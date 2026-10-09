@@ -1,0 +1,292 @@
+from __future__ import annotations
+
+import dataclasses
+import hashlib
+import os
+import shutil
+import struct
+import subprocess
+import sys
+import types
+from pathlib import Path
+
+import pytest
+
+from wozmod.formats.audio import (
+    MOZ_VOICE_IDS,
+    VoiceBankError,
+    block_voice_map,
+    build_synthetic_kovs_record,
+    english_voice_bank,
+    english_voice_clips,
+    inspect_voice_bank,
+    kovs_record,
+    moz_se_banks,
+    parse_kovs_record,
+    se_bank,
+    se_entries,
+    slot_voice_map,
+    wo1_se_entries,
+    wo1_voice_clips,
+    wo1_voice_records,
+    wo2_se_entries,
+    wo2_voice_records,
+)
+
+
+def _checksum(page: bytes) -> int:
+    crc = 0
+    for value in page:
+        crc ^= value << 24
+        for _ in range(8):
+            crc = ((crc << 1) ^ (0x04C11DB7 if crc & 0x80000000 else 0)) & 0xFFFFFFFF
+    return crc
+
+
+def _record(size: int, *, serial: int = 0x53594E54, samples: int = 0, rate: int = 48_000) -> bytes:
+    identification = b"\x01vorbis" + struct.pack("<I", 0) + b"\x01" + struct.pack("<Iiii", rate, 0, 0, 0) + b"\xb8\x01"
+    filler = size - 91
+    lacing = bytes((30, filler)) if filler >= 0 else bytes((30,))
+    page = bytearray(b"OggS\x00\x06" + struct.pack("<QII", samples, serial, 0) + bytes(4) + bytes((len(lacing),)) + lacing + identification + bytes(max(0, filler)))
+    struct.pack_into("<I", page, 22, _checksum(page))
+    for at in range(min(256, len(page))):
+        page[at] ^= at
+    return b"KOVS" + struct.pack("<Ii", len(page), 0) + bytes(20) + page
+
+
+def _allocated(record: bytes) -> bytes:
+    return record + bytes(-len(record) % 16)
+
+
+def _se_header(entries: list[bytes]) -> bytes:
+    offsets = [8 + 4 * len(entries) + 40 * k for k in range(len(entries))]
+    body = struct.pack(f"<HHI{len(entries)}I", 0x3200, len(entries), 0, *offsets) + b"".join(entries)
+    return b"_HBW0000" + struct.pack("<I", 12 + len(body)) + body
+
+
+def test_voice_bank_advances_over_padding_without_dropping_second_record(tmp_path: Path) -> None:
+    records = [_record(90, serial=101), _record(101, serial=202, samples=1234)]
+    bank = b"".join(map(_allocated, records))
+    source = tmp_path / "voice.bin"
+    source.write_bytes(bank)
+
+    layout = inspect_voice_bank(source, expected_sha256=hashlib.sha256(bank).hexdigest())
+
+    assert layout.source_bytes == 208
+    assert layout.source_sha256 == hashlib.sha256(bank).hexdigest()
+    assert [(r.ordinal, r.offset, r.stream_bytes, r.logical_bytes, r.allocated_bytes, r.padding_bytes, r.ogg.stream_serial, r.ogg.sample_count, r.sha256) for r in layout.records] == [
+        (0, 0, 58, 90, 96, 6, 101, 0, hashlib.sha256(records[0]).hexdigest()),
+        (1, 96, 69, 101, 112, 11, 202, 1234, hashlib.sha256(records[1]).hexdigest()),
+    ]
+
+
+@pytest.mark.parametrize("damage", ["padding", "trailer", "allocation"])
+def test_voice_bank_rejects_nonzero_padding_trailer_and_oversized_allocation(tmp_path: Path, damage: str) -> None:
+    changed = bytearray(_allocated(_record(90)))
+    if damage == "padding":
+        changed[95] = 1
+    elif damage == "trailer":
+        changed.extend(bytes(16))
+    else:
+        struct.pack_into("<I", changed, 4, 10_000)
+    source = tmp_path / "voice.bin"
+    source.write_bytes(changed)
+
+    with pytest.raises(VoiceBankError):
+        inspect_voice_bank(source)
+
+
+def test_kovs_rejects_corruption_after_the_identification_packet() -> None:
+    changed = bytearray(_record(101))
+    changed[-1] ^= 1
+
+    with pytest.raises(VoiceBankError, match="checksum"):
+        parse_kovs_record(bytes(changed))
+    assert parse_kovs_record(bytes(changed), verify_checksums=False)[2].sample_rate == 48_000
+
+
+@pytest.mark.parametrize("damage", ["length", "reserved"])
+def test_kovs_rejects_a_wrong_stream_length_or_nonzero_reserved_header(damage: str) -> None:
+    changed = bytearray(_record(90))
+    if damage == "length":
+        struct.pack_into("<I", changed, 4, 59)
+    else:
+        changed[31] = 1
+
+    with pytest.raises(VoiceBankError):
+        parse_kovs_record(bytes(changed))
+
+
+def test_kovs_position_transform_stops_at_byte_256() -> None:
+    stream = bytes(i % 251 for i in range(300))
+    encoded = kovs_record(stream)
+    expected = bytes(value ^ i if i < 256 else value for i, value in enumerate(stream))
+
+    assert encoded == b"KOVS" + struct.pack("<Ii", 300, 0) + bytes(20) + expected
+
+
+def test_kovs_metadata_does_not_drop_signed_loop_start_or_use_a_fixed_sample_rate() -> None:
+    looped = bytearray(_record(101, serial=18, samples=4321, rate=22_050))
+    struct.pack_into("<i", looped, 8, -123)
+    size, loop, metadata = parse_kovs_record(bytes(looped))
+    assert (size, loop, dataclasses.astuple(metadata)) == (69, -123, (1, 18, 1, 22_050, 4321))
+
+
+def test_synthetic_record_does_not_add_a_zero_length_packet_at_minimum_size() -> None:
+    for size in (90, 101, 150):
+        assert build_synthetic_kovs_record(size, stream_serial=71, sample_rate=22_050, sample_count=901) == _record(size, serial=71, rate=22_050, samples=901)
+
+
+@pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="needs no-follow file opens")
+def test_voice_bank_does_not_follow_a_symlink_to_another_input(tmp_path: Path) -> None:
+    source = tmp_path / "voice.bin"
+    source.write_bytes(_allocated(_record(90)))
+    link = tmp_path / "other.bin"
+    link.symlink_to(source)
+
+    with pytest.raises(VoiceBankError, match="read-only"):
+        inspect_voice_bank(link)
+
+
+def test_wo1_voice_index_converts_sectors_to_bytes_and_ignores_allocated_size() -> None:
+    index = struct.pack("<4sIII", b"SM4L", 2, 7, 0) + struct.pack("<8I", 0, 3, 100, 0, 3, 4, 201, 0)
+
+    assert wo1_voice_records(index) == [(0, 100), (6144, 201)]
+
+
+def test_wo2_voice_index_requires_contiguous_sector_starts() -> None:
+    index = struct.pack(">II", 2, 0) + struct.pack(">10I", 0, 0, 2, 100, 48_000, 1, 2, 3, 201, 48_000)
+
+    assert wo2_voice_records(index) == [(0, 100), (4096, 201)]
+    changed = bytearray(index)
+    struct.pack_into(">I", changed, 32, 3)
+    with pytest.raises(VoiceBankError, match="contiguous"):
+        wo2_voice_records(bytes(changed))
+
+
+def test_wo1_equal_sample_count_record_remains_unavailable_for_fallback(tmp_path: Path) -> None:
+    records = [_record(96, samples=n) for n in (1234, 5678)]
+    donor = tmp_path / "donor.bdx"
+    donor.write_bytes(b"".join(r + bytes(2048 - len(r)) for r in records))
+    index = struct.pack("<4sIII", b"SM4L", 2, 2, 0) + b"".join(struct.pack("<IIII", i, 1, len(r), 0) for i, r in enumerate(records))
+    stock = tmp_path / "stock.bin"
+    stock.write_bytes(_record(96, samples=1234))
+    stock_index = bytes(8) + struct.pack(">II", 0, 96) * 9
+
+    assert wo1_voice_clips({7: 0, 8: 1}, index, donor, stock_index, stock) == {8: records[1]}
+
+
+def test_voice_bank_table_serves_sparse_ids_with_their_own_aligned_records() -> None:
+    clips = {MOZ_VOICE_IDS - 1: _record(90, serial=1), 5: _record(101, serial=2)}
+    bank = english_voice_bank(clips)
+    table = [struct.unpack_from("<II", bank, 4 + 8 * i) for i in range(MOZ_VOICE_IDS)]
+
+    assert struct.unpack_from("<I", bank)[0] == MOZ_VOICE_IDS
+    assert {i: (off % 16, bank[off:off + size]) for i, (off, size) in enumerate(table) if size} == {i: (0, clip) for i, clip in clips.items()}
+    assert len(bank) == 181_536
+
+
+def test_se_replacement_keeps_each_clip_offset_and_preserves_non_audio_fields() -> None:
+    original = [struct.pack("<IHHHH4xIII12s", 0x01000000, 48_000, 0x8800, 512, 1017, 9, 0, 512, bytes((k,)) * 12) for k in range(3)]
+    clips = [(1017, bytes((1,)) * 512), (1018, bytes((2,)) * 1024), (0, b"")]
+    header, data = se_bank(_se_header(original), clips)
+
+    assert data == b"_DBW0000" + struct.pack("<I", 1548) + bytes((1,)) * 512 + bytes((2,)) * 1024
+    assert struct.unpack_from("<I", header, 16)[0] == 1536
+    for offset, old, (samples, ima) in zip(se_entries(header), original, clips):
+        entry = header[offset:offset + 40]
+        count, start, size = struct.unpack_from("<III", entry, 16)
+        assert (count, data[12 + start:12 + start + size], entry[:16] + entry[28:]) == (samples, ima, old[:16] + old[28:])
+
+
+def test_se_index_reads_header_and_data_as_pairs_without_swapping_offsets() -> None:
+    body = b"head!clip"
+    spans = [(0, 5), (5, 4)] + [(0, 0)] * 242
+    index = struct.pack(">II", 244, 0) + b"".join(struct.pack(">II", *span) for span in spans)
+
+    assert moz_se_banks(index, body) == [(b"head!", b"clip")] + [(b"", b"")] * 121
+
+
+def test_wo2_se_entries_use_record_words_and_accumulate_unaligned_bank_sizes() -> None:
+    def bank(records: list[tuple[int, int]]) -> bytes:
+        sample = b"SDsdSmpl" + struct.pack("<II", 0, len(records)) + b"".join(struct.pack("<18I", offset, *([0] * 12), 48_000, 0, 0, 0, size) for offset, size in records)
+        chunk = b"SDsdVers" + bytes(8) + b"SDsdHead" + bytes(40) + sample
+        return chunk + bytes(2048 - len(chunk))
+
+    assert wo2_se_entries(bank([(0, 80), (80, 100)]) + bank([(0, 70)])) == [[(0, 80, 48_000), (80, 100, 48_000)], [(180, 70, 48_000)]]
+
+
+def test_wo1_se_entries_align_bank_data_and_keep_entry_offsets_relative() -> None:
+    def bank(sizes: list[int]) -> bytes:
+        offsets, data, entries = [], 0, b""
+        for size in sizes:
+            offsets.append(8 + 4 * len(sizes) + 40 * len(offsets))
+            entries += struct.pack("<IHH8xIII12x", 0x01320000, 48_000, 0x4800, size // 2, data, size)
+            data += size
+        chunk = struct.pack(f"<HHI{len(sizes)}I", 2, len(sizes), data, *offsets) + entries
+        return chunk + bytes(2048 - len(chunk))
+
+    assert wo1_se_entries(bank([100, 60]) + bank([40])) == [[(0, 100, 48_000), (100, 60, 48_000)], [(2048, 40, 48_000)]]
+
+
+def test_slot_voice_map_drops_ambiguous_ids_and_unsuffixed_slots_without_shifting() -> None:
+    tables = [([b"a@100", b"b", b"c@102"], [b"d@7", b"e@8", b"f@9"]), ([b"g@100", b"h@103"], [b"i@11", b"j@12"])]
+
+    assert slot_voice_map(tables, 1644) == {0x3078 + 101: 1652, 0x3078 + 102: 1655}
+
+
+def test_block_voice_map_does_not_drop_the_last_id_in_a_run() -> None:
+    assert block_voice_map((100, 17, 3)) == {100: 17, 101: 18, 102: 19}
+
+
+@pytest.mark.skipif(os.environ.get("WOZMOD_AUDIO") != "1" or not shutil.which("ffmpeg"), reason="set WOZMOD_AUDIO=1 with ffmpeg")
+def test_x360_placeholder_falls_back_without_blocking_a_usable_shared_clip(tmp_path: Path) -> None:
+    def wav(samples: int, tone: int) -> bytes:
+        pcm = b"".join(struct.pack("<h", (i * tone) % 4000 - 2000) for i in range(samples))
+        fmt = struct.pack("<IHHIIHH", 16, 1, 1, 48_000, 96_000, 2, 16)
+        return b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " + fmt + b"data" + struct.pack("<I", len(pcm)) + pcm
+
+    riffs = [wav(4800, 7)] * 3 + [wav(9600, 13)]
+    wo2_bank = tmp_path / "x360.bdx"
+    wo2_bank.write_bytes(b"".join(c + bytes(-len(c) % 2048) for c in riffs))
+    wo2_index = struct.pack(">II", 4, 0) + b"".join(struct.pack(">5I", i, sum(-(-len(c) // 2048) for c in riffs[:i]), -(-len(clip) // 2048), len(clip), 48_000) for i, clip in enumerate(riffs))
+    wo1_clips = [_record(96, samples=n) for n in (6000, 7000, 1234)]
+    wo1_bank = tmp_path / "wo1.bdx"
+    wo1_bank.write_bytes(b"".join(c + bytes(2048 - len(c)) for c in wo1_clips))
+    wo1_index = struct.pack("<4sIII", b"SM4L", 3, 3, 0) + b"".join(struct.pack("<IIII", i, 1, len(c), 0) for i, c in enumerate(wo1_clips))
+    stock = tmp_path / "stock.bin"
+    stock.write_bytes(_record(96, samples=1234))
+    stock_index = bytes(8) + struct.pack(">II", 0, 96) * 14
+
+    selected, tiers = english_voice_clips({10: 0, 11: 1, 12: 2}, wo1_index, wo1_bank, {10: 3, 11: 0, 12: 2, 13: 1}, wo2_index, wo2_bank, stock_index, stock)
+
+    assert set(selected) == {10, 11}
+    assert parse_kovs_record(selected[10])[2].sample_count == 9600
+    assert selected[11] == wo1_clips[1]
+    assert tiers == {"wo1-pc": 1, "wo2-x360": 1}
+
+
+@pytest.mark.skipif(not os.environ.get("WOZMOD_GAME") or not os.environ.get("WOZMOD_OLD_REPO"), reason="set WOZMOD_GAME and WOZMOD_OLD_REPO")
+def test_real_donor_indices_do_not_drop_rows_in_large_record_tables() -> None:
+    old_repo = Path(os.environ["WOZMOD_OLD_REPO"])
+    paths = [old_repo / "work/donors" / donor / name for donor, name in (("wo1", "linkdata_ans.idx"), ("wo2-x360", "linkdata_ans.idx"), ("wo1", "link_sebank.hdx"), ("wo2-x360", "link_sebank.hdx"))]
+    if not all(path.is_file() for path in paths):
+        pytest.skip("donor extracts are absent")
+    source = subprocess.run(["git", "-C", str(old_repo), "show", "2fa29d5:src/musou_patch/targets/musou_orochi_z/audio.py"], capture_output=True, text=True, check=True).stdout
+    old = types.ModuleType("_wozmod_audio_baseline_test")
+    sys.modules[old.__name__] = old
+    try:
+        exec(compile(source, "audio-baseline", "exec"), old.__dict__)
+        for name, path in zip(("wo1_voice_records", "wo2_voice_records", "wo1_se_entries", "wo2_se_entries"), paths):
+            assert globals()[name](path.read_bytes()) == getattr(old, name)(path.read_bytes())
+        bank = Path(os.environ["WOZMOD_GAME"]) / "data/Sound/Voice/Voice.bin"
+        if not bank.is_file():
+            pytest.skip("stock voice bank is absent")
+        with bank.open("rb") as stream:
+            header = stream.read(32)
+            payload = header + stream.read(struct.unpack_from("<I", header, 4)[0])
+        new_result = parse_kovs_record(payload)
+        old_result = old.parse_kovs_record(payload)
+        assert (new_result[:2], dataclasses.astuple(new_result[2])) == (old_result[:2], dataclasses.astuple(old_result[2]))
+    finally:
+        sys.modules.pop(old.__name__, None)

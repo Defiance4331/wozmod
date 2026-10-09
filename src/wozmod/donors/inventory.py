@@ -1,0 +1,133 @@
+"""Pinned donor members and their extraction names."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+def _relative_path(value: str) -> None:
+    if not value or "\\" in value or ":" in value or any(
+        part in ("", ".", "..") for part in value.split("/")
+    ):
+        raise ValueError("Member paths must be relative slash paths")
+
+
+@dataclass(frozen=True)
+class DonorFile:
+    path: str
+    source: str
+    size: int
+    sha256: str
+
+    def __post_init__(self) -> None:
+        _relative_path(self.path)
+        _relative_path(self.source)
+        if self.size < 0 or len(self.sha256) != 64 or any(
+            c not in "0123456789abcdef" for c in self.sha256
+        ):
+            raise ValueError("Invalid member identity")
+
+
+@dataclass(frozen=True)
+class Donor:
+    name: str
+    format: str
+    files: tuple[DonorFile, ...]
+    first_cabinet: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.format not in ("iso9660", "xdvdfs"):
+            raise ValueError("Unknown donor disc format")
+        for field in ("path", "source"):
+            names = [getattr(file, field).casefold() for file in self.files]
+            if len(set(names)) != len(names):
+                raise ValueError("Duplicate member identity")
+        if self.first_cabinet is not None:
+            _relative_path(self.first_cabinet)
+
+
+
+WO1 = Donor(
+    'wo1', 'iso9660', (
+        DonorFile('link_sebank.bdx', 'link_sebank.bdx', 113721344,
+                  'e1b79560d6474cd8a00ec49beb6b19207537eb6f1b68557ab188accbdcadf1ff'),
+        DonorFile('link_sebank.hdx', 'link_sebank.hdx', 212992,
+                  'dabadb9a8157db3af9c3e910d0c4b72bd81cd8ae66a4e7e26578739b21f307e0'),
+        DonorFile('link_vodat.bdx', 'link_vodat.bdx', 236677120,
+                  '82f769306a1ec10b55d4f9f767cb942675f4dacd4470d6a6953863de8ae50c10'),
+        DonorFile('linkdata_ans.idx', 'linkdata_ans.idx', 147904,
+                  '7fed7b4ce12cab34700b00969d6d48f5b7068ca35c62d563a0d8a420f6a3d593'),
+        DonorFile('linkdata_ens.idx', 'linkdata_ens.idx', 13952,
+                  'd2f7a5f098dcb4753c295ccfa6f5158ac38c212973c9b1c0e7912c25c310c815'),
+        DonorFile('linkdata_ens.lnk', 'linkdata_ens.lnk', 1027012608,
+                  'd700ddf6bf298d33b60b6bae40996c9e875b6e05641a27f21ec3226f2eb54a6d'),
+        DonorFile('movie/mev01.wmv', 'mev01.wmv', 40994782,
+                  '233ebc09cf0e68649b16375eba9fc6bc8c1dca1056b6998eb9f02a1764b53d21'),
+        DonorFile('movie/mev06.wmv', 'mev06.wmv', 36529842,
+                  '72be03db89bbfdd8602cec8696331760c29a34175ca1f67d56b69d30762becd1'),
+        DonorFile('movie/mev11.wmv', 'mev11.wmv', 1072928,
+                  '965e135cdefa6e5093655a21c802620fd20465bd73af5369f3f7197a3c10f64c'),
+        DonorFile('movie/mev12.wmv', 'mev12.wmv', 974438,
+                  'e2fda95b1821a2926c405cf0064e57da118b169d4c2074b81a27ee027ff89f45'),
+        DonorFile('movie/mev13.wmv', 'mev13.wmv', 941608,
+                  '4d3c49514c96a9ab8e14e5485454c0bf11679f092f3a8512f89738834d04ac86'),
+        DonorFile('movie/mev14.wmv', 'mev14.wmv', 974438,
+                  'b79968a8feb533c6e91d8da9aa90b108fcf768fc567b4a412de6d9170352be39'),
+    ), first_cabinet="OROCHI.cab"
+)
+
+
+X360 = Donor(
+    'wo2-x360', 'xdvdfs', (
+        DonorFile('default.xex', 'default.xex', 5451776,
+                  '5a99bd246d56e3a2362a65f1a617ebd427cc84b1c6468eb4f187496f7758f506'),
+        DonorFile('link_sebank.bdx', 'data/LINK_SEBANK.BDX', 50376704,
+                  'b43c5cd3e906b67fd5efd63208079e5e8c4ef08e5b9ccb59fbc3565016f40d05'),
+        DonorFile('link_sebank.hdx', 'data/LINK_SEBANK.HDX', 485376,
+                  '292180c951016bf06b1b0a723fd0f80a861770c5d7b8722052ec9e74fb7664f3'),
+        DonorFile('link_vodat.bdx', 'data/LINK_VODAT.BDX', 441327616,
+                  '2553642804be8f1beded74cd4a1da8254588c1e8cee9a1ec51cfd942f367c5c9'),
+        DonorFile('linkdata_ans.idx', 'data/LINKDATA_ANS.IDX', 210088,
+                  '47c0129ac53694aed303ac666efdcc40fa4f50f6410ff638dfda0c58697ea6c4'),
+        DonorFile('linkdata_bns.idx', 'data/LINKDATA_BNS.IDX', 61104,
+                  'a7ac557aa1e5e8c2009f613b028f8e1c14a39115751dd312e447df240e390cdd'),
+        DonorFile('linkdata_bns.lnk', 'data/LINKDATA_BNS.LNK', 3198955520,
+                  'ba93fb181d392bc044fadaac2c729bd95397ee40c579cd7f46a38c1015728629'),
+        DonorFile('linkdata_ens.idx', 'data/LINKDATA_ENS.IDX', 4448,
+                  'bf621a9d86586431fdc7730e169b6eaa350caffb3b24b1de102890a5b6af4126'),
+        DonorFile('linkdata_ens.lnk', 'data/LINKDATA_ENS.LNK', 355137536,
+                  '259a4a3bb3d2fcaec946c5afb2717dbeeeb14d11251fdf031d3597dcd0f073ac'),
+    ),
+)
+
+
+PSP = Donor(
+    'wo2-psp', 'iso9660', (
+        DonorFile('PSP_GAME/PARAM.SFO', 'PSP_GAME/PARAM.SFO', 472,
+                  '279068f106f67d9838c75b9f33b6708dc9b4ed3bd7f95a5c92a707d94d9fbad6'),
+        DonorFile('PSP_GAME/SYSDIR/BOOT.BIN', 'PSP_GAME/SYSDIR/BOOT.BIN', 3197900,
+                  '22c2e3e9b6cd654b7db2f1e5df74460c6275f323717a7ee2688aa2b3d32be67a'),
+        DonorFile('PSP_GAME/USRDIR/BOOT.BIN', 'PSP_GAME/USRDIR/BOOT.BIN', 3210916,
+                  '07671edbcdc67a3c5c5eb28ef9dda2197a3e4613418fa56a906cd20341a647e4'),
+        DonorFile('PSP_GAME/USRDIR/LINKDATA.BNS', 'PSP_GAME/USRDIR/LINKDATA.BNS', 224425984,
+                  '16073121459020245b4cad88b146709aa2455e5fcc87824d3eb7fcc91e26686e'),
+        DonorFile('PSP_GAME/USRDIR/LINKDATA.CNS', 'PSP_GAME/USRDIR/LINKDATA.CNS', 60180480,
+                  '110b190911b006289629c45012378261f146a114d9263f73dc22fd2d7914c227'),
+        DonorFile('PSP_GAME/USRDIR/LINKDATA.DNS', 'PSP_GAME/USRDIR/LINKDATA.DNS', 540672,
+                  '1ef813b10d0cf32d2f7de60beefa3b9a8019d1c174ee15043db20f0bdc71d867'),
+        DonorFile('PSP_GAME/USRDIR/LINKDATA.ENS', 'PSP_GAME/USRDIR/LINKDATA.ENS', 192739328,
+                  '4aa460ac96033416ea7d4a7b205655ef48855dd6ae51e050bdcbdade0574c755'),
+        DonorFile('PSP_GAME/USRDIR/LINKDATA_FRA.FNS', 'PSP_GAME/USRDIR/LINKDATA_FRA.FNS', 34621440,
+                  '696a08d42e4f9934d51b6cc4821624230c081dbb474203b9c29144eaf861f84f'),
+        DonorFile('PSP_GAME/USRDIR/LINKDATA_NA.FNS', 'PSP_GAME/USRDIR/LINKDATA_NA.FNS', 34457600,
+                  '6d7213772b30cfdbf9e4ad3c4d49b52d6acf78696b0f2259d6c421356c79a40b'),
+    ),
+)
+
+
+DONORS = {donor.name: donor for donor in (WO1, X360, PSP)}
+
+PSP_ENCRYPTED_FILE = DonorFile(
+    "PSP_GAME/SYSDIR/EBOOT.BIN", "PSP_GAME/SYSDIR/EBOOT.BIN", 3198240,
+    "e7c3714e77f13a83beb0cd0586fc2340efc2214122b1d184fc72bd40c9c39d11",
+)
