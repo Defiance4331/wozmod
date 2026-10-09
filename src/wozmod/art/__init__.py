@@ -1,0 +1,1 @@
+"""Menu art build tooling."""
