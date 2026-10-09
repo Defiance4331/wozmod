@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# Local work: stock and donor extracts, builds, test copies of the game
+work/
+
+# Agent reports
+.agent-outputs/
+.claude/
+
+# Game files and anything built from them never belong here
+*.bin
+*.idx
+*.lnk
+*.bdx
+*.hdx
+*.iso
+*.xex
+*.exe
+*.dll
+*.g1t
+*.kovs
+*.wmv
+*.7z
+*.zip
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wozmod"
+version = "0.1.0"
+description = "Fan mod for the Japanese PC release of Musou Orochi Z: English text and gameplay patches"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.14"
+dependencies = ["pillow>=12.1,<13"]
+
+[dependency-groups]
+dev = ["pytest>=9.0.2,<10"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
