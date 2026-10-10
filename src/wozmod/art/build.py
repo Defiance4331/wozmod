@@ -2368,7 +2368,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="write <entry>.<item>.<texture>.png stock|edited sheets of every edited texture")
     parser.add_argument("--entries", type=int, nargs="+",
                         help="rebuild only these entries for --preview-dir; writes no entries")
-    parser.add_argument("--hires", help="write moz-english/hires.bin: 'vector' (rows lettered by the vector "
+    parser.add_argument("--hires", help="write wozmod/hires.bin: 'vector' (rows lettered by the vector "
                         "faces), 'fixture' (2x nearest copy of the served art, for plumbing tests only) or a "
                         "directory of <entry>.<item>.png sheets")
     parser.add_argument("--hires-only", action="store_true", help="with --hires: the entries are already built")
@@ -2492,14 +2492,14 @@ def main(argv: list[str] | None = None) -> int:
     if not args.output_dir:
         print(f"{args.preview_dir}: previews of {len(stored)} entries")
         return 0
-    entries = args.output_dir / "moz-english/entries"
+    entries = args.output_dir / "wozmod/entries"
     entries.mkdir(parents=True, exist_ok=True)
     for ordinal, data in stored.items():
         (entries / f"{ordinal}.bin").write_bytes(data)
     with base_bin.open("rb") as stream:
         prompts = read_entry(stream, index.entries[PROMPT_ENTRY])[0]
     wo2_prompts = wo1_entries(args.wo2_donor.with_suffix(".lnk"), args.wo2_donor.with_suffix(".idx"), [13])[13]
-    (args.output_dir / "moz-english/prompts-xbox.bin").write_bytes(xbox_prompts(prompts, wo2_g1ts(wo2_prompts)))
+    (args.output_dir / "wozmod/prompts-xbox.bin").write_bytes(xbox_prompts(prompts, wo2_g1ts(wo2_prompts)))
     if args.hires:
         write_hires(args)
     write_manifest(args.output_dir)
@@ -2526,8 +2526,8 @@ def write_hires(args) -> None:
             sorted(X360_PLATE_ENTRIES)).items()}
         donors["menu_labels"] = prepare_menu_labels(mapping)
         vector = mapping, donors
-    (args.output_dir / "moz-english/hires.bin").write_bytes(hires_bin(
-        args.output_dir / "moz-english/entries", source, vector, args.squeeze))
+    (args.output_dir / "wozmod/hires.bin").write_bytes(hires_bin(
+        args.output_dir / "wozmod/entries", source, vector, args.squeeze))
     (args.output_dir / "review-variant.json").write_text(json.dumps({
         "schema": "moz-menu-review-variant-v1", "selection": selected,
         "runtime_edits": "shared", "geometry": "per-bank minima and right-anchor growth",

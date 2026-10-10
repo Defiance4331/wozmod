@@ -101,6 +101,6 @@ def test_full_art_build_does_not_drop_or_change_fixed_baseline_payloads(tmp_path
         "--font-python", font_python,
     ], cwd=tmp_path, env=new_environment, capture_output=True, text=True)
     assert new_run.returncode == 0, new_run.stdout + new_run.stderr
-    old_payloads, new_payloads = _payloads(old_output / "moz-english"), _payloads(new_output / "moz-english")
+    old_payloads, new_payloads = _payloads(old_output / "moz-english"), _payloads(new_output / "wozmod")
     assert len(old_payloads) == 167
     assert new_payloads == old_payloads

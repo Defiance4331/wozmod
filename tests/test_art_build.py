@@ -288,7 +288,7 @@ def test_hires_bank_does_not_serialize_a_sheet_smaller_than_its_quad(monkeypatch
     size = G1T_HEADER.size + 4 + G1T_TEXTURE_HEADER.size + len(pixels)
     source = (G1T_HEADER.pack(b"GT1G", b"0000", size, G1T_HEADER.size, 1, 0, 0, 0)
               + struct.pack("<I", 4) + G1T_TEXTURE_HEADER.pack(0x10, 1, 0x59, 0) + pixels)
-    entries = tmp_path / "moz-english/entries"
+    entries = tmp_path / "wozmod/entries"
     entries.mkdir(parents=True)
     (entries / "4060.bin").write_bytes(source)
     label = Image.new("RGBA", (692, 48))
@@ -323,7 +323,7 @@ def test_hires_bank_does_not_shrink_frozen_attribute_samples(monkeypatch, tmp_pa
     g1t = (G1T_HEADER.pack(b"GT1G", b"0000", size, G1T_HEADER.size, 1, 0, 0, 0)
            + struct.pack("<I", 4) + G1T_TEXTURE_HEADER.pack(0x10, 1, 0x57, 0) + pixels)
     member = g1t + bytes((-len(g1t)) % 2048)
-    entries = tmp_path / "moz-english/entries"
+    entries = tmp_path / "wozmod/entries"
     entries.mkdir(parents=True)
     sources = {4079: member * 97, 4080: member * 34}
     for entry, payload in sources.items():

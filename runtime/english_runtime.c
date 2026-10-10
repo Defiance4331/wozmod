@@ -3076,7 +3076,7 @@ static void install(HINSTANCE self)
         return;
     while (n && root[n - 1] != '\\' && root[n - 1] != '/')
         n--;
-    lstrcpyW(root + n, L"moz-english\\");
+    lstrcpyW(root + n, L"wozmod\\");
     runtime_log = CreateFileW(path(name, L"runtime.log"), GENERIC_WRITE, FILE_SHARE_READ, 0, CREATE_ALWAYS, 0, 0);
     GetPrivateProfileStringW(L"language", L"text", L"english", value, 16, path(name, L"settings.ini"));
     text_saved = !lstrcmpiW(value, L"japanese");
@@ -3096,7 +3096,7 @@ static void install(HINSTANCE self)
         return;
     }
     if (english && !(enrt_table = load_table())) {
-        note("refused: moz-english\\table.bin is missing or damaged", 0);
+        note("refused: wozmod\\table.bin is missing or damaged", 0);
         return;
     }
     table_time(&table_stamp);
