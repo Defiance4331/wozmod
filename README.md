@@ -45,14 +45,29 @@ folder, `wozmod`, to the game folder.
 
 ## Install
 
-1. Download the latest release from the **Releases** page of this repository.
-2. Unzip it to any folder.
-3. Open `wozmod-setup`.
-4. Select your Musou Orochi Z folder.
-5. For English, select your Warriors Orochi folder and your two Warriors
-   Orochi 2 disc images.
-6. Click **Install**. The installer builds the English files on your computer.
-   This step takes several minutes.
+wozmod installs from a terminal for now. A setup window comes later.
+
+1. Install [uv](https://docs.astral.sh/uv/) and [ffmpeg](https://ffmpeg.org/).
+   Make sure that `ffmpeg` is on your `PATH`.
+2. Download this repository, and `d3d9.dll` and `lettering.zip` from the
+   **Releases** page.
+3. Get these files from your own discs:
+   - a disc image of each of the three games;
+   - the decrypted Xbox 360 program file and the decrypted PSP
+     program file (`EBOOT.BIN`).
+4. In the repository folder, run:
+
+   ```
+   uv run wozmod install --game "<Musou Orochi Z folder>" \
+     --wo1 <Warriors Orochi .iso> --x360 <Warriors Orochi 2 360 .iso> \
+     --psp <Warriors Orochi 2 PSP .iso> \
+     --x360-exe <decrypted 360 program> --psp-eboot <EBOOT.BIN> \
+     --lettering lettering.zip --dll d3d9.dll
+   ```
+
+   wozmod builds the English files on your computer. This step takes about
+   five minutes. To use fewer processor cores, set `WOZMOD_JOBS`, for example
+   `WOZMOD_JOBS=2`.
 
 ### Extra steps on Linux (Steam or Proton)
 
@@ -83,8 +98,9 @@ change.
 
 ## Uninstall
 
-Delete `d3d9.dll` and the `wozmod` folder from the game folder. Your game and
-your saves stay as they were.
+Run `uv run wozmod uninstall --game "<Musou Orochi Z folder>"`. Or delete
+`d3d9.dll` and the `wozmod` folder from the game folder. Your game and your
+saves stay as they were.
 
 ## Problems
 

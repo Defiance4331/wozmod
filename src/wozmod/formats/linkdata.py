@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import collections
+import re
 import struct
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 LZP2_MAGIC = b"LZP2"
@@ -65,14 +66,14 @@ def _decode_stream(stream: bytes, expected_size: int) -> tuple[bytes, int]:
             end = position + token
             if end > len(stream):
                 raise ArchiveError("LZP2 literal run is truncated")
-            output.extend(stream[position:end])
+            output += stream[position:end]
             position = end
         elif token < 0x80:
             if position + 2 > len(stream):
                 raise ArchiveError("LZP2 repeated-byte run is truncated")
             run_length = ((token & 0x3F) << 8) | stream[position]
             run_length += 4
-            output.extend(bytes((stream[position + 1],)) * run_length)
+            output += stream[position + 1:position + 2] * run_length
             position += 2
         else:
             if position >= len(stream):
@@ -81,10 +82,13 @@ def _decode_stream(stream: bytes, expected_size: int) -> tuple[bytes, int]:
             distance = ((token & 0x07) << 8) | stream[position]
             distance += 1
             position += 1
-            if distance > len(output):
+            start = len(output) - distance
+            if start < 0:
                 raise ArchiveError("LZP2 back-reference exceeds output")
-            for _ in range(run_length):
-                output.append(output[-distance])
+            if distance >= run_length:
+                output += output[start:start + run_length]
+            else:  # the copy overlaps its own output: repeat the last distance bytes
+                output += (output[start:] * (run_length // distance + 1))[:run_length]
         if len(output) > expected_size:
             raise ArchiveError("LZP2 output exceeds its declared size")
     raise ArchiveError("LZP2 stream has no end token")
@@ -92,7 +96,11 @@ def _decode_stream(stream: bytes, expected_size: int) -> tuple[bytes, int]:
 
 def parse_lzp2(data: bytes, signature: bytes = LZP2_SIGNATURE) -> Lzp2Member:
 
-    source = bytes(data)
+    return _parse_lzp2(bytes(data), signature)
+
+
+@lru_cache(maxsize=1)  # the menu-art build decodes one entry several times in a row
+def _parse_lzp2(source: bytes, signature: bytes) -> Lzp2Member:
     if len(source) < LZP2_HEADER.size:
         raise ArchiveError("LZP2 header is truncated")
     magic, found, expected_size, compressed_size = LZP2_HEADER.unpack_from(source)
@@ -116,101 +124,67 @@ def parse_lzp2(data: bytes, signature: bytes = LZP2_SIGNATURE) -> Lzp2Member:
     )
 
 
-def _repeat_length(data: bytes, position: int) -> int:
-    length = 1
-    limit = min(MAX_REPEAT_BYTES, len(data) - position)
-    while length < limit and data[position + length] == data[position]:
-        length += 1
-    return length
-
-
 def _encode_stream(data: bytes) -> bytes:
-    positions: dict[bytes, collections.deque[int]] = collections.defaultdict(
-        collections.deque
-    )
-
-    def add_position(position: int) -> None:
-        expired = position - MAX_BACK_REFERENCE_DISTANCE
-        if expired >= 0 and expired + 3 <= len(data):
-            expired_key = data[expired : expired + 3]
-            expired_positions = positions.get(expired_key)
-            if expired_positions and expired_positions[0] == expired:
-                expired_positions.popleft()
-                if not expired_positions:
-                    del positions[expired_key]
-        if position + 3 <= len(data):
-            positions[data[position : position + 3]].append(position)
-
-    def match_at(position: int) -> tuple[int, int]:
-        if position + 3 > len(data):
-            return 0, 0
-        candidates = positions.get(data[position : position + 3], ())
-        best_length = 0
-        best_distance = 0
-        limit = min(MAX_BACK_REFERENCE_BYTES, len(data) - position)
-        for previous in reversed(candidates):
-            distance = position - previous
-            length = 3
-            while (
-                length < limit
-                and data[position + length] == data[position + length - distance]
-            ):
-                length += 1
-            if length > best_length:
-                best_length = length
-                best_distance = distance
-            if best_length == limit:
-                break
-        return best_length, best_distance
-
-    def advance(start: int, count: int) -> int:
-        end = start + count
-        for visited in range(start, end):
-            add_position(visited)
-        return end
+    """Greedy parse: a run of 4+ equal bytes, else the longest (then nearest) back-reference, else literals."""
+    n = len(data)
+    window = MAX_BACK_REFERENCE_DISTANCE
+    # stops[q] is 1 where a run or a back-reference can start; literal runs extend to the next stop.
+    stops = bytearray(n)
+    last: dict[bytes, int] = {}
+    get = last.get
+    for q in range(n - 2):
+        key = data[q:q + 3]
+        if q - get(key, -window - 1) <= window:
+            stops[q] = 1
+        last[key] = q
+    for run in re.finditer(rb"(.)\1{3,}", data, re.S):
+        stops[run.start()] = 1
 
     stream = bytearray()
     position = 0
-    while position < len(data):
-        repeat_length = _repeat_length(data, position)
-        match_length, distance = match_at(position)
-        if repeat_length >= 4 and (
-            repeat_length > match_length
-            or repeat_length > MAX_BACK_REFERENCE_BYTES
-        ):
-            encoded_length = repeat_length - 4
-            stream.extend(
-                (
-                    0x40 | (encoded_length >> 8),
-                    encoded_length & 0xFF,
-                    data[position],
-                )
-            )
-            position = advance(position, repeat_length)
-            continue
-        if match_length >= 3:
-            encoded_distance = distance - 1
-            stream.extend(
-                (
-                    0x80
-                    | ((match_length - 3) << 3)
-                    | (encoded_distance >> 8),
-                    encoded_distance & 0xFF,
-                )
-            )
-            position = advance(position, match_length)
-            continue
-
+    while position < n:
+        if stops[position]:
+            repeat_length = 1
+            if data[position:position + 4] == data[position:position + 1] * 4:
+                run = data[position:position + MAX_REPEAT_BYTES]
+                repeat_length = len(run) - len(run.lstrip(run[:1]))
+            match_length = distance = 0
+            low = max(0, position - window)
+            found = data.rfind(data[position:position + 3], low, position + 2)
+            if found >= 0:
+                limit = min(MAX_BACK_REFERENCE_BYTES, n - position)
+                target = int.from_bytes(data[position:position + limit])
+                while True:
+                    # Measure the nearest source found so far, then look for the nearest source of a longer match.
+                    differ = target ^ int.from_bytes(data[found:found + limit])
+                    match_length = limit - 1 - (differ.bit_length() - 1) // 8 if differ else limit
+                    distance = position - found
+                    if match_length == limit:
+                        break
+                    found = data.rfind(data[position:position + match_length + 1], low, position + match_length)
+                    if found < 0:
+                        break
+            if repeat_length >= 4 and (
+                repeat_length > match_length
+                or repeat_length > MAX_BACK_REFERENCE_BYTES
+            ):
+                encoded_length = repeat_length - 4
+                stream += bytes((0x40 | (encoded_length >> 8), encoded_length & 0xFF, data[position]))
+                position += repeat_length
+                continue
+            if match_length >= 3:
+                encoded_distance = distance - 1
+                stream += bytes((0x80 | ((match_length - 3) << 3) | (encoded_distance >> 8),
+                                 encoded_distance & 0xFF))
+                position += match_length
+                continue
         literal_start = position
-        position = advance(position, 1)
-        while position < len(data) and position - literal_start < MAX_LITERAL_BYTES:
-            next_repeat = _repeat_length(data, position)
-            next_match, _distance = match_at(position)
-            if next_repeat >= 4 or next_match >= 3:
-                break
-            position = advance(position, 1)
+        end = min(n, literal_start + MAX_LITERAL_BYTES)
+        position = stops.find(1, position + 1, end)
+        if position < 0:
+            position = end
         stream.append(position - literal_start)
-        stream.extend(data[literal_start:position])
+        stream += data[literal_start:position]
     stream.append(0)
     stream.extend(bytes(-len(stream) % LZP2_STREAM_ALIGNMENT))
     return bytes(stream)

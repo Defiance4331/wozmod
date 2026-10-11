@@ -121,6 +121,9 @@ def test_quad_position_flags_the_skill_squares_left_at_the_old_x_and_a_condensed
     assert sc.quad_position(screen(textures=row), "4079.82", x=1014).ok
     c = sc.quad_position(screen(textures=row[:1] + [quad("4079.82", 886, 340, 24, 24)]), "4079.82", x=1014)
     assert not c.ok and c.numbers["bad"] == [{"x": 886, "y": 340, "width": 24, "height": 24}]
+    grid = [quad("4079.82", x, y, 14, 14) for x in (1014, 1029) for y in (160, 175)]
+    assert sc.quad_position(screen(textures=grid), "4079.82", left=1014).ok
+    assert not sc.quad_position(screen(textures=[dict(q, x=q["x"] - 128) for q in grid]), "4079.82", left=1014).ok
     assert not sc.quad_position(screen(textures=[quad("4079.83", 500, 300, 56, 20)]), "4079.83", width=96).ok
     assert sc.quad_position(screen(textures=[quad("4079.83", 500, 300, 97, 20)]), "4079.83", width=96).ok  # 1 px tol
 

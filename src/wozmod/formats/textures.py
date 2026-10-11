@@ -5,6 +5,7 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass, field
 from functools import lru_cache
+from typing import Iterator
 
 G1T_MAGIC = b"GT1G"
 G1T_HEADER = struct.Struct("<4s4sIIIIII")
@@ -83,11 +84,7 @@ class G1tTexture:
         top_bytes = _mip_payload_bytes(self.pixel_format, self.width, self.height)
         payload = self.payload[:top_bytes]
         if self.pixel_format == PIXEL_FORMAT_BGRA8:
-            output = bytearray(len(payload))
-            for offset in range(0, len(payload), 4):
-                blue, green, red, alpha = payload[offset : offset + 4]
-                output[offset : offset + 4] = bytes((red, green, blue, alpha))
-            return bytes(output)
+            return _swap_red_blue(payload)
         if self.pixel_format == PIXEL_FORMAT_DXT1:
             return _decode_dxt(payload, self.width, self.height, alpha=False)
         if self.pixel_format == PIXEL_FORMAT_DXT5:
@@ -435,13 +432,16 @@ def _parse_g1t_run(source: bytes) -> TexturePackage:
     return TexturePackage(source=source, standalone=False, items=tuple(items), run=True)
 
 
+def _swap_red_blue(pixels: bytes) -> bytes:
+    """BGRA8 <-> RGBA8."""
+    swapped = bytearray(pixels)
+    swapped[0::4], swapped[2::4] = pixels[2::4], pixels[0::4]
+    return bytes(swapped)
+
+
 def _encode_top(pixel_format: int, rgba: bytes, width: int, height: int) -> bytes:
     if pixel_format == PIXEL_FORMAT_BGRA8:
-        encoded = bytearray(len(rgba))
-        for offset in range(0, len(rgba), 4):
-            red, green, blue, alpha = rgba[offset : offset + 4]
-            encoded[offset : offset + 4] = bytes((blue, green, red, alpha))
-        return bytes(encoded)
+        return _swap_red_blue(rgba)
     if pixel_format == PIXEL_FORMAT_DXT1:
         return _encode_dxt1(rgba, width, height)
     if pixel_format == PIXEL_FORMAT_DXT5:
@@ -503,74 +503,45 @@ def _alpha_palette(alpha0: int, alpha1: int) -> tuple[int, ...]:
     ) + (0, 255)
 
 
-# Cache repeated DXT blocks.
-@lru_cache(maxsize=4096)
-def _decode_block(block: bytes, alpha: bool) -> tuple[bytes, bytes, bytes, bytes]:
-    """Decode one DXT block."""
-
-    alpha_values = (255,) * 8
-    alpha_indices = 0
-    position = 0
-    if alpha:
-        alpha_values = _alpha_palette(block[0], block[1])
-        alpha_indices = int.from_bytes(block[2:8], "little")
-        position = 8
-    color0, color1, color_indices = struct.unpack_from("<HHI", block, position)
-    colors = _color_palette(color0, color1, force_four=alpha)
-    rows = []
-    for local_y in range(4):
-        row = bytearray()
-        for local_x in range(4):
-            index = local_y * 4 + local_x
-            red, green, blue, decoded_alpha = colors[(color_indices >> (index * 2)) & 0x03]
-            if alpha:
-                decoded_alpha = alpha_values[(alpha_indices >> (index * 3)) & 0x07]
-            row += bytes((red, green, blue, decoded_alpha))
-        rows.append(bytes(row))
-    return tuple(rows)  # type: ignore[return-value]
-
-
 def _decode_dxt(payload: bytes, width: int, height: int, *, alpha: bool) -> bytes:
+    from PIL import Image
+
     block_bytes = 16 if alpha else 8
-    blocks_wide = max(1, (width + 3) // 4)
-    blocks_high = max(1, (height + 3) // 4)
-    if len(payload) != blocks_wide * blocks_high * block_bytes:
+    if len(payload) != max(1, (width + 3) // 4) * max(1, (height + 3) // 4) * block_bytes:
         raise TextureCodecError("DXT payload size does not match its geometry")
-    output = bytearray(width * height * 4)
-    position = 0
-    for block_y in range(blocks_high):
-        for block_x in range(blocks_wide):
-            rows = _decode_block(payload[position : position + block_bytes], alpha)
-            position += block_bytes
-            x = block_x * 4
-            span = 4 * (min(width, x + 4) - x)
-            for local_y, row in enumerate(rows):
-                y = block_y * 4 + local_y
-                if y < height:
-                    offset = (y * width + x) * 4
-                    output[offset : offset + span] = row[:span]
-    return bytes(output)
+    # Pillow's BC1/BC3 decoder uses the same 565 expansion and integer palette rounding as the encoder here.
+    return Image.frombytes("RGBA", (width, height), payload, "bcn", 3 if alpha else 1).tobytes()
 
 
-def _block_pixels(rgba: bytes, width: int, height: int, block_x: int, block_y: int) -> tuple[tuple[int, int, int, int], ...]:
-    pixels = []
-    for local_y in range(4):
-        y = min(height - 1, block_y * 4 + local_y)
-        for local_x in range(4):
-            x = min(width - 1, block_x * 4 + local_x)
-            offset = (y * width + x) * 4
-            pixels.append(tuple(rgba[offset : offset + 4]))
-    return tuple(pixels)  # type: ignore[return-value]
+def _blocks(rgba: bytes, width: int, height: int) -> Iterator[bytes]:
+    """Yield every 4x4 block's 64 RGBA bytes in block order, repeating the last row and column at the edges."""
+    for block_y in range(max(1, (height + 3) // 4)):
+        rows = [min(height - 1, block_y * 4 + local_y) * width * 4 for local_y in range(4)]
+        for block_x in range(max(1, (width + 3) // 4)):
+            x = block_x * 16
+            if x + 16 <= width * 4:
+                yield (rgba[rows[0] + x:rows[0] + x + 16] + rgba[rows[1] + x:rows[1] + x + 16]
+                       + rgba[rows[2] + x:rows[2] + x + 16] + rgba[rows[3] + x:rows[3] + x + 16])
+            else:
+                columns = [min(width - 1, block_x * 4 + local_x) * 4 for local_x in range(4)]
+                yield b"".join(rgba[row + column:row + column + 4] for row in rows for column in columns)
+
+
+def _pixels(block: bytes) -> tuple[tuple[int, int, int, int], ...]:
+    channels = iter(block)
+    return tuple(zip(channels, channels, channels, channels))
 
 
 def _color_endpoints(
     pixels: tuple[tuple[int, int, int, int], ...], *, transparent: bool, visible: int = 128
 ) -> tuple[int, int]:
-    opaque = tuple(pixel for pixel in pixels if pixel[3] >= visible) or pixels
-    low = min(opaque, key=lambda pixel: (sum(pixel[:3]), pixel[:3]))
-    high = max(opaque, key=lambda pixel: (sum(pixel[:3]), pixel[:3]))
-    low565 = _rgba_to_rgb565(low)
-    high565 = _rgba_to_rgb565(high)
+    opaque = [pixel for pixel in pixels if pixel[3] >= visible] or pixels
+    # The darkest and brightest by channel sum, then by (red, green, blue).
+    keys = [(red + green + blue, red, green, blue) for red, green, blue, _alpha in opaque]
+    _, *low = min(keys)
+    _, *high = max(keys)
+    low565 = _rgba_to_rgb565((*low, 255))
+    high565 = _rgba_to_rgb565((*high, 255))
     if transparent:
         color0, color1 = min(low565, high565), max(low565, high565)
     else:
@@ -583,18 +554,22 @@ def _color_endpoints(
     return color0, color1
 
 
+def _nearest(red: int, green: int, blue: int, palette) -> tuple[int, int]:
+    """The nearest palette colour's (index, squared distance), the lowest index on a tie."""
+    distances = [(red - r) ** 2 + (green - g) ** 2 + (blue - b) ** 2 for r, g, b, _a in palette]
+    best = min(distances)
+    return distances.index(best), best
+
+
 def _visible_error(
     pixels: tuple[tuple[int, int, int, int], ...], endpoints: tuple[int, int]
 ) -> int:
     """Sum squared color error weighted by squared alpha."""
     palette = _color_palette(*endpoints, force_four=True)
-    return sum(
-        alpha * alpha * min((red - r) ** 2 + (green - g) ** 2 + (blue - b) ** 2 for r, g, b, _a in palette)
-        for red, green, blue, alpha in pixels
-    )
+    return sum(alpha * alpha * _nearest(red, green, blue, palette)[1]
+               for red, green, blue, alpha in pixels if alpha)
 
 
-@lru_cache(maxsize=4096)
 def _encode_color_block(
     pixels: tuple[tuple[int, int, int, int], ...], *, allow_transparency: bool
 ) -> bytes:
@@ -607,55 +582,54 @@ def _encode_color_block(
     palette = _color_palette(color0, color1, force_four=not allow_transparency)
     candidates = palette[:3] if transparent else palette
     indices = 0
+    nearest: dict[tuple[int, int, int], int] = {}
     for ordinal, (red, green, blue, alpha) in enumerate(pixels):
         if transparent and alpha < 128:
             selected = 3
-        else:  # the nearest colour, the lowest index on a tie
-            distances = [
-                (red - r) ** 2 + (green - g) ** 2 + (blue - b) ** 2
-                for r, g, b, _a in candidates
-            ]
-            selected = distances.index(min(distances))
+        else:
+            selected = nearest.get((red, green, blue))
+            if selected is None:
+                selected = nearest[red, green, blue] = _nearest(red, green, blue, candidates)[0]
         indices |= selected << (ordinal * 2)
     return struct.pack("<HHI", color0, color1, indices)
 
 
-@lru_cache(maxsize=4096)
 def _encode_alpha_block(
     pixels: tuple[tuple[int, int, int, int], ...]
 ) -> bytes:
-    alphas = tuple(pixel[3] for pixel in pixels)
+    alphas = [pixel[3] for pixel in pixels]
     alpha0 = max(alphas)
     alpha1 = min(alphas)
     palette = _alpha_palette(alpha0, alpha1)
     indices = 0
+    nearest: dict[int, int] = {}
     for ordinal, alpha in enumerate(alphas):
-        distances = [abs(alpha - value) for value in palette]
-        indices |= distances.index(min(distances)) << (ordinal * 3)
+        selected = nearest.get(alpha)
+        if selected is None:  # the nearest level, the lowest index on a tie
+            distances = [abs(alpha - value) for value in palette]
+            selected = nearest[alpha] = distances.index(min(distances))
+        indices |= selected << (ordinal * 3)
     return bytes((alpha0, alpha1)) + indices.to_bytes(6, "little")
 
 
+# Cache repeated DXT blocks.
+@lru_cache(maxsize=4096)
+def _dxt1_block(block: bytes) -> bytes:
+    return _encode_color_block(_pixels(block), allow_transparency=True)
+
+
+@lru_cache(maxsize=4096)
+def _dxt5_block(block: bytes) -> bytes:
+    pixels = _pixels(block)
+    return _encode_alpha_block(pixels) + _encode_color_block(pixels, allow_transparency=False)
+
+
 def _encode_dxt1(rgba: bytes, width: int, height: int) -> bytes:
-    output = bytearray()
-    for block_y in range(max(1, (height + 3) // 4)):
-        for block_x in range(max(1, (width + 3) // 4)):
-            output.extend(
-                _encode_color_block(
-                    _block_pixels(rgba, width, height, block_x, block_y),
-                    allow_transparency=True,
-                )
-            )
-    return bytes(output)
+    return b"".join(map(_dxt1_block, _blocks(rgba, width, height)))
 
 
 def _encode_dxt5(rgba: bytes, width: int, height: int) -> bytes:
-    output = bytearray()
-    for block_y in range(max(1, (height + 3) // 4)):
-        for block_x in range(max(1, (width + 3) // 4)):
-            pixels = _block_pixels(rgba, width, height, block_x, block_y)
-            output.extend(_encode_alpha_block(pixels))
-            output.extend(_encode_color_block(pixels, allow_transparency=False))
-    return bytes(output)
+    return b"".join(map(_dxt5_block, _blocks(rgba, width, height)))
 
 
 def x360_g1t(data: bytes) -> G1tFile:

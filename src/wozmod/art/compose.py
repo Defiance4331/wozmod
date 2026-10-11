@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 
 from . import build, lettering
@@ -11,11 +12,11 @@ from .bundle import read_bundle
 from .render import RECIPE, RECIPE_VERSION
 
 
-def compose(stock, donors, bundle, output_dir, squish=True) -> Path:
+def compose(stock, donors, bundle, output_dir, squish=True, jobs=None) -> Path:
     """Build output_dir/wozmod; donors maps wo1 and x360 to archive stems.
 
     The installer always squishes. squish=False is the developer oracle and needs a
-    bundle rendered with full_width=True.
+    bundle rendered with full_width=True. jobs is the worker process count (default: CPU count).
     """
     recipe_bytes = RECIPE.read_bytes()
     recipe = json.loads(recipe_bytes)
@@ -26,7 +27,7 @@ def compose(stock, donors, bundle, output_dir, squish=True) -> Path:
         raise ValueError("lettering bundle dropped or added a recipe layer")
     arguments = ["--game", str(stock), "--wo1-donor", str(donors["wo1"]),
                  "--wo2-donor", str(donors["x360"]), "--output-dir", str(output_dir),
-                 "--hires", "vector", "--jobs", "2"]
+                 "--hires", "vector", "--jobs", str(jobs or os.process_cpu_count())]
     if not squish:
         arguments.append("--no-squish")
     with lettering.using(layers):

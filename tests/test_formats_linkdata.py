@@ -77,6 +77,44 @@ def test_lzp2_encoder_preserves_baseline_token_choice_and_alignment() -> None:
     assert linkdata.encode_lzp2(b"abcabcZZZZZ") == expected
 
 
+def test_lzp2_encoder_takes_the_longest_reference_then_the_nearest() -> None:
+    # Bug: the nearest 3-byte source taken although an older one matches longer, or the oldest of two
+    # equally long sources taken (both decode, but the parse is no longer the baseline's).
+    data = b"abcdeQ" + b"abcdeR" + b"abcS" + b"abcde"
+    stream = (b"\x06abcdeQ" + b"\x90\x05"  # literals, then 5 bytes from 6 back
+              + b"\x01R" + b"\x80\x05"      # "abc" from 6 back
+              + b"\x01S" + b"\x90\x09"      # "abcde": at 10 back (also at 16), not the 3-byte "abc" at 4 back
+              + b"\0")
+    stream += bytes(-len(stream) % 16)
+    assert linkdata.encode_lzp2(data) == struct.pack("<4s4sII", b"LZP2", b"\x5c\x8f\x82\x3f", len(data), len(stream)) + stream
+
+
+def _filler(size: int) -> bytes:
+    return bytes(0x80 + (i * 37 + i // 97) % 0x80 for i in range(size))
+
+
+@pytest.mark.parametrize(
+    ("data", "tail"),
+    (
+        (b"abcd" + _filler(2040) + b"abc\1\2" + b"abcd", [b"\x80\x04", b"\x01d"]),
+        (b"abc" + _filler(2040) + b"\1\2\3\4\5" + b"abc", [b"\x05\1\2\3\4\5", b"\x87\xff"]),
+        (b"abc" + _filler(2041) + b"\1\2\3\4\5" + b"abc", [b"\x08\1\2\3\4\5abc"]),
+    ),
+    ids=["longer-source-2049-back", "only-source-2048-back", "only-source-2049-back"],
+)
+def test_lzp2_back_reference_reaches_exactly_the_2048_byte_window(data: bytes, tail: list[bytes]) -> None:
+    # Bug: an off-by-one window drops the farthest legal source, takes one 2049 bytes back (its distance
+    # overflows the 11-bit field), or cuts a literal run where the only source is out of the window.
+    encoded = linkdata.encode_lzp2(data)
+    assert linkdata.parse_lzp2(encoded).decoded == data
+    stream, at, tokens = encoded[16:], 0, []
+    while stream[at]:
+        size = 1 + stream[at] if stream[at] < 0x40 else 3 if stream[at] < 0x80 else 2
+        tokens.append(stream[at:at + size])
+        at += size
+    assert tokens[-len(tail):] == tail
+
+
 @pytest.mark.parametrize(
     "data", (b"", b"a", bytes(range(256)), b"Z" * 20000, b"0123456789" * 1000),
     ids=["empty-end-token", "single-final-literal", "literal-token-boundary", "repeat-length-boundary", "reference-length-boundary"],

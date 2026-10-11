@@ -87,6 +87,19 @@ def test_dxt_encode_does_not_quantize_red_to_the_wrong_rgb565_endpoint() -> None
         assert texture.encode_rgba(bytes((255, 0, 0, 255)) * 16) == expected
 
 
+def test_dxt5_blocks_pick_baseline_endpoints_and_each_pixels_own_nearest_colour() -> None:
+    # Bug: two colours that share red and green get one palette index, or the brightest endpoint is
+    # taken by channel sum alone (blue before red on a tie) instead of by sum, then red, green, blue.
+    black, blue, red = (0, 0, 0, 255), (0, 0, 255, 255), (255, 0, 0, 255)
+    left = [black, blue] * 8  # endpoints blue/black: black is index 1, blue index 0
+    right = [blue, red] + [black] * 14  # red outranks blue at equal sum; blue is nearest to black
+    rgba = b"".join(bytes(p) for y in range(4) for p in left[4 * y:4 * y + 4] + right[4 * y:4 * y + 4])
+    opaque = bytes((255, 255)) + bytes(6)
+    texture = parse_g1t(_g1t((8, 3, 2, bytes(32)))).textures[0]
+    assert texture.encode_rgba(rgba) == (opaque + struct.pack("<HHI", 0x001F, 0x0000, 0x11111111)
+                                         + opaque + struct.pack("<HHI", 0xF800, 0x0000, 0x55555551))
+
+
 def test_dxt5_endpoint_selection_does_not_flatten_glow_or_band_opaque_pixels() -> None:
     navy, glow = (16, 24, 66), (222, 209, 247)
     glow_block = [(*navy, 255), (*navy, 255), (*glow, 96), (*glow, 40)] * 4

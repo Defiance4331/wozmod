@@ -266,6 +266,32 @@ def test_x360_placeholder_falls_back_without_blocking_a_usable_shared_clip(tmp_p
     assert tiers == {"wo1-pc": 1, "wo2-x360": 1}
 
 
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
+def test_batched_x360_clips_keep_their_own_audio_across_batch_boundaries(tmp_path: Path, monkeypatch) -> None:
+    # Bug: one ffmpeg process converts several clips; a clip gets a neighbour's audio, or the last
+    # partial batch is dropped.
+    import wozmod.formats.audio as audio
+
+    def wav(samples: int) -> bytes:
+        pcm = b"".join(struct.pack("<h", (i * 7) % 4000 - 2000) for i in range(samples))
+        fmt = struct.pack("<IHHIIHH", 16, 1, 1, 48_000, 96_000, 2, 16)
+        return b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " + fmt + b"data" + struct.pack("<I", len(pcm)) + pcm
+
+    lengths = [4800, 6400, 8000, 9600, 11200]  # three batches of two, the last one partial
+    clips = [wav(n) for n in lengths]
+    bank = tmp_path / "x360.bdx"
+    bank.write_bytes(b"".join(c + bytes(-len(c) % 2048) for c in clips))
+    starts = [sum(-(-len(c) // 2048) for c in clips[:i]) for i in range(len(clips))]
+    index = struct.pack(">II", len(clips), 0) + b"".join(
+        struct.pack(">5I", i, starts[i], -(-len(c) // 2048), len(c), 48_000) for i, c in enumerate(clips))
+    monkeypatch.setattr(audio, "FFMPEG_BATCH", 2)
+
+    converted = audio.wo2_voice_clips({100 + i: i for i in range(len(clips))}, index, bank, jobs=2)
+
+    assert {moz_id: parse_kovs_record(clip)[2].sample_count for moz_id, clip in converted.items()} == {
+        100 + i: n for i, n in enumerate(lengths)}
+
+
 @pytest.mark.skipif(not os.environ.get("WOZMOD_GAME") or not os.environ.get("WOZMOD_OLD_REPO"), reason="set WOZMOD_GAME and WOZMOD_OLD_REPO")
 def test_real_donor_indices_do_not_drop_rows_in_large_record_tables() -> None:
     old_repo = Path(os.environ["WOZMOD_OLD_REPO"])

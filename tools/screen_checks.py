@@ -231,16 +231,20 @@ def text_position(screen: dict, text: dict | None, x: int | None = None, y: int 
 
 
 def quad_position(screen: dict, quad: str, x: int | None = None, y: int | None = None, width: int | None = None,
-                  height: int | None = None, tol: int = 1, allow_empty: bool = False) -> Check:
+                  height: int | None = None, left: int | None = None, tol: int = 1, allow_empty: bool = False) -> Check:
     """Every quad of texture `quad` sits at the given layout `x`, `y` and has the given `width`, `height`, within
-    `tol` (the weapon row's skill squares at x 1014; a label drawn at its full width). Skipped fields are not checked."""
+    `tol` (a strip title at its row; a tag at its size). `left` is the leftmost quad's x, for a grid such as the
+    weapon row's skill squares (columns from x 1014). Skipped fields are not checked."""
     qs = select_quads(screen, quad)
     if not qs:
         return _empty("quads=0", allow_empty)
     want = {"x": x, "y": y, "width": width, "height": height}
     bad = [{k: q[k] for k in want} for q in qs if any(v is not None and abs(q[k] - v) > tol for k, v in want.items())]
-    return Check(not bad, {"quads": len(qs), "want": {k: v for k, v in want.items() if v is not None}, "tol": tol,
-                           "bad": bad})
+    leftmost = min(q["x"] for q in qs)
+    ok = not bad and (left is None or abs(leftmost - left) <= tol)
+    want["left"] = left
+    return Check(ok, {"quads": len(qs), "want": {k: v for k, v in want.items() if v is not None}, "tol": tol,
+                      "bad": bad, "left": leftmost})
 
 
 def no_cjk(screen: dict, text: dict | None = None, allow_empty: bool = False) -> Check:

@@ -176,6 +176,11 @@ name = "camp-weapons"
 route = "camp-weapons"
 
   [[screen.assert]]
+  kind = "quad_position"            # the skill squares in the MOZ column (886 on the X360 rows)
+  quad = "4079.82"
+  left = 1014
+
+  [[screen.assert]]
   kind = "text_position"
   text = { caller = "0x5950ec" }
   x = 707
@@ -194,6 +199,11 @@ route = "camp-weapons"
 [[screen]]
 name = "camp-weapon-panel"
 route = "camp-weapon-panel"
+
+  [[screen.assert]]
+  kind = "quad_position"            # the panel's skill squares in the MOZ column (372 on the X360 rows)
+  quad = "4079.82"
+  left = 500
 
   [[screen.assert]]
   kind = "no_cjk"
@@ -260,6 +270,12 @@ name = "story-z-scenario"
 route = "story-z-scenario"
 
   [[screen.assert]]
+  kind = "quad_position"            # the strip title on the MOZ panel (459, 368 on the X360 panel)
+  quad = "4077.167"
+  x = 449
+  y = 359
+
+  [[screen.assert]]
   kind = "text_within_edge"
   text = { caller = "0x588ac8" }
   edge = 1052
@@ -277,6 +293,12 @@ route = "story-z-scenario"
 [[screen]]
 name = "story-z-scenario-three-armies"
 route = "story-z-scenario-3"
+
+  [[screen.assert]]
+  kind = "quad_position"            # the strip title on the MOZ panel (459, 368 on the X360 panel)
+  quad = "4077.167"
+  x = 449
+  y = 359
 
   [[screen.assert]]
   kind = "text_within_edge"
@@ -302,6 +324,20 @@ route = "story-z-scenario-3"
 [[screen]]
 name = "story-orochi-scenario"
 route = "story-orochi-scenario"
+
+  [[screen.assert]]
+  kind = "quad_position"            # the strip on the MOZ panel (459, 358 on the X360 panel)
+  quad = "4077.62"
+  x = 449
+  y = 383
+
+  [[screen.assert]]
+  kind = "quad_position"            # the chapter tag beside it (239, 368 on the X360 panel)
+  quad = "4079.158"
+  x = 227
+  y = 385
+  width = 70
+  height = 35
 
   [[screen.assert]]
   kind = "ink_clear_of_quad_edge"
@@ -458,6 +494,11 @@ route = "customize-weapon-pick"
 [[screen]]
 name = "customize-fusion-weapons"
 route = "customize-fusion-weapons"
+
+  [[screen.assert]]
+  kind = "quad_position"            # the fusion list's skill squares in the MOZ column (387 on the X360 rows)
+  quad = "4079.81"
+  left = 515
 
   [[screen.assert]]
   kind = "text_within_edge"         # the panel list's long names at full size in the MOZ row (lane 303 from x 208)

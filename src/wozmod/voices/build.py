@@ -33,8 +33,8 @@ class VoiceBuildResult:
     english_se_banks: int
 
 
-def build_voice_banks(stock: Path, donors: Path, output_dir: Path) -> VoiceBuildResult:
-    """Write voice/Voice.bin and voice/SE.bin below the supplied mod folder."""
+def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | None = None) -> VoiceBuildResult:
+    """Write voice/Voice.bin and voice/SE.bin below the supplied mod folder; jobs caps the ffmpeg processes."""
     stock, donors, output_dir = Path(stock), Path(donors), Path(output_dir)
     wo1, wo2 = donors / "wo1", donors / "wo2-x360"
     moz = moz_scripts(stock / "LINKDATA2.BIN", stock / "LINKDATA2.IDX")
@@ -53,7 +53,7 @@ def build_voice_banks(stock: Path, donors: Path, output_dir: Path) -> VoiceBuild
     clips, dialogue_tiers = english_voice_clips(
         one, (wo1 / "linkdata_ans.idx").read_bytes(), wo1 / "link_vodat.bdx",
         two, (wo2 / "linkdata_ans.idx").read_bytes(), wo2 / "link_vodat.bdx",
-        voiceidx, stock / "data/Sound/Voice/Voice.bin",
+        voiceidx, stock / "data/Sound/Voice/Voice.bin", jobs,
     )
     destination = output_dir / "voice"
     destination.mkdir(parents=True, exist_ok=True)
@@ -62,7 +62,7 @@ def build_voice_banks(stock: Path, donors: Path, output_dir: Path) -> VoiceBuild
     seidx, se = moz_entries(stock / "LINKDATA1.BIN", stock / "LINKDATA1.IDX", [4056, 4057]).values()
     bank, attack_tiers = english_se_bank(
         seidx, se, (wo1 / "link_sebank.hdx").read_bytes(), wo1 / "link_sebank.bdx",
-        (wo2 / "link_sebank.hdx").read_bytes(), wo2 / "link_sebank.bdx",
+        (wo2 / "link_sebank.hdx").read_bytes(), wo2 / "link_sebank.bdx", jobs,
     )
     se_path = destination / "SE.bin"
     se_path.write_bytes(bank)

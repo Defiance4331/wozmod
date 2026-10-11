@@ -7,6 +7,7 @@ import os
 import re
 import stat
 import struct
+import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,7 +16,6 @@ from typing import BinaryIO, Iterator
 KOVS_HEADER_BYTES = 32
 VOICE_RECORD_ALIGNMENT = 16
 OGG_CAPTURE_PATTERN = b"OggS"
-OGG_CHECKSUM_POLYNOMIAL = 0x04C11DB7
 
 
 class VoiceBankError(ValueError):
@@ -87,32 +87,13 @@ def _aligned_size(logical_bytes: int) -> int:
     )
 
 
-def _checksum_table() -> tuple[int, ...]:
-    values: list[int] = []
-    for value in range(256):
-        remainder = value << 24
-        for _ in range(8):
-            if remainder & 0x80000000:
-                remainder = (
-                    (remainder << 1) ^ OGG_CHECKSUM_POLYNOMIAL
-                ) & 0xFFFFFFFF
-            else:
-                remainder = (remainder << 1) & 0xFFFFFFFF
-        values.append(remainder)
-    return tuple(values)
-
-
-_OGG_CHECKSUM_TABLE = _checksum_table()
+_BIT_REVERSED = bytes(int(f"{value:08b}"[::-1], 2) for value in range(256))
 
 
 def _ogg_checksum(payload: bytes | bytearray) -> int:
-    checksum = 0
-    for value in payload:
-        checksum = (
-            ((checksum << 8) & 0xFFFFFFFF)
-            ^ _OGG_CHECKSUM_TABLE[((checksum >> 24) & 0xFF) ^ value]
-        )
-    return checksum
+    """Ogg's MSB-first CRC-32 (polynomial 0x04C11DB7, zero start), computed by zlib on bit-reversed bytes."""
+    reflected = zlib.crc32(bytes(payload).translate(_BIT_REVERSED), 0xFFFFFFFF) ^ 0xFFFFFFFF
+    return int(f"{reflected:032b}"[::-1], 2)
 
 
 def _parse_ogg_stream(
@@ -475,34 +456,52 @@ def kovs_record(ogg: bytes) -> bytes:
     return b"KOVS" + struct.pack("<Ii", len(stream), 0) + bytes(20) + stream
 
 
-def _xma_kovs(riff: bytes) -> bytes:
+# Clips per ffmpeg process: starting ffmpeg costs more than encoding one short clip.
+FFMPEG_BATCH = 32
+
+
+def _ffmpeg_each(jobs: list[tuple[list[str], bytes, list[str]]], workers: int | None = None) -> list[bytes]:
+    """Run ffmpeg once per (input options, input bytes, output options) job, FFMPEG_BATCH jobs per process."""
     import subprocess
-    ogg = subprocess.run(
-        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-threads", "1", "-filter_threads", "1",
-         "-f", "wav", "-i", "pipe:0", "-ac", "1", "-ar", "48000", "-c:a", "libvorbis", "-threads", "1",
-         "-q:a", str(WO2_VORBIS_QUALITY), "-fflags", "+bitexact", "-flags:a", "+bitexact",
-         "-f", "ogg", "pipe:1"], input=riff, capture_output=True, check=True).stdout
-    return kovs_record(ogg)
+    import tempfile
+    from concurrent.futures import ThreadPoolExecutor
+
+    def batch(start: int) -> list[bytes]:
+        part = jobs[start:start + FFMPEG_BATCH]
+        with tempfile.TemporaryDirectory(prefix="wozmod-ffmpeg-") as folder:
+            command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-filter_threads", "1"]
+            for k, (before, data, _) in enumerate(part):
+                Path(folder, f"{k}.in").write_bytes(data)
+                command += [*before, "-i", str(Path(folder, f"{k}.in"))]
+            for k, (_, _, after) in enumerate(part):
+                command += ["-map", f"{k}:a", *after, str(Path(folder, f"{k}.out"))]
+            subprocess.run(command, capture_output=True, check=True)
+            return [Path(folder, f"{k}.out").read_bytes() for k in range(len(part))]
+
+    with ThreadPoolExecutor(workers or os.process_cpu_count()) as pool:
+        return [out for part in pool.map(batch, range(0, len(jobs), FFMPEG_BATCH)) for out in part]
 
 
-def wo2_voice_clips(mapping: dict[int, int], index: bytes, bank: Path) -> dict[int, bytes]:
+def wo2_voice_clips(mapping: dict[int, int], index: bytes, bank: Path, jobs: int | None = None) -> dict[int, bytes]:
     """Convert donor RIFF clips, excluding repeated placeholders."""
     from collections import Counter
-    from concurrent.futures import ThreadPoolExecutor
     records = wo2_voice_records(index)
     with bank.open("rb") as stream:
         riffs = {moz_id: _read_at(stream, *records[clip]) for moz_id, clip in mapping.items()}
         copies = Counter(hashlib.sha256(_read_at(stream, *record)).digest() for record in records)
     riffs = {moz_id: riff for moz_id, riff in riffs.items() if copies[hashlib.sha256(riff).digest()] <= 2}
-    with ThreadPoolExecutor(min(4, os.cpu_count() or 1)) as pool:
-        return dict(zip(riffs, pool.map(_xma_kovs, riffs.values())))
+    vorbis = ["-ac", "1", "-ar", "48000", "-c:a", "libvorbis", "-threads", "1",
+              "-q:a", str(WO2_VORBIS_QUALITY), "-fflags", "+bitexact", "-flags:a", "+bitexact", "-f", "ogg"]
+    oggs = _ffmpeg_each([(["-threads", "1", "-f", "wav"], riff, vorbis) for riff in riffs.values()], jobs)
+    return dict(zip(riffs, map(kovs_record, oggs)))
 
 
 def english_voice_clips(wo1_mapping: dict[int, int], wo1_index: bytes, wo1_bank: Path,
                         wo2_mapping: dict[int, int], wo2_index: bytes, wo2_bank: Path,
-                        stock_index: bytes, stock_bank: Path) -> tuple[dict[int, bytes], dict[str, int]]:
-    """Select usable X360 clips before WO1 fallbacks."""
-    wo2 = wo2_voice_clips(wo2_mapping, wo2_index, wo2_bank)
+                        stock_index: bytes, stock_bank: Path,
+                        jobs: int | None = None) -> tuple[dict[int, bytes], dict[str, int]]:
+    """Select usable X360 clips before WO1 fallbacks; jobs is the ffmpeg process count (default: CPU count)."""
+    wo2 = wo2_voice_clips(wo2_mapping, wo2_index, wo2_bank, jobs)
     wo1 = wo1_voice_clips({i: record for i, record in wo1_mapping.items() if i not in wo2},
                           wo1_index, wo1_bank, stock_index, stock_bank)
     return wo1 | wo2, {"wo1-pc": len(wo1), "wo2-x360": len(wo2)}
@@ -599,21 +598,24 @@ def _xma2_riff(packets: bytes, rate: int) -> bytes:
     return b"RIFF" + struct.pack("<I", 4 + len(body)) + b"WAVE" + body
 
 
-def _ima_adpcm(clip: bytes, wo1: bool, donor_rate: int, rate: int) -> tuple[int, bytes]:
-    """Convert a donor clip to IMA ADPCM in 512-byte blocks."""
-    import subprocess
-    run = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
-    source = ["-f", "s16le", "-ar", str(donor_rate), "-ac", "1"] if wo1 else ["-f", "wav"]
-    pcm = subprocess.run(run + source + ["-i", "pipe:0", "-ac", "1", "-ar", str(rate), "-f", "s16le", "pipe:1"],
-                         input=clip if wo1 else _xma2_riff(clip, donor_rate), capture_output=True, check=True).stdout
-    wav = subprocess.run(run + ["-f", "s16le", "-ar", str(rate), "-ac", "1", "-i", "pipe:0", "-c:a", "adpcm_ima_wav",
-                                "-block_size", str(SE_BLOCK), "-fflags", "+bitexact", "-f", "wav", "pipe:1"],
-                         input=pcm, capture_output=True, check=True).stdout
-    at = 12
-    while wav[at:at + 4] != b"data":
-        at += 8 + struct.unpack_from("<I", wav, at + 4)[0]
-    samples = len(pcm) // 2
-    return samples, wav[at + 8:at + 8 + -(-samples // SE_BLOCK_SAMPLES) * SE_BLOCK]
+def _ima_adpcm(clips: list[tuple[bytes, bool, int, int]], jobs: int | None) -> list[tuple[int, bytes]]:
+    """Convert (clip, is WO1, donor rate, rate) donor clips to IMA ADPCM in 512-byte blocks."""
+    pcms = _ffmpeg_each([
+        (["-f", "s16le", "-ar", str(donor_rate), "-ac", "1"] if wo1 else ["-f", "wav"],
+         clip if wo1 else _xma2_riff(clip, donor_rate), ["-ac", "1", "-ar", str(rate), "-f", "s16le"])
+        for clip, wo1, donor_rate, rate in clips], jobs)
+    wavs = _ffmpeg_each([
+        (["-f", "s16le", "-ar", str(rate), "-ac", "1"], pcm,
+         ["-c:a", "adpcm_ima_wav", "-block_size", str(SE_BLOCK), "-fflags", "+bitexact", "-f", "wav"])
+        for pcm, (_, _, _, rate) in zip(pcms, clips)], jobs)
+    out = []
+    for pcm, wav in zip(pcms, wavs):
+        at = 12
+        while wav[at:at + 4] != b"data":
+            at += 8 + struct.unpack_from("<I", wav, at + 4)[0]
+        samples = len(pcm) // 2
+        out.append((samples, wav[at + 8:at + 8 + -(-samples // SE_BLOCK_SAMPLES) * SE_BLOCK]))
+    return out
 
 
 def se_bank(header: bytes, clips: list[tuple[int, bytes]]) -> tuple[bytes, bytes]:
@@ -630,31 +632,29 @@ def se_bank(header: bytes, clips: list[tuple[int, bytes]]) -> tuple[bytes, bytes
 
 
 def english_se_bank(seidx: bytes, se: bytes, wo1_hdx: bytes, wo1_bdx: Path, wo2_hdx: bytes,
-                    wo2_bdx: Path) -> tuple[bytes, dict[str, int]]:
-    """Assemble sound banks from paired donor entries."""
-    from concurrent.futures import ThreadPoolExecutor
+                    wo2_bdx: Path, jobs: int | None = None) -> tuple[bytes, dict[str, int]]:
+    """Assemble sound banks from paired donor entries; jobs is the ffmpeg process count (default: CPU count)."""
     stock, wo1, wo2 = moz_se_banks(seidx, se), wo1_se_entries(wo1_hdx), wo2_se_entries(wo2_hdx)
     for donor, bdx in ((wo1, wo1_bdx), (wo2, wo2_bdx)):
         if max(o + n for bank in donor for o, n, _ in bank) > bdx.stat().st_size:
             raise VoiceBankError(f"{bdx.name} is shorter than its HDX describes")
-    jobs, tiers = {}, {"wo1-pc": 0, "wo2-x360": 0}
+    work, tiers = {}, {"wo1-pc": 0, "wo2-x360": 0}
     with wo1_bdx.open("rb") as one, wo2_bdx.open("rb") as two:
         for moz, w in SE_BANK_MAP.items():
             header = stock[moz][0]
             if len(se_entries(header)) != len(wo2[w]):
                 continue
             wo1_bank, pairs = SE_WO1.get(moz, (None, ()))
-            jobs[moz] = []
+            work[moz] = []
             for k, at in enumerate(se_entries(header)):
                 rate = struct.unpack_from("<H", header, at + 4)[0]
                 j = pairs[k] if k < len(pairs) else None
                 offset, size, donor_rate = wo2[w][k] if j is None else wo1[wo1_bank][j]
                 clip = _read_at(two if j is None else one, offset, size)
-                jobs[moz].append((clip, j is not None, donor_rate, rate))
+                work[moz].append((clip, j is not None, donor_rate, rate))
                 tiers["wo2-x360" if j is None else "wo1-pc"] += 1
-    with ThreadPoolExecutor(os.cpu_count()) as pool:
-        clips = {moz: [pool.submit(_ima_adpcm, *job) for job in entries] for moz, entries in jobs.items()}
-        banks = {moz: se_bank(stock[moz][0], [f.result() for f in futures]) for moz, futures in clips.items()}
+    converted = iter(_ima_adpcm([job for entries in work.values() for job in entries], jobs))
+    banks = {moz: se_bank(stock[moz][0], [next(converted) for _ in entries]) for moz, entries in work.items()}
     table, body = bytearray(_aligned_size(4 + 16 * SE_BANKS)), bytearray()
     struct.pack_into("<I", table, 0, SE_BANKS)
     for moz, (header, data) in sorted(banks.items()):
