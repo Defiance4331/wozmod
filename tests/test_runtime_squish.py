@@ -1,0 +1,210 @@
+"""Synthetic checks of the runtime's text-fit geometry."""
+
+from __future__ import annotations
+
+import ctypes
+import shutil
+import subprocess
+
+import pytest
+
+from wozmod.runtime.english_runtime import C_SOURCE
+
+
+@pytest.fixture(scope="module")
+def fit_runtime(tmp_path_factory):
+    compiler = shutil.which("cc")
+    if not compiler:
+        pytest.skip("a native C compiler is unavailable")
+    directory = tmp_path_factory.mktemp("text-fit")
+    source = directory / "fit.c"
+    source.write_text(r'''
+#include "text_fit.h"
+double names(unsigned int width, unsigned int fixed, unsigned int room)
+{
+    return text_fit_names(width, fixed, room);
+}
+double factor(unsigned int text, unsigned int box, unsigned int align, int enabled)
+{
+    return text_fit(text, text, box, align, enabled).factor;
+}
+unsigned int point(unsigned int packed, double anchor, unsigned int text, unsigned int box,
+    unsigned int align, int enabled, double pixels)
+{
+    return text_fit_x(packed, anchor, text_fit(text, text, box, align, enabled), pixels, anchor);
+}
+unsigned int point_line(unsigned int packed, double anchor, unsigned int run, unsigned int own,
+    unsigned int box, unsigned int align, double pixels)
+{
+    return text_fit_x(packed, anchor, text_fit(run, own, box, align, 1), pixels, anchor);
+}
+unsigned int point_near(unsigned int packed, double anchor, unsigned int text, unsigned int box,
+    unsigned int align, int enabled, double pixels, double pen)
+{
+    return text_fit_x(packed, anchor, text_fit(text, text, box, align, enabled), pixels, pen);
+}
+int latin(const char *value)
+{
+    return text_fit_latin(value);
+}
+int drop(const char *value, char *out, unsigned int size)
+{
+    return text_drop_bad_icons(value, out, size) == value;
+}
+void quad(unsigned int *data, int four, double anchor, unsigned int text, unsigned int box,
+    unsigned int align, int enabled, double pixels)
+{
+    unsigned int clean = 0;
+    text_fit_quad(data, four, anchor, text_fit(text, text, box, align, enabled), pixels, anchor, &clean);
+}
+void quad_pen(unsigned int *data, double anchor, unsigned int text, unsigned int box, double pen, unsigned int *clean)
+{
+    text_fit_quad(data, 0, anchor, text_fit(text, text, box, 0, 1), 24, pen, clean);
+}
+''')
+    library = directory / "fit.so"
+    subprocess.run([compiler, "-std=c11", "-O2", "-Wall", "-Werror", "-shared", "-fPIC",
+                    "-I", str(C_SOURCE.parent), str(source), "-o", str(library)], check=True)
+    fit = ctypes.CDLL(str(library))
+    fit.factor.argtypes = [ctypes.c_uint, ctypes.c_uint, ctypes.c_uint, ctypes.c_int]
+    fit.factor.restype = ctypes.c_double
+    fit.names.argtypes = [ctypes.c_uint, ctypes.c_uint, ctypes.c_uint]
+    fit.names.restype = ctypes.c_double
+    fit.point.argtypes = [ctypes.c_uint, ctypes.c_double, ctypes.c_uint, ctypes.c_uint,
+                         ctypes.c_uint, ctypes.c_int, ctypes.c_double]
+    fit.point.restype = ctypes.c_uint
+    fit.point_near.argtypes = fit.point.argtypes + [ctypes.c_double]
+    fit.point_line.argtypes = [ctypes.c_uint, ctypes.c_double, ctypes.c_uint, ctypes.c_uint,
+                              ctypes.c_uint, ctypes.c_uint, ctypes.c_double]
+    fit.point_line.restype = ctypes.c_uint
+    fit.point_near.restype = ctypes.c_uint
+    fit.latin.argtypes = [ctypes.c_char_p]
+    fit.latin.restype = ctypes.c_int
+    fit.drop.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+    fit.drop.restype = ctypes.c_int
+    fit.quad.argtypes = [ctypes.POINTER(ctypes.c_uint), ctypes.c_int, ctypes.c_double,
+                        ctypes.c_uint, ctypes.c_uint, ctypes.c_uint, ctypes.c_int, ctypes.c_double]
+    fit.quad.restype = None
+    fit.quad_pen.argtypes = [ctypes.POINTER(ctypes.c_uint), ctypes.c_double, ctypes.c_uint, ctypes.c_uint,
+                            ctypes.c_double, ctypes.POINTER(ctypes.c_uint)]
+    fit.quad_pen.restype = None
+    return fit
+
+
+def test_fitting_off_or_unknown_boxes_do_not_stretch_glyphs(fit_runtime):
+    for text, box, enabled in [(40, 80, 1), (80, 80, 1), (100, 0, 1), (100, 80, 0), (0, 80, 1)]:
+        assert fit_runtime.factor(text, box, 0, enabled) == 1
+        assert fit_runtime.point(0x12348123, 0x8000, text, box, 0, enabled, 16) == 0x12348123
+    assert fit_runtime.factor(100, 80, 0, 1) == pytest.approx(0.8)
+
+
+def test_condensing_keeps_the_left_centre_or_right_anchor(fit_runtime):
+    # A 100-pixel run begins at 200 and must occupy an 80-pixel box.
+    anchor = 0x8000 + 200 * 16
+    original = [anchor, anchor + 24 * 16, anchor + 100 * 16]
+    expected = [[200, 219.2, 280], [210, 229.2, 290], [220, 239.2, 300]]
+    for align, positions in enumerate(expected):
+        observed = [fit_runtime.point(0x43210000 | x, anchor, 100, 80, align, 1, 16)
+                    for x in original]
+        assert observed == [0x43210000 | int(0x8000 + x * 16 + 0.5) for x in positions]
+
+
+def test_a_shorter_caption_line_stays_centred_when_the_widest_line_sets_the_factor(fit_runtime):
+    # A 900-pixel line of a caption whose widest line is 1500, in the 1200 box centred at 640.
+    # The stock centres the line at x 190; at factor 0.8 it must span 280 to 1000.
+    anchor = 0x8000 + 190 * 16
+    ends = [fit_runtime.point_line(0x11110000 | (0x8000 + x * 16), anchor, 1500, 900, 1200, 1, 16)
+            for x in (190, 1090)]
+    assert ends == [0x11110000 | (0x8000 + x * 16) for x in (280, 1000)]
+
+
+def test_non_native_condensing_does_not_use_native_scale_or_drop_fractional_rounding(fit_runtime):
+    # Centred 101-pixel run in a 73-pixel box, with a 17-pixel advance, at 1920x1080.
+    anchor = 0x8000 + 300 * 24
+    source = [anchor, anchor + 24 * 24, anchor + 17 * 24, anchor + 41 * 24]
+    result = [fit_runtime.point(0x76540000 | x, anchor, 101, 73, 1, 1, 24) for x in source]
+    assert result == [0x76549D70, 0x76549F10, 0x76549E97, 0x7654A037]
+
+
+def test_quad_condensing_does_not_shift_packed_stride_or_corrupt_uv_y_depth(fit_runtime):
+    anchor = 0x8000 + 200 * 16
+    cases = [([12, 16], [0, 24], [0, 19.2], 0),
+             ([12, 18, 24, 30], [0, 24, 17, 41], [0, 19.2, 13.6, 32.8], 1)]
+    for indices, offsets, condensed, four in cases:
+        original = [0x12340000 + index * 101 for index in range(36)]
+        expected = original.copy()
+        for index, offset, fitted in zip(indices, offsets, condensed):
+            upper = (index + 1) << 16
+            original[index] = upper | (anchor + offset * 16)
+            expected[index] = upper | int(anchor + fitted * 16 + 0.5)
+        packed = (ctypes.c_uint * len(original))(*original)
+        fit_runtime.quad(packed, four, anchor, 100, 80, 0, 1, 16)
+        assert list(packed) == expected
+
+
+def test_glyph_pen_unwrap_does_not_jump_long_runs_or_outline_vertices_to_the_text_anchor(fit_runtime):
+    # A 24-unit pixel scale gives a 576-unit quad and a 48-unit left outline.
+    for distance, expected in [(70000, [23232, 23693, 23194]),
+                               (140000, [13696, 14157, 13658])]:
+        pen = 32768 + distance
+        packed = [0x65430000 | ((pen + offset) & 0xffff) for offset in [0, 576, -48]]
+        fitted = [fit_runtime.point_near(value, 32768, 100, 80, 0, 1, 24, pen) for value in packed]
+        assert fitted == [0x65430000 | value for value in expected]
+
+
+def test_latin_eligibility_does_not_reject_safe_icons_or_squish_truncated_special_tokens(fit_runtime):
+    valid = [b"", b"Authored 42"]
+    valid += [bytes([0x84, selector]) for selector in range(0x40, 0x45)]
+    valid += [bytes([0xf0, selector]) for selector in range(0x40, 0x5a) if selector != 0x48]
+    invalid = [None, b"\x84", b"\xf0", b"\x84\x3f", b"\x84\x45", b"\x85\x40",
+               b"\xf0\x3f", b"\xf0\x5a", b"\xf0\x48", b"a\x84\x45b"]
+    cases = [(value, 1) for value in valid] + [(value, 0) for value in invalid]
+    assert [(value, fit_runtime.latin(value)) for value, _ in cases] == cases
+
+
+def test_icon_codes_the_stock_draw_cannot_handle_are_dropped_without_misreading_tokens(fit_runtime):
+    """Icon 0x56 from donor text sent the stock draw through its unhandled branch and crashed."""
+    cases = [
+        (b"Press \xf0U\xf0V now.", b"Press \xf0U now."),
+        (b"\xf0H\xf0Ione  \xf0Atwo", None),                 # F0 48 takes F0 49 as its argument
+        (b"\xf0K\xf0Z\xf0\x7f\xf0@", b"\xf0@"),         # 0x4B, 0x5A and above are unhandled too
+        (b"\x82\xf0V", None),                              # 0xF0 is a trail byte here, V is plain text
+        (b"A\xf0", b"A"),                                   # a cut-off token reaches the same branch
+        (b"\xf0@\xf0Y", None),
+    ]
+    out = ctypes.create_string_buffer(64)
+    got = []
+    for value, expected in cases:
+        same = fit_runtime.drop(value, out, len(out))
+        got.append((value, None if same else out.value))
+    assert got == cases
+
+
+def test_a_glyph_placed_past_2048_pixels_gets_its_depth_back_when_squished_on_screen(fit_runtime):
+    """The game packs (x + 2048) * 16 into the low half; past 2048 px the carry lands in the depth half."""
+    depth, anchor = 0x7FFE0000, 32768 + 600 * 24
+    def word(screen):  # what the game stores: a carry past 16 bits is or-ed into the depth half
+        value = (screen + 2048) * 16
+        return depth | (value & 0xFFFF) | (value >> 16 << 16)
+    clean = ctypes.c_uint(0)
+    straddling = (ctypes.c_uint * 20)(*[0] * 20)
+    straddling[12], straddling[16] = word(2040), word(2064)
+    fit_runtime.quad_pen(straddling, anchor, 1500, 1000, (2040 + 2048) * 16, ctypes.byref(clean))
+    beyond = (ctypes.c_uint * 20)(*[0] * 20)
+    beyond[12], beyond[16] = word(2070), word(2094)
+    fit_runtime.quad_pen(beyond, anchor, 1500, 1000, (2070 + 2048) * 16, ctypes.byref(clean))
+    assert [value >> 16 for value in (straddling[12], straddling[16], beyond[12], beyond[16])] == [depth >> 16] * 4
+    # and the X is the squished position of the true (unwrapped) one
+    assert straddling[16] & 0xFFFF == int(anchor + ((2064 + 2048) * 16 - anchor) * 1000 / 1500 + 0.5) & 0xFFFF
+
+
+def test_names_sharing_a_lane_with_icons_shrink_alone_and_end_inside_it(fit_runtime):
+    """The scenario army line ran under the RECORD rows; the icons and gaps between names keep their width."""
+    room = 507
+    for names, fixed in [([220, 214, 212], [68]),          # the three widest army names at cell 18
+                         ([165, 160], [34, 90]),            # one name the game cannot condense
+                         ([142, 188, 198], [68])]:          # a line that already fits
+        f = fit_runtime.names(sum(names), sum(fixed), room)
+        drawn = sum(int(w * f) for w in names) + sum(fixed)
+        assert f == 1 if sum(names) + sum(fixed) <= room else room - len(names) <= drawn <= room
+    assert fit_runtime.names(300, room, room) == 1     # nothing left to shrink into: drawn as is

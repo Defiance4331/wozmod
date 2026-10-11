@@ -5,7 +5,6 @@ from __future__ import annotations
 import struct
 
 CAVE = 0x5F5100
-FUSION_PAGE = 0x1413FF0
 PAD_PROMPTS = 0x1413FEC
 
 ABILITY_CELL_GROWTH = 40
@@ -58,34 +57,16 @@ CODE_EDITS = [
 
     *widths(0x533ABE, 0x533AC8, stock=322, wide=556),
 
-    *widths(0x595AC1, stock=225, wide=361), *widths(0x595BB6, stock=189, wide=325),
-    (0x595ADE, bytes.fromhex("8d5723"), bytes.fromhex("8d5759")),
+    (0x595ADE, bytes.fromhex("8d5723"), bytes.fromhex("8d5716")),
     (0x595AEF, bytes.fromhex("6a46"), bytes.fromhex("6a60")),
-    (0x595AF2, bytes.fromhex("8d4749"), bytes.fromhex("8d477f")),
-    (0x595B0F, bytes.fromhex("8d979d000000"), bytes.fromhex("8d97ed000000")),
+    (0x595AF2, bytes.fromhex("8d4749"), bytes.fromhex("8d473c")),
+    (0x595B0F, bytes.fromhex("8d979d000000"), bytes.fromhex("8d97aa000000")),
     *[(va, bytes.fromhex("6a46"), bytes.fromhex("6a60"))
       for va in (0x527821, 0x527829, 0x529655, 0x52965D, 0x52D819, 0x52D821, 0x56A848, 0x56A850)],
-    (0x527832, bytes.fromhex("83c349"), bytes.fromhex("83c37f")),
-    (0x529666, bytes.fromhex("83c349"), bytes.fromhex("83c37f")),
-    (0x52D82A, bytes.fromhex("83c649"), bytes.fromhex("83c67f")),
-    (0x56A859, bytes.fromhex("83c749"), bytes.fromhex("83c77f")),
-
-    (0x529587, bytes.fromhex("69c90b020000"), bytes.fromhex("69c94f020000")),
-    (0x52959B, bytes.fromhex("8d9c021fffffff"), bytes.fromhex("8d9c0297feffff")),
-    (0x5295B0, bytes.fromhex("69c9c6020000"), bytes.fromhex("69c982020000")),
-    (0x5295DC, bytes.fromhex("bb2a010000"), bytes.fromhex("bbe6000000")),
-    (0x52D757, bytes.fromhex("69d20c020000"), bytes.fromhex("69d24f020000")),
-    (0x52D76B, bytes.fromhex("8db4021fffffff"), bytes.fromhex("8db40297feffff")),
-    (0x52D77E, bytes.fromhex("69d287030000"), bytes.fromhex("69d242030000")),
-    (0x52D7A4, bytes.fromhex("be2b010000"), bytes.fromhex("bee6000000")),
-    (0x56A7A1, bytes.fromhex("69c9e3010000"), bytes.fromhex("69c931020000")),
-    (0x56A7B5, bytes.fromhex("8dbc021fffffff"), bytes.fromhex("8dbc0297feffff")),
-    (0x56A7D0, bytes.fromhex("bf02010000"), bytes.fromhex("bfc8000000")),
-
-    (0x527705, bytes.fromhex("69c9ae010000"), bytes.fromhex("69c92b010000")),
-    (0x527722, bytes.fromhex("b8e3000000"), bytes.fromhex("b830000000")),
-    (0x52776D, bytes.fromhex("bbda010000"), bytes.fromhex("bb52010000")),
-    (0x5277C7, bytes.fromhex("69c926030000"), bytes.fromhex("69c9ae030000")),
+    (0x527832, bytes.fromhex("83c349"), bytes.fromhex("83c33c")),
+    (0x529666, bytes.fromhex("83c349"), bytes.fromhex("83c33c")),
+    (0x52D82A, bytes.fromhex("83c649"), bytes.fromhex("83c63c")),
+    (0x56A859, bytes.fromhex("83c749"), bytes.fromhex("83c73c")),
 
     (0x52B5B7, bytes.fromhex("8d4b18"), bytes.fromhex("8d4b0b")),
     (0x52B5DA, bytes.fromhex("6a46"), bytes.fromhex("6a60")),
@@ -95,92 +76,27 @@ CODE_EDITS = [
     (0x52BB52, bytes.fromhex("6a46"), bytes.fromhex("6a60")),
     (0x52BB5B, bytes.fromhex("83c73f"), bytes.fromhex("83c732")),
 
-    *widths(0x5332F8, stock=203, wide=251), *widths(0x53343A, stock=189, wide=237),
-    *detour(0x53338F, bytes.fromhex("8d4e07 8d5611 83c665"), CAVE + 0x1C0, 0x533398,
-            bytes.fromhex("8d4e07 8d5611 81c6b8000000")),
     (0x533315, bytes.fromhex("8d4e15"), bytes.fromhex("8d4e0b")),
-    (0x53332F, bytes.fromhex("8d86a1000000"), bytes.fromhex("8d86dc000000")),
+    (0x53332F, bytes.fromhex("8d86a1000000"), bytes.fromhex("8d86ac000000")),
     (0x533346, bytes.fromhex("6a5b"), bytes.fromhex("6a70")),
-    (0x533349, bytes.fromhex("8d4e38"), bytes.fromhex("8d4e46")),
+    (0x533349, bytes.fromhex("8d4e38"), bytes.fromhex("8d4e2e")),
     (0x533365, bytes.fromhex("6a46"), bytes.fromhex("6a70")),
     (0x53336D, bytes.fromhex("6a46"), bytes.fromhex("6a70")),
-    (0x533372, bytes.fromhex("8d5642"), bytes.fromhex("8d5646")),
+    (0x533372, bytes.fromhex("8d5642"), bytes.fromhex("8d562e")),
 
-    (0x52742C, bytes.fromhex("8dbc0235ffffff"), bytes.fromhex("8dbc0205ffffff")),
-    (0x527464, bytes.fromhex("bf33010000"), bytes.fromhex("bf03010000")),
-    (0x527719, bytes.fromhex("8d840a35ffffff"), bytes.fromhex("8d840a05ffffff")),
-    (0x528F19, bytes.fromhex("8d8c0a35ffffff"), bytes.fromhex("8d8c0a05ffffff")),
-    (0x528F27, bytes.fromhex("b934010000"), bytes.fromhex("b904010000")),
-
-    *widths(0x52D072, 0x52D08C, 0x59858A, 0x598DFC, stock=0xE0, wide=0xF6),
     *widths(0x5955BB, 0x52D077, 0x52D091, 0x53375B, 0x53376D, 0x59858F, 0x598E01, stock=0x1D8, wide=650),
 
     (0x598DD3, bytes.fromhex("69f6bb020000"), bytes.fromhex("69f6bd020000")),
     (0x598DE7, bytes.fromhex("8db40228feffff"), bytes.fromhex("8db40276fdffff")),
     (0x598DF0, bytes.fromhex("bee3000000"), bytes.fromhex("be33000000")),
 
-    *[edit for site, stub, target in ((0x52D3CF, CAVE + 0x5A0, 0x533740), (0x52D663, CAVE + 0x5C0, 0x5955A0))
-      for edit in ((site, rel32(b"\xe8", site, target), rel32(b"\xe8", site, stub)),
-                   (stub, b"\xcc" * 32, assembled(stub, b"\x8f\x05" + p32(FUSION_PAGE + 4)
-                                                  + b"\xc6\x05" + p32(FUSION_PAGE) + b"\x01", target,
-                                                  b"\xc6\x05" + p32(FUSION_PAGE) + b"\x00\xff\x35"
-                                                  + p32(FUSION_PAGE + 4) + b"\xc3")))],
-
-    *[(va, bytes.fromhex("68e0000000"), rel32(b"\xe8", va, CAVE + 0x5E0)) for va in (0x5955B6, 0x533756, 0x533768)],
-    (CAVE + 0x5E0, b"\xcc" * 29, bytes.fromhex("ff3424 c7442404f6000000 803d") + p32(FUSION_PAGE)
-     + bytes.fromhex("00 7408 c7442404e0000000 c3")),
-    *detour(0x5954A3, bytes.fromhex("8b442468 6a00 53 83c06d 50"), CAVE + 0x300, 0x5954AE,
-            bytes.fromhex("69eeb6000000 036c2464 83c513 8b442468 0586000000 803d") + p32(FUSION_PAGE)
-            + bytes.fromhex("00 7410 6bee7d 036c2464 81c5bb000000 83e819 6a00 53 50")),
-    *[(va, bytes.fromhex(f"8d{m}8f000000"), bytes.fromhex(f"8d{m}a6000000"))
-      for va, m in ((0x52EB02, "9410"), (0x52EC31, "9c08"), (0x59863F, "8428"))],
-    *detour(0x595541, bytes.fromhex("8d94108f000000"), CAVE + 0x600, 0x595548,
-            bytes.fromhex("8d9410a6000000 803d") + p32(FUSION_PAGE) + bytes.fromhex("00 7403 83ea17")),
-
-    *[edit for init, push in ((0x5290EA, 0x5290F8), (0x5291CC, 0x5291DF)) for edit in (
-        (init, bytes.fromhex("bf43030000"), bytes.fromhex("bf86020000")),
-        (push, bytes.fromhex("680d010000"), bytes.fromhex("6826010000")))],
-    (0x529150, bytes.fromhex("83c74d 83c501 81ff2a040000"), bytes.fromhex("81c7b6000000 83c501 83fd03")),
-    *detour(0x5291EB, bytes.fromhex("83c74d 83c414"), CAVE + 0x580, 0x5291F1, bytes.fromhex("81c7b6000000 83c414")),
-    (0x5291F4, bytes.fromhex("81ff2a040000"), bytes.fromhex("81ffa8040000")),
-    *detour(0x52913C, bytes.fromhex("6a1c 6a46 6a00 680d010000 57") + rel32(b"\xe8", 0x529148, 0x590350),
-            CAVE + 0x200, 0x52914D, bytes.fromhex("6a1c 68b0000000 6a00 6826010000 57"), call=0x590350),
-
-    *detour(0x52EA74, bytes.fromhex("8b442468 6a01 6a00 83c06d 50 53 56"), CAVE + 0x240, 0x52EA82,
-            bytes.fromhex("69ddb6000000 035c2464 83c313 8b442468 6a01 6a00 0586000000 50 53 56")),
-    *detour(0x52EBAB, bytes.fromhex("8b4c2468 6a01 6a00 83c16d 51 56 50"), CAVE + 0x280, 0x52EBB9,
-            bytes.fromhex("be03000000 2bf3 69f6b6000000 03742464 83c613"
-                          "8b4c2468 6a01 6a00 81c186000000 51 56 50")),
-
-    *[(va, bytes.fromhex(stock), bytes.fromhex(wide)) for va, stock, wide in (
-        (0x52FC4D, "81fbdd000000", "81fbd0000000"), (0x52FC55, "bbdd000000", "bbd0000000"),
-        (0x52FD1E, "68dd000000", "68d0000000"), (0x52EEE0, "68dd000000", "68d0000000"),
-        (0x52FA62, "68ca010000", "68d3010000"), (0x52ED51, "6882010000", "6898010000"))],
-
     *detour(0x52CC8C, bytes.fromhex("6a1c 6a62 056c010000"), CAVE + 0x740, 0x52CC95,
-            bytes.fromhex("6a1c 6896000000 0576010000")),
-    (0x52CCF2, bytes.fromhex("6bc94d"), bytes.fromhex("6bc95b")),
-    *detour(0x52CD02, bytes.fromhex("6a1c 6a46 6a00 81c144030000 684a010000 51") + rel32(b"\xe8", 0x52CD14, 0x590350),
-            CAVE + 0x2C0, 0x52CD19, bytes.fromhex("6a1c 68b0000000 6a00 03c9 81c187020000 6856010000 51"),
-            call=0x590350),
+            bytes.fromhex("6a1c 6896000000 056c010000")),
 
     *detour(0x595612, bytes.fromhex("6880000000 6a7c 68d8010000"), CAVE + 0x540, 0x59561E,
-            bytes.fromhex("6880000000 6896000000 6850020000")),
+            bytes.fromhex("6880000000 6896000000 68d8010000")),
     *detour(0x59569E, bytes.fromhex("6880000000 6a7c 68d8010000"), CAVE + 0x560, 0x5956AA,
-            bytes.fromhex("6880000000 6896000000 6850020000")),
-    (0x59866D, bytes.fromhex("81c5e8000000"), bytes.fromhex("81c562ffffff")),
-    (0x5986F4, bytes.fromhex("81c3e8000000"), bytes.fromhex("81c362ffffff")),
-    *detour(0x5986D4, bytes.fromhex("8bd6 6bd24d 6a1c 6a46 57 8d4b6d 51 8d842ad0000000 50"), CAVE + 0x340,
-            0x5986EA, bytes.fromhex("69d6b6000000 6a1c 68b0000000 57 8d8b86000000 51 8d842a13000000 50")),
-
-    (0x5292F1, bytes.fromhex("688b010000"), bytes.fromhex("68a1010000")),
-    (0x529270, bytes.fromhex("689b010000"), bytes.fromhex("68b1010000")),
-    (0x529246, bytes.fromhex("68b7010000"), bytes.fromhex("68cd010000")),
-
-    *[(va, bytes.fromhex("68" + stock), bytes.fromhex("68" + wide)) for va, stock, wide in (
-        (0x598E08, "79010000", "63010000"), (0x598E1B, "79010000", "63010000"),
-        (0x598E38, "5d010000", "47010000"), (0x598ED1, "8e010000", "78010000"),
-        (0x598F01, "8e010000", "78010000"))],
+            bytes.fromhex("6880000000 6896000000 68d8010000")),
 
     *widths(0x52BBD1, stock=364, wide=400), *widths(0x52BBD8, stock=884, wide=848),
     *widths(0x52BBE1, stock=532, wide=548), *widths(0x52BBE8, stock=716, wide=700),
@@ -215,11 +131,6 @@ CODE_EDITS = [
     (0x52745A, bytes.fromhex("bf7d020000"), bytes.fromhex("bf30020000")),
     (0x5274B1, bytes.fromhex("69f683020000"), bytes.fromhex("69f6d0020000")),
 
-    *widths(0x59506C, stock=350, wide=478),
-    (0x595135, bytes.fromhex("8dbc3918010000"), bytes.fromhex("8dbc3998010000")),
-    *widths(0x5951E6, stock=366, wide=494),
-    *widths(0x526DE4, stock=378, wide=506),
-
     (0x531914, bytes.fromhex("8d8402b0feffff"), bytes.fromhex("8d840230feffff")),
     (0x53191D, bytes.fromhex("b8d4000000"), bytes.fromhex("b854000000")),
     (0x531976, bytes.fromhex("8d8c02b0feffff"), bytes.fromhex("8d8c0230feffff")),
@@ -249,22 +160,11 @@ CODE_EDITS = [
     (0x55452A, bytes.fromhex("bae3000000"), bytes.fromhex("ba63000000")),
     (0x55460A, bytes.fromhex("8d8c0288feffff"), bytes.fromhex("8d8c0208feffff")),
     (0x55461E, bytes.fromhex("b9dc000000"), bytes.fromhex("b95c000000")),
-    *widths(0x554387, stock=376, wide=504),
 
     *widths(0x587C52, 0x587C5C, stock=308, wide=600),
     *widths(0x542B30, 0x542B50, 0x542B5A, stock=308, wide=600),
 
     (0x542B5F, bytes.fromhex("6a30"), bytes.fromhex("6a00")),
-
-    *detour(0x5432F9, bytes.fromhex("6826010000 8bf1 8b0dc075c200 52 56 55"), CAVE + 0x4E0, 0x543309,
-            assembled(CAVE + 0x4E0,
-                      bytes.fromhex("50 50 51 52"),
-                      bytes.fromhex("6a05 6a18 6a18"), 0x54C350, bytes.fromhex("83c40c"),
-                      bytes.fromhex("83ec40 57 8d442404 50"), 0x58CE50, bytes.fromhex("83c408"),
-                      bytes.fromhex("6a00 6a00 50"), 0x54BF80, bytes.fromhex("83c44c"),
-                      bytes.fromhex("2dc2000000 7e02 eb02 31c0"),
-                      bytes.fromhex("29c5 0526010000 8944240c"),
-                      bytes.fromhex("5a 59 58 8bf1 8b0dc075c200 52 56 55"))),
 
     *[(va, bytes.fromhex("6a3f"), bytes.fromhex("6a7f")) for va in (0x591DCC, 0x591DD2, 0x591E0B, 0x591E15)],
     (0x591E4D, bytes.fromhex("81c28d000000"), bytes.fromhex("81c2bc000000")),
@@ -286,54 +186,18 @@ CODE_EDITS = [
 
     *widths(0x538B0D, 0x538B18, stock=378, wide=512),
 
-    (0x538C9C, bytes.fromhex("683e010000"), bytes.fromhex("68f6000000")),
-    (0x538CA3, bytes.fromhex("689a000000"), bytes.fromhex("6852000000")),
-    (0x538CB0, bytes.fromhex("685a030000"), bytes.fromhex("68a2030000")),
-
     *widths(0x53AB6C, 0x53AB77, 0x53ABAD, 0x53ABB8, stock=196, wide=312),
 
     *widths(0x53AB3E, 0x53AB45, stock=154, wide=196),
 
-    *widths(0x53A631, stock=293, wide=125),
-    *widths(0x53A62C, stock=424, wide=426),
-    *widths(0x53A625, stock=708, wide=1044),
-    *widths(0x53A620, stock=188, wide=197),
-    *widths(0x53A663, stock=292, wide=124),
-    *widths(0x53A65E, stock=426, wide=428),
-    *widths(0x53A655, stock=182, wide=191),
-    *widths(0x53A73D, 0x53A68B, stock=307, wide=139),
-    *widths(0x539F94, stock=314, wide=146),
-    *widths(0x53A686, stock=500, wide=529),
-    *widths(0x53A699, stock=528, wide=557),
-    *widths(0x53A7AC, stock=314, wide=146),
-    *widths(0x53A7A7, stock=522, wide=551),
-    *widths(0x53A7A0, stock=673, wide=1009),
-    (0x53A79E, b"\x6a\x23", b"\x6a\x45"),
-    (0x53A764, bytes.fromhex("83ff03"), bytes.fromhex("83ff02")),
-    (0x710298, bytes.fromhex("ec000000 10010000 34010000"), bytes.fromhex("ed000000 21010000 21010000")),
 
     *widths(0x5A5971, 0x5A597C, 0x5A6946, 0x5A6951, 0x5A69F6, 0x5A6A01, 0x5A6AC6, 0x5A6AD1, 0x5A6B69, 0x5A6B74,
             0x5A6D1A, 0x5A6D25, 0x5A6F2B, 0x5A6F36, 0x5A7122, 0x5A712D, stock=238, wide=412),
     *widths(0x5A67A4, 0x5A67AF, 0x5A6814, 0x5A681F, stock=140, wide=162),
     (0x5A67F8, bytes.fromhex("81c3a1000000"), bytes.fromhex("81c3b7000000")),
 
-    (0x5A66F3, bytes.fromhex("bb1a020000"), bytes.fromhex("bb26010000")),
-    (0x5A6700, bytes.fromhex("681a020000"), bytes.fromhex("6826010000")),
-    *widths(0x5A6783, stock=641, wide=906),
-
     *widths(0x5807AF, 0x5807BA, 0x58081D, 0x580828, stock=140, wide=162),
     (0x580804, bytes.fromhex("81c6a1000000"), bytes.fromhex("81c6b7000000")),
-
-    (0x580780, bytes.fromhex("beb6010000"), bytes.fromhex("beab000000")),
-    (0x58076A, bytes.fromhex("68b6010000"), bytes.fromhex("68ab000000")),
-    *widths(0x580791, stock=641, wide=906),
-
-    *widths(0x598395, stock=257, wide=312),
-    *widths(0x5982D3, 0x59840D, stock=541, wide=596),
-    *widths(0x598495, 0x5984E5, stock=497, wide=552),
-    *widths(0x5984DD, stock=556, wide=501),
-    *widths(0x59853F, stock=535, wide=590),
-    *widths(0x598534, stock=507, wide=452),
 
     *widths(0x5A5ADC, 0x5A5AE7, stock=168, wide=204),
 
@@ -364,39 +228,21 @@ CODE_EDITS = [
     (0x551D89, bytes.fromhex("6a00"), bytes.fromhex("6a64")),
     (0x551D95, bytes.fromhex("83c6e8"), bytes.fromhex("83c6ca")),
 
-    *widths(0x556D81, stock=215, wide=351), *widths(0x556E7A, stock=189, wide=325),
-    (0x556D9F, bytes.fromhex("8d4e23"), bytes.fromhex("8d4e59")),
+    (0x556D9F, bytes.fromhex("8d4e23"), bytes.fromhex("8d4e16")),
     (0x556DB4, bytes.fromhex("6a46"), bytes.fromhex("6a60")),
-    (0x556DB7, bytes.fromhex("8d4649"), bytes.fromhex("8d467f")),
-    (0x556DD5, bytes.fromhex("8d869d000000"), bytes.fromhex("8d86ed000000")),
-    (0x55742F, bytes.fromhex("69c9cf010000"), bytes.fromhex("69c901020000")),
-    (0x557443, bytes.fromhex("8d9c0a29ffffff"), bytes.fromhex("8d9c0aa1feffff")),
-    (0x557456, bytes.fromhex("bbf8000000"), bytes.fromhex("bba2000000")),
-    (0x557506, bytes.fromhex("69c91c030000"), bytes.fromhex("69c9ea020000")),
-    (0x557529, bytes.fromhex("c7442410e4010000"), bytes.fromhex("c744241016020000")),
+    (0x556DB7, bytes.fromhex("8d4649"), bytes.fromhex("8d463c")),
+    (0x556DD5, bytes.fromhex("8d869d000000"), bytes.fromhex("8d86aa000000")),
 
-    *widths(0x55B55E, stock=209, wide=345), *widths(0x55B656, stock=189, wide=325),
-    (0x55B57B, bytes.fromhex("8d5723"), bytes.fromhex("8d5759")),
+    (0x55B57B, bytes.fromhex("8d5723"), bytes.fromhex("8d5716")),
     (0x55B58C, bytes.fromhex("6a46"), bytes.fromhex("6a60")),
-    (0x55B58F, bytes.fromhex("8d4749"), bytes.fromhex("8d477f")),
-    (0x55B5AC, bytes.fromhex("8d979d000000"), bytes.fromhex("8d97ed000000")),
-    (0x55BAF0, bytes.fromhex("69c9d7010000"), bytes.fromhex("69c912020000")),
-    (0x55BB04, bytes.fromhex("8dbc021fffffff"), bytes.fromhex("8dbc0297feffff")),
-    (0x55BB15, bytes.fromhex("bff6000000"), bytes.fromhex("bfa9000000")),
-    (0x55BBE7, bytes.fromhex("69f60e030000"), bytes.fromhex("69f6d3020000")),
-    (0x55BC0A, bytes.fromhex("c7442414f2010000"), bytes.fromhex("c74424142d020000")),
+    (0x55B58F, bytes.fromhex("8d4749"), bytes.fromhex("8d473c")),
+    (0x55B5AC, bytes.fromhex("8d979d000000"), bytes.fromhex("8d97aa000000")),
     *[(va, bytes.fromhex("6a46"), bytes.fromhex("6a60")) for va in (0x5574DF, 0x5574E7, 0x55BB9A, 0x55BBA0)],
-    (0x5574F0, bytes.fromhex("83c349"), bytes.fromhex("83c37f")),
-    (0x55BBA8, bytes.fromhex("83c749"), bytes.fromhex("83c77f")),
+    (0x5574F0, bytes.fromhex("83c349"), bytes.fromhex("83c33c")),
+    (0x55BBA8, bytes.fromhex("83c749"), bytes.fromhex("83c73c")),
 
     *widths(0x552F9D, 0x552FA8, 0x552FCF, 0x552FDA, stock=196, wide=312),
 
-    *widths(0x552E76, stock=212, wide=362), *widths(0x552F09, stock=189, wide=339),
-    *widths(0x552F7F, stock=392, wide=472),
-    (0x553139, bytes.fromhex("69c96c010000"), bytes.fromhex("69c949010000")),
-    (0x55315E, bytes.fromhex("bfec000000"), bytes.fromhex("bfc9000000")),
-    (0x5531BB, bytes.fromhex("69c9d4020000"), bytes.fromhex("69c9a1020000")),
-    (0x5531DA, bytes.fromhex("bf2c020000"), bytes.fromhex("bf5f020000")),
     *detour(0x553011, bytes.fromhex("6a1c 6a70 6a00 6a00 6a1c 6a70"), CAVE + 0x100, 0x55301D,
             bytes.fromhex("6a1c 68a0000000 6a00 6a00 6a1c 68a0000000")),
     *detour(0x553035, bytes.fromhex("6a1c 6a70 6a00 6a00 6a1c 6a70"), CAVE + 0x140, 0x553041,
@@ -405,19 +251,6 @@ CODE_EDITS = [
     (0x55BCF7, bytes.fromhex("e8d4fafeff"), bytes.fromhex("0f1f440000")),
 
     (0x595368, bytes.fromhex("e86364fbff"), bytes.fromhex("0f1f440000")),
-
-    *widths(0x536654, stock=245, wide=443), *widths(0x536694, stock=147, wide=345),
-    *widths(0x536828, stock=189, wide=353),
-    (0x53665C, bytes.fromhex("c7442430f5000000"), bytes.fromhex("c7442430bb010000")),
-    (0x5366FD, bytes.fromhex("b893000000"), bytes.fromhex("b859010000")),
-    (0x536791, bytes.fromhex("8d8dcb000000"), bytes.fromhex("8d8d91010000")),
-    (0x5368C4, bytes.fromhex("81c2d2000000"), bytes.fromhex("81c276010000")),
-    (0x5368F3, bytes.fromhex("05d2000000"), bytes.fromhex("0576010000")),
-    (0x536970, bytes.fromhex("69d25f010000"), bytes.fromhex("69d2db010000")),
-    (0x536984, bytes.fromhex("8db4020bffffff"), bytes.fromhex("8db40245feffff")),
-    (0x53699B, bytes.fromhex("be6a000000"), bytes.fromhex("be20000000")),
-
-    *widths(0x535E5D, stock=294, wide=410),
 
     (0x5519EE, bytes.fromhex("c70594d0c2009a010000"), bytes.fromhex("c70594d0c2006a010000")),
     (0x55128E, bytes.fromhex("81c59a010000"), bytes.fromhex("81c56a010000")),
@@ -430,24 +263,6 @@ CODE_EDITS = [
     (0x59C48E, bytes.fromhex("b80a010000"), bytes.fromhex("b86e010000")),
     (0x59C3DF, bytes.fromhex("bfe8000000"), bytes.fromhex("bfb6000000")),
     (0x59C3E6, bytes.fromhex("bf13030000"), bytes.fromhex("bfe1020000")),
-
-    *widths(0x594EDA, stock=385, wide=473),
-
-    *widths(0x52B59B, stock=448, wide=578), *widths(0x52B6B9, stock=431, wide=561),
-    (0x52B715, bytes.fromhex("8d83d9000000"), bytes.fromhex("8d835b010000")),
-    (0x52B75C, bytes.fromhex("81c3f7000000"), bytes.fromhex("81c379010000")),
-    (0x52B817, bytes.fromhex("81c1ad010000"), bytes.fromhex("81c12f020000")),
-    (0x52B8EA, bytes.fromhex("053e010000"), bytes.fromhex("05c0010000")),
-    (0x52BAB7, bytes.fromhex("69c9af020000"), bytes.fromhex("69c9a2020000")),
-    (0x52BACB, bytes.fromhex("8dbc0240feffff"), bytes.fromhex("8dbc02befdffff")),
-    (0x52BADF, bytes.fromhex("bfef000000"), bytes.fromhex("bf60000000")),
-    (0x52BB7D, bytes.fromhex("69c92d020000"), bytes.fromhex("69c93a020000")),
-    (0x52BBFF, bytes.fromhex("69f62d020000"), bytes.fromhex("69f63a020000")),
-    (0x52BB9C, bytes.fromhex("b8d3020000"), bytes.fromhex("b8c6020000")),
-    (0x52BC2F, bytes.fromhex("b8d3020000"), bytes.fromhex("b8c6020000")),
-    *widths(0x52B956, stock=385, wide=473),
-    (0x52B9C3, bytes.fromhex("8d8503010000"), bytes.fromhex("8d855b010000")),
-    (0x52BA67, bytes.fromhex("81c5ee000000"), bytes.fromhex("81c546010000")),
 
     *widths(0x537C0F, 0x537C1C, stock=140, wide=208),
 
@@ -505,9 +320,6 @@ CODE_EDITS = [
 
     *widths(0x598CC5, 0x598CCF, stock=210, wide=332),
 
-    (0x52E7B2, bytes.fromhex("8d8683000000"), bytes.fromhex("8d86af000000")),
-    (0x52E83B, bytes.fromhex("8d9683000000"), bytes.fromhex("8d96af000000")),
-
     (0x592323, bytes.fromhex("be69000000"), bytes.fromhex("be80000000")),
     (0x592335, bytes.fromhex("b98c000000"), bytes.fromhex("b994000000")),
 
@@ -529,21 +341,9 @@ CODE_EDITS = [
 
     (0x547636, bytes.fromhex("81c6e2020000"), bytes.fromhex("81c6d4030000")),
 
-    (0x5488E8, bytes.fromhex("c7442408c0000000"), bytes.fromhex("c744240864000000")),
-    (0x5488F8, bytes.fromhex("c7442418f8000000"), bytes.fromhex("c74424189c000000")),
-    (0x548900, bytes.fromhex("c744241c10030000"), bytes.fromhex("c744241cc8030000")),
-    (0x548910, bytes.fromhex("c744242808040000"), bytes.fromhex("c744242864040000")),
     *[(va, bytes.fromhex("6a38"), bytes.fromhex("6a40")) for va in (0x5489FD, 0x548A06)],
     *widths(0x5489FF, 0x548A08, stock=294, wide=1024),
     *widths(0x548A13, stock=226, wide=134),
-    *widths(0x548A0E, stock=412, wide=368),
-    *widths(0x548980, stock=454, wide=404),
-    *widths(0x548976, stock=178, wide=240),
-
-    *widths(0x56108C, 0x59C71C, stock=756, wide=1229),
-    *widths(0x561098, stock=262, wide=25),
-    *widths(0x59C728, stock=232, wide=25),
-    *widths(0x561087, stock=262, wide=305),
 
     *widths(0x56EAEA, 0x56EAF4, 0x56B595, 0x56B59F, 0x56FAC4, 0x570585, 0x57058F, 0x572432, 0x57243C,
             0x56BEE2, 0x56BEEC, 0x56CAC6, 0x56CAD0, 0x571BB2, stock=210, wide=310),
@@ -616,25 +416,23 @@ CODE_EDITS = [
     *((va + 6, bytes([stock]), b"\x09") for va, stock in
       ((0x4761CE, 2), (0x4761E9, 2), (0x476206, 1), (0x476233, 1), (0x47624F, 0))),
 
-    *widths(0x596839, stock=0x330, wide=992),
-    *[(va, bytes.fromhex("68e7000000"), bytes.fromhex("6890000000")) for va in (0x596845, 0x596854, 0x596865, 0x596877)],
-    (0x596890, bytes.fromhex("8d515d"), bytes.fromhex("8d5106")),
-    (0x5968A1, bytes.fromhex("8d485d"), bytes.fromhex("8d4806")),
+    *widths(0x596839, stock=0x330, wide=982),
+    *[(va, bytes.fromhex("68e7000000"), bytes.fromhex("6894000000")) for va in (0x596845, 0x596854, 0x596865, 0x596877)],
+    (0x596890, bytes.fromhex("8d515d"), bytes.fromhex("8d510a")),
+    (0x5968A1, bytes.fromhex("8d485d"), bytes.fromhex("8d480a")),
 
     (0x596666, bytes.fromhex("8b0d7cec7900"), rel32(b"\xe9", 0x596666, CAVE + 0x620) + b"\x90"),
     (CAVE + 0x620, b"\xcc" * 32, b"\x80\x3d" + p32(PAD_PROMPTS) + bytes.fromhex("00 750b 8b0d7cec7900")
      + rel32(b"\xe9", CAVE + 0x62F, 0x59666C) + bytes.fromhex("8b8c2484000000") + rel32(b"\xe9", CAVE + 0x63B, 0x5967D9)),
 
-    *widths(0x595F17, stock=308, wide=627),
-    (0x582619, bytes.fromhex("81c672020000"), bytes.fromhex("81c6d2010000")),
-    (0x553885, bytes.fromhex("68e9010000"), bytes.fromhex("684a010000")),
-
-    (0x598859, bytes.fromhex("81c234010000"), bytes.fromhex("81c22c010000")),
+    *widths(0x595F17, stock=308, wide=568),
+    (0x582619, bytes.fromhex("81c672020000"), bytes.fromhex("81c6f0010000")),
+    (0x553885, bytes.fromhex("68e9010000"), bytes.fromhex("6867010000")),
 
     (0x597512, bytes.fromhex("68b2010000"), bytes.fromhex("68d1010000")),
-    *widths(0x597517, stock=532, wide=804 + ABILITY_CELL_GROWTH),
+    *widths(0x597517, stock=532, wide=745),
     (0x5975BB, bytes.fromhex("6805020000"), b"\x68" + p32(482 + ABILITY_CELL_GROWTH)),
-    *widths(0x5975CF, 0x59761D, stock=452, wide=724),
+    *widths(0x5975CF, 0x59761D, stock=452, wide=686),
     (0x597624, bytes.fromhex("6879010000"), bytes.fromhex("6899010000")),
     *[(va, bytes.fromhex("6886010000"), bytes.fromhex("68cc010000")) for va in (0x597675, 0x5976A2)],
     (0x59767A, bytes.fromhex("68d1010000"), bytes.fromhex("685d020000")),
@@ -649,6 +447,237 @@ CODE_EDITS = [
 
     (0x598221, bytes.fromhex("81c6f5000000"), bytes.fromhex("81c66d010000")),
 ]
+
+def immediate(va: int, opcode: str, stock: int, x360: int) -> tuple:
+    """Return a checked edit of the 32-bit immediate that ends an instruction."""
+    return (va, bytes.fromhex(opcode) + p32(stock & 0xFFFFFFFF), bytes.fromhex(opcode) + p32(x360 & 0xFFFFFFFF))
+
+def imm8(va: int, opcode: str, stock: int, x360: int) -> tuple:
+    """Return a checked edit of the signed 8-bit immediate or displacement that ends an instruction."""
+    return (va, bytes.fromhex(opcode) + bytes([stock & 0xFF]), bytes.fromhex(opcode) + bytes([x360 & 0xFF]))
+
+def cell_then(site: int, stock: str, cave: int, cell: int, field: int, skip: int) -> list:
+    """Detour `mov eax,[esi+field]; test eax,eax; je skip` to set the font cell width first."""
+    code = bytes.fromhex("c6050caec200") + bytes([cell, 0x8B, 0x46, field, 0x85, 0xC0])
+    code += b"\x0f\x84" + struct.pack("<i", skip - (cave + len(code) + 6))
+    return detour(site, bytes.fromhex(stock), cave, site + len(bytes.fromhex(stock)), code)
+
+# Panel geometry taken from the X360 build of the same screen.
+X360_LAYOUT = [
+    # Still-event bar x, y, width, height, and the name plate and name y above it.
+    immediate(0x59C728, "68", 232, 40), immediate(0x59C723, "68", 412, 503),
+    immediate(0x59C71C, "68", 756, 1200), immediate(0x59C717, "68", 262, 126),
+    immediate(0x59C433, "68", 398, 440), immediate(0x59C4A2, "68", 412, 454),
+    # Battle history: box, scroll bar, two entries, time and text x, lone entry, highlight, row table.
+    immediate(0x53A631, "68", 293, 237), immediate(0x53A62C, "68", 424, 430), immediate(0x53A625, "68", 708, 812),
+    immediate(0x53A663, "68", 292, 236), immediate(0x53A65E, "68", 426, 432),
+    (0x53A676, bytes.fromhex("83f803"), bytes.fromhex("83f802")), (0x53A764, bytes.fromhex("83ff03"), bytes.fromhex("83ff02")),
+    *widths(0x53A68B, 0x53A73D, stock=307, wide=272), immediate(0x539F94, "68", 314, 279),
+    immediate(0x53A686, "68", 500, 531),
+    immediate(0x53A7AC, "68", 314, 265), immediate(0x53A7A7, "68", 522, 553), immediate(0x53A7A0, "68", 673, 764),
+    (0x53A79E, bytes.fromhex("6a23"), bytes.fromhex("6a46")),
+    # Movie subtitle cell and pitch, and the two line bases.
+    (0x49EAA1, bytes.fromhex("b020"), bytes.fromhex("b018")),
+    (0x49EABF, bytes.fromhex("c6050eaec20024"), bytes.fromhex("c6050eaec2001c")),
+    immediate(0x49EAFE, "b8", 628, 652), immediate(0x49EB39, "b8", 664, 680),
+]
+
+# X360 panels: lists, cards, plates and boxes of the same screens.
+X360_PANELS = [
+    # Officer list (0x595AA0) and gallery lists (0x556D60, 0x55B540) at the X360 width,
+    # their callers' x and slides, and neighbour panels.
+    immediate(0x595AC1, "68", 225, 321),
+    imm8(0x595B3D, "83c2", 25, 35),
+    imm8(0x595B6E, "8d47", 17, 22),
+    imm8(0x595B71, "83c7", 28, 29),
+    imm8(0x595B83, "83c7", 32, 42),
+    immediate(0x595BB6, "68", 189, 296),
+    immediate(0x556D81, "68", 215, 321),
+    immediate(0x556E7A, "68", 189, 301),
+    imm8(0x55B55A, "8d45", 33, 32),
+    immediate(0x55B55E, "68", 209, 321),
+    imm8(0x55B578, "83c6", -8, -9),
+    imm8(0x55B5DA, "83c2", 25, 31),
+    imm8(0x55B612, "83c7", 28, 23),
+    immediate(0x55B656, "68", 189, 301),
+    immediate(0x56A7A1, "69c9", 483, 579),
+    immediate(0x56A7B5, "8dbc02", -225, -321),
+    immediate(0x529587, "69c9", 523, 576),
+    immediate(0x52959B, "8d9c02", -225, -321),
+    immediate(0x5295B0, "69c9", 710, 645),
+    immediate(0x5295C4, "8d9c0a", -412, -390),
+    immediate(0x5295DC, "bb", 298, 255),
+    immediate(0x52D757, "69d2", 524, 555),
+    immediate(0x52D76B, "8db402", -225, -321),
+    immediate(0x52D77E, "69d2", 903, 806),
+    immediate(0x52D792, "8db402", -604, -572),
+    immediate(0x52D7A4, "be", 299, 234),
+    immediate(0x527705, "69c9", 430, 454),
+    immediate(0x527719, "8d840a", -203, -267),
+    immediate(0x527722, "b8", 227, 187),
+    immediate(0x52776D, "bb", 474, 482),
+    immediate(0x5277C7, "69c9", 806, 798),
+    immediate(0x527882, "bf", 741, 831),
+    immediate(0x527890, "69ff", 806, 798),
+    immediate(0x5278A8, "b8", 1547, 1629),
+    immediate(0x55742F, "69c9", 463, 537),
+    immediate(0x557443, "8d9c0a", -215, -321),
+    immediate(0x557456, "bb", 248, 216),
+    immediate(0x557506, "69c9", 796, 710),
+    immediate(0x557529, "c7442410", 484, 570),
+    immediate(0x55BAF0, "69c9", 471, 538),
+    immediate(0x55BB04, "8dbc02", -225, -321),
+    immediate(0x55BB15, "bf", 246, 217),
+    immediate(0x55BBE7, "69f6", 782, 699),
+    immediate(0x55BC0A, "c7442414", 498, 581),
+    imm8(0x595ADE, "8d57", 35, 82),
+    imm8(0x595AF2, "8d47", 73, 120),
+    immediate(0x595B0F, "8d97", 157, 207),
+    imm8(0x556D9F, "8d4e", 35, 82),
+    imm8(0x556DB7, "8d46", 73, 120),
+    immediate(0x556DD5, "8d86", 157, 207),
+    imm8(0x55B57B, "8d57", 35, 92),
+    *detour(0x55B58C, bytes.fromhex("6a46538d4749"), 0x5F5E00, 0x55B592, bytes.fromhex("6a46538d8782000000")),
+    immediate(0x55B5AC, "8d97", 157, 217),
+    imm8(0x56A859, "83c7", 73, 120),
+    imm8(0x529666, "83c3", 73, 120),
+    imm8(0x52D82A, "83c6", 73, 121),
+    imm8(0x527832, "83c3", 73, 120),
+    imm8(0x5574F0, "83c3", 73, 120),
+    *detour(0x55BBA3, bytes.fromhex("689200000083c749"), 0x5F5E20, 0x55BBAB, bytes.fromhex("689100000081c782000000")),
+    # Attribute list panel and slide; skill list panel, grade row and slides. The weapon row keeps
+    # its stock name x: MOZ draws the weapon thumbnail at row x+0x26..+0x5E, where the X360 name starts.
+    immediate(0x52E5CD, "68", 378, 391),
+    immediate(0x52F9A2, "b9", 223, 227),
+    imm8(0x52F9A9, "8d69", -95, -99),
+    immediate(0x52F9BA, "69c9", 601, 618),
+    immediate(0x52F9CE, "8d8c02", -378, -391),
+    imm8(0x52FA17, "6a", 122, 121),
+    immediate(0x5332F8, "68", 203, 267),
+    immediate(0x53343A, "68", 189, 253),
+    imm8(0x533315, "8d4e", 21, 48),
+    immediate(0x53332F, "8d86", 161, 188),
+    imm8(0x533349, "8d4e", 56, 83),
+    imm8(0x533372, "8d56", 66, 93),
+    immediate(0x527418, "69c9", 510, 454),
+    immediate(0x52742C, "8dbc02", -203, -267),
+    immediate(0x527464, "bf", 307, 187),
+    immediate(0x528F05, "69c9", 511, 494),
+    immediate(0x528F19, "8d8c0a", -203, -267),
+    immediate(0x528F27, "b9", 308, 227),
+    # Pre-battle army list (0x536630) and its slide; officer card box, no reading line.
+    immediate(0x536654, "68", 245, 335),
+    imm8(0x536675, "8d4d", 7, 12),
+    imm8(0x53669A, "8d45", 42, 47),
+    immediate(0x536694, "68", 147, 217),
+    immediate(0x5366FD, "b8", 147, 217),
+    imm8(0x53670E, "8d4428", 42, 47),
+    immediate(0x536791, "8d8d", 203, 285),
+    immediate(0x536828, "68", 189, 280),
+    immediate(0x5368C4, "81c2", 210, 307),
+    immediate(0x5368F3, "05", 210, 307),
+    immediate(0x536970, "69d2", 351, 391),
+    immediate(0x536984, "8db402", -245, -335),
+    immediate(0x53699B, "be", 106, 56),
+    imm8(0x535E6C, "8d53", -8, -22),
+    immediate(0x535E5D, "68", 294, 413),
+    (0x535EC1, bytes.fromhex("e80a590100"), bytes.fromhex("0f1f440000")),
+    imm8(0x535EDB, "8d4e", 24, 12),
+    # Pre-battle army line cell and TIME plate; battle banner backing and label cell.
+    imm8(0x538C4E, "6a", 24, 22),
+    immediate(0x538CB0, "68", 858, 942),
+    immediate(0x538CA3, "68", 154, 70),
+    immediate(0x538C9C, "68", 318, 234),
+    immediate(0x54FE19, "81c6", 409, 528),
+    imm8(0x550821, "6a", 24, 22),
+    # Still-event plates (616x70, both X360 plates in one texture) and the scenario panel,
+    # RECORD at the top right.
+    immediate(0x59C3DF, "bf", 232, 26),
+    immediate(0x59C3E6, "bf", 787, 640),
+    imm8(0x59C41F, "6a", 52, 70),
+    imm8(0x59C42A, "6a", 52, 70),
+    immediate(0x59C42C, "68", 266, 616),
+    *detour(0x59C421, bytes.fromhex("680a0100006a006a00"), 0x5F5E40, 0x59C42A, bytes.fromhex("686802000031c083ff7f7c02b080506a00")),
+    # Z-story still event bar at the X360 x and width (stock source rectangle stretched).
+    immediate(0x59A712, "68", 192, 40), immediate(0x59A706, "68", 896, 1200),
+    # Captions, movie title and body cells.
+    immediate(0x56A160, "bb", 600, 616),
+    immediate(0x56A1A8, "c706", 636, 652),
+    *cell_then(0x49EAE4, "8b4624 85c0 7434", 0x5F5F00, 29, 0x24, 0x49EB1F),
+    *cell_then(0x49EB1F, "8b4620 85c0 7434", 0x5F5F40, 24, 0x20, 0x49EB5A),
+]
+
+# Screens that keep the MOZ layout (the pre-wave-4 panels): VS and Survival rules panel moved left and
+# widened, the weapon rows and their skill squares widened, the treasure list and detail panel, the
+# narration panel. The gallery weapon list (0x55B540) keeps its X360 plate with the name centred in it
+# as MOZ centres it (plate at name y - 7).
+MOZ_LAYOUT = [
+    (0x5A66F3, bytes.fromhex("bb1a020000"), bytes.fromhex("bb26010000")),
+    (0x5A6700, bytes.fromhex("681a020000"), bytes.fromhex("6826010000")),
+    *widths(0x5A6783, stock=641, wide=906),
+    (0x580780, bytes.fromhex("beb6010000"), bytes.fromhex("beab000000")),
+    (0x58076A, bytes.fromhex("68b6010000"), bytes.fromhex("68ab000000")),
+    *widths(0x580791, stock=641, wide=906),
+    *widths(0x59506C, stock=350, wide=478),
+    (0x595135, bytes.fromhex("8dbc3918010000"), bytes.fromhex("8dbc3998010000")),
+    *widths(0x5951E6, stock=366, wide=494),
+    *widths(0x526DE4, stock=378, wide=506),
+    *widths(0x554387, stock=376, wide=504),
+    *widths(0x552E76, stock=212, wide=362), *widths(0x552F09, stock=189, wide=339),
+    *widths(0x552F7F, stock=392, wide=472),
+    (0x553139, bytes.fromhex("69c96c010000"), bytes.fromhex("69c949010000")),
+    (0x55315E, bytes.fromhex("bfec000000"), bytes.fromhex("bfc9000000")),
+    (0x5531BB, bytes.fromhex("69c9d4020000"), bytes.fromhex("69c9a1020000")),
+    (0x5531DA, bytes.fromhex("bf2c020000"), bytes.fromhex("bf5f020000")),
+    *widths(0x56108C, stock=756, wide=1229),
+    *widths(0x561098, stock=262, wide=25),
+    *widths(0x561087, stock=262, wide=305),
+    imm8(0x55B624, "83c7", 32, 38),
+]
+
+# Our own values on X360-layout screens. Battle history: 4 px more between the time and the event text
+# (lone entry and each entry), the second entry 4 px lower and the box and scroll bar 8 px taller.
+# PC controls list: action cells 40 px wider, keyboard and pad columns moved with them, so the widest
+# action name fits its lane at full size.
+LAYOUT_TWEAKS = [
+    immediate(0x53A699, "68", 528, 563),
+    imm8(0x53A74E, "83c3", 28, 32),
+    (0x71029C, p32(272), p32(292)),
+    immediate(0x53A620, "68", 188, 196),
+    immediate(0x53A655, "68", 182, 190),
+    *widths(0x598395, stock=257, wide=297),
+    *widths(0x5982D3, 0x59840D, stock=541, wide=581),
+    *widths(0x598495, 0x5984E5, stock=497, wide=537),
+    *widths(0x5984DD, stock=556, wide=516),
+    *widths(0x59853F, stock=535, wide=575),
+    *widths(0x598534, stock=507, wide=467),
+]
+
+# Page text drawn away from its stock origin. The Z-story narration glyph callback (0x55EDC0) adds 4 px
+# per glyph from a counter it resets only when a glyph starts at the stock line x 0x168; at the X360
+# origin the counter never resets and the text runs off screen, so the glyphs keep their plain advance.
+PAGE_ORIGIN = [
+    (0x55EEAD, bytes.fromhex("8d4c8a02"), bytes.fromhex("8d4a0290")),
+]
+
+# Two-line captions: the cue layout (0x56A130) gives both lines the smaller of their centred x, so the
+# shorter line sat left of centre; each line keeps its own centred x.
+CAPTION_LINES = [
+    (0x56A1DC, bytes.fromhex("890e"), bytes.fromhex("9090")),
+    (0x56A1E2, bytes.fromhex("890a"), bytes.fromhex("9090")),
+]
+
+# Kept art and clearance edits that the X360 panels replace.
+X360_REPLACED = {
+    0x595ADE, 0x595AEF, 0x595AF2, 0x595B0F, 0x527821, 0x527829, 0x527832, 0x529655, 0x52965D, 0x529666,
+    0x52D819, 0x52D821, 0x52D82A, 0x56A848, 0x56A850, 0x56A859, 0x556D9F, 0x556DB4, 0x556DB7, 0x556DD5,
+    0x55B57B, 0x55B58C, 0x55B58F, 0x55B5AC, 0x5574DF, 0x5574E7, 0x5574F0, 0x55BB9A, 0x55BBA0, 0x55BBA8,
+    0x52B5B7, 0x52B5DA, 0x52B5E1, 0x52B5F2, 0x52BB4A, 0x52BB52, 0x52BB5B,
+    0x533315, 0x53332F, 0x533349, 0x533372, 0x533346, 0x533365, 0x53336D,
+    0x59C421, 0x59C42C, 0x59C48E, 0x59C3DF, 0x59C3E6,
+}
+CODE_EDITS = ([edit for edit in CODE_EDITS if edit[0] not in X360_REPLACED] + MOZ_LAYOUT + X360_LAYOUT + X360_PANELS
+              + LAYOUT_TWEAKS + PAGE_ORIGIN + CAPTION_LINES)
 
 LATIN_TOKEN = 0x1000
 

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tarfile
 
 import pytest
@@ -92,15 +93,46 @@ def test_full_art_build_does_not_drop_or_change_fixed_baseline_payloads(tmp_path
     for key in ("WOZMOD_WO1_ISO", "WOZMOD_X360_ISO", "WOZMOD_WO1_DONOR", "WOZMOD_X360_DONOR",
                 "WOZMOD_LATIN_CELLS", "WOZMOD_GAME"):
         new_environment.pop(key, None)
+    bundle = tmp_path / "lettering.zip"
+    render_run = subprocess.run([
+        font_python, "-m", "wozmod.art.render", str(bundle),
+        "--font-python", font_python, "--jobs", "4", "--full-width",
+    ], cwd=tmp_path, env=new_environment, capture_output=True, text=True)
+    assert render_run.returncode == 0, render_run.stdout + render_run.stderr
+
+    guard = tmp_path / "import-guard"
+    guard.mkdir()
+    attempts, activated = guard / "attempts.txt", guard / "activated.txt"
+    attempts.write_text("")
+    (guard / "sitecustomize.py").write_text(
+        'import importlib.abc, os, sys\n'
+        'from pathlib import Path\n'
+        'class RejectFontTools(importlib.abc.MetaPathFinder):\n'
+        '    def find_spec(self, fullname, path=None, target=None):\n'
+        '        if fullname.split(".")[0] in {"fontforge", "cairo", "numpy"}:\n'
+        '            with Path(os.environ["WOZMOD_IMPORT_ATTEMPTS"]).open("a") as output:\n'
+        '                output.write(fullname + "\\n")\n'
+        '            raise ModuleNotFoundError("compose imported a font tool: " + fullname)\n'
+        'sys.meta_path.insert(0, RejectFontTools())\n'
+        'Path(os.environ["WOZMOD_IMPORT_GUARD"]).write_text("active")\n'
+    )
+    compose_environment = dict(new_environment)
+    compose_environment["PYTHONPATH"] = str(guard) + os.pathsep + new_environment["PYTHONPATH"]
+    compose_environment["WOZMOD_IMPORT_ATTEMPTS"] = str(attempts)
+    compose_environment["WOZMOD_IMPORT_GUARD"] = str(activated)
     new_run = subprocess.run([
-        font_python, "-m", "wozmod.art.build", "--game", str(game),
+        sys.executable, "-m", "wozmod.art.compose", "--game", str(game),
         "--wo1-donor", str(old_repo / "work/donors/wo1/linkdata_ens"),
         "--wo2-donor", str(old_repo / "work/donors/wo2-x360/linkdata_ens"),
-        "--latin-cells", str(old_repo / "work/font/latin-24.png"),
-        "--output-dir", str(new_output), "--hires", "vector", "--jobs", "4",
-        "--font-python", font_python,
-    ], cwd=tmp_path, env=new_environment, capture_output=True, text=True)
+        "--bundle", str(bundle), "--output-dir", str(new_output), "--oracle-full-width",
+    ], cwd=tmp_path, env=compose_environment, capture_output=True, text=True)
     assert new_run.returncode == 0, new_run.stdout + new_run.stderr
+    assert activated.read_text() == "active"
+    assert attempts.read_text() == "", "compose attempted to import font tools"
     old_payloads, new_payloads = _payloads(old_output / "moz-english"), _payloads(new_output / "wozmod")
     assert len(old_payloads) == 167
-    assert new_payloads == old_payloads
+    assert new_payloads.keys() == old_payloads.keys()
+    # Intended changes: X360 skill tag plates (4079), faction labels (4060, 4064, 4069) and grade plates (4060),
+    # the still-event plates (4104), and no hires labels on the faction tabs.
+    assert {name for name in old_payloads if new_payloads[name] != old_payloads[name]} == {
+        "entries/4079.bin", "entries/4060.bin", "entries/4064.bin", "entries/4069.bin", "entries/4104.bin", "hires.bin"}

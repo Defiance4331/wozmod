@@ -22,6 +22,7 @@ from wozmod.formats.linkdata import (
     encode_lzp2, parse_index, parse_lzp2, wo1_entries,
 )
 from wozmod.runtime.english_runtime import write_manifest
+from . import lettering
 from .hires import HIRES_OVERLAY, HIRES_RIGHT_GROW, hires_blob
 from wozmod.runtime.latin_font import CELL, LATIN_GLYPH
 from wozmod.donors import WO1, X360, extract_donor, verify_file
@@ -792,7 +793,8 @@ def only_strokes(image: Image.Image, spec: dict) -> Image.Image:
 
 def composed(stock: Image.Image, rows: list[list[dict]], donors: dict, align: str, gap: int,
              bands=None) -> Image.Image:
-
+    """A row whose first piece names a window [x0, x1] (where its quad lets ink show) is centred in it
+    and condensed to fit."""
     lines, bands = [], bands or ink_rows(stock)
     inks = [ink(stock.crop((0, top, stock.width, bottom))) for top, bottom in bands]
     left = min(box[0] for box in inks)
@@ -821,14 +823,19 @@ def composed(stock: Image.Image, rows: list[list[dict]], donors: dict, align: st
             line.alpha_composite(part, (x, dy))
             x += part.width + gap
         line = line.crop(ink(line))
-        if align == "full":
+        window = pieces[0].get("window")
+        if window:
+            x0, x1 = window
+            if line.width > x1 - x0 and donors.get("squish", True):
+                line = line.resize((x1 - x0, line.height), Image.Resampling.LANCZOS)
+        elif align == "full":
             x0, x1 = 0, stock.width
         elif align == "left":
             x0 = left
-        lines.append((line, top, bottom, x0, x1))
+        lines.append((line, top, bottom, x0, x1, align == "left" and not window))
     canvas = Image.new("RGBA", stock.size)
-    for line, top, bottom, x0, x1 in lines:
-        placed(canvas, line, x0 if align == "left" else round((x0 + x1 - line.width) / 2), top + (bottom - top - line.height) // 2)
+    for line, top, bottom, x0, x1, left in lines:
+        placed(canvas, line, x0 if left else round((x0 + x1 - line.width) / 2), top + (bottom - top - line.height) // 2)
     return canvas
 
 def tinted(image: Image.Image, factors: list[float]) -> Image.Image:
@@ -867,10 +874,7 @@ def recoloured(image: Image.Image, edit: dict) -> Image.Image:
     return image
 
 MENU_BATCH = "wozmod.fonts.menu_batch"
-OTHER_TABS = {(4060, 18): "Other 1", (4060, 19): "Other 2",
-              (4064, 12): "Other 1", (4064, 13): "Other 2",
-              (4069, 6): "Other 1", (4069, 7): "Other 2"}
-HIRES_NATIVE_MENU = {(4079, item) for item in [*range(60, 78), 80]} | set(OTHER_TABS)
+HIRES_NATIVE_MENU = {(4079, item) for item in [*range(60, 78), 80]}
 
 ABILITY_QUAD_MINIMUM = {(4079, 69): 144, (4079, 71): 156, (4079, 75): 132}
 
@@ -931,8 +935,6 @@ def prepare_menu_labels(mapping: dict, output_dir: Path | None = None) -> dict:
         add("rounded.ability", native_menu_text(4079, item),
             native_menu_role(4079, item))
     add("rounded.base", native_menu_text(4079, 80))
-    for text in OTHER_TABS.values():
-        add("rounded.tab-other", text)
     for edit in mapping.get("textures", []):
         spec = edit.get("banner") or edit.get("card")
         if spec and "lines" in spec and native_officer_source(edit) is None:
@@ -940,6 +942,9 @@ def prepare_menu_labels(mapping: dict, output_dir: Path | None = None) -> dict:
             for row, text in enumerate(spec["lines"]):
                 add(style, text, officer_name_role(edit, row))
     ordered = list(requests.values())
+    if lettering.ACTIVE is not None:
+        return {menu_label_key(r["style"], r["text"], r.get("role")):
+                lettering.get(dict(kind="native", **r), None) for r in ordered}
     with tempfile.TemporaryDirectory(prefix="moz-menu-labels-") as temporary:
         folder = Path(temporary)
         path, output = folder / "requests.json", output_dir or folder / "labels"
@@ -955,7 +960,8 @@ def prepare_menu_labels(mapping: dict, output_dir: Path | None = None) -> dict:
             if record["index"] != index or record["request"] != request:
                 raise ValueError(f"menu batch changed native label {index}")
             image = Image.open(output / record["file"]).convert("RGBA")
-            labels[menu_label_key(request["style"], request["text"], request.get("role"))] = image, record["metrics"]
+            labels[menu_label_key(request["style"], request["text"], request.get("role"))] = lettering.get(
+                dict(kind="native", **request), lambda: (image, record["metrics"]))
     return labels
 
 def native_menu_label(donors: dict, style: str, text: str, role: str | None = None) -> tuple:
@@ -964,6 +970,43 @@ def native_menu_label(donors: dict, style: str, text: str, role: str | None = No
     if key not in donors.get("menu_labels", {}):
         raise ValueError(f"native menu label was not prepared: {key}")
     return donors["menu_labels"][key]
+
+def squished_native_label(donors: dict, style: str, text: str, role=None,
+                          *, entry: int, item: int, row: int = 0, room: float,
+                          scale: int = 1, label=None, metrics=None, x360: bool = True) -> tuple:
+    """Condense a native label to the width its X360 counterpart fills, or (x360=False or no
+    counterpart) only as far as it overflows `room`."""
+    if label is None:
+        label, metrics = native_menu_label(donors, style, text, role)
+    if not donors.get("squish"):
+        return label, metrics
+    original = (reference(f"{entry}.{item}", row) or {}).get("original", {})
+    geometry = None
+    if x360 and original.get("donor") == "x360" and original.get("ens"):
+        ens, member, texture = original["ens"]
+        source = rgba(donors[("wo2", ens)][member].textures[texture])
+        source = source.crop(original.get("crop"))
+        geometry = row_geometry(source, lambda r, g, b, a:
+                                a / 255 * max(0, (max(r, g, b) - 100) / 140))
+    if geometry is None:
+        box = label.getbbox()
+        natural = (metrics.get("fill") or metrics["ink"][::2])
+        width = natural[1] - natural[0]
+        target = width * min(1.0, room * scale / (box[2] - box[0]))
+        geometry = (0, target / scale, 0)
+    return squeezed_label(label, metrics, geometry, scale, True)
+
+
+def native_reference_entries(mapping: dict) -> set[int]:
+    keys = {(4079, item) for item in [*range(60, 78), 80]}
+    for spec in mapping["stage_names"]["strips"]:
+        keys |= {(spec["entry"], spec["item"] + k) for k in range(spec["count"])}
+    keys |= {(4069, item) for item in (23, 24, 25)}
+    from wozmod.fonts.menu_references import load_catalog
+    return {record["original"]["ens"][0] for entry, item in keys
+            for record in load_catalog().get(f"{entry}.{item}", {}).get("rows", {}).values()
+            if record.get("original", {}).get("donor") == "x360"
+            and record["original"].get("ens")}
 
 def draw_native_menu_label(image: Image.Image, label: Image.Image, metrics: dict,
                            left: float, baseline: int,
@@ -1000,7 +1043,8 @@ def native_menu_layout(edit: dict, donors: dict) -> dict | None:
         ability = key[1] != 80
         style = "rounded.ability" if ability else "rounded.base"
         role = native_menu_role(*key) if ability else None
-        label, metrics = native_menu_label(donors, style, text, role)
+        label, metrics = squished_native_label(donors, style, text, role, entry=key[0], item=key[1],
+                                               room=112 if ability else 140)
         source = source_image(edit, donors, None)
         geometry = row_geometry(source, lambda r, g, b, a: a / 255 * max(0, (max(r, g, b) - 100) / 140))
         if geometry is None:
@@ -1008,20 +1052,12 @@ def native_menu_layout(edit: dict, donors: dict) -> dict | None:
         left, baseline = geometry[0], geometry[2]
         window = [0, 0, 112 if ability else 140, 35 if ability else 31]
         x, y = round(left - metrics["ink"][0]), baseline - metrics["baseline"]
-    elif key in OTHER_TABS:
-        text, style, role = OTHER_TABS[key], "rounded.tab-other", None
-        label, metrics = native_menu_label(donors, style, text)
-        box = label.getbbox()
-        width, height = box[2] - box[0], box[3] - box[1]
-        window = [0, 0, 96, 35]
-        x, y = (max(96, width) - width) // 2 - box[0], (35 - height) // 2 - box[1]
-        left, baseline = x + metrics["ink"][0], y + metrics["baseline"]
     else:
         return None
     return {"style": style, "role": role, "text": text, "left": left, "baseline": baseline,
             "x": x, "y": y, "sampled_window": window,
             "alpha_bbox": [value + offset for value, offset in zip(label.getbbox(), (x, y, x, y))],
-            "metrics": metrics}
+            "metrics": metrics, "label": label}
 
 def native_menu_widths(mapping: dict, donors: dict) -> dict:
 
@@ -1101,9 +1137,11 @@ def native_menu_payload(target, edit: dict, donors: dict) -> bytes | None:
 
     key = edit.get("entry"), edit.get("item")
     if "stage_name" in edit:
-        label, metrics = native_menu_label(donors, "stage.stage", edit["stage_name"])
-        image = Image.new("RGBA", (target.width, target.height))
         width, height = (432, 42) if key[0] == 4108 else (440, 35)
+        # MOZ strips: a stage name condenses only where it overflows its own strip.
+        label, metrics = squished_native_label(donors, "stage.stage", edit["stage_name"],
+                                               entry=key[0], item=key[1], room=width - 2, x360=False)
+        image = Image.new("RGBA", (target.width, target.height))
         draw_native_menu_label(image, label, metrics, native_stage_left(label, metrics),
                                native_stage_baseline(label, metrics), (0, 0, width, height))
         return target.encode_rgba(image.tobytes())
@@ -1115,12 +1153,14 @@ def native_menu_payload(target, edit: dict, donors: dict) -> bytes | None:
             left = 53 if key[1] == 25 else 0
             top = row["row"] * 42
             image = restriped(image, (left, top, image.width, top + 42), image.width - 1)
-            label, metrics = native_menu_label(donors, "sound.sound", row["text"])
+            label, metrics = squished_native_label(donors, "sound.sound", row["text"],
+                                                   entry=key[0], item=key[1], row=row["row"],
+                                                   room=(614 if key[1] == 25 else 600) - row["at"][0])
             draw_native_menu_label(image, label, metrics, row["at"][0], row["at"][1])
         return target.encode_rgba(image.tobytes())
     layout = native_menu_layout(edit, donors)
     if layout:
-        label, metrics = native_menu_label(donors, layout["style"], layout["text"], layout["role"])
+        label, metrics = layout["label"], layout["metrics"]
         image = Image.new("RGBA", (target.width, target.height))
         draw_native_menu_label(image, label, metrics, layout["left"], layout["baseline"])
         return target.encode_rgba(image.tobytes())
@@ -1166,7 +1206,9 @@ def payload(target, edit: dict, donors: dict, package) -> bytes:
         image.alpha_composite(layer)
         name, baselines = BANNER_LINES[len(spec["lines"])]
         for row, (text, baseline) in enumerate(zip(spec["lines"], baselines, strict=True)):
-            line, metrics = native_menu_label(donors, name.replace("_", "."), text)
+            line, metrics = squished_native_label(donors, name.replace("_", "."), text,
+                                                  entry=edit["entry"], item=edit["item"], row=row,
+                                                  room=172 if len(spec["lines"]) == 1 else 173)
             top = metrics["baseline"]
             x0, y0, x1, _ = line.getbbox()
             x = banner_line_left(len(spec["lines"]), row, x1 - x0)
@@ -1193,8 +1235,9 @@ def payload(target, edit: dict, donors: dict, package) -> bytes:
             baselines = DREAM_NAME_BASELINES[len(spec["lines"])]
             drop = 0
             for row, (text, baseline) in enumerate(zip(spec["lines"], baselines, strict=True)):
-                line, metrics = native_menu_label(donors, name.replace("_", "."), text,
-                                                  officer_name_role(edit, row))
+                line, metrics = squished_native_label(donors, name.replace("_", "."), text,
+                                                      officer_name_role(edit, row),
+                                                      entry=edit["entry"], item=edit["item"], row=row, room=196)
                 top = metrics["baseline"]
                 x0, y0, x1, y1 = line.getbbox()
                 lines.append((line.crop((x0, y0, x1, y1)), baseline - top + y0))
@@ -1465,6 +1508,8 @@ DARK_PLATE = {**{(e, i): "plate" for e, items in {4069: range(27, 30), 4080: ran
                  4064: [22, 23, 24], 4094: [4, 16], 4098: [6, 7, 11, 15], 4081: [40, 41]}.items() for i in items}}
 DARK |= DARK_PLATE | {(4079, i): "attributes" for i in range(83, 97)}
 
+# Attribute labels condense only past this room: the effect plate and the weapon card cell before its value.
+ATTRIBUTE_ROOM = 96
 ATTRIBUTE_QUAD_MINIMUM = {(4079, 83 + offset): width for offset, width in enumerate(
     [76, 48, 52, 72, 56, 68, 92, 52, 76, 80, 64, 80, 72, 68])}
 MENU_RASTER = "wozmod.fonts.menu"
@@ -1584,7 +1629,7 @@ def solved_track(text: str, natural: dict, geometry, scale: int, mean: float) ->
     short = (mean - track) * gaps(text)  
     return None if short > max(CONDENSED * gaps(text), CONDENSED_MIN) else track
 
-def button_label(text: str, scale: int, out: Path, track: float = 0.0,
+def _render_button_label(text: str, scale: int, out: Path, track: float = 0.0,
                  style: str = "501.3") -> tuple[Image.Image, dict]:
 
     run = subprocess.run([FONT_PYTHON, "-c", TRACKED_RASTER, str(REPO / "src"), text, str(out),
@@ -1620,7 +1665,7 @@ print(json.dumps(dict(baseline=label.baseline, ink=list(label.ink), fill=fill,
                      counterpart=counterpart, hscale=hscale)))
 """
 
-def pause_button_label(text: str, scale: int, out: Path, target: float,
+def _render_pause_button_label(text: str, scale: int, out: Path, target: float,
                        counterpart: str | None) -> tuple[Image.Image, dict]:
 
     run = subprocess.run([FONT_PYTHON, "-c", PAUSE_BUTTON_RASTER,
@@ -1629,7 +1674,21 @@ def pause_button_label(text: str, scale: int, out: Path, target: float,
                          check=True, capture_output=True, text=True, env=font_environment())
     return Image.open(out).convert("RGBA"), json.loads(run.stdout)
 
-def squeezed_label(label: Image.Image, metrics: dict, geometry, scale: int,
+def header_label(text: str, scale: int, out: Path, raster: str = HEADER_RASTER, *options: str) -> tuple:
+    request = dict(kind="header", text=text, scale=scale, raster=raster, options=list(options))
+    return lettering.get(request, lambda: _render_header_label(text, scale, out, raster, *options))
+
+def button_label(text: str, scale: int, out: Path, track: float = 0.0,
+                 style: str = "501.3") -> tuple:
+    request = dict(kind="button", text=text, scale=scale, track=track, style=style)
+    return lettering.get(request, lambda: _render_button_label(text, scale, out, track, style))
+
+def pause_button_label(text: str, scale: int, out: Path, target: float,
+                       counterpart: str | None) -> tuple:
+    request = dict(kind="pause", text=text, scale=scale, target=target, counterpart=counterpart)
+    return lettering.get(request, lambda: _render_pause_button_label(text, scale, out, target, counterpart))
+
+def _squeezed_label(label: Image.Image, metrics: dict, geometry, scale: int,
                    squeeze: bool = False) -> tuple[Image.Image, dict]:
 
     if not squeeze or geometry is None:
@@ -1656,6 +1715,19 @@ def squeezed_label(label: Image.Image, metrics: dict, geometry, scale: int,
         changed["size"] = list(image.size)
     return image, changed
 
+def squeezed_label(label: Image.Image, metrics: dict, geometry, scale: int,
+                   squeeze: bool = False) -> tuple[Image.Image, dict]:
+    if not squeeze or geometry is None:
+        return label, metrics
+    left, right = metrics.get("fill") or metrics["ink"][::2]
+    width = (geometry[1] - geometry[0]) * scale
+    if right - left <= width or width <= 0:
+        return label, metrics
+    if "_lettering" not in metrics:
+        return _squeezed_label(label, metrics, geometry, scale, squeeze)
+    request = dict(kind="squish", base=metrics["_lettering"], width=width, fill=metrics.get("fill"))
+    return lettering.get(request, lambda: _squeezed_label(label, metrics, geometry, scale, True))
+
 def page_label_art(scale: int, width: int = 512, served: Image.Image | None = None,
                    squeeze: bool = False) -> Image.Image:
 
@@ -1663,10 +1735,7 @@ def page_label_art(scale: int, width: int = 512, served: Image.Image | None = No
     with tempfile.TemporaryDirectory() as tmp:
         for i, text in enumerate(PAGE_ROWS):
             out = Path(tmp) / f"{i}.png"
-            run = subprocess.run([FONT_PYTHON, "-m", LABEL_RASTER, text, str(out), "--scale", str(scale)],
-                                 check=True, capture_output=True, text=True, env=font_environment())
-            metrics = json.loads(run.stdout)
-            label = Image.open(out).convert("RGBA")
+            label, metrics = header_label(text, scale, out, LABEL_RASTER)
             geometry = row_geometry(served.crop((0, 35 * i, width, 35 * (i + 1))),
                                     lambda r, g, b, a: (250 - (r + g + b) / 3) / 180
                                     if a > 204 else 0) if squeeze and served is not None else None
@@ -1750,7 +1819,7 @@ def hires_texts(edit: dict, mapping: dict, donors: dict) -> list[str | None]:
                for row, text in enumerate(out)]
     return out
 
-def header_label(text: str, scale: int, out: Path, raster: str = HEADER_RASTER, *options: str) -> tuple[Image.Image, dict]:
+def _render_header_label(text: str, scale: int, out: Path, raster: str = HEADER_RASTER, *options: str) -> tuple[Image.Image, dict]:
 
     run = subprocess.run([FONT_PYTHON, "-m", raster, text, str(out), "--scale", str(scale), *options],
                          check=True, capture_output=True, text=True, env=font_environment())
@@ -1905,7 +1974,8 @@ def vector_art(edit: dict, served: Image.Image, texts: list, scale: int, window=
                                                   destination=(edit["entry"], edit["item"]))
                     label, metrics = help_labels[k] if k in help_labels else header_label(
                         text, scale, Path(tmp) / f"{k}.png", MENU_RASTER, *options)
-                label, metrics = squeezed_label(label, metrics, geometry, scale, squeeze)
+                fit = (geometry[0], geometry[0] + ATTRIBUTE_ROOM, geometry[2]) if style == "attributes" else geometry
+                label, metrics = squeezed_label(label, metrics, fit, scale, squeeze)
                 if "tint" in edit:
                     label = tinted(label, edit["tint"])
                 if look and (edit["entry"], edit["item"]) in {(4069, 14), (4069, 15)}:
@@ -1956,6 +2026,7 @@ def vector_art(edit: dict, served: Image.Image, texts: list, scale: int, window=
                 if text != expected:
                     raise ValueError(f"pause row pairing changed: {edit['entry']}.{edit['item']} row {k}: {text!r}")
                 label, metrics = pause_button_label(text, scale, Path(tmp) / f"pause-{k}.png", target, counterpart)
+                label, metrics = squeezed_label(label, metrics, (left, left + target, baseline), scale, squeeze)
                 width = target if counterpart is None else (metrics["fill"][1] - metrics["fill"][0]) / scale
                 placement = ((centre - width / 2, centre + width / 2, baseline)
                              if centre is not None else (left, left + width, baseline))
@@ -1982,9 +2053,10 @@ def vector_art(edit: dict, served: Image.Image, texts: list, scale: int, window=
             if (edit["entry"], edit["item"]) in {(4080, 44), (4080, 45)}:
 
                 x = max(x, 0)
-            if window and (x < window[0] * scale or x + label.width > window[1] * scale):
+            quad = piece.get("window") or window
+            if quad and (x < quad[0] * scale or x + label.width > quad[1] * scale):
                 print(f"{edit['entry']}.{edit['item']} row {k} {text}: {x}-{x + label.width} leaves the quad window "
-                      f"{window[0] * scale}-{window[1] * scale}", file=sys.stderr)
+                      f"{quad[0] * scale}-{quad[1] * scale}", file=sys.stderr)
             band = Image.new("RGBA", (art.width, (bottom - top) * scale))
             band.paste(label, (x, y))  
             art.paste(band, (0, top * scale))
@@ -2000,10 +2072,8 @@ def main_art(served: Image.Image, scale: int, style: str, squeeze: bool = False)
     with tempfile.TemporaryDirectory() as tmp:
         for k, ((top, bottom), text, (left, right, baseline)) in enumerate(zip(bands, MAIN_ROWS, geometry)):
             out = Path(tmp) / f"{k}.png"
-            run = subprocess.run([FONT_PYTHON, "-m", MAIN_RASTER, text, str(out), "--scale", str(scale),
-                                  "--style", style, "--room", str(MAIN_STREAK_END - left)],
-                                 check=True, capture_output=True, text=True, env=font_environment())
-            label, metrics = Image.open(out).convert("RGBA"), json.loads(run.stdout.splitlines()[-1])
+            label, metrics = header_label(text, scale, out, MAIN_RASTER,
+                                          "--style", style, "--room", str(MAIN_STREAK_END - left))
             label, metrics = squeezed_label(label, metrics, official_geometry[k], scale, squeeze)
             band = Image.new("RGBA", (art.width, MAIN_PITCH * scale))
             band.paste(label, row_offset((left, right, baseline), metrics, scale, "left"))
@@ -2153,7 +2223,7 @@ def plate_art(entry: int, item: int, g1t, edit: dict, text: str, scale: int,
     return g1t, overlay, width
 
 def native_menu_art(entry: int, item: int, served: Image.Image, mapping: dict,
-                    donors: dict, scale: int) -> Image.Image:
+                    donors: dict, scale: int, squeeze: bool = False) -> Image.Image:
 
     edit = next((e for e in mapping["textures"]
                  if (e["entry"], e.get("item")) == (entry, item)
@@ -2169,6 +2239,11 @@ def native_menu_art(entry: int, item: int, served: Image.Image, mapping: dict,
         options += ["--role", layout["role"]]
     with tempfile.TemporaryDirectory() as tmp:
         label, metrics = header_label(layout["text"], scale, Path(tmp) / "native.png", MENU_RASTER, *options)
+    if squeeze:
+        label, metrics = squished_native_label(dict(donors, squish=True), layout["style"], layout["text"],
+                                               layout["role"], entry=entry, item=item,
+                                               room=layout["sampled_window"][2], scale=scale,
+                                               label=label, metrics=metrics)
     art = Image.new("RGBA", (served.width * scale, served.height * scale))
     x = round(layout["left"] * scale - metrics["ink"][0])
     y = round(layout["baseline"] * scale - metrics["baseline"])
@@ -2186,7 +2261,7 @@ def native_menu_art(entry: int, item: int, served: Image.Image, mapping: dict,
     fits = not box or box[2] <= layout["sampled_window"][2] * scale
     natural_minimum = 0 if fits else 4 * math.ceil((box[2] / scale + 2) / 4)
     art.info["minimum"] = max(natural_minimum, ABILITY_QUAD_MINIMUM.get((entry, item), 0))
-    art.info["native_layout"] = dict(layout, hires_placement={
+    art.info["native_layout"] = dict({k: v for k, v in layout.items() if k != "label"}, hires_placement={
         "scale": scale, "x": x, "y": y, "vertical_shift": vertical_shift,
         "sampled_height": sampled_height, "alpha_bbox": list(box) if box else None,
     })
@@ -2225,7 +2300,7 @@ def hires_bin(entries: Path, source: Path | None, vector: tuple | None = None,
         elif vector:
             mapping, donors = vector
             if (entry, item) in HIRES_NATIVE_MENU:
-                art = native_menu_art(entry, item, served, mapping, donors, scale)
+                art = native_menu_art(entry, item, served, mapping, donors, scale, squeeze)
                 details = entries.parent.parent / "native-menu-layout"
                 details.mkdir(parents=True, exist_ok=True)
                 (details / f"{entry}.{item}.json").write_text(
@@ -2375,8 +2450,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--variant", action="append", default=[], metavar="NAME=VALUE",
                         help="review lettering: help=per-screen|condensed|wide|condensed-camp; "
                         "camp=x360|wo1 (repeat to combine; defaults are per-screen and x360)")
-    parser.add_argument("--squeeze", action="store_true",
-                        help="with --hires vector: condense overflowing vector ink to the official 1x fill")
+    parser.add_argument("--no-squish", action="store_true",
+                        help="developer oracle only: keep full-width vector lettering")
     parser.add_argument("--game", type=Path, default=os.environ.get("WOZMOD_GAME"))
     parser.add_argument("--wo1-iso", type=Path, default=os.environ.get("WOZMOD_WO1_ISO"))
     parser.add_argument("--wo2-iso", type=Path, default=os.environ.get("WOZMOD_X360_ISO"))
@@ -2393,8 +2468,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(str(error))
     if args.variant and args.hires != "vector":
         parser.error("--variant needs --hires vector")
-    if args.squeeze and args.hires != "vector":
-        parser.error("--squeeze needs --hires vector")
+    args.squeeze = not args.no_squish
     if (bool(args.entries) == bool(args.output_dir)) or (args.entries and not args.preview_dir):
         parser.error("give --output-dir, or --entries with --preview-dir (a partial build is never written)")
     if args.hires_only and not (args.hires and args.output_dir):
@@ -2443,17 +2517,24 @@ def main(argv: list[str] | None = None) -> int:
     wo1 = wo1_entries(args.wo1_donor.with_suffix(".lnk"), args.wo1_donor.with_suffix(".idx"), sorted(
         {e["donor"][0] for e in flat if "donor" in e} | {stages["font"][0], titles["donor"]}))
     donors = {k: donor_g1ts(v) for k, v in wo1.items()}
-    if args.latin_cells is None:
+    if lettering.ACTIVE is not None:
+        donors["latin"] = lettering.get(dict(kind="latin"), None)[0]
+    elif args.latin_cells is None:
         args.latin_cells = working / "latin-cells.png"
         args.latin_cells.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run([FONT_PYTHON, "-m", "wozmod.fonts.raster", str(args.latin_cells), "--px", "24", "--spacing", "legacy"],
                        check=True, env=font_environment(), stdout=subprocess.PIPE, text=True)
-    if not args.latin_cells.is_file():
-        parser.error(f"missing Latin cells: {args.latin_cells}")
-    donors["latin"] = Image.open(args.latin_cells).convert("L")
+    if lettering.ACTIVE is None:
+        if not args.latin_cells.is_file():
+            parser.error(f"missing Latin cells: {args.latin_cells}")
+        donors["latin"] = lettering.get(dict(kind="latin"),
+                                       lambda: (Image.open(args.latin_cells).convert("L"), {}))[0]
     donors |= {("wo2", k): wo2_g1ts(v) for k, v in wo1_entries(
         args.wo2_donor.with_suffix(".lnk"), args.wo2_donor.with_suffix(".idx"),
-        sorted({e["wo2"][0] for e in flat if "wo2" in e} | {3})).items()}
+        sorted({e["wo2"][0] for e in flat if "wo2" in e}
+               | {s["wo2"][0] for e in flat for s in e.get("draw", []) if "wo2" in s}
+               | {3} | native_reference_entries(mapping))).items()}
+    donors["squish"] = args.squeeze
     stock = args.game
     base_bin = stock / "LINKDATA1.BIN"
     index = parse_index((stock / "LINKDATA1.IDX").read_bytes(), base_bin.stat().st_size)
@@ -2468,10 +2549,13 @@ def main(argv: list[str] | None = None) -> int:
     donors["menu_sound_rows"] = {item: sound_menu_rows(mapping, item) for item in (23, 24, 25)}
     if args.preview_dir:
         args.preview_dir.mkdir(parents=True, exist_ok=True)
-    native_width_path = (args.output_dir / "review/native-menu-widths.json" if args.output_dir
-                         else args.preview_dir / "native-menu-widths.json")
-    native_width_path.parent.mkdir(parents=True, exist_ok=True)
-    native_width_path.write_text(json.dumps(native_menu_widths(mapping, donors), ensure_ascii=False, indent=2) + "\n")
+    if lettering.ACTIVE is None:
+        native_width_path = (args.output_dir / "review/native-menu-widths.json" if args.output_dir
+                             else args.preview_dir / "native-menu-widths.json")
+        native_width_path.parent.mkdir(parents=True, exist_ok=True)
+        with lettering.untracked():
+            report = native_menu_widths(mapping, donors)
+        native_width_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     ld2_bin = stock / "LINKDATA2.BIN"
     SHARED.update(base_bin=base_bin, index=index, donors=donors, edits=edits,
                   ld2_bin=ld2_bin, ld2_index=parse_index((stock / "LINKDATA2.IDX").read_bytes(), ld2_bin.stat().st_size),
@@ -2523,8 +2607,9 @@ def write_hires(args) -> None:
         donors = {k: donor_g1ts(v) for k, v in wo1.items()}
         donors |= {("wo2", k): x360_members(v) for k, v in wo1_entries(
             args.wo2_donor.with_suffix(".lnk"), args.wo2_donor.with_suffix(".idx"),
-            sorted(X360_PLATE_ENTRIES)).items()}
+            sorted(set(X360_PLATE_ENTRIES) | native_reference_entries(mapping))).items()}
         donors["menu_labels"] = prepare_menu_labels(mapping)
+        donors["squish"] = args.squeeze
         vector = mapping, donors
     (args.output_dir / "wozmod/hires.bin").write_bytes(hires_bin(
         args.output_dir / "wozmod/entries", source, vector, args.squeeze))

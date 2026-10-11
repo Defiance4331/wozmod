@@ -16,6 +16,7 @@
 
 
 #include <windows.h>
+#include "text_fit.h"
 
 typedef unsigned int u32;
 typedef unsigned short u16;
@@ -46,12 +47,8 @@ static const u32 *enrt_table;
 #define ENRT_CELL 24
 #endif
 
-#define BANNER_KIND (*(volatile u8 *)0xC2AF70)
-#define BANNER_OFFICER ((volatile unsigned short *)0xC2AF6C)
-#define BANNER_ARMY (*(volatile u8 *)0xC2AF73)
-#define ARMY_LABEL(i) (*(const char *const *)(0x6FB7C0 + 4 * (i)))
-#define PROMPT_TEXT ((const char *)0xC2F1B8)
 #define PROMPT_DRAW 0x55DFD8
+#define PROMPT_TEXT ((const char *)0xC2F1B8)
 #define MESSAGE_CELL ((volatile short *)0xC2AF36)
 #define MESSAGE_X (*(volatile short *)0xC2AF3A)
 #define MESSAGE_WIDTH (*(volatile short *)0xC2AF40)
@@ -60,12 +57,26 @@ static const u32 *enrt_table;
 #define NAME_FORMAT_TITLED 0x7042C8
 #define NAME_FORMAT_PLAIN 0x7042E0
 #define HISTORY_DRAW 0x539F9F
-#define HISTORY_WIDTH 1000
+#define HISTORY_WIDTH 756
+#define WINDOWS 0xC2CF68
+#define WINDOW_SIZE 0x128
+#define WINDOW_MEASURE 0x54E807
+#define WINDOW_PITCH 24
 
 #define NARRATION_DRAW 0x561111
 #define STILL_DRAW 0x59C7BD
 #define STILL_PLATE 0x59C4B3
+/* Z-story still name plate: the stock 406x70 plates (4102.0/1); their dark box is 183 wide over the name
+   rows, centred where the stock centres the name by its Japanese glyph count (28 px each). */
+#define STILL_Z_PLATE 0x59A3E2
+#define STILL_Z_LANE 180
+#define NAME_GLYPHS ((u32 (*)(u32))0x54A0A0)
 #define BRIEFING_DRAW 0x548F52
+/* Z-story chapter narration and still event: twins of the screens above, with their glyph counts. */
+#define NARRATION_Z_DRAW 0x55F31C
+#define STILL_Z_DRAW 0x59A785
+#define NARRATION_Z_COUNT 0x55E724
+#define STILL_Z_COUNTS 0x5990EE, 0x5995D9
 
 #define NARRATION_CODE 0x560870
 #define NARRATION_CODE_END 0x561900
@@ -73,11 +84,25 @@ static const u32 *enrt_table;
 #define STILL_CODE_END 0x59D000
 #define BRIEFING_COUNT 0x548C7B
 #define SCENARIO_TEXT_DRAW 0x588C17
+/* Scenario text in the stock column at one smaller cell in every box, 5 lines, condensed only past them. */
 #define SCENARIO_TEXT_WIDTH 290
-#define SCENARIO_TEXT_PITCH 28
+#define SCENARIO_TEXT_CELL 20
+#define SCENARIO_TEXT_PITCH 23
+#define SCENARIO_TEXT_LINES 5
+/* Dream summary at the stock cell and pitch in its column, at most 7 lines (clear of the help bar). */
+#define DREAM_SUMMARY_PITCH 28
+#define DREAM_SUMMARY_LINES 7
 #define DREAM_SUMMARY_DRAW 0x547673
 #define DREAM_SUMMARY_WIDTH 240
 #define DREAM_SUMMARY_Y 408
+/* Scenario army line (X360 0x822CFA48): names at cell 15 there (ours 18, an edit) from box+0x23, 34 px
+   between names (gap 3 and the icon advance 31), RECORD rows from box+0x222. Names wider than the room
+   are condensed together; the icons and gaps keep their width. */
+#define ARMY_NAME_DRAW 0x588AC8
+#define ARMY_NAME_ADVANCE 0x588AD9
+#define ARMY_NAMES 0x6FB7C0
+#define ARMY_GAP 34
+#define ARMY_ROOM (0x380 - 2 * 0x24)
 
 #define WEAPON_READING_DRAW 0x55BCFC
 #define WEAPON_INFO_READING_DRAW 0x59536D
@@ -93,22 +118,31 @@ static const u32 *enrt_table;
 #define MODE_1080P 9
 
 #define RESOLUTION_RAISED (*(volatile u8 *)0x801532)
-#define SKILL_NAME(i) (*(const char *const *)(0x6FD310 + 4 * (i)))
-#define SKILL_TAG ((unsigned long long (*)(u32))0x58E180)
 
 
+#define BANNER_TEXT_DRAW 0x55083E
+/* Pre-battle army list title: outline passes and face, centred on its plate. */
+#define ARMY_TITLE_OUTLINE 0x536742
+#define ARMY_TITLE 0x536785
+#define BANNER_NAME_DRAW 0x550874
+#define BANNER_TEXT_CELL 22
 #define CAPTION_CUE 0x56A23F
 #define CAPTION_WIDTH 1200
-#define TAG_WIDTH 176
 
 
-#define FUSION_PAGE (*(volatile const u8 *)0x1413FF0)
-#define ROW_TAG_WIDTH 121
 
 #define PAD_PROMPTS (*(volatile u8 *)0x1413FEC)
 
 
 static u32 inner;
+/* Window wrap in 24-cell pixels and drawn width (the stock box widths); the window is sized to the drawn width. */
+static const u32 windows[2][2] = {{720, 720}, {1224, 1224}};
+static const int squish = 1;
+static struct text_fit active_fit = {1.0, 0.0};
+static double fit_anchor;
+static u32 fit_clean;
+static u32 caption_run_width;
+static u32 banner_width;
 
 static u32 fnv(const u8 *s)
 {
@@ -148,8 +182,15 @@ const char *enrt_translate(const char *s)
         const u32 *slot = &enrt_table[2 + 3 * (i & mask)];
         if (!slot[1])
             return s;
-        if (slot[0] == h && same(base + slot[1], (const u8 *)s))
-            return (const char *)(base + slot[2]);
+        if (slot[0] == h && same(base + slot[1], (const u8 *)s)) {
+            /* Donor text can carry console icon codes that the stock draw crashes on. */
+            static char safe[4][512];
+            static u32 next;
+            const char *en = (const char *)(base + slot[2]);
+            const char *kept = text_drop_bad_icons(en, safe[next & 3], sizeof safe[0]);
+            next += kept != en;
+            return kept;
+        }
     }
 }
 
@@ -356,6 +397,8 @@ static void test_put(struct test_text *t, u32 hook, u32 caller, u32 x, u32 y, u3
 
 static void test_text(u32 hook, const struct frame *f, const char *s, u32 x, u32 y, u32 width)
 {
+    if (inner && active_fit.factor != 1.0) /* a squished draw: report the extent it is drawn at */
+        x += (u32)(int)(active_fit.shift + 0.5), width = (u32)(width * active_fit.factor + 0.5);
     if (current->texts < TEST_TEXTS)
         test_put(&current->text[current->texts], hook, f->ret, x, y, width, s);
     current->texts++;
@@ -559,6 +602,51 @@ static u32 width24(const char *s)
     return width;
 }
 
+typedef void (*text_draw)(const char *, u32, u32, u32, u32);
+
+static void draw_fit_at(text_draw renderer, const char *s, u32 x, u32 y, u32 layer, u32 count, u32 width, u32 align, u32 run_width)
+{
+    struct text_fit saved = active_fit;
+    double anchor = fit_anchor;
+    u32 own = measure(s), clean = fit_clean;
+    active_fit = text_fit(run_width ? run_width : own, own, width, align, squish && text_fit_latin(s));
+    fit_anchor = (double)(int)x * SCREEN_W * 16 / 1280 + 32768;
+    fit_clean = 0;
+    inner++;
+    renderer(s, x, y, layer, count);
+    inner--;
+    active_fit = saved, fit_anchor = anchor, fit_clean = clean;
+}
+
+static void draw_fit(const char *s, u32 x, u32 y, u32 layer, u32 count, u32 width, u32 align)
+{
+    draw_fit_at(GAME_DRAW, s, x, y, layer, count, width, align, 0);
+}
+
+/* Return addresses of the glyph finalizer calls (stock draw and each screen's glyph callback) and the
+   register holding the glyph there: 0 esi, 1 edi. A call missing here draws its text unsquished. */
+static const u32 glyph_sites[][2] = {
+    {0x54A704, 0}, {0x54A8FF, 0}, {0x54AB57, 1}, {0x54ADC8, 0}, {0x54AF9D, 0}, {0x54B1A2, 0},
+    {0x54B34F, 0}, {0x54B5B8, 0}, {0x54B77E, 0}, {0x561054, 0}, {0x59C6E2, 0}, {0x548ECF, 0},
+    {0x54F2E6, 0}, {0x549F3E, 0}, {0x550DD9, 1}, {0x55F0BE, 1}, {0x55F293, 1}, {0x59A105, 1},
+    {0x59A6C8, 0},
+};
+
+static void glyph_fit(u32 id, const struct frame *f)
+{
+    u32 i, *quad = (u32 *)f->arg[0];
+    if (active_fit.factor == 1.0)
+        return;
+    for (i = 0; i < sizeof glyph_sites / sizeof *glyph_sites; i++)
+        if (f->ret == glyph_sites[i][0]) {
+            const u32 *glyph = (const u32 *)(glyph_sites[i][1] ? f->edi : f->esi);
+            double pixels = (double)SCREEN_W * 16 / 1280;
+            double pen = (double)(int)glyph[3] * pixels + 32768;
+            text_fit_quad(quad, id == 69, fit_anchor, active_fit, pixels, pen, &fit_clean);
+            break;
+        }
+}
+
 static void draw(const char *s, u32 x, u32 y, u32 layer)
 {
     inner++;
@@ -648,20 +736,40 @@ static char wrapped[512], window_text[256], message_text[256], printed_name[96],
 
 
 static const u32 boxed[][2] = {
-    {0x49DACE, 1100}, {0x49DB4C, 1100},
-    {0x53C225, 580}, {0x53C2A5, 580},
+    {0x49DACE, 1152}, {0x49DB4C, 1152},
+    {0x53C225, 578}, {0x53C2A5, 578},
     {0x5A686C, 705}, {0x580876, 705},
     {0x5530FC, 416},
-    {0x526BE8, 630},
-    {0x595679, 516}, {0x5956FA, 516},
+    {0x526BE8, 641},
+    {0x595679, 413}, {0x5956FA, 413},
     {0x598125, 604}, {0x59818B, 604},
     {0x593E56, 480}, {0x593EAE, 480},
 };
 
+/* X360 wrap width in 24-cell pixels where it differs from the box; the draw squishes into the box. */
+static const u32 reflow[][2] = {
+    {0x595F93, 589}, {0x5975C6, 589}, {0x593B98, 762},
+    {0x595679, 516}, {0x5956FA, 516},
+    {0x53C225, 680}, {0x53C2A5, 680},
+    {0x526BE8, 733},
+    {0x539F9F, 840},
+};
+
+static const char *reflow_wrap(u32 caller, const char *s, u32 box, char *out, u32 size)
+{
+    u32 i;
+    for (i = 0; i < sizeof reflow / sizeof *reflow; i++)
+        if (caller == reflow[i][0])
+            box = reflow[i][1];
+    return wrap(s, box, out, size);
+}
 
 
 
 
+
+
+/* MOZ message box: widened in 24 px steps (centred) until the wrapped text fits its height, up to 1120. */
 static void fit_message(const char *s, u32 extra)
 {
     static short stock_w, stock_x, grown_w, grown_x;
@@ -683,7 +791,6 @@ static void fit_message(const char *s, u32 extra)
     FONT_CELL[0] = w, FONT_CELL[1] = h;
 }
 
-
 static const char *flat(const char *s)
 {
     char *p;
@@ -698,21 +805,59 @@ static const char *flat(const char *s)
 
 
 
-static const u32 pages[][4] = {
-    {NARRATION_DRAW, 960, 160, 535},
-    {STILL_DRAW, 960, 160, 544},
-    {BRIEFING_DRAW, 1000, 140, 521},
+/* Page cell (w, h in 24-cell units), pitch, origin, wrap at that cell and box. Cell 0 keeps the stock
+   cell and pitch and centres the lines on y (the MOZ narration). */
+static const u32 pages[][8] = {
+    {NARRATION_DRAW, 0, 0, 0, 160, 535, 960, 960},
+    {STILL_DRAW, 25, 21, 28, 150, 531, 972, 980},
+    {NARRATION_Z_DRAW, 24, 25, 35, 200, 507, 742, 757},
+    {STILL_Z_DRAW, 25, 21, 28, 150, 531, 972, 980},
+    {BRIEFING_DRAW, 24, 24, 34, 248, 486, 784, 784},
 };
+/* Pages that wrap wider, up to this many lines, and condense back into their box. */
+static const u32 page_lines[][2] = {{BRIEFING_DRAW, 4}};
 
-static void page(struct frame *f, const u32 *site)
+/* Wrap at width, widened in 4 px steps (up to twice the width) until the text takes at most `lines`
+   lines; the draw then condenses it back into width. */
+static const char *wrap_lines(const char *s, u32 width, u32 lines)
 {
-    const char *p = wrap(flat((const char *)f->arg[0]), site[1], line_text, sizeof line_text);
-    u32 lines = 1;
-    f->arg[0] = (u32)p;
-    for (; *p; p++)
-        lines += *p == '\n';
-    f->arg[1] = site[2];
-    f->arg[2] = site[3] - (FONT_CELL[1] + (lines - 1) * FONT_CELL[2]) / 2;
+    const char *w = s, *p;
+    u32 at, n;
+    for (at = width; at < 2 * width; at += 4) {
+        w = wrap(s, at, line_text, sizeof line_text);
+        for (n = 1, p = w; p && *p; p++)
+            n += *p == '\n';
+        if (n <= lines)
+            break;
+    }
+    return w;
+}
+
+static u32 page(struct frame *f, const u32 *site)
+{
+    u8 w = FONT_CELL[0], h = FONT_CELL[1], pitch = FONT_CELL[2];
+    const char *s, *p;
+    u32 i, lines = 0, y = site[5];
+    if (!f->arg[0])
+        return 0;
+    if (site[1])
+        FONT_CELL[0] = (u8)site[1], FONT_CELL[1] = (u8)site[2], FONT_CELL[2] = (u8)site[3];
+    for (i = 0; i < sizeof page_lines / sizeof *page_lines; i++)
+        if (site[0] == page_lines[i][0])
+            lines = page_lines[i][1];
+    s = flat((const char *)f->arg[0]);
+    s = lines ? wrap_lines(s, site[6], lines) : wrap(s, site[6], line_text, sizeof line_text);
+    if (!site[1]) {
+        for (lines = 1, p = s; *p; p++)
+            lines += *p == '\n';
+        y -= (FONT_CELL[1] + (lines - 1) * FONT_CELL[2]) / 2;
+    }
+#ifdef ENRT_TEST
+    test_text(1, f, s, site[4], y, measure(s));
+#endif
+    draw_fit(s, site[4], y, f->arg[3], f->arg[4], site[7], 0);
+    FONT_CELL[0] = w, FONT_CELL[1] = h, FONT_CELL[2] = pitch;
+    return 1;
 }
 
 
@@ -745,22 +890,105 @@ static u32 description(struct frame *f, u32 width, u8 pitch)
 {
     u8 stock = FONT_CELL[2];
     FONT_CELL[2] = pitch;
-    inner++;
-    GAME_DRAW(wrap(flat((const char *)f->arg[0]), width, line_text, sizeof line_text),
-              f->arg[1], f->arg[2], f->arg[3], f->arg[4]);
-    inner--;
+    draw_fit(reflow_wrap(f->ret, flat((const char *)f->arg[0]), width, line_text, sizeof line_text),
+             f->arg[1], f->arg[2], f->arg[3], f->arg[4], width, 0);
     FONT_CELL[2] = stock;
     return 1;
 }
 
 
 
+/* A column of at most `lines` lines at cell (0: stock) and pitch, condensed into width past them. */
+static u32 fit_lines(struct frame *f, u32 width, u32 lines, u8 cell, u8 pitch)
+{
+    u8 cell_w = FONT_CELL[0], cell_h = FONT_CELL[1], stock = FONT_CELL[2];
+    if (cell)
+        FONT_CELL[0] = FONT_CELL[1] = cell;
+    FONT_CELL[2] = pitch;
+    draw_fit(wrap_lines(flat((const char *)f->arg[0]), width, lines), f->arg[1], f->arg[2], f->arg[3], f->arg[4], width, 0);
+    FONT_CELL[0] = cell_w, FONT_CELL[1] = cell_h, FONT_CELL[2] = stock;
+    return 1;
+}
+
 #define DESCRIBED_PITCH 24
 static const u32 described[][2] = {
-    {0x595F93, 589},
-    {0x5975C6, 589},
-    {0x593B98, 762},
+    {0x595F93, 530},
+    {0x5975C6, 490},
+    {0x593B98, 686},
 };
+
+static const u32 single_line[][2] = {
+    {0x595BF9, 287}, {0x556ED0, 289}, {0x55B699, 293},
+    {0x53693D, 269}, {0x535EE7, 305}, {0x594F77, 229},
+    {0x543382, 175}, {0x5950EC, 303}, {0x52B6FD, 181},
+    {0x5983CB, 276}, {0x52E78F, 196}, {0x533469, 170},
+    {0x538C65, 835}, {0x536742, 252}, {0x536785, 252},
+    {0x5A6805, 705}, {0x580811, 705},
+};
+
+static u32 single_width(u32 caller)
+{
+    u32 i;
+    for (i = 0; i < sizeof single_line / sizeof *single_line; i++)
+        if (caller == single_line[i][0])
+            return single_line[i][1];
+    return 0;
+}
+
+static double army_fit = 1.0;
+
+/* The factor for the whole army line, from the caller's loop frame: count, army ids [esp+0x1C..0x28]
+   and stage [esp+0xE8]. The middle name (side 2) is skipped as the stock loop skips it. */
+static void army_line(const struct frame *f)
+{
+    const u32 *loop = f->arg + 5;
+    u32 count = loop[7], stage = loop[58], i, names = 0, fixed = 0, shown = 0;
+    u32 flag = *(const u32 *)(*(const u32 *)0xC54AF0 + 0xF4);
+    unsigned long long mask = flag ? 0x15971a0cull : 0x04c3b52f2b964eb4ull;
+    u8 shift = (u8)(flag ? stage : stage - 0x48);
+    for (i = 0; i < 3; i++) {
+        u32 side = i == 2 ? 1 : i ? 2 : 0;
+        const char *s;
+        if (side == 2 && (count == 2 || !loop[10] || shift >= 64 || !(mask >> shift & 1)))
+            continue;
+        s = enrt_translate(*(const char *const *)(ARMY_NAMES + 4 * loop[8 + side]));
+        *(text_fit_latin(s) ? &names : &fixed) += measure(s);
+        shown++;
+    }
+    army_fit = text_fit_names(names, fixed + (shown ? shown - 1 : 0) * ARMY_GAP, ARMY_ROOM);
+}
+
+static u32 army_width(const char *s)
+{
+    u32 w = measure(s);
+    return text_fit_latin(s) ? (u32)(w * army_fit) : w;
+}
+
+/* X360 rows: the attribute level follows the drawn name; costs and skill counts end at a right edge. */
+static int name_end;
+
+static void row_columns(struct frame *f)
+{
+    const char *s = (const char *)f->arg[0];
+    u32 w, lane;
+    if (!s)
+        return;
+    switch (f->ret) {
+    case 0x52E78F: case 0x52E8BF:
+        w = measure(s), lane = single_width(f->ret);
+        name_end = (int)f->arg[1] + (int)(lane && w > lane ? lane : w);
+        break;
+    case 0x52E7C3: case 0x52E8E9:
+        f->arg[1] = (u32)(name_end + 0x43 - 0x39);
+        break;
+    case 0x52E7EE: case 0x52E910:
+        f->arg[1] += 0x154 - 0xE0 - measure(s);
+        break;
+    case 0x533497:
+        f->arg[1] += 0xF8 - 0x65 - measure(s);
+        break;
+    }
+}
 
 
 
@@ -790,7 +1018,7 @@ static void box_drawn(u32 id, struct frame *f)
 
 
 
-static void fit_box(struct frame *f)
+static u32 fit_box(struct frame *f)
 {
     const char *s = (const char *)f->arg[0];
     int x = (int)f->arg[1], y = (int)f->arg[2], inset, width, lines = 1, foot;
@@ -800,11 +1028,11 @@ static void fit_box(struct frame *f)
         if (c->x <= x && x < c->x + c->w && c->y <= y && y < c->y + c->h && (!b || c->w * c->h < b->w * b->h))
             b = c;
     if (!b)
-        return;
+        return 0;
     inset = x - b->x < 8 ? 8 : x - b->x > 16 ? 16 : x - b->x;
     width = b->x + b->w - inset - x;
     if (width < 96)
-        return;
+        return 0;
     if ((int)measure(s) > width)
         f->arg[0] = (u32)(s = wrap(s, (u32)width, box_text, sizeof box_text));
     for (; *s; s++)
@@ -812,6 +1040,7 @@ static void fit_box(struct frame *f)
     foot = y + FONT_CELL[1] + (lines - 1) * FONT_CELL[2] - (b->y + b->h);
     if (foot > 0 && foot + inset > b->grow)
         b->grow = foot + inset;
+    return (u32)width;
 }
 
 
@@ -1290,6 +1519,9 @@ static void bind_camera(u32 player)
 #define PACKAGE_ITEM ((const void *(*)(const void *, u32))0x5AD170)
 #define TEXTURE_HANDLE ((unsigned long long (*)(const void *, u32, u32))0x5E02C0)
 #define START_WIDTH 0x549CC4
+#define STICK_WIDTH 0x549E68        /* F0 55 quad width (texture 0xB3) */
+#define WIDE_LAST_DRAW 0x54BAE1     /* last double-advance icon code: draw, then measure */
+#define WIDE_LAST_MEASURE 0x54C041
 #define KEYS_HELD ((const volatile u8 *)0x140C4E0)
 static const u8 prompt_slot[19] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 44, 178, 179};
 static unsigned long long prompt_handle[2][19];
@@ -1576,7 +1808,7 @@ static int rebinding;
 
 static void prompts_show(int xbox)
 {
-    static const u8 width[2] = {30, 60};
+    static const u8 width[2] = {30, 60}, wide_last[2] = {0x14, 0x15};
     u32 i;
     if (!prompts_ready || xbox == prompt_set)
         return;
@@ -1585,6 +1817,9 @@ static void prompts_show(int xbox)
     for (i = 0; i < sizeof prompt_slot; i++)
         PROMPT_TABLE[prompt_slot[i]] = prompt_handle[xbox][i];
     write_at(START_WIDTH, &width[xbox], 1);
+    write_at(STICK_WIDTH, &width[xbox], 1);
+    write_at(WIDE_LAST_DRAW, &wide_last[xbox], 1);
+    write_at(WIDE_LAST_MEASURE, &wide_last[xbox], 1);
 }
 
 
@@ -2390,7 +2625,22 @@ static u32 english_hook(u32 id, struct frame *f)
     switch (id) {
     case 1:
     case 2: {
-        u32 i, before;
+        u32 i, before, width = single_width(f->ret), align = f->ret == ARMY_TITLE_OUTLINE || f->ret == ARMY_TITLE;
+        if (f->ret == 0x54E76F)
+            width = MESSAGE_WIDTH > *(volatile short *)0xC2AF44 ?
+                MESSAGE_WIDTH - *(volatile short *)0xC2AF44 : 0;
+        else if (f->ret == 0x55194F)
+            width = NOTICE_BOX_WIDTH > *(volatile short *)0xC2B08C ?
+                NOTICE_BOX_WIDTH - *(volatile short *)0xC2B08C : 0;
+        else if (f->ret == 0x54F8CF)
+            width = f->arg[4] == 0xC2D090 ? windows[0][1] : f->arg[4] == 0xC2D1B8 ? windows[1][1] : 0;
+        else if (f->ret == BANNER_TEXT_DRAW)
+            width = banner_width;
+        else if (f->ret == PROMPT_DRAW) {
+            u32 total = *(volatile u32 *)0xC2F214;
+            width = total > 0x83 ? total - 0x83 : 0;
+            align = 2;
+        }
 #if ENRT_CELL != 24
 
 
@@ -2402,6 +2652,15 @@ static u32 english_hook(u32 id, struct frame *f)
         if (f->ret == WEAPON_READING_DRAW || f->ret == WEAPON_INFO_READING_DRAW)
             return 1;
         f->arg[0] = before = text(f->arg[0], id, f);
+        if (id == 1)
+            row_columns(f);
+        if (id == 1 && f->ret == ARMY_NAME_DRAW && f->arg[0]) {
+            army_line(f);
+            width = army_width((const char *)f->arg[0]);
+        } else if (id == 2 && f->ret == ARMY_NAME_ADVANCE && f->arg[0]) {
+            f->eax = army_width((const char *)f->arg[0]);
+            return 1;
+        }
         for (i = 0; i < sizeof key_first / sizeof *key_first; i++)
             if (f->ret == key_first[i][0]) {
                 inner++;
@@ -2411,29 +2670,59 @@ static u32 english_hook(u32 id, struct frame *f)
                 return 1;
             } else if (f->ret == key_first[i][1])
                 f->arg[1] += KEY_TEXT;
+        if (id == 2 && f->ret == WINDOW_MEASURE && f->arg[1]) {
+            u32 slot = (f->esi - WINDOWS) / WINDOW_SIZE;
+            u8 pitch = FONT_CELL[2];
+            if (slot == 1 || slot == 2)
+                FONT_CELL[2] = WINDOW_PITCH;
+            inner++;
+            GAME_MEASURE((const char *)f->arg[0], (u32 *)f->arg[1], (u32 *)f->arg[2]);
+            inner--;
+            FONT_CELL[2] = pitch;
+            if ((slot == 1 || slot == 2) && *(u32 *)f->arg[1] > windows[slot - 1][1])
+                *(u32 *)f->arg[1] = windows[slot - 1][1];
+            f->eax = *(u32 *)f->arg[1];
+            return 1;
+        }
         if (f->ret == SCENARIO_TEXT_DRAW)
-            return description(f, SCENARIO_TEXT_WIDTH, SCENARIO_TEXT_PITCH);
+            return fit_lines(f, SCENARIO_TEXT_WIDTH, SCENARIO_TEXT_LINES, SCENARIO_TEXT_CELL, SCENARIO_TEXT_PITCH);
         if (f->ret == DREAM_SUMMARY_DRAW) {
             f->arg[2] = DREAM_SUMMARY_Y;
-            return description(f, DREAM_SUMMARY_WIDTH, SCENARIO_TEXT_PITCH);
+            return fit_lines(f, DREAM_SUMMARY_WIDTH, DREAM_SUMMARY_LINES, 0, DREAM_SUMMARY_PITCH);
         }
         for (i = 0; i < sizeof described / sizeof *described; i++)
             if (f->ret == described[i][0])
                 return description(f, described[i][1], DESCRIBED_PITCH);
         for (i = 0; i < sizeof boxed / sizeof *boxed; i++)
-            if (f->ret == boxed[i][0])
-                f->arg[0] = (u32)wrap((const char *)f->arg[0], boxed[i][1], line_text, sizeof line_text);
+            if (f->ret == boxed[i][0]) {
+                width = boxed[i][1];
+                f->arg[0] = (u32)reflow_wrap(f->ret, (const char *)f->arg[0], boxed[i][1], line_text, sizeof line_text);
+            }
         for (i = 0; i < sizeof pages / sizeof *pages; i++)
             if (f->ret == pages[i][0])
-                page(f, pages[i]);
-        if (f->ret == HISTORY_DRAW)
-            f->arg[0] = (u32)wrap(history((const char *)f->arg[0]), HISTORY_WIDTH, line_text, sizeof line_text);
-        if (id == 1 && !inner && f->arg[0] == before && f->arg[0] && f->ret != PROMPT_DRAW)
-            fit_box(f);
+                return page(f, pages[i]);
+        if (f->ret == HISTORY_DRAW) {
+            width = HISTORY_WIDTH;
+            f->arg[0] = (u32)reflow_wrap(f->ret, history((const char *)f->arg[0]), HISTORY_WIDTH, line_text, sizeof line_text);
+        }
+        if (id == 1 && !inner && !width && f->arg[0] == before && f->arg[0] && f->ret != PROMPT_DRAW)
+            width = fit_box(f);
 #ifdef ENRT_TEST
         if (id == 1 && f->arg[0])
             test_text(id, f, (const char *)f->arg[0], f->arg[1], f->arg[2], measure((const char *)f->arg[0]));
 #endif
+        if (id == 1 && !inner && f->ret == 0x54F8CF && width && f->arg[0]) {
+            u8 pitch = FONT_CELL[2];
+            FONT_CELL[2] = WINDOW_PITCH;
+            draw_fit((const char *)f->arg[0], f->arg[1], f->arg[2], f->arg[3], f->arg[4], width, 0);
+            FONT_CELL[2] = pitch;
+            return 1;
+        }
+        if (id == 1 && !inner && width && f->arg[0] && squish && text_fit_latin((const char *)f->arg[0])
+            && measure((const char *)f->arg[0]) > width) {
+            draw_fit((const char *)f->arg[0], f->arg[1], f->arg[2], f->arg[3], f->arg[4], width, align);
+            return 1;
+        }
         break;
     }
     case 44: {
@@ -2455,8 +2744,10 @@ static u32 english_hook(u32 id, struct frame *f)
                 }
             else
                 f->ecx = s;
+            caption_run_width = measure((const char *)f->ecx);
             FONT_CELL[0] = w, FONT_CELL[1] = h;
-        }
+        } else
+            caption_run_width = 0;
         break;
     }
     case 4:
@@ -2465,6 +2756,12 @@ static u32 english_hook(u32 id, struct frame *f)
         if (f->arg[0])
             test_text(id, f, (const char *)f->arg[0], f->arg[1], f->arg[2], 0);
 #endif
+        if (!inner && f->arg[0] && squish && text_fit_latin((const char *)f->arg[0])
+            && (caption_run_width ? caption_run_width : measure((const char *)f->arg[0])) > CAPTION_WIDTH) {
+            draw_fit_at((text_draw)0x54BBB0, (const char *)f->arg[0], f->arg[1], f->arg[2],
+                        f->arg[3], f->arg[4], CAPTION_WIDTH, 1, caption_run_width);
+            return 1;
+        }
         break;
     case 7:
         f->arg[0] = text(f->arg[0], id, f);
@@ -2498,7 +2795,7 @@ static u32 english_hook(u32 id, struct frame *f)
         f->arg[1] = text(f->arg[1], id, f);
         if (f->arg[1] && !f->arg[2] && (f->arg[0] == 1 || f->arg[0] == 2)) {
             FONT_CELL[0] = FONT_CELL[1] = 24;
-            f->arg[1] = (u32)wrap((const char *)f->arg[1], f->arg[0] == 1 ? 720 : 1224,
+            f->arg[1] = (u32)wrap((const char *)f->arg[1], windows[f->arg[0] - 1][0],
                                   window_text, sizeof window_text);
         }
 #ifdef ENRT_TEST
@@ -2557,15 +2854,31 @@ static u32 english_hook(u32 id, struct frame *f)
     case 15:
     case 16:
         f->arg[0] = (u32)wrap((const char *)text(f->arg[0], id, f),
-                              id == 15 ? MESSAGE_WIDTH : NOTICE_BOX_WIDTH, message_text, sizeof message_text);
+                              id == 16 ? NOTICE_BOX_WIDTH : MESSAGE_WIDTH,
+                              message_text, sizeof message_text);
         break;
     case 17: {
         char name[96];
         int x = (int)f->arg[2], cells = (int)name_cells(f->arg[0], f->arg[1]);
         compose(name, f->arg[0], f->arg[1]);
-        if (f->ret == STILL_PLATE)
-            x = x + 8 - (366 - cells * 24) / 2 + 178 - (int)measure(name) / 2;
-        draw(name, x, f->arg[3], f->arg[4]);
+        if (f->ret == BANNER_NAME_DRAW && *(volatile u8 *)0xC2AF70 == 5)
+            x += 0x93 - 0x85;
+        u8 cell_w = FONT_CELL[0], cell_h = FONT_CELL[1];
+        if (f->ret == STILL_Z_PLATE) {
+            int glyphs = (int)(NAME_GLYPHS(f->arg[0]) + NAME_GLYPHS(f->arg[1])) * 28;
+            x += (f->arg[0] == f->arg[1] ? glyphs / 2 : glyphs) / 2 - (int)measure(name) / 2;
+        }
+        if (f->ret == STILL_PLATE) {
+            /* X360 616-wide plates at x 26 and 640; the name is drawn at cell 28 and centred on plate+284 or plate+332. */
+            FONT_CELL[0] = 34, FONT_CELL[1] = 28;
+            x += 8 - (266 - cells * 24) / 2;
+            x += (x < 640 ? 284 : 332) - (int)measure(name) / 2;
+        }
+        draw_fit(name, x, f->arg[3], f->arg[4], 0,
+                 f->ret == STILL_PLATE ? 400 : f->ret == STILL_Z_PLATE ? STILL_Z_LANE
+                 : f->ret == BANNER_NAME_DRAW ? banner_width : single_width(f->ret),
+                 f->ret == STILL_PLATE || f->ret == STILL_Z_PLATE);
+        FONT_CELL[0] = cell_w, FONT_CELL[1] = cell_h;
         f->eax = (width24(name) + 23) / 24;
 #ifdef ENRT_LOG
         log_line(id, f, (const u8 *)name, fnv((const u8 *)name));
@@ -2595,16 +2908,21 @@ static u32 english_hook(u32 id, struct frame *f)
     case 33:
     case 34:
     case 35: {
-        static const int rest[] = {0x391, 0x3DA, 0x435}, inset[] = {0x85, 0x46, 0x50};
-        int k = BANNER_KIND, stock = rest[id - 33], x, w = 0;
-        char name[96];
-        if (k == 1 || k == 2 || k == 5)
-            compose(name, BANNER_OFFICER[0], BANNER_OFFICER[1]), w = (int)width24(name);
-        else if (k == 3 || k == 4 || k == 6 || k == 7 || k == 10)
-            w = (int)width24(enrt_translate(ARMY_LABEL(BANNER_ARMY)));
-        x = 1280 - 16 - inset[id - 33] - w;
-        if (x < stock)
-            f->esi = (u32)(x + ((int)f->esi - stock) * (1280 - x) / (1280 - stock));
+        /* X360 banner width: text room plus inset, right edge 1280; the stock slide is rescaled to it. */
+        static const int stock[] = {367, 294, 203}, inset[] = {224, 147, 157};
+        u32 type = *(volatile u8 *)0xC2AF70, s = id - 33, room = 126;
+        const char *label = *(const char *const *)(0x6FB7C0 + 4 * *(volatile u8 *)0xC2AF73);
+        if (type == 1 || type == 2 || type == 5)
+            room = 300;
+        else if (s == 1 && label) {
+            u8 w = FONT_CELL[0], h = FONT_CELL[1];
+            FONT_CELL[0] = BANNER_TEXT_CELL, FONT_CELL[1] = 24;
+            room = measure(enrt_translate(label));
+            FONT_CELL[0] = w, FONT_CELL[1] = h;
+        }
+        banner_width = room;
+        f->esi = (u32)(1280 - (int)(room + inset[s])
+                       + ((int)f->esi - (1280 - stock[s])) * (int)(room + inset[s]) / stock[s]);
         break;
     }
     case 42:
@@ -2617,11 +2935,16 @@ static u32 english_hook(u32 id, struct frame *f)
     case 19:
         f->eax = text(MESSAGE(f->arg[0]), id, f);
         return 1;
-    case 20:
+    case 20: {
+        static const u32 z_counts[] = {NARRATION_Z_COUNT, STILL_Z_COUNTS};
+        u32 z = 0, i;
+        for (i = 0; i < sizeof z_counts / sizeof *z_counts; i++)
+            z |= f->ret == z_counts[i];
         if ((f->ret >= NARRATION_CODE && f->ret < NARRATION_CODE_END)
-            || (f->ret >= STILL_CODE && f->ret < STILL_CODE_END) || f->ret == BRIEFING_COUNT)
+            || (f->ret >= STILL_CODE && f->ret < STILL_CODE_END) || f->ret == BRIEFING_COUNT || z)
             f->arg[0] = (u32)flat((const char *)text(f->arg[0], id, f));
         break;
+    }
     case 66:
     case 67: {
         u32 width = hires_width(4080, f->arg[0] + 6);
@@ -2633,39 +2956,6 @@ static u32 english_hook(u32 id, struct frame *f)
             f->arg[6] = width;
         }
         break;
-    }
-    case 23: {
-        u32 skill = f->arg[0], mode = FONT_MODE, colour = FONT_COLOUR;
-        u8 w = FONT_CELL[0], h = FONT_CELL[1], alpha = FONT_ALPHA;
-        u32 width = FUSION_PAGE ? ROW_TAG_WIDTH : TAG_WIDTH, n;
-        unsigned long long tag;
-        const char *name;
-        char cut[16];
-        if (skill > 15)
-            return 0;
-#ifdef ENRT_TAG_PREVIEW
-        if (skill == 15)
-            skill = f->arg[1] / (width + 4) % 3 == 0 ? 2 : f->arg[1] / (width + 4) % 3 == 1 ? 12 : 4;
-#endif
-
-
-        tag = SKILL_TAG(skill == 15 ? 0x93 : (f->arg[4] ? 0x84 : 0x75) + skill);
-        GAME_QUAD((u32)tag, (u32)(tag >> 32), f->arg[1], f->arg[2], f->arg[3], width, 28, 2, 0, 4, 28, 0x80, 3);
-        if (skill < 15) {
-            name = enrt_translate(SKILL_NAME(skill));
-            GAME_FONT(24, 24, f->arg[4] ? 6 : 5);
-            if (measure(name) > width - 2) {
-                for (n = 0; name[n] && n < sizeof cut - 2; n++)
-                    cut[n] = name[n];
-                do
-                    cut[n] = '.', cut[n + 1] = 0;
-                while (measure(cut) > width - 7 && --n);
-                name = cut;
-            }
-            draw(name, f->arg[1] + (width - (int)measure(name)) / 2, f->arg[2] + 2, f->arg[3]);
-            FONT_CELL[0] = w, FONT_CELL[1] = h, FONT_MODE = mode, FONT_COLOUR = colour, FONT_ALPHA = alpha;
-        }
-        return 1;
     }
 #ifdef ENRT_LOG
     case 8:
@@ -2683,6 +2973,10 @@ static int always(u32 id, struct frame *f, u32 *replace)
     const u32 *voice, *se;
     *replace = 0;
     switch (id) {
+    case 68:
+    case 69:
+        glyph_fit(id, f);
+        return 1;
     case 24:
         reload();
         keys_read();

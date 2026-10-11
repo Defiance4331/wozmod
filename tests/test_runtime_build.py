@@ -134,6 +134,7 @@ def test_compiler_prefers_native_and_falls_back_to_pinned_docker(
             build = Path(kwargs["cwd"])
         assert (build / "enrt_data.h").read_text() == "synthetic header\n"
         assert (build / "english_runtime.c").is_file()
+        assert (build / "text_fit.h").is_file()
         (build / "d3d9.dll").write_bytes(b"MZsynthetic-dll")
         return subprocess.CompletedProcess(command, 0)
 
@@ -236,3 +237,23 @@ def test_test_build_keeps_the_harness_mailbox_version_and_size(compiled_test_dll
 def test_repeated_dll_builds_do_not_add_wall_clock_timestamps(compiled_test_dlls: tuple[bytes, bytes]) -> None:
     first, second = compiled_test_dlls
     assert first == second
+
+
+def test_xbox_prompt_writes_land_on_the_stock_icon_width_and_advance_bytes() -> None:
+    """A shifted address would write 60 or 0x15 into another instruction byte."""
+    game = os.environ.get("WOZMOD_GAME")
+    exe = Path(game or "", "OROCHI_Z.exe")
+    if not game or not exe.is_file():
+        pytest.skip("set WOZMOD_GAME to the stock game folder")
+    stock = exe.read_bytes()
+    source = (Path(__file__).resolve().parents[1] / "runtime/english_runtime.c").read_text()
+    layout = runtime.pe_layout(stock)
+    expected = {"START_WIDTH": b"\x6a\x1e", "STICK_WIDTH": b"\x6a\x1e",
+                "WIDE_LAST_DRAW": b"\x83\xf8\x14", "WIDE_LAST_MEASURE": b"\x83\xf8\x14"}
+    wrong = []
+    for name, opcode in expected.items():
+        va = int(re.search(rf"#define {name} (0x[0-9A-Fa-f]+)", source)[1], 16)
+        at = runtime.file_offset(layout, va) + 1 - len(opcode)
+        if stock[at:at + len(opcode)] != opcode:
+            wrong.append((name, hex(va), stock[at:at + len(opcode)].hex()))
+    assert wrong == []

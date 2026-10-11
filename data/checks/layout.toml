@@ -1,0 +1,504 @@
+# Layout checks for the per-screen layout decisions (Old = MOZ positions, New = X360 positions, Mixed). Started
+# from the earlier checks and routes.toml; the expected values are the decided layouts. One [[screen]] per screen; `check`
+# visits them in its own order (fewest route edges, dead ends last), so the order here only breaks ties.
+#
+# Keys as in tools/screen_checks.py. Positions are layout px (1280x720). Texts the runtime draws itself (names, page text,
+# condensed columns) have a DLL caller, so they are selected by draw position. The story-narration chain (main
+# story narration and victory still) is a second dead end, so it is not in this file: one boot reaches only the
+# Z-story chain.
+
+# Help bar (Old): the panel hugs its text at full size, text at the stock y 642, right end 1184.
+[[screen]]
+name = "game-settings"
+route = "game-settings"
+
+  [[screen.assert]]
+  kind = "no_cjk"
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x55dfd8" }
+  y = 642
+  right = 1184
+
+[[screen]]
+name = "options-controller"
+route = "options-controller"
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x55dfd8" }
+  y = 642
+  right = 1184
+
+[[screen]]
+name = "gallery-original-background"
+route = "gallery-original-background"
+
+  [[screen.assert]]
+  kind = "ink_clear_of_quad_edge"   # the label art stays inside the 252-wide quad window
+  quad = "4064.5"
+  side = "right"
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x55dfd8" }
+  y = 642
+  right = 1184
+
+# Officer lists (Mixed): X360 name panels, names vertically centred in them as MOZ draws them (plate at name y - 7).
+# The gallery list's first name sits at y 192 (the X360 y was 196).
+[[screen]]
+name = "gallery-weapons"
+route = "gallery-weapons"
+
+  [[screen.assert]]
+  kind = "no_cjk"
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { x = 240, y = 192 }
+  y = 192
+  tol = 0
+
+[[screen]]
+name = "gallery-movies"
+route = "gallery-movies"
+
+  [[screen.assert]]
+  kind = "no_cjk"
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x55dfd8" }
+  y = 642
+  right = 1184
+
+# Captions (New): X360 heights 616 and 652, each line of a two-line caption centred on its own width.
+[[screen]]
+name = "gallery-movie-two-line"
+route = "gallery-movie-two-line"
+
+  [[screen.assert]]
+  kind = "text_position"            # the longer second line starts left of the first; both centred on 640
+  text = { caller = "0x56a116", y = 616 }
+  x = 290
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x56a116", y = 652 }
+  x = 273
+
+# Treasure (Old): the MOZ list and detail panel (names from x 228, detail text from x 635 in a 416 box).
+[[screen]]
+name = "gallery-treasure-guide"
+route = "gallery-treasure-guide"
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x552f3d" }
+  x = 228
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x5530fc" }
+  x = 635
+
+  [[screen.assert]]
+  kind = "text_within_edge"
+  text = { caller = "0x5530fc" }
+  edge = 1051
+
+# VS and Survival rules (Old): the panel moved left and widened; rules and CONDITIONS from x 477 in a 705 box,
+# CONDITIONS on one line.
+[[screen]]
+name = "vs-course"
+route = "vs-course"
+
+  [[screen.assert]]
+  kind = "line_count"
+  text = { caller = "0x5a6805" }
+  max = 1
+
+  [[screen.assert]]
+  kind = "text_within_edge"
+  text = { caller = "0x5a6805" }
+  edge = 1182
+
+  [[screen.assert]]
+  kind = "line_count"
+  text = { caller = "0x5a686c" }
+  min = 2
+  max = 4
+
+  [[screen.assert]]
+  kind = "text_clear_of_text"
+  text = { caller = "0x5a6805" }
+  other = { caller = "0x5a686c" }
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x5a686c" }
+  x = 477
+
+[[screen]]
+name = "vs-team-select"
+route = "vs-team-select"
+
+  [[screen.assert]]
+  kind = "line_count"
+  text = { caller = "0x5a6805" }
+  max = 1
+
+  [[screen.assert]]
+  kind = "text_clear_of_text"
+  text = { caller = "0x5a6805" }
+  other = { caller = "0x5a686c" }
+
+[[screen]]
+name = "survival-members"
+route = "survival-members"
+
+  [[screen.assert]]
+  kind = "no_cjk"
+
+[[screen]]
+name = "camp-officers"
+route = "camp-officers"
+
+  [[screen.assert]]
+  kind = "no_cjk"
+
+# Weapon rows (Old): the MOZ row, widened, with the skill squares (4079.82) moved right; names start right of the
+# thumbnail (row+0x65) and end before the squares (lane 303).
+[[screen]]
+name = "camp-weapons"
+route = "camp-weapons"
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x5950ec" }
+  x = 707
+  tol = 0
+
+  [[screen.assert]]
+  kind = "text_within_edge"
+  text = { caller = "0x5950ec" }
+  edge = 1010
+
+  [[screen.assert]]
+  kind = "text_clear_of_quad"
+  text = { caller = "0x5950ec" }
+  quad = "4079.82"
+
+[[screen]]
+name = "camp-weapon-panel"
+route = "camp-weapon-panel"
+
+  [[screen.assert]]
+  kind = "no_cjk"
+
+  [[screen.assert]]
+  kind = "text_within_edge"         # weapon panel list names: lane 303 from x 193
+  text = { caller = "0x5950ec" }
+  edge = 496
+
+[[screen]]
+name = "camp-customize"
+route = "camp-customize"
+
+  [[screen.assert]]
+  kind = "no_cjk"
+  allow_empty = true
+
+[[screen]]
+name = "customize-upgrade-skills"
+route = "customize-upgrade-skills"
+
+  [[screen.assert]]
+  kind = "text_within_edge"         # name lane 170, at least 8 px before the count column at 374
+  text = { caller = "0x533469" }
+  edge = 366
+
+# Descriptions (Mixed): the description text in the X360 413 box (the MOZ build wrapped it at 516).
+[[screen]]
+name = "customize-weapon-attributes"
+route = "customize-weapon-attributes"
+
+  [[screen.assert]]
+  kind = "text_within_edge"         # the upgrade skill description condensed into the X360 413 box from x 658
+  text = { caller = "0x5956fa" }
+  edge = 1071
+
+[[screen]]
+name = "customize-fusion-officers"
+route = "customize-fusion-officers"
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x5950ec" }
+  x = 748
+  tol = 0
+
+  [[screen.assert]]
+  kind = "text_within_edge"         # lane 303: names end before the moved skill squares
+  text = { caller = "0x5950ec" }
+  edge = 1051
+
+
+[[screen]]
+name = "customize-weapon-upgrade"
+route = "customize-weapon-upgrade"
+
+  [[screen.assert]]
+  kind = "no_cjk"
+
+# Scenario panel (Old, option B): the MOZ panel; army names at full size inside the MOZ box; the scenario text one
+# size smaller in the stock 290 column from (449, 507), at most 5 lines, inside the box.
+[[screen]]
+name = "story-z-scenario"
+route = "story-z-scenario"
+
+  [[screen.assert]]
+  kind = "text_within_edge"
+  text = { caller = "0x588ac8" }
+  edge = 1052
+
+  [[screen.assert]]
+  kind = "line_count"
+  text = { x = 449, y = 507 }
+  max = 5
+
+  [[screen.assert]]
+  kind = "text_within_edge"
+  text = { x = 449, y = 507 }
+  edge = 740
+
+[[screen]]
+name = "story-z-scenario-three-armies"
+route = "story-z-scenario-3"
+
+  [[screen.assert]]
+  kind = "text_within_edge"
+  text = { caller = "0x588ac8" }
+  edge = 1052
+
+  [[screen.assert]]
+  kind = "text_clear_of_quad"       # the army line stays above the RECORD TIME plate
+  text = { caller = "0x588ac8" }
+  quad = "4077.27"
+
+  [[screen.assert]]
+  kind = "line_count"
+  text = { x = 449, y = 507 }
+  max = 5
+
+  [[screen.assert]]
+  kind = "text_within_edge"
+  text = { x = 449, y = 507 }
+  edge = 740
+
+# Orochi chapter tag (New): the authored tag sits inside its 70-wide quad; the old tag's last letter was cut.
+[[screen]]
+name = "story-orochi-scenario"
+route = "story-orochi-scenario"
+
+  [[screen.assert]]
+  kind = "ink_clear_of_quad_edge"
+  quad = "4079.158"
+  side = "right"
+
+# Dream summary (Old): the stock cell and pitch (28) in its column; this summary takes the full 7 lines there
+# (fewer at the X360 size) and ends inside the 240 column.
+[[screen]]
+name = "dream-select"
+route = "dream-select"
+
+  [[screen.assert]]
+  kind = "line_count"
+  text = { x = 980, y = 408 }
+  min = 7
+  max = 7
+
+  [[screen.assert]]
+  kind = "text_within_edge"
+  text = { x = 980, y = 408 }
+  edge = 1220
+
+# Briefing (Mixed): the stock band and text origin (248, 486), at most 4 lines condensed into the 784 band.
+[[screen]]
+name = "briefing"
+route = "briefing"
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x548f52" }
+  x = 248
+  y = 486
+
+  [[screen.assert]]
+  kind = "line_count"
+  text = { caller = "0x548f52" }
+  max = 4
+
+  [[screen.assert]]
+  kind = "text_within_edge"
+  text = { caller = "0x548f52" }
+  edge = 1032
+
+  [[screen.assert]]
+  kind = "text_has_ink"
+  text = { caller = "0x548f52" }
+
+[[screen]]
+name = "pre-battle-weapons"
+route = "pre-battle-weapons"
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x5950ec" }
+  x = 707
+  tol = 0
+
+  [[screen.assert]]
+  kind = "text_within_edge"
+  text = { caller = "0x5950ec" }
+  edge = 1010
+
+[[screen]]
+name = "pre-battle-weapon-panel"
+route = "pre-battle-weapon-panel"
+
+  [[screen.assert]]
+  kind = "text_within_edge"         # panel names: lane 303 from x 208
+  text = { caller = "0x5950ec" }
+  edge = 511
+
+[[screen]]
+name = "pre-battle-officers"
+route = "pre-battle-officers"
+
+  [[screen.assert]]
+  kind = "text_within_edge"         # army title lane 252 from x 140
+  text = { caller = "0x536785" }
+  edge = 392
+
+# Battle windows (Old): window 1 with the speaker on the left at the stock x 164 (the X360 x was 251).
+[[screen]]
+name = "battle-windows"
+route = "battle"
+wait = { x = 164, timeout = 40 }
+
+  [[screen.assert]]
+  kind = "line_count"
+  text = { caller = "0x54f8cf", x = 164 }
+  max = 3
+
+[[screen]]
+name = "pause"
+route = "pause"
+
+  [[screen.assert]]
+  kind = "text_clear_of_quad"       # the army line stays off the TIME plate
+  text = { caller = "0x538c65" }
+  quad = "4080.4"
+
+  [[screen.assert]]
+  kind = "text_within_edge"
+  text = { caller = "0x538c65" }
+  edge = 942
+
+# Battle history (New): 4 px more between each time heading and its event text: the entries' text at y 469 and
+# 567 (the X360 has them at 465 and 559).
+[[screen]]
+name = "battle-history"
+route = "battle-history"
+script = 10                         # a banner script puts two entries in the history
+
+  [[screen.assert]]
+  kind = "text_within_edge"         # entries wrap inside the 812-wide box at x 279
+  text = { caller = "0x539f9f" }
+  edge = 1091
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x539f9f", y = 469 }
+  x = 279
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x539f9f", y = 567 }
+  x = 279
+
+[[screen]]
+name = "save-prompt"
+route = "save-prompt"
+
+  [[screen.assert]]
+  kind = "no_cjk"
+
+[[screen]]
+name = "camp-treasure"
+route = "camp-treasure"
+
+  [[screen.assert]]
+  kind = "no_cjk"
+  allow_empty = true
+
+[[screen]]
+name = "customize-weapon-pick"
+route = "customize-weapon-pick"
+
+  [[screen.assert]]
+  kind = "no_cjk"
+  allow_empty = true
+
+# The fusion weapon list sends `unlock` (four weapons, the longest names), so check visits it after the screens
+# that need the plain save.
+[[screen]]
+name = "customize-fusion-weapons"
+route = "customize-fusion-weapons"
+
+  [[screen.assert]]
+  kind = "text_within_edge"         # the panel list's long names at full size in the MOZ row (lane 303 from x 208)
+  text = { caller = "0x5950ec" }
+  edge = 511
+
+# Story Z chapter narration (Mixed): wrapped in the X360 box at (200, 507) at cell 24x25 (pitch 35): the first page
+# takes 3 lines there (2 at the X360 size).
+[[screen]]
+name = "story-z-narration"
+route = "story-z-narration"
+wait = { caller = "0x55f31c", timeout = 30 }
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x55f31c" }
+  x = 200
+  y = 507
+
+  [[screen.assert]]
+  kind = "text_within_edge"         # wrap 742; the page is typed out, so use the reported width
+  text = { caller = "0x55f31c" }
+  edge = 942
+  ink = false
+
+  [[screen.assert]]
+  kind = "line_count"
+  text = { caller = "0x55f31c" }
+  min = 3
+  max = 3
+
+  [[screen.assert]]
+  kind = "text_has_ink"
+  text = { caller = "0x55f31c" }
+
+# The Z still event follows the narration (also no way out). Its names are drawn by the runtime, so they are
+# selected by shape: one or more capitalised words, which the page text and prompt bar never are.
+[[screen]]
+name = "story-z-still"
+route = "story-z-still-2"
+
+  [[screen.assert]]
+  kind = "text_centred_in_box"      # each name centred in its plate's dark box and inside it (lane 180)
+  text = { match = "^[A-Z][a-z]+( [A-Z][a-z]+)*$" }

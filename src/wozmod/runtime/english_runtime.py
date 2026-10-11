@@ -23,7 +23,7 @@ HOOKS = [
     (0x54B7D0, "83ec34 8b442448", 1, 0),        # draw text
     (0x54BF80, "515556 8b742410", 2, 0),        # measure text
     (0x54C150, "83ec08 0fb60d0caec200", 3, None),  # wrap text (source)
-    (0x54BBB0, "83ec38 5556", 4, None),         # draw cinematic caption line
+    (0x54BBB0, "83ec38 5556", 4, 0),            # draw cinematic caption line
     (0x56A23F, "8918 895804 885820", 44, None),  # cinematic cue read, before its split at LF (mid-function)
     (0x69D87C, "558bec 83ec20", 5, None),       # sprintf format
     (0x54E780, "56 8b742408", 6, None),         # window set text
@@ -42,7 +42,6 @@ HOOKS = [
     (0x577450, "81ec9c000000", 32, 0),        # overhead officer name (eax, ecx, edx in registers)
     (0x47D060, "8b442404 8b0485f0e46d00", 19, 0),  # message table entry
     (0x549FB0, "56 8b742408", 20, None),        # glyph count
-    (0x593CE0, "83ec48 a1e4057c00", 23, 0),     # skill tag
     (0x54F7A5, "0fb705b8b8c200", 26, None),     # battle dialog, after its plates are queued (mid-function)
     (0x5ABE26, "83c40c 6828000200", 27, None),  # save.dat loaded into the game state (mid-function)
     (0x54FC5A, "8bfe 8d9685000000", 33, None),  # banner x, rest 913 (mid-function)
@@ -52,6 +51,8 @@ HOOKS = [
     (0x5949E0, "83ec1c 837c243800", 43, None),  # framed box, the same
     (0x591430, "51535556 8b742420", 66, None),  # battle label and its plate: width from the vector sheet
     (0x5915C0, "535556 8b74241c", 67, None),    # the alternate battle label plate
+    (0x5DCA30, "8b442408 8b4c2404", 68, None),  # two-corner glyph finalizer
+    (0x5DCCF0, "8b442408 8b4c2404", 69, None),  # four-corner glyph finalizer
 ]
 # Installed in both text modes.
 ALWAYS_HOOKS = [
@@ -210,6 +211,7 @@ def compile_dll(output: Path, header: str, defines: tuple[str, ...] = ()) -> Non
              "-o", "d3d9.dll", "english_runtime.c"]
     with tempfile.TemporaryDirectory() as tmp:
         shutil.copyfile(C_SOURCE, Path(tmp, "english_runtime.c"))
+        shutil.copyfile(C_SOURCE.with_name("text_fit.h"), Path(tmp, "text_fit.h"))
         Path(tmp, "enrt_data.h").write_text(header)
         if shutil.which("i686-w64-mingw32-gcc"):
             subprocess.run(["i686-w64-mingw32-gcc", *flags], cwd=tmp, check=True)

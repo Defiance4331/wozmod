@@ -4,7 +4,7 @@
     uv run python tools/run_check.py --install work/fixups2/install [--dll FILE] [--save NAME]
         [--only SCREEN,...] [SPEC]
 
-SPEC defaults to data/checks/wave4.toml. Running this launches the game under the machine-wide lock:
+SPEC defaults to data/checks/layout.toml. Running this launches the game under the machine-wide lock:
 get the user's permission for the current task first (AGENTS.md).
 Exit 1 on any FAIL row, a run that did not end by our stop, or a game that never started.
 """
@@ -26,7 +26,7 @@ import prepare_run
 import screen_checks
 
 LOCK = Path.home() / "Games/musou-orochi-z-eng/work/.game-run.lock"
-DEFAULT_SPEC = harness.REPO / "data/checks/wave4.toml"
+DEFAULT_SPEC = harness.REPO / "data/checks/layout.toml"
 START_WAIT = 300  # seconds from launch (lock wait included) until the game answers the test mailbox
 STOP_WAIT = 60  # seconds for the supervisor to end after stop
 RETRIES = 2  # fresh runs after one that ended before the game started
@@ -132,7 +132,7 @@ def run_check(args: argparse.Namespace, stage=prepare_run.prepare, start=launch)
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("spec", type=Path, nargs="?", default=DEFAULT_SPEC, help="check file (default wave4.toml)")
+    parser.add_argument("spec", type=Path, nargs="?", default=DEFAULT_SPEC, help="check file (default layout.toml)")
     parser.add_argument("--install", type=Path, required=True, help="directory holding d3d9.dll and wozmod/")
     parser.add_argument("--dll", type=Path, help="use this d3d9.dll instead of the install's")
     parser.add_argument("--save", default="full-unlock", help="fixture under work/saves (default full-unlock)")

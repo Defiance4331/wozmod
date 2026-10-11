@@ -444,7 +444,6 @@ def test_font_environment_does_not_drop_package_or_inherited_import_paths(monkey
     ([], "give --output-dir"),
     (["--entries", "42"], "give --output-dir"),
     (["--output-dir", "out", "--entries", "42"], "give --output-dir"),
-    (["--output-dir", "out", "--squeeze"], "--squeeze needs --hires vector"),
     (["--output-dir", "out", "--variant", "help"], "must be NAME=VALUE"),
     (["--output-dir", "out", "--variant", "help=wide", "--variant", "help=wide"], "specified twice"),
     (["--entries", "42", "--preview-dir", "out", "--hires", "vector", "--hires-only"],
@@ -575,3 +574,38 @@ def test_native_ability_bank_does_not_grow_fitting_ink_or_drop_fixed_reserve(mon
         if actual != minimum:
             failures.append((item, right, actual, minimum))
     assert not failures, failures
+
+
+def test_squish_condenses_an_overflowing_pause_row_to_its_official_width(monkeypatch, tmp_path):
+    # Bug: pause rows skip the squish step and keep full-width lettering past the official width.
+    original_temp = build.tempfile.TemporaryDirectory
+    monkeypatch.setattr(build.tempfile, "TemporaryDirectory", lambda: original_temp(dir=tmp_path))
+    label = Image.new("RGBA", (48, 42))
+    label.paste((200, 200, 200, 255), (4, 8, 44, 36))
+    monkeypatch.setattr(build, "pause_button_label",
+                        lambda *a: (label, {"ink": [4, 8, 44, 36], "baseline": 36}))
+    monkeypatch.setattr(build, "PAUSE_BUTTON_ROWS", {(4080, 99, 0): ("Menu", 12.0, 7.0, 23, None, None)})
+    served = Image.new("RGBA", (64, 32))
+    served.paste((200, 200, 200, 255), (7, 9, 19, 23))
+    edit = {"entry": 4080, "item": 99, "rows": [[{"text": "Menu"}]], "bands": [(0, 32)]}
+    for squeeze, right in ((False, 54), (True, 38)):
+        art = build.vector_art(edit, served, ["Menu"], 2, squeeze=squeeze)
+        fill = art.getchannel("A").point(lambda a: 255 if a > 128 else 0)
+        assert fill.getbbox() == (14, 18, right, 46)
+
+
+def test_row_with_a_quad_window_is_centred_and_condensed_inside_it():
+    """Labels centred across the 512 sheet showed only their left half through the stock 252-wide quad."""
+    stock = Image.new("RGBA", (128, 64))
+    stock.paste(FILL, (40, 10, 80, 20))
+    stock.paste(FILL, (40, 42, 80, 52))
+    word = Image.new("RGBA", (90, 20))
+    word.paste(FILL, (0, 4, 90, 16))
+    face = type("Face", (), {"render": lambda self, text: (word, 16)})()
+    rows = [[{"face": "f", "text": "WIDE", "window": [6, 66]}], [{"face": "f", "text": "WIDE"}]]
+    image = build.composed(stock, rows, {"faces": {"f": face}}, "full", 0, [(0, 32), (32, 64)])
+    alpha = image.getchannel("A")
+    assert alpha.crop((0, 0, 128, 32)).getbbox() == (6, 10, 66, 22)
+    assert alpha.crop((0, 32, 128, 64)).getbbox() == (19, 10, 109, 22)
+    squish_off = build.composed(stock, rows[:1], {"faces": {"f": face}, "squish": False}, "full", 0, [(0, 32)])
+    assert squish_off.getchannel("A").getbbox() == (0, 10, 90, 22)
