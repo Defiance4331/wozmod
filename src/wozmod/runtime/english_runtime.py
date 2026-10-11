@@ -11,7 +11,9 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-C_SOURCE = Path(__file__).resolve().parents[3] / "runtime" / "english_runtime.c"
+from wozmod import resources
+
+C_SOURCE = resources.root() / "runtime" / "english_runtime.c"
 MINGW_IMAGE = "musou-dw5s-mingw:fc44-gcc16.1.1"
 DLL_BASE = 0x68000000  # the harness finds a --test build's mailbox in the image at this base
 WIDTH_POINTER = 0x79BAC0  # per-glyph advance table; stock 0 means every glyph is 24 wide

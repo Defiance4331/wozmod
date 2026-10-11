@@ -14,8 +14,15 @@ dependencies = ["pillow>=12.1,<13"]
 [project.scripts]
 wozmod = "wozmod.__main__:main"
 
+[project.optional-dependencies]
+native = ["wozmod-native"]
+
+[tool.uv.sources]
+wozmod-native = { path = "native" }
+
 [dependency-groups]
 dev = ["pytest>=9.0.2,<10"]
+build = ["pyinstaller>=6.19,<7"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,0 +1,13 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "wozmod-native"
+version = "0.1.0"
+description = "Optional fast LZP2 and DXT5 codecs for wozmod. The Python codecs give the same bytes."
+license = "GPL-3.0-or-later"
+requires-python = ">=3.14"
+
+[tool.maturin]
+module-name = "wozmod_native"

@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Iterator
 
+from wozmod import native
+
 G1T_MAGIC = b"GT1G"
 G1T_HEADER = struct.Struct("<4s4sIIIIII")
 G1T_TEXTURE_HEADER = struct.Struct("<BBHI")
@@ -628,8 +630,14 @@ def _encode_dxt1(rgba: bytes, width: int, height: int) -> bytes:
     return b"".join(map(_dxt1_block, _blocks(rgba, width, height)))
 
 
-def _encode_dxt5(rgba: bytes, width: int, height: int) -> bytes:
+def _encode_dxt5_python(rgba: bytes, width: int, height: int) -> bytes:
     return b"".join(map(_dxt5_block, _blocks(rgba, width, height)))
+
+
+def _encode_dxt5(rgba: bytes, width: int, height: int) -> bytes:
+    if native.module:
+        return native.module.dxt5_encode(rgba, width, height)
+    return _encode_dxt5_python(rgba, width, height)
 
 
 def x360_g1t(data: bytes) -> G1tFile:

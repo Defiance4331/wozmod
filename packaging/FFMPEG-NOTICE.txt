@@ -1,0 +1,29 @@
+FFmpeg in this download
+=======================
+
+wozmod runs FFmpeg as a separate program to convert voice clips. The copy in
+the "ffmpeg" folder inside "_internal" is an unmodified FFmpeg n8.1.3 build,
+made by the BtbN FFmpeg-Builds project (release autobuild-2026-09-30-13-08).
+It is the LGPL variant, linked as shared libraries (the libav*.so and
+avcodec-*.dll files next to ffmpeg). You can replace those libraries with
+your own build of the same FFmpeg version.
+
+FFmpeg is licensed under the GNU Lesser General Public License, version 3.
+The licence text is in "ffmpeg-LICENSE.txt" in this folder. FFmpeg is a
+trademark of Fabrice Bellard, originator of the FFmpeg project.
+
+Source code
+-----------
+The FFmpeg source for this build is FFmpeg release n8.1.3 plus the commits up
+to g29e619e767 of the release/8.1 branch:
+
+  https://git.ffmpeg.org/ffmpeg.git        (commit 29e619e767)
+  https://ffmpeg.org/download.html
+
+The build scripts, with the patches and the versions of the libraries linked
+into FFmpeg, are at:
+
+  https://github.com/BtbN/FFmpeg-Builds    (tag autobuild-2026-09-30-13-08)
+
+If you cannot get the source from these places, ask the wozmod maintainer for it
+and we will send it to you.

@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Iterator
 
+from wozmod import resources
+
 KOVS_HEADER_BYTES = 32
 VOICE_RECORD_ALIGNMENT = 16
 OGG_CAPTURE_PATTERN = b"OggS"
@@ -469,7 +471,7 @@ def _ffmpeg_each(jobs: list[tuple[list[str], bytes, list[str]]], workers: int | 
     def batch(start: int) -> list[bytes]:
         part = jobs[start:start + FFMPEG_BATCH]
         with tempfile.TemporaryDirectory(prefix="wozmod-ffmpeg-") as folder:
-            command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-filter_threads", "1"]
+            command = [resources.ffmpeg() or "ffmpeg", "-hide_banner", "-loglevel", "error", "-filter_threads", "1"]
             for k, (before, data, _) in enumerate(part):
                 Path(folder, f"{k}.in").write_bytes(data)
                 command += [*before, "-i", str(Path(folder, f"{k}.in"))]

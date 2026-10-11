@@ -6,13 +6,15 @@ import struct
 
 from PIL import Image
 
+from wozmod import resources
+
 from wozmod.donors import WO1, X360
 from wozmod.formats.linkdata import LZP2_SIGNATURE, WO1_LZP2_SIGNATURE, parse_lzp2, parse_wo1_index
 from wozmod.formats.textures import (
     TextureCodecError, parse_g1t, parse_texture_package, x360_g1t,
 )
 
-REPO = Path(__file__).resolve().parents[3]
+REPO = resources.root()
 CATALOG = REPO / "data/art/menu_visuals.json"
 
 @lru_cache(maxsize=1)

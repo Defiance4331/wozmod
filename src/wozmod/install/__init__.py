@@ -14,8 +14,10 @@ from contextlib import contextmanager
 from multiprocessing import get_context
 from pathlib import Path
 
+from wozmod import resources
+
 MANIFEST = "wozmod/install.json"
-TEXT_DATA = Path(__file__).resolve().parents[3] / "data/text/table.json"
+TEXT_DATA = resources.root() / "data/text/table.json"
 
 # Stock files the build reads: (size, SHA-256) of the supported Japanese PC release.
 STOCK_FILES = {
@@ -90,7 +92,7 @@ def check_inputs(game: Path, inputs: dict[str, Path]) -> None:
     for flag, pin in (("lettering", LETTERING), ("dll", DLL)):
         if wrong := _pinned(inputs[flag], pin):
             problems.append(f"--{flag}: {inputs[flag]} is {wrong}")
-    if shutil.which("ffmpeg") is None:
+    if resources.ffmpeg() is None:
         problems.append("ffmpeg was not found on PATH; the voice build needs it")
     if problems:
         raise InstallError("\n".join(problems))

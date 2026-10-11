@@ -35,3 +35,7 @@ work/
 .idea/
 .vscode/
 *.swp
+
+# Native codec build output
+native/target/
+*.so

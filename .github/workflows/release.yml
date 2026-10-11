@@ -1,0 +1,54 @@
+# Builds the Windows and Linux release zips when a v* tag is pushed, and attaches them to the
+# draft release of that tag. Make that draft first with packaging/release_assets.py: it holds
+# d3d9.dll and lettering.zip, which need the stock game and cannot be built here.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  zip:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            native/Cargo.lock
+
+      # The runners carry a Rust toolchain; the cache keeps the compiled crates between releases.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+
+      - uses: actions/cache@v4
+        with:
+          path: build/packaging/cache
+          key: ffmpeg-${{ matrix.os }}-${{ hashFiles('packaging/ffmpeg.json') }}
+
+      - name: Fetch d3d9.dll and lettering.zip from the draft release
+        shell: bash
+        run: gh release download "$GITHUB_REF_NAME" --dir assets --pattern d3d9.dll --pattern lettering.zip
+
+      - name: Build the zip
+        shell: bash
+        run: |
+          uv sync --extra native --group build
+          uv run python packaging/build.py --assets assets --tag "$GITHUB_REF_NAME"
+
+      - name: Attach the zip to the draft release
+        shell: bash
+        run: gh release upload "$GITHUB_REF_NAME" build/packaging/wozmod-*.zip --clobber

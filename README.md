@@ -47,26 +47,24 @@ folder, `wozmod`, to the game folder.
 
 wozmod installs from a terminal for now. A setup window comes later.
 
-1. Install [uv](https://docs.astral.sh/uv/) and [ffmpeg](https://ffmpeg.org/).
-   Make sure that `ffmpeg` is on your `PATH`.
-2. Download this repository, and `d3d9.dll` and `lettering.zip` from the
-   **Releases** page.
-3. Get these files from your own discs:
+1. Download the release for your system (Windows or Linux) from the
+   **Releases** page, and unzip it to any folder. It holds `wozmod`,
+   `d3d9.dll` and `lettering.zip`.
+2. Get these files from your own discs:
    - a disc image of each of the three games;
    - the decrypted Xbox 360 program file and the decrypted PSP
      program file (`EBOOT.BIN`).
-4. In the repository folder, run:
+3. Open a terminal in the release folder, and run:
 
    ```
-   uv run wozmod install --game "<Musou Orochi Z folder>" \
+   wozmod install --game "<Musou Orochi Z folder>" \
      --wo1 <Warriors Orochi .iso> --x360 <Warriors Orochi 2 360 .iso> \
      --psp <Warriors Orochi 2 PSP .iso> \
-     --x360-exe <decrypted 360 program> --psp-eboot <EBOOT.BIN> \
-     --lettering lettering.zip --dll d3d9.dll
+     --x360-exe <decrypted 360 program> --psp-eboot <EBOOT.BIN>
    ```
 
    wozmod builds the English files on your computer. This step takes about
-   five minutes. To use fewer processor cores, set `WOZMOD_JOBS`, for example
+   two minutes. To use fewer processor cores, set `WOZMOD_JOBS`, for example
    `WOZMOD_JOBS=2`.
 
 ### Extra steps on Linux (Steam or Proton)
@@ -98,7 +96,7 @@ change.
 
 ## Uninstall
 
-Run `uv run wozmod uninstall --game "<Musou Orochi Z folder>"`. Or delete
+Run `wozmod uninstall --game "<Musou Orochi Z folder>"`. Or delete
 `d3d9.dll` and the `wozmod` folder from the game folder. Your game and your
 saves stay as they were.
 
@@ -113,6 +111,21 @@ saves stay as they were.
 - **The screen stays black at start (Linux).** The game must start in its own
   folder. If you added it to Steam as a non-Steam game, set **Start In** to the
   game folder.
+
+## Build from source
+
+Install [uv](https://docs.astral.sh/uv/), [ffmpeg](https://ffmpeg.org/) and
+[Rust](https://rustup.rs). In the repository folder, run
+`uv run --extra native wozmod install ...` with the options above. Without
+`--extra native`, wozmod uses its slower Python code, and builds the same
+files.
+
+To build the release zip for your system, run
+`uv sync --extra native --group build`, then
+`uv run python packaging/build.py --assets <folder with d3d9.dll and lettering.zip>`.
+`packaging/release_assets.py` explains how those two files are made and
+published, and the release workflow in `.github/workflows/` builds the zips
+for Windows and Linux when a `v*` tag is pushed.
 
 ## Legal
 

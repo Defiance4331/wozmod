@@ -1,10 +1,10 @@
 """Load authored face sources from the art data directory."""
 
-from pathlib import Path
+from wozmod import resources
 
 
 _FACES = frozenset({"buttonvec", "headervec", "labelvec", "mainvec", "valuevec", "wo1vec", "menusans"})
-_ROOT = Path(__file__).resolve().parents[3] / "data/art/faces"
+_ROOT = resources.root() / "data/art/faces"
 
 
 def load(name: str, namespace: dict) -> None:

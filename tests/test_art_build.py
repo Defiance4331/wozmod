@@ -609,3 +609,13 @@ def test_row_with_a_quad_window_is_centred_and_condensed_inside_it():
     assert alpha.crop((0, 32, 128, 64)).getbbox() == (19, 10, 109, 22)
     squish_off = build.composed(stock, rows[:1], {"faces": {"f": face}, "squish": False}, "full", 0, [(0, 32)])
     assert squish_off.getchannel("A").getbbox() == (0, 10, 90, 22)
+
+
+def test_worker_pool_falls_back_to_threads_where_fork_does_not_exist(monkeypatch):
+    # Bug: get_context("fork") raises ValueError on Windows, so the art stage (and the install) cannot start there.
+    from concurrent.futures import ThreadPoolExecutor
+
+    monkeypatch.setattr(build, "get_all_start_methods", lambda: ["spawn"])
+    with build.worker_pool(2) as pool:
+        assert isinstance(pool, ThreadPoolExecutor)
+        assert pool.submit(sum, [1, 2]).result() == 3

@@ -1,6 +1,7 @@
 """wozmod command line: install and uninstall."""
 
 import argparse
+import multiprocessing
 import sys
 from functools import partial
 from pathlib import Path
@@ -16,6 +17,7 @@ INPUTS = (
     ("lettering", "the release lettering bundle (lettering.zip)"),
     ("dll", "the release d3d9.dll"),
 )
+SHIPPED = {"lettering": "lettering.zip", "dll": "d3d9.dll"}  # in the release folder, beside the program
 
 
 def main(argv=None) -> int:
@@ -26,8 +28,11 @@ def main(argv=None) -> int:
         epilog="environment: WOZMOD_JOBS=N runs each build stage on at most N worker processes "
                "(default: the number of CPUs)")
     add.add_argument("--game", type=Path, required=True, help="the stock Musou Orochi Z folder")
+    release = Path(sys.executable).parent if getattr(sys, "frozen", False) else None
     for name, text in INPUTS:
-        add.add_argument(f"--{name}", type=Path, required=True, help=text)
+        shipped = release / SHIPPED[name] if release and name in SHIPPED else None
+        add.add_argument(f"--{name}", type=Path, required=shipped is None, default=shipped,
+                         help=text + (" (default: the one in the release folder)" if shipped else ""))
     add.add_argument("--force", action="store_true", help="replace an existing install")
     remove = commands.add_parser("uninstall", help="delete the files the install wrote")
     remove.add_argument("--game", type=Path, required=True)
@@ -44,4 +49,5 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()  # a packaged program starts its spawned workers through here
     raise SystemExit(main())

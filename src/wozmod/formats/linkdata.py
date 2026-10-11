@@ -5,8 +5,9 @@ from __future__ import annotations
 import re
 import struct
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
+
+from wozmod import native
 
 LZP2_MAGIC = b"LZP2"
 LZP2_SIGNATURE = bytes.fromhex("5c8f823f")
@@ -99,7 +100,6 @@ def parse_lzp2(data: bytes, signature: bytes = LZP2_SIGNATURE) -> Lzp2Member:
     return _parse_lzp2(bytes(data), signature)
 
 
-@lru_cache(maxsize=1)  # the menu-art build decodes one entry several times in a row
 def _parse_lzp2(source: bytes, signature: bytes) -> Lzp2Member:
     if len(source) < LZP2_HEADER.size:
         raise ArchiveError("LZP2 header is truncated")
@@ -113,7 +113,13 @@ def _parse_lzp2(source: bytes, signature: bytes) -> Lzp2Member:
     if LZP2_HEADER.size + compressed_size != len(source):
         raise ArchiveError("LZP2 stored size does not match its header")
     stream = source[LZP2_HEADER.size :]
-    decoded, token_bytes = _decode_stream(stream, expected_size)
+    if native.module:
+        try:
+            decoded, token_bytes = native.module.lzp2_decode_stream(stream, expected_size)
+        except ValueError as error:
+            raise ArchiveError(str(error)) from None
+    else:
+        decoded, token_bytes = _decode_stream(stream, expected_size)
     return Lzp2Member(
         source=source,
         signature=signature,
@@ -195,7 +201,7 @@ def encode_lzp2(data: bytes) -> bytes:
     decoded = bytes(data)
     if len(decoded) > 0xFFFFFFFF:
         raise ArchiveError("LZP2 input exceeds its 32-bit size field")
-    stream = _encode_stream(decoded)
+    stream = (native.module.lzp2_encode_stream if native.module else _encode_stream)(decoded)
     return LZP2_HEADER.pack(
         LZP2_MAGIC,
         LZP2_SIGNATURE,

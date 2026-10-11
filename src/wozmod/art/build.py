@@ -11,8 +11,9 @@ import sys
 import subprocess
 import tempfile
 import zlib
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from multiprocessing import get_context
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from functools import lru_cache
+from multiprocessing import get_all_start_methods, get_context
 from pathlib import Path
 from statistics import fmean, median, mode
 
@@ -21,6 +22,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 from wozmod.formats.linkdata import (
     encode_lzp2, parse_index, parse_lzp2, wo1_entries,
 )
+from wozmod import native, resources
 from wozmod.runtime.english_runtime import write_manifest
 from . import lettering
 from .hires import HIRES_OVERLAY, HIRES_RIGHT_GROW, hires_blob
@@ -30,7 +32,7 @@ from wozmod.formats.textures import (
     G1T_TEXTURE_HEADER, G1tFile, parse_g1t, parse_texture_package, x360_g1t,
 )
 
-REPO = Path(__file__).resolve().parents[3]
+REPO = resources.root()
 from wozmod.fonts.menu_plates import X360_PLATES, X360_PLATE_ENTRIES, clean_substrate
 from wozmod.fonts.menu_references import reference, x360_members
 MAPPING = REPO / "data/art/menu_textures.json"
@@ -38,7 +40,6 @@ FONT_PYTHON = os.environ.get("WOZMOD_FONT_PYTHON", "/usr/bin/python3")
 PACKAGE_MAGIC = 0x33B59
 
 LZP2_CACHE: Path | None = None
-LZP2_CODEC = hashlib.sha256(Path(encode_lzp2.__code__.co_filename).read_bytes()).digest()
 SHARED: dict = {}  
 
 REVIEW_VARIANTS = {"help": "per-screen", "camp": "x360"}
@@ -1428,11 +1429,23 @@ def read_members(stream, entry) -> list[bytes]:
     allocation = stream.read(entry.allocated_bytes)
     return [allocation[m.relative_offset:m.relative_offset + m.stored_bytes] for m in entry.members]
 
+@lru_cache(maxsize=1)
+def _lzp2_codec() -> bytes:
+    """Cache key that changes with the codec. A packaged program has no source file, so it hashes the bytecode."""
+    source = Path(encode_lzp2.__code__.co_filename)
+    return hashlib.sha256(source.read_bytes() if source.is_file() else encode_lzp2.__code__.co_code).digest()
+
+def worker_pool(workers: int):
+    """Workers that share the already loaded donors: forked processes, or threads where fork does not exist (Windows)."""
+    if "fork" in get_all_start_methods():
+        return ProcessPoolExecutor(workers, mp_context=get_context("fork"))
+    return ThreadPoolExecutor(workers)
+
 def packed_lzp2(data: bytes) -> bytes:
 
     if LZP2_CACHE is None:
         return encode_lzp2(data)
-    path = LZP2_CACHE / f"{hashlib.sha256(LZP2_CODEC + data).hexdigest()}.lzp2"
+    path = LZP2_CACHE / f"{hashlib.sha256(_lzp2_codec() + data).hexdigest()}.lzp2"
     if path.exists():
         return path.read_bytes()
     encoded = encode_lzp2(data)
@@ -2268,16 +2281,18 @@ def native_menu_art(entry: int, item: int, served: Image.Image, mapping: dict,
     return art
 
 def hires_bin(entries: Path, source: Path | None, vector: tuple | None = None,
-              squeeze: bool = False) -> bytes:
+              squeeze: bool = False, jobs: int = 1) -> bytes:
 
-    rows, packages = [], {}
+    rows, packages, parsed = [], {}, {}
     plate_sources = entries.parent.parent / "vector-plate-sources"
     if vector:
         plate_sources.mkdir(parents=True, exist_ok=True)
     extras = list(DARK) + (sorted(HIRES_NATIVE_MENU) if vector else [])
     for entry, item, scale, w, h, band, per_col in HIRES + [(e, i, 2, 0, 0, 0, 0) for e, i in extras]:
-        data = (entries / f"{entry}.bin").read_bytes()
-        package = parse_texture_package(parse_lzp2(data).decoded if data[:4] == b"LZP2" else data)
+        if entry not in parsed:  # decode each entry once, however many of its items are used
+            data = (entries / f"{entry}.bin").read_bytes()
+            parsed[entry] = parse_texture_package(parse_lzp2(data).decoded if data[:4] == b"LZP2" else data)
+        package = parsed[entry]
         g1t = package.items[item].g1t
         if vector and (entry, item) in DARK_PLATE:
             original = plate_sources / f"{entry}.{item}.g1t"
@@ -2357,10 +2372,15 @@ def hires_bin(entries: Path, source: Path | None, vector: tuple | None = None,
                 minimum = max(minimum, ATTRIBUTE_QUAD_MINIMUM[entry, item])
         rows.append((entry, item, scale, w, h, band | (minimum << 16), per_col,
                      rekeyed(g1t.with_texture_resized(0, *sheet.size, sheet.tobytes())).encode()))
-    for entry, package in packages.items():
-        path = entries / f"{entry}.bin"
-        was_packed = path.read_bytes()[:4] == b"LZP2"
-        path.write_bytes(packed_lzp2(package.encode()) if was_packed else package.encode())
+    encoded = {entry: package.encode() for entry, package in packages.items()}
+    packed = [entry for entry in encoded if (entries / f"{entry}.bin").read_bytes()[:4] == b"LZP2"]
+    if jobs > 1 and len(packed) > 1 and not native.module:  # the Python encoder is slow: one entry per process
+        with worker_pool(min(jobs, len(packed))) as pool:
+            results = dict(zip(packed, pool.map(packed_lzp2, [encoded[entry] for entry in packed])))
+    else:
+        results = {entry: packed_lzp2(encoded[entry]) for entry in packed}
+    for entry, data in encoded.items():
+        (entries / f"{entry}.bin").write_bytes(results.get(entry, data))
     return hires_blob(rows)
 
 LINKDATA2_FIRST = 4251  
@@ -2561,7 +2581,7 @@ def main(argv: list[str] | None = None) -> int:
                   ld2_bin=ld2_bin, ld2_index=parse_index((stock / "LINKDATA2.IDX").read_bytes(), ld2_bin.stat().st_size),
                   preview=args.preview_dir, write=bool(args.output_dir))
 
-    with ProcessPoolExecutor(args.jobs, mp_context=get_context("fork")) as pool:
+    with worker_pool(args.jobs) as pool:
         futures = [pool.submit(rebuilt, ordinal)
                    for ordinal in sorted(edits, key=lambda ordinal: -archive(ordinal)[1].stored_bytes)]
         try:
@@ -2612,7 +2632,7 @@ def write_hires(args) -> None:
         donors["squish"] = args.squeeze
         vector = mapping, donors
     (args.output_dir / "wozmod/hires.bin").write_bytes(hires_bin(
-        args.output_dir / "wozmod/entries", source, vector, args.squeeze))
+        args.output_dir / "wozmod/entries", source, vector, args.squeeze, getattr(args, "jobs", 1)))
     (args.output_dir / "review-variant.json").write_text(json.dumps({
         "schema": "moz-menu-review-variant-v1", "selection": selected,
         "runtime_edits": "shared", "geometry": "per-bank minima and right-anchor growth",
