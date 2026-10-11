@@ -143,10 +143,18 @@ def test_reordered_or_added_printf_arguments_cannot_enter_the_table(stock: str, 
     ("1%s item", "Authored %s item", "objective count"),
     ("Stock " + chr(0xFF05), "Authored percent", "literal percent"),
     (bytes((0xF0, 0x40)).decode("cp932") + "Stock", "Authored", "shape"),
+    ("Stock", "Authored " + bytes((0xF0, 0x55, 0xF0, 0x56)).decode("cp932") + ".", "icon"),
 ])
 def test_undrawable_row_cannot_enter_the_runtime_table(stock: str, english: str, problem: str) -> None:
     with pytest.raises(TableBuildError, match=problem):
         table_pairs([{"ja": stock, "en": english}])
+
+
+def test_icon_check_does_not_read_the_start_icon_argument_or_a_trail_byte_as_an_icon() -> None:
+    start = bytes((0xF0, 0x48, 0xF0, 0x49)).decode("cp932")
+    english = start + "Authored " + bytes((0x88, 0xF0)).decode("cp932") + "V" + bytes((0xF0, 0x55)).decode("cp932")
+    assert table_pairs([{"ja": start + "Stock", "en": english}]) == {
+        (start + "Stock").encode("cp932"): english.encode("cp932")}
 
 
 def test_name_override_does_not_replace_another_identical_stock_name() -> None:
@@ -262,7 +270,12 @@ def test_real_donor_table_does_not_change_a_migration_output_byte(tmp_path: Path
         if not image_name or not Path(image_name).is_file():
             pytest.skip("supply WOZMOD_WO1_PROGRAM or WOZMOD_WO1_ISO")
         program = extract_text_program(Path(image_name), tmp_path / "donors")
-    data = Path(__file__).resolve().parents[1] / "data" / "text" / "table.json"
+    import subprocess
+    repo = Path(__file__).resolve().parents[1]
+    data = tmp_path / "migration-table.json"
+    data.write_bytes(subprocess.run(
+        ["git", "show", "4474d02:data/text/table.json"], cwd=repo, capture_output=True, check=True,
+    ).stdout)
     output = tmp_path / "table.bin"
     build_table(stock, DonorResolver(donor_root, wo1_program=program), data, output)
     assert output.read_bytes() == oracle.read_bytes()

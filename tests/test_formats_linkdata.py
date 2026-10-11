@@ -168,6 +168,40 @@ def test_wo2_disc_member_offsets_are_relative_to_bns_base(tmp_path: Path) -> Non
     assert linkdata.wo2_members(iso, [0]) == {0: b"abc"}
 
 
+def test_ps2_member_sector_offsets_do_not_read_table_bytes(tmp_path: Path) -> None:
+    path = tmp_path / "archive.fns"
+    blob = bytearray(4099)
+    struct.pack_into("<4I4I", blob, 0, 0x33B59, 2, 2048, 0, 2, 3, 1, 5)
+    blob[2048:2053] = b"later"
+    blob[4096:4099] = b"one"
+    path.write_bytes(blob)
+    assert linkdata.ps2_members(path, [1, 0]) == {1: b"later", 0: b"one"}
+
+
+def test_ps2_raw_member_that_looks_packed_is_returned_without_decoding(tmp_path: Path) -> None:
+    path = tmp_path / "archive.fns"
+    raw = struct.pack("<4I", 0, 0, 16, 16)
+    blob = struct.pack("<4I2I", 0x33B59, 1, 2048, 0, 1, len(raw))
+    path.write_bytes(blob + bytes(2048 - len(blob)) + raw)
+    assert linkdata.ps2_members(path, [0]) == {0: raw}
+
+
+def test_ps2_negative_member_cannot_resolve_to_a_different_slot(tmp_path: Path) -> None:
+    path = tmp_path / "archive.fns"
+    blob = struct.pack("<4I4I", 0x33B59, 2, 2048, 0, 1, 3, 1, 3)
+    path.write_bytes(blob + bytes(2048 - len(blob)) + b"one")
+    with pytest.raises(linkdata.ArchiveError, match="out of range"):
+        linkdata.ps2_members(path, [-1])
+
+
+def test_ps2_extent_past_archive_cannot_return_truncated_donor_bytes(tmp_path: Path) -> None:
+    path = tmp_path / "archive.fns"
+    blob = struct.pack("<4I2I", 0x33B59, 1, 2048, 0, 1, 4)
+    path.write_bytes(blob + bytes(2048 - len(blob)) + b"one")
+    with pytest.raises(linkdata.ArchiveError, match="extent is invalid"):
+        linkdata.ps2_members(path, [0])
+
+
 @pytest.mark.skipif(os.environ.get("WOZMOD_FORMATS_ORACLE") != "1", reason="opt-in real archive oracle")
 def test_real_linkdata_high_ordinal_rows_are_not_cut_off_by_a_small_table_limit() -> None:
     game_root, old_root = os.environ.get("WOZMOD_GAME"), os.environ.get("WOZMOD_OLD_REPO")

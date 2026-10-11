@@ -4,6 +4,7 @@ Pointers are positional arrays, with zero-based indices:
   [donor, "ens", entry, view, *indices]
   ["wo1", "exe", byte_offset], ["x360", "pe", byte_offset],
   or ["psp", "prx", string_slot]
+  ["psp", "fns", member, view, *indices]
 Donors are wo1, x360 and psp. ENS names linkdata_ens.lnk/.idx.
 Views: notices/dialog (slot), mesc (block, slot), quotes (table, slot),
 event (line id), captions (list of cue slots, whitespace joined), cstr
@@ -20,12 +21,13 @@ from __future__ import annotations
 from functools import cache
 from pathlib import Path
 
-from wozmod.formats.linkdata import wo1_entries
+from wozmod.formats.linkdata import decoded_member, ps2_members, wo1_entries
 from wozmod.formats.scripts import (
     caption_cues, donor_text, event_lines, mesc_blocks, parse_script,
     quote_tables, quote_text,
 )
 from wozmod.donors.programs import X360_PROGRAM, verify_program
+from wozmod.donors import PSP, verify_file
 
 
 def program_text(raw: bytes) -> str:
@@ -54,11 +56,21 @@ class DonorResolver:
 
     @cache
     def entry(self, donor: str, ordinal: int) -> bytes:
+        if donor == "psp":
+            if type(ordinal) is not int or ordinal < 0:
+                raise ValueError("Invalid FNS member")
+            data = ps2_members(self.psp_archive(), [ordinal])[ordinal]
+            return data if ordinal == 27 else decoded_member(data)
         folder = {"wo1": "wo1", "x360": "wo2-x360"}.get(donor)
         if folder is None or not isinstance(ordinal, int) or ordinal < 0:
             raise ValueError("Invalid ENS donor or entry")
         base = self.root / folder / "linkdata_ens"
         return wo1_entries(base.with_suffix(".lnk"), base.with_suffix(".idx"), [ordinal])[ordinal]
+
+    @cache
+    def psp_archive(self) -> Path:
+        identity = next(file for file in PSP.files if file.path.endswith("/LINKDATA_NA.FNS"))
+        return verify_file(self.root / "wo2-psp" / identity.path, identity)
 
     @cache
     def program(self, donor: str) -> bytes:
@@ -109,7 +121,8 @@ class DonorResolver:
             if at >= len(data):
                 raise ValueError("PE pointer outside program")
             text = program_text(data[at:data.index(b"\0", at)])
-        elif file == "ens" and len(parts) >= 2:
+        elif ((file == "ens" and donor in ("wo1", "x360"))
+              or (file == "fns" and donor == "psp")) and len(parts) >= 2:
             ordinal, kind, *indices = parts
             data = self.entry(donor, ordinal)
             if kind in ("cstr", "slice"):
@@ -132,7 +145,11 @@ class DonorResolver:
                 elif kind == "mesc" and len(indices) == 2:
                     raw = view[indices[0]][indices[1]]
                 elif kind == "quotes" and len(indices) == 2:
-                    raw = quote_text(view[indices[0]][indices[1]])
+                    if donor == "psp":
+                        from .psp_alignment import psp_quote_text
+                        raw = psp_quote_text(view[indices[0]][indices[1]])
+                    else:
+                        raw = quote_text(view[indices[0]][indices[1]])
                 elif kind == "event" and len(indices) == 1:
                     raw = view[indices[0]]
                 elif kind == "captions" and len(indices) == 1 and isinstance(indices[0], list):

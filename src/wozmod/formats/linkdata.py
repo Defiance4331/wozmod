@@ -21,6 +21,8 @@ RECORD = struct.Struct("<III")
 WORD = struct.Struct("<I")
 SM4L_HEADER = struct.Struct(">4sIII")
 SM4L_RECORD = struct.Struct(">IIII")
+PS2_HEADER = struct.Struct("<4I")
+PS2_RECORD = struct.Struct("<II")
 # WO2 PS2 USA: LINKDATA.BNS starts at disc sector 501815 with a 2969-member table.
 BNS_BASE = 501815 * SECTOR_SIZE
 WO2_BNS_HEADER = struct.pack("<4I", 0x33B59, 2969, 2048, 0)
@@ -504,6 +506,36 @@ def wo2_members(iso_path: Path, members) -> dict[int, bytes]:
             block, size = struct.unpack_from("<II", table, member * 8)
             stream.seek(BNS_BASE + block * SECTOR_SIZE)
             entries[member] = stream.read(size)
+    return entries
+
+
+def ps2_members(archive_path: Path, members) -> dict[int, bytes]:
+    """Read stored members from a sector-indexed PS2-layout archive."""
+    entries = {}
+    with archive_path.open("rb") as stream:
+        stream.seek(0, 2)
+        data_size = stream.tell()
+        stream.seek(0)
+        header = stream.read(PS2_HEADER.size)
+        if len(header) != PS2_HEADER.size:
+            raise ArchiveError("PS2 archive header is truncated")
+        magic, count, sector_size, reserved = PS2_HEADER.unpack(header)
+        if magic != 0x33B59 or sector_size != SECTOR_SIZE or reserved != 0:
+            raise ArchiveError("PS2 archive header is unsupported")
+        table_end = PS2_HEADER.size + count * PS2_RECORD.size
+        if table_end > data_size:
+            raise ArchiveError("PS2 archive member table is truncated")
+        table = stream.read(count * PS2_RECORD.size)
+        for member in members:
+            if not 0 <= member < count:
+                raise ArchiveError(f"PS2 archive member is out of range: {member}")
+            sector, size = PS2_RECORD.unpack_from(table, member * PS2_RECORD.size)
+            offset = sector * SECTOR_SIZE
+            if offset + size > data_size or (size and offset < table_end):
+                raise ArchiveError(f"PS2 archive member extent is invalid: {member}")
+            stream.seek(offset)
+            data = stream.read(size)
+            entries[member] = data
     return entries
 
 

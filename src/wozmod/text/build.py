@@ -34,6 +34,23 @@ class TableBuildError(ValueError):
     """A translation row cannot safely enter the runtime table."""
 
 
+# Icon codes the stock draw's jump table (0x549F48) handles; F0 48 takes two argument bytes.
+DRAWABLE_ICONS = frozenset(range(0x40, 0x5A)) - {0x49, 0x4B, 0x56}
+
+
+def _undrawable_icon(english: bytes) -> bool:
+    at = 0
+    while at < len(english):
+        if english[at] == 0xF0:
+            code = english[at + 1] if at + 1 < len(english) else None
+            if code not in DRAWABLE_ICONS:
+                return True
+            at += 4 if code == 0x48 else 2
+        else:
+            at += 2 if 0x81 <= english[at] <= 0x9F or english[at] >= 0xE0 else 1
+    return False
+
+
 def cp932_forms(text: str) -> tuple[bytes, ...]:
     """Canonical CP932 followed by IBM codes, preserving baseline order."""
     return tuple(dict.fromkeys((
@@ -57,6 +74,8 @@ def _draw_checks(stock: bytes, text: str, english: bytes, key: str) -> None:
         problems.append("literal percent")
     if stock[:1] == b"\xf0" and english[:2] != stock[:2]:
         problems.append("shape")
+    if _undrawable_icon(english):
+        problems.append("icon")
     if stock[:1].isdigit() and (b"%s" in stock or b"[1" in stock) and english[:1] != stock[:1]:
         problems.append("objective count")
     if problems:
