@@ -1,0 +1,345 @@
+# Layout checks for the screens the wave 4 in-game checks judged by hand (work/harness-plan/screens.md
+# has the paths and the measurements these numbers come from). One [[screen]] per screen; `check` visits
+# them in its own order (fewest route edges from where the last one ended, dead ends last), so the order here
+# only breaks ties.
+#
+# name = label in the table; route = a route screen (tools/game_harness.ROUTE_SCREENS); fixture, battle,
+# script = optional (script N fires in the battle, before the route goes on); wait = optional condition with
+# the route-screen keys (texture, caller, x) plus timeout in s; assert = list of {kind = ...} from
+# tools/screen_checks.ASSERTIONS. Select text by draw caller (or `match` regex) and textures by key.member
+# (fnmatch). Never quote game text. A screen is reached only by route, never by hand-sent keys.
+#
+# Positions are layout px (1280x720). A lane is a text's x plus the width the draw squishes it into, so
+# lane checks pass the capture through `text_within_edge` and measure the drawn ink, not the JSON width
+# (`ink = false` for a text typed out letter by letter). Prompt bar (caller 0x55dfd8): y 652, right end
+# 1192 on every screen that has one.
+
+[[screen]]
+name = "game-settings"
+route = "game-settings"
+
+  [[screen.assert]]
+  kind = "no_cjk"
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x55dfd8" }
+  y = 652
+  right = 1192
+
+[[screen]]
+name = "options-controller"
+route = "options-controller"
+
+  [[screen.assert]]
+  kind = "no_cjk"
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x55dfd8" }
+  y = 652
+  right = 1192
+
+[[screen]]
+name = "gallery-original-background"
+route = "gallery-original-background"
+
+  [[screen.assert]]
+  kind = "ink_clear_of_quad_edge"   # the label art stays inside the 252-wide quad window
+  quad = "4064.5"
+  side = "right"
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x55dfd8" }
+  y = 652
+  right = 1192
+
+[[screen]]
+name = "gallery-weapons"
+route = "gallery-weapons"
+
+  [[screen.assert]]
+  kind = "no_cjk"
+
+[[screen]]
+name = "gallery-movies"
+route = "gallery-movies"
+
+  [[screen.assert]]
+  kind = "no_cjk"
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x55dfd8" }
+  y = 652
+  right = 1192
+
+[[screen]]
+name = "vs-course"
+route = "vs-course"
+
+  [[screen.assert]]
+  kind = "line_count"               # CONDITIONS is one line (it wrapped to two before the fix)
+  text = { caller = "0x5a6805" }
+  max = 1
+
+  [[screen.assert]]
+  kind = "text_within_edge"         # ... and ends inside the rules box: x 549 + its 641 width
+  text = { caller = "0x5a6805" }
+  edge = 1190
+
+  [[screen.assert]]
+  kind = "line_count"
+  text = { caller = "0x5a686c" }
+  min = 3
+  max = 4
+
+  [[screen.assert]]
+  kind = "text_clear_of_text"
+  text = { caller = "0x5a6805" }
+  other = { caller = "0x5a686c" }
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x5a686c" }
+  x = 549
+
+[[screen]]
+name = "vs-team-select"
+route = "vs-team-select"
+
+  [[screen.assert]]
+  kind = "line_count"
+  text = { caller = "0x5a6805" }
+  max = 1
+
+  [[screen.assert]]
+  kind = "text_clear_of_text"
+  text = { caller = "0x5a6805" }
+  other = { caller = "0x5a686c" }
+
+[[screen]]
+name = "survival-members"
+route = "survival-members"
+
+  [[screen.assert]]
+  kind = "no_cjk"
+
+[[screen]]
+name = "camp-officers"
+route = "camp-officers"
+
+  [[screen.assert]]
+  kind = "no_cjk"
+
+[[screen]]
+name = "camp-weapons"
+route = "camp-weapons"
+
+  [[screen.assert]]
+  kind = "text_position"            # the thumbnail guard: names start right of the weapon picture, at every row.
+  text = { caller = "0x5950ec" }    # The picture is an unnamed quad, so no text_clear_of_quad can see it;
+  x = 707                           # the run-2 build drew names at x 648, under it, and this row went red.
+  tol = 0
+
+  [[screen.assert]]
+  kind = "text_within_edge"         # lane 175: names end before the skill squares
+  text = { caller = "0x5950ec" }
+  edge = 882
+
+[[screen]]
+name = "camp-weapon-panel"
+route = "camp-weapon-panel"
+
+  [[screen.assert]]
+  kind = "no_cjk"
+
+[[screen]]
+name = "camp-customize"
+route = "camp-customize"
+
+  [[screen.assert]]
+  kind = "no_cjk"
+  allow_empty = true
+
+[[screen]]
+name = "customize-upgrade-skills"
+route = "customize-upgrade-skills"
+
+  [[screen.assert]]
+  kind = "text_within_edge"         # name lane 170, at least 8 px before the count column at 374
+  text = { caller = "0x533469" }
+  edge = 366
+
+[[screen]]
+name = "customize-fusion-officers"
+route = "customize-fusion-officers"
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x5950ec" }
+  x = 748
+  tol = 0
+
+  [[screen.assert]]
+  kind = "text_within_edge"         # names end before the skill squares (cap 1390)
+  text = { caller = "0x5950ec" }
+  edge = 926
+
+[[screen]]
+name = "customize-weapon-upgrade"
+route = "customize-weapon-upgrade"
+
+  [[screen.assert]]
+  kind = "no_cjk"
+
+[[screen]]
+name = "story-z-scenario"
+route = "story-z-scenario"
+
+  [[screen.assert]]
+  kind = "text_clear_of_quad"       # the RECORD TIME plate stays off the army line
+  text = { caller = "0x588ac8" }
+  quad = "4077.27"
+
+  [[screen.assert]]
+  kind = "text_within_edge"
+  text = { caller = "0x588ac8" }
+  edge = 747
+
+[[screen]]
+name = "story-z-scenario-three-armies"
+route = "story-z-scenario-3"
+
+  [[screen.assert]]
+  kind = "text_clear_of_quad"
+  text = { caller = "0x588ac8" }
+  quad = "4077.27"
+
+  [[screen.assert]]
+  kind = "text_within_edge"
+  text = { caller = "0x588ac8" }
+  edge = 747
+
+[[screen]]
+name = "dream-select"
+route = "dream-select"
+
+  [[screen.assert]]
+  kind = "line_count"               # the summary column is at most 7 lines; only the runtime draws it, so select by position
+  text = { x = 980, y = 408 }
+  max = 7
+
+[[screen]]
+name = "briefing"
+route = "briefing"
+
+  [[screen.assert]]
+  kind = "line_count"
+  text = { caller = "0x548f52" }
+  max = 3
+
+  [[screen.assert]]
+  kind = "text_has_ink"
+  text = { caller = "0x548f52" }
+
+[[screen]]
+name = "pre-battle-weapons"
+route = "pre-battle-weapons"
+
+  [[screen.assert]]
+  kind = "text_position"            # the thumbnail guard, as on camp-weapons
+  text = { caller = "0x5950ec" }
+  x = 707
+  tol = 0
+
+  [[screen.assert]]
+  kind = "text_within_edge"
+  text = { caller = "0x5950ec" }
+  edge = 882
+
+[[screen]]
+name = "pre-battle-weapon-panel"
+route = "pre-battle-weapon-panel"
+
+  [[screen.assert]]
+  kind = "text_within_edge"         # panel names: lane 175 from x 208
+  text = { caller = "0x5950ec" }
+  edge = 383
+
+[[screen]]
+name = "pre-battle-officers"
+route = "pre-battle-officers"
+
+  [[screen.assert]]
+  kind = "text_within_edge"         # army title lane 252 from x 140
+  text = { caller = "0x536785" }
+  edge = 392
+
+[[screen]]
+name = "pause"
+route = "pause"
+
+  [[screen.assert]]
+  kind = "text_clear_of_quad"       # the army line stays off the TIME plate
+  text = { caller = "0x538c65" }
+  quad = "4080.4"
+
+  [[screen.assert]]
+  kind = "text_within_edge"
+  text = { caller = "0x538c65" }
+  edge = 942
+
+[[screen]]
+name = "battle-history"
+route = "battle-history"
+script = 10                         # a banner script puts two entries in the history
+
+  [[screen.assert]]
+  kind = "text_within_edge"         # entries wrap inside the 812-wide box at x 279
+  text = { caller = "0x539f9f" }
+  edge = 1091
+
+[[screen]]
+name = "save-prompt"
+route = "save-prompt"
+
+  [[screen.assert]]
+  kind = "no_cjk"
+
+[[screen]]
+name = "story-z-narration"
+route = "story-z-narration"
+wait = { caller = "0x55f31c", timeout = 30 }
+
+  [[screen.assert]]
+  kind = "text_position"            # the page text sits at (200, 507)
+  text = { caller = "0x55f31c" }
+  x = 200
+  y = 507
+
+  [[screen.assert]]
+  kind = "text_within_edge"         # wrap 742; the page is typed out, so the capture holds only its start: use the reported width
+  text = { caller = "0x55f31c" }
+  edge = 942
+  ink = false
+
+  [[screen.assert]]
+  kind = "line_count"
+  text = { caller = "0x55f31c" }
+  max = 3
+
+  [[screen.assert]]
+  kind = "text_has_ink"
+  text = { caller = "0x55f31c" }
+
+# The Z still event follows the narration (also no way out). Its names are drawn by the runtime, so they are
+# selected by shape: one or more capitalised words, which the page text and prompt bar never are.
+[[screen]]
+name = "story-z-still"
+route = "story-z-still-2"
+
+  [[screen.assert]]
+  kind = "text_centred_in_box"      # each name centred in its plate's dark box and inside it (lane 180)
+  text = { match = "^[A-Z][a-z]+( [A-Z][a-z]+)*$" }

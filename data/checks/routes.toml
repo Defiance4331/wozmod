@@ -1,0 +1,122 @@
+# Route smoke for the screens that no check rule judges yet: each entry reaches the screen by route and takes
+# its capture (the empty text selection passes, so a row only fails when the screen cannot be reached).
+# Run it on any build with `tools/run_check.py --install DIR [--dll FILE] data/checks/routes.toml`.
+# The Wei story chain, the victory still and the fusion weapon list (it unlocks every officer's weapons) are
+# visited last; the story screens have no way back to the menu.
+
+[[screen]]
+name = "story-orochi-scenario"
+route = "story-orochi-scenario"
+
+  [[screen.assert]]
+  kind = "text_has_ink"
+  text = { caller = "0x1" }
+  allow_empty = true
+
+[[screen]]
+name = "story-wei-scenario"
+route = "story-wei-scenario"
+
+  [[screen.assert]]
+  kind = "text_has_ink"
+  text = { caller = "0x1" }
+  allow_empty = true
+
+[[screen]]
+name = "story-narration"
+route = "story-narration"
+
+  [[screen.assert]]
+  kind = "text_has_ink"
+  text = { caller = "0x1" }
+  allow_empty = true
+
+[[screen]]
+name = "story-wei-pre-battle"
+route = "story-wei-pre-battle"
+
+  [[screen.assert]]
+  kind = "text_has_ink"
+  text = { caller = "0x1" }
+  allow_empty = true
+
+[[screen]]
+name = "story-wei-battle"
+route = "story-wei-battle"
+
+  [[screen.assert]]
+  kind = "text_has_ink"
+  text = { caller = "0x1" }
+  allow_empty = true
+
+[[screen]]
+name = "story-victory-still"
+route = "story-victory-still"
+
+  [[screen.assert]]
+  kind = "text_has_ink"
+  text = { caller = "0x1" }
+  allow_empty = true
+
+[[screen]]
+name = "gallery-treasure-guide"
+route = "gallery-treasure-guide"
+
+  [[screen.assert]]
+  kind = "text_has_ink"
+  text = { caller = "0x1" }
+  allow_empty = true
+
+[[screen]]
+name = "gallery-movie-play"
+route = "gallery-movie-play"
+
+  [[screen.assert]]
+  kind = "text_has_ink"
+  text = { caller = "0x1" }
+  allow_empty = true
+
+[[screen]]
+name = "gallery-movie-two-line"
+route = "gallery-movie-two-line"
+
+  [[screen.assert]]
+  kind = "text_has_ink"
+  text = { caller = "0x1" }
+  allow_empty = true
+
+[[screen]]
+name = "camp-treasure"
+route = "camp-treasure"
+
+  [[screen.assert]]
+  kind = "text_has_ink"
+  text = { caller = "0x1" }
+  allow_empty = true
+
+[[screen]]
+name = "customize-weapon-pick"
+route = "customize-weapon-pick"
+
+  [[screen.assert]]
+  kind = "text_has_ink"
+  text = { caller = "0x1" }
+  allow_empty = true
+
+[[screen]]
+name = "customize-weapon-attributes"
+route = "customize-weapon-attributes"
+
+  [[screen.assert]]
+  kind = "text_has_ink"
+  text = { caller = "0x1" }
+  allow_empty = true
+
+[[screen]]
+name = "customize-fusion-weapons"
+route = "customize-fusion-weapons"
+
+  [[screen.assert]]
+  kind = "text_has_ink"
+  text = { caller = "0x1" }
+  allow_empty = true

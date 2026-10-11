@@ -1,0 +1,1729 @@
+#!/usr/bin/env python3
+"""Headless game control for the wozmod checks."""
+
+from __future__ import annotations
+
+import argparse
+import ctypes
+import fcntl
+import hashlib
+import json
+import math
+import os
+import re
+import resource
+import shutil
+import signal
+import struct
+import subprocess
+import sys
+import time
+import uuid
+from pathlib import Path
+
+from wozmod.runtime.english_runtime import DLL_BASE, SURROGATES, encode_english
+
+
+REPO = Path(__file__).resolve().parents[1]
+TARGET = "musou-orochi-z-pc-jp"
+XENIA = "warriors-orochi-2-x360-usa"  # official X360 menu references, using a disposable emulator
+MAX_KEYS = 100  # keys in one sequence
+GAME_PROCESS = "OROCHI_Z.exe"  # /proc/<pid>/comm of the game under Proton
+ADDRESS_LIMIT = 1 << 32  # the game is 32-bit
+MAX_PEEK, MAX_POKE, MAX_PATTERN, MAX_HITS = 65536, 4096, 256, 64
+FIND_CHUNK = 1 << 24  # bytes read at a time by find
+SAVE = "prefix/pfx/drive_c/users/steamuser/Documents/KOEI/Musou OROCHI Z/Savedata/save.dat"
+# save.dat holds the game's state from 0x7FB650 at offset 8, so the resolution index (0x80152D, into
+# the table at 0x6FDE2C) sits at 0x5EE5. At 0x25F24 is the file's byte sum, taken with that 20-byte field zeroed.
+SAVE_SIZE, SAVE_MODE, SAVE_SUM, MODE_1080P = 0x25F48, 0x5EE5, 0x25F24, 9
+# The mailbox of a --test runtime build; english_runtime.c struct test_block.
+TEST_MAGIC, TEST_VERSION = b"ENRT-TEST-BLOCK\0", 2
+TEST_TEXTS, TEST_QUADS, TEST_SETS, TEST_INPUT = 256, 2048, 16, 1024
+TEST_TEXT = struct.Struct("<2I3i124s")  # hook, caller, x, y, width, text
+TEST_QUAD = struct.Struct("<4I4i")  # hook, caller, handle, name, x, y, width, height
+TEST_HEADER = struct.Struct(f"<16s8I{TEST_INPUT}sI")  # magic ... result, input, sets
+TEST_SNAPSHOT = TEST_HEADER.size + TEST_SETS * TEST_TEXT.size
+TEST_RELOADS = TEST_SNAPSHOT + 12 + TEST_TEXTS * TEST_TEXT.size + TEST_QUADS * TEST_QUAD.size  # tables loaded
+TEST_SIZE = TEST_RELOADS + 4
+RELOAD_SECONDS = 5  # the runtime looks at table.bin about once a second
+TEST_COMMAND_SECONDS = 5  # the game runs a command at its next frame
+# Battle state the stock exe keeps at fixed addresses; see english_runtime.c.
+STAGE, STAGE_DATA, SCRIPT_TABLE, SCRIPT_EVENTS = 0x801AA0, 0x9C8FD4, 0x9C919C, 0x9C91B0
+LAST_STAGE = 0x8F  # stage numbers are LINKDATA2 container indices; 0x90 is no stage and quits the game
+UNSURROGATES = {ord(v): k for k, v in SURROGATES.items()}
+# The virtual pad (run --pad): a uinput Xbox 360 pad, the device Steam Input and xpad present to
+# Wine. Evdev codes: buttons, then (axis, value) presses for the triggers, D-pad and sticks.
+PAD_BUTTONS = {"A": 0x130, "B": 0x131, "X": 0x133, "Y": 0x134, "LB": 0x136, "RB": 0x137,
+               "BACK": 0x13A, "START": 0x13B, "GUIDE": 0x13C, "LS": 0x13D, "RS": 0x13E}
+STICK = 32767
+PAD_HIDDEN = "/dev/harness-pad"  # the pad node while unplugged: no input scan looks here
+PAD_PRESSES = {"LT": (2, 255), "RT": (5, 255), "UP": (0x11, -1), "DOWN": (0x11, 1), "LEFT": (0x10, -1),
+               "RIGHT": (0x10, 1), "L-UP": (1, -STICK), "L-DOWN": (1, STICK), "L-LEFT": (0, -STICK),
+               "L-RIGHT": (0, STICK), "R-UP": (4, -STICK), "R-DOWN": (4, STICK), "R-LEFT": (3, -STICK),
+               "R-RIGHT": (3, STICK)}
+PAD_AXES = {0: (-32768, STICK), 1: (-32768, STICK), 3: (-32768, STICK), 4: (-32768, STICK),
+            2: (0, 255), 5: (0, 255), 0x10: (-1, 1), 0x11: (-1, 1)}
+# xpad pads by USB id and kernel name: the Microsoft pad, and a third-party XInput pad Wine names differently
+PAD_MODELS = {"x360": (0x045E, 0x028E, b"Microsoft X-Box 360 pad"),
+              "8bitdo": (0x2DC8, 0x3106, b"8BitDo Ultimate Wireless / Pro 2 Wired Controller")}
+
+
+def bounded(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number) or not 0 < number <= 3600:
+        raise argparse.ArgumentTypeError("use a finite value greater than 0 and at most 3600")
+    return number
+
+
+def local_path(root: Path, name: str) -> Path:
+    path = root / name
+    if path.resolve() != path or not path.is_relative_to(root):
+        raise ValueError(f"run path must not contain symlinks: {path}")
+    return path
+
+
+def at_1080p(save: bytes) -> bytes:
+    """The save with the game's resolution set to 1920x1080, which the game applies at boot."""
+    if len(save) != SAVE_SIZE:
+        raise ValueError(f"save.dat is {len(save)} bytes, not {SAVE_SIZE}")
+    data = bytearray(save)
+    data[SAVE_MODE] = MODE_1080P
+    data[SAVE_SUM:SAVE_SUM + 20] = bytes(20)
+    data[SAVE_SUM:SAVE_SUM + 4] = sum(data).to_bytes(4, "little")
+    return bytes(data)
+
+
+def write_json(path: Path, value: dict) -> None:
+    temporary = path.with_suffix(".next")
+    temporary.write_text(json.dumps(value) + "\n")
+    temporary.replace(path)
+
+
+X_INPUT = None  # (libX11, libXtst, display) kept open by the server, so only its first key input primes
+
+
+def x_input() -> tuple:
+    """The isolated Xwayland display for key input, opened and primed on first use. Use only inside headless Gamescope."""
+    global X_INPUT
+    if X_INPUT:
+        return X_INPUT
+    if not os.environ.get("GAMESCOPE_WAYLAND_DISPLAY"):
+        raise ValueError("key input requires the isolated Gamescope child")
+    x11 = ctypes.CDLL("libX11.so.6")
+    xtst = ctypes.CDLL("libXtst.so.6")
+    display_type = ctypes.c_void_p
+    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    x11.XOpenDisplay.restype = display_type
+    x11.XStringToKeysym.argtypes = [ctypes.c_char_p]
+    x11.XStringToKeysym.restype = ctypes.c_ulong
+    x11.XKeysymToKeycode.argtypes = [display_type, ctypes.c_ulong]
+    x11.XKeysymToKeycode.restype = ctypes.c_uint
+    x11.XFlush.argtypes = [display_type]
+    x11.XCloseDisplay.argtypes = [display_type]
+    xtst.XTestFakeKeyEvent.argtypes = [display_type, ctypes.c_uint, ctypes.c_int, ctypes.c_ulong]
+    xtst.XTestFakeMotionEvent.argtypes = [
+        display_type, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_ulong,
+    ]
+    display = x11.XOpenDisplay(None)
+    if not display:
+        raise ValueError("cannot open the isolated DISPLAY")
+    # Prime Xwayland's libei connection before the keyboard events.
+    if not xtst.XTestFakeMotionEvent(display, 0, 640, 360, 0):
+        x11.XCloseDisplay(display)
+        raise RuntimeError("XTEST pointer priming failed")
+    x11.XFlush(display)
+    time.sleep(1)
+    X_INPUT = (x11, xtst, display)
+    return X_INPUT
+
+
+def tap_keys(names: list[str], hold: float, gap: float, settle: float | None = None) -> None:
+    """Tap keys in order, gap seconds apart; wait ``settle`` seconds (default ``gap``) after the last release.
+
+    The display stays open between calls (x_input), so a call after the first needs no priming second."""
+    global X_INPUT
+    x11, xtst, display = x_input()
+    keys = []
+    for name in names:  # resolve every key before sending any
+        key = x11.XKeysymToKeycode(display, x11.XStringToKeysym(name.encode("ascii")))
+        if not key:
+            raise ValueError(f"unknown X keysym: {name}")
+        keys.append(key)
+    for n, key in enumerate(keys):
+        try:
+            if not xtst.XTestFakeKeyEvent(display, key, 1, 0):
+                x11.XCloseDisplay(display)
+                X_INPUT = None  # reopen and prime on the next call
+                raise RuntimeError("XTEST key press failed")
+            x11.XFlush(display)
+            time.sleep(hold)
+        finally:
+            xtst.XTestFakeKeyEvent(display, key, 0, 0)
+            x11.XFlush(display)
+        time.sleep(gap if n < len(keys) - 1 or settle is None else settle)
+
+
+def click_point(x: int, y: int) -> None:
+    """Click the left button on the isolated Xwayland display."""
+    if not os.environ.get("GAMESCOPE_WAYLAND_DISPLAY"):
+        raise ValueError("click input requires the isolated Gamescope child")
+    x11 = ctypes.CDLL("libX11.so.6")
+    xtst = ctypes.CDLL("libXtst.so.6")
+    display_type = ctypes.c_void_p
+    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    x11.XOpenDisplay.restype = display_type
+    x11.XFlush.argtypes = [display_type]
+    x11.XCloseDisplay.argtypes = [display_type]
+    xtst.XTestFakeMotionEvent.argtypes = [
+        display_type, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_ulong,
+    ]
+    xtst.XTestFakeButtonEvent.argtypes = [display_type, ctypes.c_uint, ctypes.c_int, ctypes.c_ulong]
+    display = x11.XOpenDisplay(None)
+    if not display:
+        raise ValueError("cannot open the isolated DISPLAY")
+    try:
+        # Prime Xwayland's libei connection, then position the pointer for the click.
+        if not xtst.XTestFakeMotionEvent(display, 0, 640, 360, 0):
+            raise RuntimeError("XTEST pointer priming failed")
+        x11.XFlush(display)
+        time.sleep(1)
+        if not xtst.XTestFakeMotionEvent(display, 0, x, y, 0):
+            raise RuntimeError("XTEST pointer positioning failed")
+        x11.XFlush(display)
+        time.sleep(0.05)
+        try:
+            if not xtst.XTestFakeButtonEvent(display, 1, 1, 0):
+                raise RuntimeError("XTEST left-button press failed")
+            x11.XFlush(display)
+            time.sleep(0.08)
+        finally:
+            xtst.XTestFakeButtonEvent(display, 1, 0, 0)
+            x11.XFlush(display)
+        time.sleep(1)
+    finally:
+        x11.XCloseDisplay(display)
+
+
+class VirtualPad:
+    """A uinput XInput pad (PAD_MODELS), created outside the sandbox; its event node is bound in."""
+
+    def __init__(self, model: str) -> None:
+        self.fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
+        try:
+            fcntl.ioctl(self.fd, 0x40045564, 1)  # UI_SET_EVBIT EV_KEY
+            fcntl.ioctl(self.fd, 0x40045564, 3)  # UI_SET_EVBIT EV_ABS
+            for code in PAD_BUTTONS.values():
+                fcntl.ioctl(self.fd, 0x40045565, code)  # UI_SET_KEYBIT
+            for axis, (low, high) in PAD_AXES.items():
+                fcntl.ioctl(self.fd, 0x40045567, axis)  # UI_SET_ABSBIT
+                flat = 128 if high == STICK else 0
+                fcntl.ioctl(self.fd, 0x401C5504, struct.pack("<H2x6i", axis, 0, low, high, 16 if flat else 0, flat, 0))
+            vendor, product, name = PAD_MODELS[model]
+            fcntl.ioctl(self.fd, 0x405C5503, struct.pack("<4H80sI", 3, vendor, product, 0x110, name, 0))  # UI_DEV_SETUP
+            fcntl.ioctl(self.fd, 0x5501)  # UI_DEV_CREATE
+            sysname = fcntl.ioctl(self.fd, 0x80405500 | 44, bytes(64)).split(b"\0")[0].decode()  # UI_GET_SYSNAME
+            deadline = time.monotonic() + 5
+            while not (nodes := list(Path(f"/sys/devices/virtual/input/{sysname}").glob("event*"))):
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("the virtual pad got no event node")
+                time.sleep(0.05)
+            self.node = f"/dev/input/{nodes[0].name}"
+            while not os.access(self.node, os.R_OK):  # udev gives the seat user access (uaccess)
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(f"no access to {self.node}; udev did not tag it for this seat")
+                time.sleep(0.05)
+        except BaseException:
+            os.close(self.fd)
+            raise
+
+    def send(self, events: list[tuple[int, int, int]]) -> None:
+        now = time.time()
+        stamp = struct.pack("<qq", int(now), int(now % 1 * 1e6))
+        os.write(self.fd, b"".join(stamp + struct.pack("<HHi", *event) for event in events + [(0, 0, 0)]))
+
+    def tap(self, names: list[str], hold: float, gap: float) -> None:
+        """Press each name (parts joined by + go down together) for hold seconds, then release it."""
+        for name in names:
+            down, up = [], []
+            for part in name.split("+"):
+                if part in PAD_BUTTONS:
+                    down.append((1, PAD_BUTTONS[part], 1)), up.append((1, PAD_BUTTONS[part], 0))
+                else:
+                    axis, value = PAD_PRESSES[part]
+                    down.append((3, axis, value)), up.append((3, axis, 0))
+            try:
+                self.send(down)
+                time.sleep(hold)
+            finally:
+                self.send(up)
+            time.sleep(gap)
+
+    def close(self) -> None:
+        fcntl.ioctl(self.fd, 0x5502)  # UI_DEV_DESTROY
+        os.close(self.fd)
+
+
+def pad_names(names: object) -> list[str]:
+    if not isinstance(names, list) or not 0 < len(names) <= MAX_KEYS or not all(
+        isinstance(name, str) and all(part in PAD_BUTTONS or part in PAD_PRESSES for part in name.split("+"))
+        for name in names
+    ):
+        raise ValueError(f"use 1 to {MAX_KEYS} pad inputs from {', '.join([*PAD_BUTTONS, *PAD_PRESSES])}, "
+                         "joined by + to press together")
+    return names
+
+
+def game_pid() -> int:
+    """The game's pid in this PID namespace: the server only sees its own run's processes."""
+    pids = [p.parent.name for p in Path("/proc").glob("[0-9]*/comm")
+            if p.read_text(errors="replace").strip() == GAME_PROCESS]
+    if len(pids) != 1:
+        raise ValueError(f"expected one {GAME_PROCESS} process, found {len(pids)}")
+    return int(pids[0])
+
+
+def hex_bytes(value: object, limit: int) -> bytes:
+    if not isinstance(value, str) or not re.fullmatch(r"(?:[0-9a-fA-F]{2}){1,%d}" % limit, value):
+        raise ValueError(f"use 1 to {limit} bytes as plain hex, such as 00000000")
+    return bytes.fromhex(value)
+
+
+def game_range(address: object, length: int) -> int:
+    if not isinstance(address, int) or not 0 <= address <= ADDRESS_LIMIT - length:
+        raise ValueError(f"address range must lie below {ADDRESS_LIMIT:#x}")
+    return address
+
+
+def find_bytes(pid: int, pattern: bytes) -> list[int]:
+    """Addresses of pattern in the game's writable memory, up to MAX_HITS."""
+    hits, chunk = [], FIND_CHUNK
+    with open(f"/proc/{pid}/mem", "rb", buffering=0) as memory:
+        for line in Path(f"/proc/{pid}/maps").read_text().splitlines():
+            span, permissions = line.split()[:2]
+            start, end = (int(x, 16) for x in span.split("-"))
+            if not permissions.startswith("rw") or end > ADDRESS_LIMIT:
+                continue
+            for offset in range(start, end, chunk):  # chunks overlap by len(pattern) - 1
+                try:
+                    data = os.pread(memory.fileno(), min(chunk + len(pattern) - 1, end - offset), offset)
+                except OSError:  # guard or vanished pages
+                    break
+                at = data.find(pattern)
+                while at != -1 and at < chunk:
+                    hits.append(offset + at)
+                    if len(hits) == MAX_HITS:
+                        return hits
+                    at = data.find(pattern, at + 1)
+    return hits
+
+
+def test_block(memory: int) -> int:
+    """Address of a --test runtime's mailbox: its magic in the d3d9.dll image at its fixed base."""
+    try:
+        header = os.pread(memory, 4096, DLL_BASE)
+    except OSError:
+        header = b""
+    if header[:2] != b"MZ":
+        raise ValueError("no English runtime d3d9.dll at its base; is WINEDLLOVERRIDES=d3d9=n,b set?")
+    pe = struct.unpack_from("<I", header, 0x3C)[0]
+    table = pe + 24 + struct.unpack_from("<H", header, pe + 20)[0]
+    for i in range(struct.unpack_from("<H", header, pe + 6)[0]):
+        _, size, rva = struct.unpack_from("<8sII", header, table + 40 * i)
+        at = os.pread(memory, size, DLL_BASE + rva).find(TEST_MAGIC)
+        if at >= 0:
+            block = DLL_BASE + rva + at
+            layout = struct.unpack("<2I", os.pread(memory, 8, block + 16))
+            if layout != (TEST_VERSION, TEST_SIZE):
+                raise ValueError(f"test mailbox version/size {layout} does not match this harness")
+            return block
+    raise ValueError("the game has no test mailbox; build the runtime with --test")
+
+
+def test_command(memory: int, block: int, op: int, arg: int = 0, data: bytes = b"", busy: float = 0) -> None:
+    """Run one mailbox op on the game thread, at the game's next frame, retrying result 4 for busy seconds."""
+    if len(data) >= TEST_INPUT:
+        raise ValueError(f"text must be under {TEST_INPUT} bytes in CP932")
+    busy_until = time.monotonic() + busy
+    while True:
+        command, done = struct.unpack("<2I", os.pread(memory, 8, block + 28))
+        if command != done:
+            raise RuntimeError("the game has not run the previous test command yet; is it loading?")
+        os.pwrite(memory, struct.pack("<3I", op, arg, 0) + data.ljust(TEST_INPUT, b"\0"), block + 36)
+        command = (command + 1) & 0xFFFFFFFF
+        os.pwrite(memory, struct.pack("<I", command), block + 28)
+        deadline = time.monotonic() + TEST_COMMAND_SECONDS
+        while struct.unpack("<I", os.pread(memory, 4, block + 32))[0] != command:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("the game ran no frame for the test command; it runs once the game pumps again")
+            time.sleep(0.01)
+        result = struct.unpack("<I", os.pread(memory, 4, block + 44))[0]
+        if result != 4 or time.monotonic() >= busy_until:
+            break
+        time.sleep(0.2)
+    if result:
+        raise RuntimeError(f"the game refused test op {op}: " + {
+            1: "use window 1 or 2", 2: "unknown op, rebuild the runtime with this harness",
+            3: "not in a battle, or the battle is already ending",
+            4: "a script is playing or the event queue is full; retry",
+            5: "no such queued script in this stage; run scripts",
+            6: "review texture or rectangle is unavailable; check the test-only review.bin",
+        }.get(result, f"result {result}"))
+
+
+def stage_scripts(memory: int) -> dict:
+    """The loaded stage's event scripts and the dialog and notice records each shows."""
+    def u32s(address: int, count: int = 1) -> tuple:
+        return struct.unpack(f"<{count}I", os.pread(memory, 4 * count, address))
+
+    if not u32s(STAGE_DATA)[0]:
+        raise RuntimeError("not in a battle")
+    (stage,), (base, count), (events,) = u32s(STAGE), u32s(SCRIPT_TABLE, 2), u32s(SCRIPT_EVENTS)
+    scripts = []
+    for i, (offset, at) in enumerate(zip(u32s(base + 12, count), u32s(events, count))):
+        flags, kind, setup, immediate, _, n = os.pread(memory, 6, base + offset)
+        # event: opcode, operands; 0x26 spoken dialog (speaker, record), 0x25 battle notice (record, ...)
+        rows = list(struct.iter_unpack("<8H", os.pread(memory, 16 * n, at)))
+        scripts.append({"index": i, "type": kind, "fired": bool(flags & 1), "queued": not setup and not immediate,
+                        "dialogs": [r[2] for r in rows if r[0] == 0x26],
+                        "notices": [r[1] for r in rows if r[0] == 0x25]})
+    return {"stage": stage, "scripts": scripts}
+
+
+def english(raw: bytes) -> str:
+    return raw.split(b"\0")[0].decode("cp932", "replace").translate(UNSURROGATES)
+
+
+def screen(memory: int, block: int) -> dict:
+    """Text and named textures the last frame drew, and the latest window texts set."""
+    test_command(memory, block, 1)
+    data = os.pread(memory, TEST_SIZE, block)
+    now, sets = struct.unpack_from("<I", data, 24)[0], struct.unpack_from("<I", data, TEST_HEADER.size - 4)[0]
+    frame, texts, quads = struct.unpack_from("<3I", data, TEST_SNAPSHOT)
+    windows = []
+    for n in range(max(0, sets - TEST_SETS), sets):
+        hook, caller, which, when, _, raw = TEST_TEXT.unpack_from(data, TEST_HEADER.size + n % TEST_SETS * TEST_TEXT.size)
+        windows.append({"set": f"window {which}" if hook == 6 else "message box", "frame": when,
+                        "caller": f"{caller:#x}", "text": english(raw)})
+    drawn = []
+    for n in range(min(texts, TEST_TEXTS)):
+        hook, caller, x, y, width, raw = TEST_TEXT.unpack_from(data, TEST_SNAPSHOT + 12 + n * TEST_TEXT.size)
+        drawn.append({"x": x, "y": y, "width": width, "caller": f"{caller:#x}", "text": english(raw),
+                      **({"hook": "caption"} if hook == 4 else {})})
+    named, unnamed = {}, 0
+    for n in range(min(quads, TEST_QUADS)):
+        at = TEST_SNAPSHOT + 12 + TEST_TEXTS * TEST_TEXT.size + n * TEST_QUAD.size
+        _, caller, _, name, x, y, width, height = TEST_QUAD.unpack_from(data, at)
+        if not name:
+            unnamed += 1
+            continue
+        key = (f"{name >> 16}.{name & 0xFFFF}", x, y, width, height, f"{caller:#x}")
+        named[key] = named.get(key, 0) + 1
+    textures = [dict(zip(("texture", "x", "y", "width", "height", "caller"), key), count=count)
+                for key, count in named.items()]
+    return {"frame": frame, "frames_run": now, "texts": drawn, "textures": textures, "unnamed_quads": unnamed,
+            "dropped": {"texts": max(0, texts - TEST_TEXTS), "quads": max(0, quads - TEST_QUADS)},
+            "windows": windows}
+
+
+def wait_for(memory: int, block: int, text: str | None, texture: str | None, seconds: float,
+             on_match=None) -> dict:
+    """Poll frames until text is drawn or set in a window after the wait began, or texture is drawn.
+
+    on_match runs straight after the matching poll, before the answer is built; the poll gap
+    shrinks to 20 ms when it is set, so a capture lands within a few frames of the match."""
+    deadline, start = time.monotonic() + seconds, None
+    while True:
+        seen = screen(memory, block)
+        start = seen["frames_run"] if start is None else start
+        if text is not None:
+            recent = [w for w in seen["windows"] if w["frame"] >= start]
+            hits = [t for t in seen["texts"] + recent if text in t["text"].replace("\n", " ")]
+        else:
+            hits = [q for q in seen["textures"] if q["texture"] == texture]
+        if hits:
+            found = {"frame": seen["frame"], "matches": hits}
+            if on_match:
+                found.update(on_match())
+                found["frames_to_capture"] = screen(memory, block)["frames_run"] - seen["frames_run"]
+            return found
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"not drawn within {seconds:g} s; run screen to see what is")
+        time.sleep(0.02 if on_match else 0.1)
+
+
+def review_request(texture: str, rect: list[int]) -> tuple[int, list[int]]:
+    """Validate a renderer review before it reaches the game mailbox."""
+    if texture == "off":
+        return 0, [0, 0, 0, 0]
+    if not isinstance(texture, str) or not re.fullmatch(r"\d+\.\d+", texture):
+        raise ValueError("review texture is key.member, or off")
+    entry, item = map(int, texture.split("."))
+    if not 0 < entry < 65536 or not 0 <= item < 65536:
+        raise ValueError("review entry and item must fit 16 bits")
+    if len(rect) != 4 or any(not isinstance(v, int) or v < 0 for v in rect):
+        raise ValueError("review rect is four nonnegative integers: X Y W H")
+    x, y, w, h = rect
+    if not 0 < w <= 1110 or not 0 < h <= 200 or x + w > 4095 or y + h > 4095:
+        raise ValueError("review rect must fit the UV cap, width 1110, and height 200")
+    return entry << 16 | item, rect
+
+
+def capture_name(root: Path, name: object) -> Path:
+    """The PNG path for a new capture; refuses an unsafe stem or an existing file."""
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", name):
+        raise ValueError("capture name must be a short filename stem, without slashes")
+    destination = local_path(root, f"evidence/{name}.png")
+    if destination.exists():
+        raise ValueError(f"capture already exists: {destination}")
+    return destination
+
+
+def capture_png(root: Path, name: object) -> Path:
+    destination = capture_name(root, name)
+    subprocess.run(["gamescopectl", "screenshot", str(destination)], check=True, timeout=10)
+    deadline = time.monotonic() + 10
+    while not destination.exists() or not destination.read_bytes().endswith(
+        b"\x00\x00\x00\x00IEND\xaeB\x60\x82"
+    ):
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Gamescope did not produce the screenshot")
+        time.sleep(0.1)
+    return destination
+
+
+def perform(root: Path, request: dict) -> dict:
+    action = request["action"]
+    if action == "scripts":
+        with open(f"/proc/{game_pid()}/mem", "rb", buffering=0) as memory:
+            return stage_scripts(memory.fileno())
+    if action in ("screen", "wait", "say", "notice", "win", "lose", "script", "unlock", "battle", "review"):
+        with open(f"/proc/{game_pid()}/mem", "r+b", buffering=0) as memory:
+            block = test_block(memory.fileno())
+            if action == "screen":
+                return screen(memory.fileno(), block)
+            if action == "review":
+                name, rect = review_request(request["texture"], request["rect"])
+                test_command(memory.fileno(), block, 7, name, struct.pack("<4I", *rect))
+                return {"review": request["texture"], "rect": rect, "reference": "top", "vector": "bottom"}
+            if action in ("script", "battle"):
+                number, highest = request["number"], LAST_STAGE if action == "battle" else 0xFF
+                if not isinstance(number, int) or not 0 <= number <= highest:
+                    raise ValueError(f"{action} takes a number from 0 to {highest}")
+                if action == "script":  # waits out a script already playing
+                    test_command(memory.fileno(), block, 4, number, busy=10)
+                else:
+                    test_command(memory.fileno(), block, 6, number)
+                return {"queued": number} if action == "script" else {"next_battle_stage": number}
+            if action == "unlock":
+                test_command(memory.fileno(), block, 5)
+                return {"officers": "level 99, four weapons each"}
+            if action == "wait":
+                text, texture, seconds = request.get("text"), request.get("texture"), request["seconds"]
+                if (text is None) == (texture is None) or not isinstance(text or texture, str):
+                    raise ValueError("wait needs one of text or texture")
+                if texture is not None and not re.fullmatch(r"\d+\.\d+", texture):
+                    raise ValueError("texture is key.member, such as 4079.12")
+                if not isinstance(seconds, (int, float)) or not 0 < seconds <= 600:
+                    raise ValueError("wait seconds must be greater than 0 and at most 600")
+                shot = request.get("capture")
+                if shot is not None:
+                    capture_name(root, shot)  # refuse a bad or taken name before waiting
+                return wait_for(memory.fileno(), block, text, texture, seconds,
+                                (lambda: {"path": str(capture_png(root, shot))}) if shot is not None else None)
+            if action in ("win", "lose"):
+                # The stage's own victory (type 7) or defeat (type 8) script; the result screen follows.
+                test_command(memory.fileno(), block, 3, 7 if action == "win" else 8)
+                return {"queued": action}
+            if not isinstance(request["text"], str) or not request["text"]:
+                raise ValueError("say and notice need text")
+            # Window 1 is spoken dialog, 2 the battle notice; the runtime translates and wraps as the game would.
+            test_command(memory.fileno(), block, 2, 1 if action == "say" else 2, encode_english(request["text"]))
+            return {"window": 1 if action == "say" else 2}
+    if action == "reload":
+        # Replace table.bin whole, as an editor saving it would, and wait for the runtime to load it.
+        source = Path(request["table"])
+        if not source.is_file():
+            raise ValueError(f"no table at {source}")
+        with open(f"/proc/{game_pid()}/mem", "rb", buffering=0) as memory:
+            block = test_block(memory.fileno())
+            before = struct.unpack("<I", os.pread(memory.fileno(), 4, block + TEST_RELOADS))[0]
+            target = root / "game/wozmod/table.bin"
+            partial = target.with_name("table.bin.partial")
+            shutil.copyfile(source, partial)
+            os.replace(partial, target)
+            start = time.monotonic()
+            while (now := struct.unpack("<I", os.pread(memory.fileno(), 4, block + TEST_RELOADS))[0]) == before:
+                if time.monotonic() - start > RELOAD_SECONDS:
+                    raise TimeoutError(f"table.bin not reloaded within {RELOAD_SECONDS} s; see wozmod/runtime.log")
+                time.sleep(0.05)
+            return {"reloads": now, "seconds": round(time.monotonic() - start, 2)}
+    if action == "peek":
+        length = request["length"]
+        if not isinstance(length, int) or not 0 < length <= MAX_PEEK:
+            raise ValueError(f"peek length must be 1 to {MAX_PEEK} bytes")
+        address = game_range(request["address"], length)
+        with open(f"/proc/{game_pid()}/mem", "rb", buffering=0) as memory:
+            return {"address": f"{address:#x}", "hex": os.pread(memory.fileno(), length, address).hex()}
+    if action == "poke":
+        data = hex_bytes(request["hex"], MAX_POKE)
+        address = game_range(request["address"], len(data))
+        with open(f"/proc/{game_pid()}/mem", "r+b", buffering=0) as memory:
+            before = os.pread(memory.fileno(), len(data), address)
+            if os.pwrite(memory.fileno(), data, address) != len(data):
+                raise OSError("short write to game memory")
+        # before is journaled in actions.jsonl: poke it back to undo
+        return {"address": f"{address:#x}", "before": before.hex(), "after": data.hex()}
+    if action == "plug":  # inside the sandbox: the pad's event node appears or goes, as a real hotplug
+        node = json.loads((root / "evidence/session.json").read_text())["pad"]
+        if not node:
+            raise ValueError("this run has no pad; start it with run --pad")
+        if request["on"]:
+            Path(node).symlink_to(PAD_HIDDEN)
+        else:
+            Path(node).unlink()
+        return {"plugged": request["on"]}
+    if action == "find":
+        return {"addresses": [f"{a:#x}" for a in find_bytes(game_pid(), hex_bytes(request["hex"], MAX_PATTERN))]}
+    if action == "click":
+        size = json.loads(local_path(root, "evidence/session.json").read_text())["render_size"]
+        if not isinstance(size, list) or len(size) != 2 or any(type(value) is not int for value in size):
+            raise ValueError("run has no valid render size for click input")
+        width, height = size
+        if not 0 < width <= 1920 or not 0 < height <= 1080:
+            raise ValueError("click render size must fit 1920x1080")
+        x, y = request["x"], request["y"]
+        if type(x) is not int or type(y) is not int or not 0 <= x < width or not 0 <= y < height:
+            raise ValueError(f"click coordinates must be integers inside {width}x{height}")
+        click_point(x, y)
+        return {"action": "click", "x": x, "y": y, "button": "left"}
+    if action in ("key", "keys"):
+        # "key" keeps the original one-tap request and 1-second settle; "settle" overrides the wait after the last key.
+        names = [request["key"]] if action == "key" else request["keys"]
+        hold = float(request["hold"])
+        gap = float(request["gap"]) if action == "keys" else 1.0
+        settle = float(request["settle"]) if "settle" in request else gap
+        if not isinstance(names, list) or not 0 < len(names) <= MAX_KEYS or not all(
+            isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9_]+", name) for name in names
+        ):
+            raise ValueError(f"use 1 to {MAX_KEYS} X keysyms, such as Return or Down")
+        if not math.isfinite(hold) or not 0 < hold <= 2:
+            raise ValueError("key hold must be greater than 0 and at most 2 seconds")
+        if not math.isfinite(gap) or not 0.05 <= gap <= 2:
+            raise ValueError("key gap must be from 0.05 to 2 seconds")
+        if not math.isfinite(settle) or not 0 <= settle <= 10:
+            raise ValueError("key settle must be from 0 to 10 seconds")
+        tap_keys(names, hold, gap, settle)
+    elif action == "pad":
+        # The supervisor outside the sandbox owns the pad (gamescope closes inherited descriptors).
+        control = root / "control"
+        write_json(control / "pad.json", dict(request, names=pad_names(request["names"])))
+        deadline = time.monotonic() + 10 + len(request["names"]) * (request["hold"] + request["gap"])
+        while (control / "pad.json").exists():
+            if time.monotonic() >= deadline:
+                raise TimeoutError("the supervisor did not take the pad input")
+            time.sleep(0.02)
+        done = json.loads((control / "pad-done.json").read_text())
+        if done.get("error"):
+            raise ValueError(done["error"])
+        time.sleep(request["gap"])
+    elif action == "capture":
+        return {"path": str(capture_png(root, request["name"]))}
+    elif action == "record":
+        # The game plays into the private null sink; its monitor is what a player would hear.
+        name, seconds = request["name"], request["seconds"]
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", name):
+            raise ValueError("record name must be a short filename stem, without slashes")
+        if not isinstance(seconds, (int, float)) or not 0 < seconds <= 600:
+            raise ValueError("record seconds must be greater than 0 and at most 600")
+        destination = local_path(root, f"evidence/{name}.wav")
+        if destination.exists():
+            raise ValueError(f"recording already exists: {destination}")
+        subprocess.Popen(["timeout", str(seconds), "parecord", "--device=musou_harness.monitor",
+                          "--file-format=wav", str(destination)],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return {"path": str(destination), "seconds": seconds}
+    elif action not in ("status", "stop"):
+        raise ValueError(f"unknown action: {action}")
+    return {"action": action}
+
+
+def start_audio(root: Path) -> None:
+    """Keep Proton's audio backend available without host playback."""
+    runtime = os.environ["XDG_RUNTIME_DIR"]
+    os.environ["PULSE_SERVER"] = f"unix:{runtime}/pulse/native"
+    for name in ("pipewire", "pipewire-pulse", "wireplumber"):
+        with (root / f"evidence/{name}.log").open("w") as log:
+            subprocess.Popen([name], stdout=log, stderr=subprocess.STDOUT)
+    deadline = time.monotonic() + 10
+    while not Path(runtime, "pulse/native").is_socket():
+        if time.monotonic() >= deadline:
+            raise TimeoutError("private PulseAudio socket did not become ready")
+        time.sleep(0.1)
+    subprocess.run(
+        ["pactl", "load-module", "module-null-sink", "sink_name=musou_harness"],
+        check=True, timeout=10, stdout=subprocess.DEVNULL,
+    )
+    subprocess.run(
+        ["pactl", "set-default-sink", "musou_harness"], check=True, timeout=10,
+    )
+
+
+def serve(root: Path) -> int:
+    """Internal entry point, invoked only within the isolated compositor."""
+    if (
+        not os.environ.get("GAMESCOPE_WAYLAND_DISPLAY")
+        or os.environ.get("MUSOU_HARNESS_ROOT") != str(root)
+    ):
+        raise ValueError("serve requires the harness Gamescope environment")
+    control = root / "control"
+    start_audio(root)
+    with (root / "evidence/launcher.log").open("w") as log:
+        process = subprocess.Popen(
+            ["bash", str(root / "launch.sh")], cwd=root,
+            stdout=log, stderr=subprocess.STDOUT,
+        )
+        try:
+            write_json(control / "ready.json", {"display": os.environ.get("DISPLAY")})
+            while process.poll() is None:
+                path = control / "request.json"
+                if not path.exists():
+                    time.sleep(0.02)
+                    continue
+                request = json.loads(path.read_text())
+                response = {"id": request.get("id"), "ok": False}
+                try:
+                    response.update(perform(root, request), ok=True)
+                except (
+                    OSError, ValueError, KeyError, TypeError,
+                    RuntimeError, subprocess.SubprocessError,
+                ) as exc:
+                    response["error"] = str(exc)
+                with (root / "evidence/actions.jsonl").open("a") as journal:
+                    journal.write(json.dumps({
+                        "time": time.time(), "request": request,
+                        "response": response,
+                    }) + "\n")
+                write_json(control / "response.json", response)
+                path.unlink()
+                if request.get("action") == "stop" and response["ok"]:
+                    write_json(root / "evidence/game-exit.json", {"stopped": True, "time": time.time()})
+                    return 0
+            # The launcher execs Proton, so this is the game's own exit status: the one record that
+            # tells a crash from a quit, since both end the harness with the same code.
+            write_json(root / "evidence/game-exit.json", {"returncode": process.returncode, "time": time.time()})
+            return process.returncode
+        finally:
+            (control / "ready.json").unlink(missing_ok=True)
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+            # The outer PID namespace removes all remaining Proton/audio children.
+
+
+def last_actions(root: Path, count: int = 3) -> list[str]:
+    """The run's last journaled requests, as `action args -> ok|error`."""
+    journal = root / "evidence/actions.jsonl"
+    lines = journal.read_text().splitlines()[-count:] if journal.is_file() else []
+    out = []
+    for line in lines:
+        entry = json.loads(line)
+        request, response = entry["request"], entry["response"]
+        detail = request.get("keys") or request.get("key") or request.get("name") or request.get("number") or ""
+        out.append(f"{request['action']} {detail}".strip() + f" -> {'ok' if response['ok'] else response.get('error')}")
+    return out
+
+
+def hold_for_supervisor(root: Path, code: int) -> None:
+    """Report the server's end and wait to be killed. gamescope 3.16 on NVIDIA segfaults in its own
+    exit path once its child exits (the CVulkanDevice destructor, or the pipeline-compile thread on
+    an early exit), so the compositor's child never exits: the supervisor SIGKILLs the sandbox."""
+    write_json(root / "control/serve-exit.json", {"returncode": code})
+    while True:
+        time.sleep(1)
+
+
+def exit_record(root: Path, returncode: int | None, interrupted: bool) -> dict:
+    """Why a run ended. The harness exits with the server's code after both a crash and a quit; the game's own exit
+    status (evidence/game-exit.json, written inside the sandbox) separates them."""
+    path = root / "evidence/game-exit.json"
+    game = json.loads(path.read_text()) if path.is_file() else None
+    if game and game.get("stopped"):
+        reason = "stopped"  # the stop command
+    elif game:
+        reason = "quit" if game["returncode"] == 0 else "crash"
+    elif interrupted:
+        reason = "interrupted"  # the supervisor was stopped while the game ran
+    elif returncode in (124, 137):
+        reason = "timeout"  # run --timeout elapsed
+    else:
+        reason = "unknown"  # the compositor or sandbox ended before the game did; see harness.log
+    record = {"returncode": returncode, "reason": reason, "last_actions": last_actions(root)}
+    if game and "returncode" in game:
+        record["game_returncode"] = game["returncode"]
+    return record
+
+
+def ended(root: Path) -> str | None:
+    """A one-line account of a finished run, or None while it has not ended."""
+    path = root / "evidence/exit.json"
+    if path.is_file():
+        record = json.loads(path.read_text())
+    elif (root / "evidence/game-exit.json").is_file():  # the game is gone; the compositor is closing
+        record = exit_record(root, None, False)
+    else:
+        return None
+    code = f" (game exit status {record['game_returncode']})" if "game_returncode" in record else ""
+    last = "; ".join(record.get("last_actions", [])) or "none"
+    return f"the run has ended: {record.get('reason', 'unknown')}{code}; last actions: {last}"
+
+
+def run(root: Path, args: argparse.Namespace) -> int:
+    if not args.authorize_launch:
+        raise ValueError("launch needs current-task permission and --authorize-launch")
+    game = args.game.resolve(strict=True)
+    if not game.is_dir() or not game.is_relative_to(root):
+        raise ValueError("--game must be a disposable directory inside --root")
+    launcher = local_path(root, "launch.sh")
+    if not launcher.is_file():
+        raise ValueError("prepare and review a run-local launch.sh first")
+    for name in ("tmp", "runtime", "home", "prefix", "steamrt"):
+        local_path(root, name).mkdir(mode=0o700, exist_ok=True)
+    save = local_path(root, SAVE)
+    if args.target == TARGET and save.is_file():  # MOZ applies this mode at boot
+        replaced = save.with_name("save.dat.next")
+        replaced.write_bytes(at_1080p(save.read_bytes()))
+        replaced.replace(save)  # a new inode, so a reflinked template never changes
+    # Run directories are single-use: never replay stale input after a restart.
+    local_path(root, "control").mkdir(mode=0o700)
+    local_path(root, "evidence").mkdir(mode=0o700)
+    render_size = (1280, 720) if args.target == XENIA else (1920, 1080)
+    output_size = render_size if args.target == XENIA else (3840, 2160)
+    identity = {"target": args.target, "game": str(game), "root": str(root),
+                "launch_sha256": hashlib.sha256(launcher.read_bytes()).hexdigest(),
+                "timeout_seconds": args.timeout, "render_size": render_size,
+                "output_size": output_size, "fsr": args.target != XENIA}
+    pad = VirtualPad(args.pad) if args.pad else None
+    identity["pad"] = pad.node if pad else None
+    write_json(root / "evidence/session.json", identity)
+    runtime = f"/run/user/{os.getuid()}"
+    command = [
+        "timeout", "--kill-after=10", str(args.timeout), "bwrap",
+        "--die-with-parent", "--new-session", "--unshare-pid",
+        "--unshare-net", "--unshare-ipc", "--ro-bind", "/", "/",
+        "--bind", str(root), str(root), "--bind", str(root / "tmp"), "/tmp",
+        "--bind", str(root / "runtime"), runtime,
+        "--dev", "/dev", "--proc", "/proc",
+    ]
+    for device in (
+        "/dev/dri", "/dev/nvidia0", "/dev/nvidiactl", "/dev/nvidia-modeset",
+        "/dev/nvidia-uvm", "/dev/nvidia-uvm-tools",
+    ):
+        if Path(device).exists():
+            command += ["--dev-bind", device, device]
+    if pad:  # only the virtual pad: host input devices stay outside; plug links or unlinks its node
+        command += ["--dev-bind", pad.node, PAD_HIDDEN, "--dir", "/dev/input"]
+        if not args.unplugged:
+            command += ["--symlink", PAD_HIDDEN, pad.node]
+    for variable in (
+        "DISPLAY", "WAYLAND_DISPLAY", "GAMESCOPE_WAYLAND_DISPLAY", "XAUTHORITY",
+        "DBUS_SESSION_BUS_ADDRESS", "PULSE_SERVER", "PIPEWIRE_REMOTE",
+    ):
+        command += ["--unsetenv", variable]
+    environment = {
+        "MUSOU_HARNESS_ROOT": str(root), "GAME_DIR": str(game),
+        "XDG_RUNTIME_DIR": runtime, "PULSE_SERVER": "unix:/nonexistent",
+        "HOME": str(root / "home"), "XDG_CACHE_HOME": str(root / "home/cache"),
+        "XDG_CONFIG_HOME": str(root / "home/config"), "XDG_STATE_HOME": str(root / "home/state"),
+        "STEAM_COMPAT_DATA_PATH": str(root / "prefix"), "SLR4": str(root / "steamrt/run"),
+        "DXVK_LOG_PATH": str(root / "evidence"), "DXVK_STATE_CACHE_PATH": str(root / "home/cache"),
+        "PROTON_USE_XALIA": "0",
+    }
+    for key, value in environment.items():
+        command += ["--setenv", key, value]
+    hz = "60" if args.target == XENIA else os.environ.get("MUSOU_HARNESS_HZ", "60")
+    if hz not in ("60", "120"):
+        raise ValueError("MUSOU_HARNESS_HZ must be 60 or 120")
+    command += ["dbus-run-session", "--", "gamescope", "--backend", "headless",
+                "-W", str(output_size[0]), "-H", str(output_size[1]),
+                "-w", str(render_size[0]), "-h", str(render_size[1])]
+    if args.target != XENIA:
+        command += ["-F", "fsr"]
+    command += ["-r", hz, "--",
+                sys.executable, str(Path(__file__).resolve()), "_serve", "--root", str(root)]
+
+    def interrupted(signum: int, frame: object) -> None:
+        raise KeyboardInterrupt
+
+    served = root / "control/serve-exit.json"
+    served.unlink(missing_ok=True)
+    previous_handler = signal.signal(signal.SIGTERM, interrupted)
+    code = None
+    try:
+        with (root / "evidence/harness.log").open("w") as log:
+            process = subprocess.Popen(
+                command, stdout=log, stderr=subprocess.STDOUT,
+                start_new_session=True,  # no core dumps: a gamescope dump can stall the desktop
+                preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_CORE, (0, 0)),
+            )
+            try:
+                while process.poll() is None and not served.exists():
+                    request = root / "control/pad.json"
+                    if pad and request.exists():
+                        taken = json.loads(request.read_text())
+                        done = {"id": taken.get("id")}
+                        try:
+                            pad.tap(pad_names(taken["names"]), float(taken["hold"]), float(taken["gap"]))
+                        except (OSError, ValueError, KeyError) as exc:
+                            done["error"] = str(exc)
+                        write_json(root / "control/pad-done.json", done)
+                        request.unlink()
+                    time.sleep(0.02)
+                if served.exists():  # SIGKILL ends gamescope before its crashing exit path runs
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
+                    code = json.loads(served.read_text())["returncode"]
+                    return code
+                return process.returncode
+            finally:
+                interrupted = process.poll() is None
+                if interrupted:
+                    os.killpg(process.pid, signal.SIGTERM)
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait()
+                write_json(root / "evidence/exit.json", exit_record(root, process.returncode if code is None else code, interrupted))
+    finally:
+        signal.signal(signal.SIGTERM, previous_handler)
+        (root / "control/ready.json").unlink(missing_ok=True)
+        if pad:
+            pad.close()
+
+
+def send(root: Path, request: dict, timeout: float) -> dict:
+    control = local_path(root, "control")
+    deadline = time.monotonic() + timeout
+    # ponytail: one command at a time per run; add a queue only for real concurrent scenarios.
+    with (control / "client.lock").open("a") as lock:
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("another agent holds this run's control lock")
+                time.sleep(0.1)
+        if not (control / "ready.json").exists():
+            raise ValueError(ended(root) or "harness is not ready; read evidence/harness.log and launcher.log")
+        if (control / "request.json").exists():
+            raise ValueError("an earlier command is pending; do not replay it")
+        request = dict(request, id=uuid.uuid4().hex)
+        write_json(control / "request.json", request)
+        while time.monotonic() < deadline:
+            response_path = control / "response.json"
+            if response_path.exists():
+                response = json.loads(response_path.read_text())
+                if response.get("id") == request["id"] and not (control / "request.json").exists():
+                    return response
+            time.sleep(0.02)
+        raise TimeoutError("no acknowledgement; command outcome is unknown, do not repeat input")
+
+
+# The tour: a fixed route from a fresh boot on the full-unlock save. Each step sends keys (or one
+# request), waits for the screen that must follow, and records a stop there if it names one. The
+# screens are named by package texture (optionally without another), a stock-code text draw caller
+# or, for text the runtime draws itself (its addresses move with every build), a text x; never
+# by English, so the route runs on any build.
+# The main menu's wheel art is 4085.6 on one boot and 4085.5 (with a character panel, 4085.158) on another.
+MENU = "4085.6|4085.5"
+TOUR = [
+    (["Escape"], {"texture": "4085.0"}, "title"),  # repeated until the title: skips the logo and movie
+    (["Return"], {"texture": MENU}, None),  # main menu, cursor on STORY MODE
+    (["Up", "Up", "Return"], {"texture": "4079.171"}, "options"),
+    (["Return"], {"texture": "4069.14"}, "game-settings"),
+    (["Escape", "Escape"], {"texture": MENU}, None),  # cursor on OPTION
+    (["Down", "Down", "Return"], {"texture": "4082.0"}, "story-select"),
+    (["Return"], {"texture": "4079.170"}, "camp"),  # Shu
+    (["Escape"], {"texture": "4082.0"}, None),
+    (["Escape"], {"texture": MENU}, None),  # cursor on STORY MODE
+    (["Down", "Down", "Return"], {"texture": "4094.5"}, "dream-select"),
+    (["Escape"], {"texture": MENU}, None),  # cursor on DREAM MODE
+    (["Down", "Down", "Down", "Return"], {"texture": "4079.169"}, "gallery"),
+    (["Escape"], {"texture": MENU}, None),  # cursor on GALLERY
+    (["Up", "Up", "Up", "Return"], {"texture": "4094.5"}, None),
+    ({"action": "battle", "number": 1}, None, None),
+    (["Return"], None, None),  # the first scenario; stage 1 plays in its place
+    (["Left"], None, None),  # difficulty wraps, and the save leaves it on CHAOS: three Lefts reach EASY
+    (["Left"], None, None),
+    (["Left"], None, None),
+    (["Return"], None, None),
+    (["Return"], {"texture": "4079.170"}, None),  # recommended team, then the camp
+    (["Up", "Return"], {"caller": "0x548f52"}, "briefing"),  # NEXT; stock caller of the briefing text
+    (["Escape"], {"texture": "4079.168"}, "pre-battle"),
+    (["Up", "Return"], {"texture": "4079.148"}, "first-dialog"),  # FIGHT; the opening dialog is up by then
+    ([], {"caller": "0x550f0b"}, "first-notice"),
+    (["Escape"], {"texture": "4079.223"}, "pause"),
+    (["Escape"], {"texture": "4079.148"}, None),
+    ({"action": "win"}, {"texture": "4079.52", "without": "4080.0"}, "results"),
+    (["Return"], {"caller": "0x54e76f"}, "save-prompt"),  # message box, cursor on NO
+    (["Return"], None, "save-cancelled"),
+    (["Return"], {"texture": MENU}, None),
+]
+# The stage sweep, per stage: its Dream Mode briefing, opening dialog and victory, from the main menu
+# with the cursor on DREAM MODE, where a Dream battle leaves it. Return every 3 s pages the victory's still
+# events.
+SWEEP_START = TOUR[:2] + [(["Down", "Down"], None, None)]
+
+
+def stage_route(stage: int, dialog: float = 25) -> list:
+    return [
+        (["Return"], {"texture": "4094.5"}, None),
+        ({"action": "battle", "number": stage}, None, None),
+        *[([key], None, None) for key in ("Return", "Left", "Left", "Left", "Return")],
+        (["Return"], {"texture": "4079.170"}, None),
+        (["Up", "Return"], {"caller": "0x548f52"}, f"{stage:03d}-briefing"),
+        (["Escape"], {"texture": "4079.168"}, None),
+        (["Up", "Return"], {"texture": "4079.148"}, None),
+        ([], {"seconds": dialog}, f"{stage:03d}-dialog"),  # the opening dialog plays itself
+        ({"action": "win"}, None, None),
+        (["Return"], {"texture": MENU, "every": 3}, f"{stage:03d}-victory"),
+    ]
+
+
+TOUR_WAIT, TOUR_SETTLE, TOUR_GAP = 90, 2.0, 0.5  # seconds: per step, before a stop's record, between keys
+ROUTE_POLL = 0.1  # seconds between screen polls while a route waits for a screen
+ROUTE_GAP = 0.6  # seconds a route waits after keys whose destination screen was showing already
+# A screen is drawn before it takes input: the main menu's fingerprint is its wheel art, which shows at once, and its
+# items slide in for over half a second after (Down Down Down on a fresh menu moved the cursor four); a submenu slides in
+# too, and a battle or the results screen ignore input for seconds. So a route waits after the screen that ends an edge shows
+# (an edge's own `slow` fingerprint overrides this); keys between its steps are still gated only by the poll.
+ARRIVE_GAP = 0.6  # seconds after an edge's destination first shows
+ROUTE_KEY_GAP = 0.3  # seconds between the keys of one route step
+MENU_SETTLE = 1.2  # ... a main-menu cursor position
+SCREEN_WIDTH, LINE_HEIGHT = 1280, 24  # the game's layout space and font cell
+CJK = re.compile("[\u3000-\u30ff\u3400-\u9fff\uff00-\uffef]")
+IMAGE_CHANGE = 0.03  # mean absolute grey difference, 0 to 1, that marks a stop's image as changed
+
+
+def tour_checks(seen: dict) -> dict:
+    """The design's Tier 2 checks on one screen: Japanese that missed the table, text past the
+    screen edge, and text rectangles that intersect."""
+    # ponytail: overflow is checked against the screen edge; per-site box widths come with layout.json.
+    texts = seen["texts"]
+    boxes = [(t["x"], t["y"], t["x"] + t["width"], t["y"] + LINE_HEIGHT * (t["text"].count("\n") + 1))
+             for t in texts]
+    return {
+        "cjk": sorted({t["text"] for t in texts + seen["windows"] if CJK.search(t["text"])}),
+        "overflow": [t["text"] for t, (x, _, right, _) in zip(texts, boxes) if x < 0 or right > SCREEN_WIDTH],
+        "overlap": [[a["text"], b["text"]] for i, (a, p) in enumerate(zip(texts, boxes))
+                    for b, q in zip(texts[i + 1:], boxes[i + 1:])
+                    if a["text"] != b["text"] and p[0] < q[2] and q[0] < p[2] and p[1] < q[3] and q[1] < p[3]],
+    }
+
+
+def shows(seen: dict, until: dict) -> bool:
+    drawn = {q["texture"] for q in seen["textures"]}
+    if "caller" in until:  # `lines`: a text of that many lines; `texts`: at least that many texts of the caller at once
+        drawn_by = [t for t in seen["texts"] if t["caller"] == until["caller"]
+                    and ("lines" not in until or t["text"].count("\n") + 1 == until["lines"])]
+        return len(drawn_by) >= until.get("texts", 1)
+    if "x" in until:
+        return any(t["x"] == until["x"] for t in seen["texts"])
+    return (not drawn.isdisjoint(until["texture"].split("|")) and drawn.isdisjoint(until.get("without", "").split("|"))
+            and (not until.get("with") or until["with"] in drawn)
+            and (not until.get("quad_caller") or any(q["caller"] == until["quad_caller"] for q in seen["textures"]))
+            and not any(t["caller"] == until.get("without_caller") for t in seen["texts"]))
+
+
+def ask(root: Path, request: dict, timeout: float = 30) -> dict:
+    response = send(root, request, timeout)
+    if not response["ok"]:
+        raise RuntimeError(f"{request['action']}: {response.get('error')}")
+    return response
+
+
+def drive_step(root: Path, keys: list | dict, until: dict | None, every: float | None, label: str,
+               quick: bool = False, before: dict | None = None) -> dict | None:
+    """Send keys (or one request), then wait until the screen shows ``until``, resending every
+    ``every`` seconds; without ``until``, settle instead. ``quick`` (routes): a step with a screen to
+    wait for sends its keys with no settle after the last one and polls fast, since the poll gates the next step.
+    That holds only if the screen did not show ``until`` already: ``before`` is the last screen seen (None: unknown),
+    and when it shows ``until`` the poll gates nothing, so the keys settle ROUTE_GAP seconds instead (a menu cursor
+    still moving drops the next input). An ``until`` with ``gap`` S waits S more seconds once its screen shows: the
+    screen is drawn before it takes input (a battle loads for seconds after its first frame). Returns the screen that matched, None after a step with nothing to wait for."""
+    deadline, sent = time.monotonic() + TOUR_WAIT * (2 if until and "every" in until else 1), None
+    every = every or (until or {}).get("every")
+    gated = quick and until is not None and "seconds" not in until
+    key_gap = ROUTE_KEY_GAP if quick else TOUR_GAP
+
+    def drawn() -> dict | None:
+        try:
+            return seen if shows(seen := ask(root, {"action": "screen"}), until) else None
+        except RuntimeError:  # loading: no frame ran the command
+            return None
+
+    def arrived(seen: dict) -> dict:
+        if gated and until.get("gap"):
+            time.sleep(until["gap"])
+        return seen
+
+    while True:
+        if sent is None or (every and time.monotonic() - sent > every):
+            if sent is not None and until is not None and "seconds" not in until and (seen := drawn()):
+                return arrived(seen)  # the screen came up since the last poll: a resent key would land on it
+            if isinstance(keys, dict):
+                ask(root, keys)
+            elif keys:
+                extra = {"settle": ROUTE_GAP if before is None or shows(before, until) else 0} if gated else {}
+                ask(root, {"action": "key", "key": keys[0], "hold": 0.08, **extra} if len(keys) == 1 else
+                    {"action": "keys", "keys": keys, "hold": 0.08, "gap": key_gap, **extra},
+                    30 + len(keys) * key_gap)
+            sent = time.monotonic()
+        if until is None or "seconds" in until:
+            time.sleep(until["seconds"] if until else 0 if quick else TOUR_SETTLE)  # a blind route step keeps the key's 1 s settle
+            return None
+        if seen := drawn():
+            return arrived(seen)
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"{label}: {until} not drawn in {TOUR_WAIT} s")
+        time.sleep(ROUTE_POLL if gated else 0.5)
+
+
+# The route library: the screens the tour has verified, and the moves between them, as a graph.
+# `route <screen>` drives the shortest path from where the last route left the game. A screen is
+# named as in TOUR; the main menu is one screen per cursor position, since its keys depend on it.
+# The battle moves assume the full-unlock save (its difficulty sits on CHAOS; three Lefts reach EASY).
+ROUTE_SCREENS = {
+    "boot": None,  # a fresh run, before any input
+    "title": {"texture": "4085.0"},
+    **{f"menu@{item}": {"texture": MENU} for item in ("story", "option", "dream", "vs", "survival", "gallery")},
+    "options": {"texture": "4079.171"},
+    "game-settings": {"texture": "4069.14", "without": "4079.149"},  # the controller page draws 4069.14 too
+    "options-controller": {"texture": "4069.14", "with": "4079.149"},
+    "story-select": {"texture": "4082.0|4082.4"},  # two columns: 4082.0 with the cursor in the left one (Shu), 4082.4 in the right (Z)
+    "story-camp": {"texture": "4060.39"},  # Shu; the camp menu plate, which its submenus do not draw
+    "camp-officers": {"caller": "0x54335f"},
+    "camp-weapons": {"texture": "4060.36"},
+    "camp-weapon-panel": {"caller": "0x59538a"},
+    "camp-customize": {"texture": "4060.14", "without": "4060.39"},
+    "customize-upgrade-skills": {"caller": "0x533469"},
+    # both officer lists draw the same textures and texts; the header plate 4060.15 is drawn by a different stock
+    # function in each (the names' x moves with the build: 263 and 284 on one, 258 and 258 on the other)
+    "customize-fusion-officers": {"texture": "4060.15", "quad_caller": "0x52d841"},
+    "customize-weapon-upgrade": {"texture": "4060.15", "quad_caller": "0x52967d"},
+    "story-z-camp": {"texture": "4060.39"},
+    "story-z-scenario": {"texture": "4077.30"},  # the strip is 4077.(30 + stage index)
+    "story-z-scenario-3": {"texture": "4077.33"},  # three armies
+    "story-z-narration": {"caller": "0x55f31c"},
+    # the Z still event after the narration, by its page text (its plates are unnamed quads); -2 is one page on
+    "story-z-still": {"caller": "0x59a785"},
+    "story-z-still-2": {"caller": "0x59a785"},
+    # the Orochi and Wei tabs: camps look like Shu's; strips 4077.62 (with the Orochi chapter tag 4079.158) and 4077.145
+    "story-orochi-camp": {"texture": "4060.39"},
+    "story-orochi-scenario": {"texture": "4077.62", "with": "4079.158"},
+    "story-wei-camp": {"texture": "4060.39"},
+    "story-wei-scenario": {"texture": "4077.145"},
+    "story-narration": {"caller": "0x561111"},  # the main story's (Z's is 0x55f31c); its panel is the stretched one
+    # the Wei story battle: the same screens as the Dream ones, but `win` here leads to the victory still, not the results
+    "story-wei-pre-battle": {"texture": "4079.168"},
+    "story-wei-battle": {"texture": "4079.148"},
+    "story-victory-still": {"caller": "0x59c7bd"},  # the main-path still: X360 still plate with a name plate
+    # a gallery movie's captions (caller 0x56a116, one draw per line) come and go; a two-line one is two draws at once
+    "gallery-movie-play": {"caller": "0x56a116", "transient": True},
+    "gallery-movie-two-line": {"caller": "0x56a116", "texts": 2, "transient": True},
+    "gallery-treasure-guide": {"caller": "0x552f3d"},
+    "camp-treasure": {"texture": "4060.43"},  # the acquired-treasure grid on the upgrade skills page
+    "customize-weapon-pick": {"texture": "4060.37", "without": "4060.13"},  # the weapon list before the attribute list
+    "customize-weapon-attributes": {"caller": "0x5956fa"},  # the attribute (upgrade skill) list; its text box
+    "customize-fusion-weapons": {"texture": "4060.6"},  # the weapon list of the fusion; several weapons only after `unlock`
+    "dream-select": {"texture": "4094.5"},
+    "gallery": {"texture": "4079.169", "without": "4064.7|4064.9|4079.105|4079.17"},  # sub-pages draw one of these
+    "gallery-original-background": {"texture": "4064.7"},
+    "gallery-weapons": {"texture": "4064.9"},
+    "gallery-movies": {"caller": "0x556821"},
+    "vs-course": {"caller": "0x5a6774"},  # the course blurb, hidden while the match-settings panel is open
+    "vs-team-select": {"texture": "4098.11", "without_caller": "0x5a6774"},  # 4098.11 stays drawn after Escape
+    "survival-members": {"caller": "0x54335f"},
+    "battle-camp": {"texture": "4079.170"},
+    "briefing": {"caller": "0x548f52"},  # stock draw caller of the briefing text (its x moves with the build)
+    "pre-battle": {"texture": "4079.168"},
+    "pre-battle-weapons": {"caller": "0x5950ec"},
+    "pre-battle-weapon-panel": {"caller": "0x59538a"},
+    "pre-battle-officers": {"caller": "0x536742"},
+    "battle": {"texture": "4079.148"},  # the opening dialog is up by then
+    "pause": {"texture": "4079.223", "without": "4079.44"},  # the pre-battle menu draws 4079.223 and 4079.44
+    "battle-history": {"texture": "4080.38"},  # the entries (caller 0x539f9f) are empty at the start of a battle
+    "results": {"texture": "4079.52", "without": "4080.0"},
+    "save-prompt": {"caller": "0x54e76f"},  # message box, cursor on NO
+}
+
+
+def slow(screen: str, gap: float = 1.0) -> dict:
+    """The screen's fingerprint plus a wait after it shows: it is drawn some time before it takes input."""
+    return {**ROUTE_SCREENS[screen], "gap": gap}
+
+
+STAGE_STEP = {"action": "battle", "number": None}  # filled with route --stage
+UNLOCK_STEP = {"action": "unlock"}  # every officer gets four weapons: the rest of the run is no longer the plain save
+# (from, to, steps): each step is (keys or one request, screen to wait for); a bare key list is one
+# step that waits for the destination screen. A move up a level that leaves a submenu cursor on the
+# item it opened ends with the keys that put the cursor back, so the move down works again.
+# An edge enters this table only after it worked in a run; each group names its run (runs under
+# work/runtime-tests/, 2026-10-11_ prefix). A back edge that sends several keys sends a key that a
+# menu still sliding in drops, so one that has to leave the cursor on an item sends each key as its
+# own step. A fingerprint that is only drawn while a screen slides in (not steady) breaks the next route.
+# Drop an edge that fails twice.
+ROUTE_EDGES = [
+    # the tour, 0202-tour; 0207-B
+    ("boot", "title", [(["Escape"], {**ROUTE_SCREENS["title"], "every": 4})]),  # skips the logos and movie
+    ("title", "menu@story", ["Return"]),
+    ("menu@story", "menu@option", ["Up", "Up"]),
+    ("menu@option", "menu@story", ["Down", "Down"]),
+    ("menu@story", "menu@dream", ["Down", "Down"]),
+    ("menu@dream", "menu@story", ["Up", "Up"]),
+    ("menu@dream", "menu@gallery", ["Down", "Down", "Down"]),
+    ("menu@gallery", "menu@dream", ["Up", "Up", "Up"]),
+    ("menu@option", "options", ["Return"]),
+    ("options", "game-settings", ["Return"]),
+    ("game-settings", "menu@option", ["Escape", "Escape"]),
+    ("menu@story", "story-select", ["Return"]),
+    ("story-select", "story-camp", ["Return"]),
+    ("story-camp", "story-select", ["Escape"]),
+    ("story-select", "menu@story", ["Escape"]),
+    ("menu@dream", "dream-select", ["Return"]),
+    ("dream-select", "menu@dream", ["Escape"]),
+    ("menu@gallery", "gallery", ["Return"]),
+    ("gallery", "menu@gallery", ["Escape"]),
+    ("dream-select", "battle-camp", [(STAGE_STEP, None), *[([key], None) for key in ("Return", "Left", "Left", "Left",
+                                                                                 "Return")],
+                                     (["Return"], slow("battle-camp", 2.0))]),  # first scenario, EASY, team; the story camp's plates fade out for seconds after its fingerprint shows
+    ("battle-camp", "briefing", ["Up", "Return"]),  # NEXT
+    ("briefing", "pre-battle", ["Escape"]),
+    # FIGHT; the battle's fingerprint shows at its first frame, and the first Escape in the next seconds is lost
+    ("pre-battle", "battle", [(["Up", "Return"], slow("battle", 3.0))]),
+    ("battle", "pause", ["Escape"]),
+    ("pause", "battle", ["Escape"]),
+    ("battle", "results", [({"action": "win"}, slow("results", 2.0))]),  # the results screen takes no input while it counts up
+    ("results", "save-prompt", ["Return"]),
+    ("save-prompt", "menu@dream", [(["Return"], None), (["Return"], ROUTE_SCREENS["menu@dream"])]),
+    # 1107-B: VS and Survival menus, the options pages
+    ("menu@story", "menu@vs", ["Down", "Down", "Down"]),
+    ("menu@vs", "menu@story", ["Up", "Up", "Up"]),
+    ("menu@vs", "menu@survival", ["Down"]),
+    ("menu@survival", "menu@vs", ["Up"]),
+    ("menu@vs", "vs-course", ["Return"]),
+    ("vs-course", "menu@vs", ["Escape"]),
+    ("vs-course", "vs-team-select", ["Return"]),
+    ("vs-team-select", "vs-course", ["Escape"]),
+    ("menu@survival", "survival-members", ["Return"]),
+    ("survival-members", "menu@survival", ["Escape"]),
+    ("options", "options-controller", ["Down", "Return", "Return"]),  # also 0207-B
+    ("options-controller", "options", [(["Escape"], None), (["Escape"], None), (["Up"], None)]),  # a sub list sits between; Up undoes the Down
+    # 0211-B2: the gallery pages
+    ("gallery", "gallery-original-background", ["Down", "Return"]),
+    ("gallery-original-background", "gallery", ["Escape", "Up"]),
+    ("gallery", "gallery-weapons", ["Down", "Down", "Return"]),
+    ("gallery-weapons", "gallery", ["Escape", "Up", "Up"]),
+    ("gallery", "gallery-movies", ["Down", "Down", "Down", "Return"]),
+    ("gallery-movies", "gallery", ["Escape", "Up", "Up", "Up"]),
+    # 1107-C, 1107-C2, 1107-C4: the Shu camp and its pages
+    ("story-select", "story-z-camp", ["Right", "Return"]),
+    ("story-z-camp", "story-select", [(["Escape"], None), (["Left"], {"texture": "4082.0"})]),  # left column
+    ("story-camp", "camp-officers", ["Return"]),
+    ("camp-officers", "story-camp", ["Escape"]),
+    ("story-camp", "camp-weapons", ["Down", "Return"]),
+    ("camp-weapons", "story-camp", ["Escape", "Up"]),
+    ("camp-weapons", "camp-weapon-panel", ["Return"]),
+    ("camp-weapon-panel", "camp-weapons", ["Escape"]),
+    ("story-camp", "camp-customize", ["Down", "Down", "Down", "Down", "Return"]),
+    ("camp-customize", "story-camp", ["Escape", "Down", "Down"]),
+    ("camp-customize", "customize-upgrade-skills", ["Return"]),
+    ("customize-upgrade-skills", "camp-customize", ["Escape"]),
+    ("camp-customize", "customize-fusion-officers", ["Down", "Return"]),
+    ("customize-fusion-officers", "camp-customize", ["Escape", "Up"]),
+    ("camp-customize", "customize-weapon-upgrade", ["Down", "Down", "Return"]),
+    ("customize-weapon-upgrade", "camp-customize", ["Escape", "Up", "Up"]),
+    # 1107-C2, 1107-C4: the Z camp and its scenario select (Z narration is a dead end)
+    ("story-z-camp", "story-z-scenario", ["Up", "Return"]),  # NEXT
+    ("story-z-scenario", "story-z-camp", ["Escape", "Down"]),
+    ("story-z-scenario", "story-z-scenario-3", ["Right", "Right", "Right"]),
+    ("story-z-scenario-3", "story-z-scenario", ["Left", "Left", "Left"]),
+    ("story-z-scenario", "story-z-narration", [(["Right"], None), (["Return"], None),
+                                              (["Left", "Left", "Left", "Return"], ROUTE_SCREENS["story-z-narration"])]),
+    # fixups3 runs (see work/fixups3/HANDOFF.md): the Z still pages after the narration, also dead ends
+    ("story-z-narration", "story-z-still", [(["Return"], {**ROUTE_SCREENS["story-z-still"], "every": 2})]),
+    ("story-z-still", "story-z-still-2", [(["Return"], {"seconds": 3}), ([], ROUTE_SCREENS["story-z-still-2"])]),
+    # run zz-ex8, zz-routes-*: the Orochi and Wei tabs; the Wei narration, its battle and the victory still (all no way back)
+    ("story-select", "story-orochi-camp", ["Right", "Up", "Return"]),
+    ("story-orochi-camp", "story-select", [(["Escape"], None), (["Left"], {"texture": "4082.0"})]),
+    ("story-orochi-camp", "story-orochi-scenario", ["Up", "Return"]),  # NEXT
+    ("story-orochi-scenario", "story-orochi-camp", ["Escape", "Down"]),
+    ("story-select", "story-wei-camp", ["Down", "Return"]),
+    ("story-wei-camp", "story-select", [(["Escape"], None), (["Up"], {"texture": "4082.0"})]),
+    ("story-wei-camp", "story-wei-scenario", ["Up", "Return"]),
+    ("story-wei-scenario", "story-wei-camp", ["Escape", "Down"]),
+    # difficulty page, EASY, then the opening movies: Escape skips one each, so it is resent until the narration shows
+    ("story-wei-scenario", "story-narration", [(["Return"], None), (["Left", "Left", "Left", "Return"], None),
+                                               (["Escape"], {**ROUTE_SCREENS["story-narration"], "every": 3})]),
+    ("story-narration", "story-wei-pre-battle", ["Escape"]),  # End
+    ("story-wei-pre-battle", "story-wei-battle", [(["Up", "Return"], slow("story-wei-battle", 3.0))]),
+    ("story-wei-battle", "story-victory-still", [({"action": "win"}, ROUTE_SCREENS["story-victory-still"])]),
+    # the gallery's treasure guide, and movies by position (Left or Right x19 reaches the first or last of the 19)
+    ("gallery", "gallery-treasure-guide", ["Down", "Down", "Down", "Down", "Return"]),
+    ("gallery-treasure-guide", "gallery", ["Escape", "Up", "Up", "Up", "Up"]),
+    ("gallery-movies", "gallery-movie-play", [(["Left"] * 19 + ["Right"] * 3 + ["Return"],
+                                              {**ROUTE_SCREENS["gallery-movie-play"], "gap": 0})]),
+    ("gallery-movies", "gallery-movie-two-line", [(["Right"] * 19 + ["Left"] * 3 + ["Return"],
+                                                  {**ROUTE_SCREENS["gallery-movie-two-line"], "gap": 0})]),
+    ("gallery-movie-play", "gallery-movies", ["Escape"]),
+    ("gallery-movie-two-line", "gallery-movies", ["Escape"]),
+    # customize: the weapon upgrade's weapon and attribute lists; the fusion's weapons (`unlock` gives four each); the treasure grid
+    ("customize-weapon-upgrade", "customize-weapon-pick", ["Return"]),
+    ("customize-weapon-pick", "customize-weapon-upgrade", ["Escape"]),
+    ("customize-weapon-pick", "customize-weapon-attributes", ["Return"]),
+    ("customize-weapon-attributes", "customize-weapon-pick", ["Escape"]),
+    ("customize-fusion-officers", "customize-fusion-weapons", [(UNLOCK_STEP, None), (["Return"], ROUTE_SCREENS["customize-fusion-weapons"])]),
+    ("customize-fusion-weapons", "customize-fusion-officers", ["Escape"]),
+    ("customize-upgrade-skills", "camp-treasure", ["Tab"]),
+    ("camp-treasure", "customize-upgrade-skills", ["Escape"]),
+    # 1107-D, 1107-D2, 1107-D3: the pre-battle pages and the pause pages
+    ("pre-battle", "pre-battle-weapons", ["Return"]),
+    ("pre-battle-weapons", "pre-battle", ["Escape"]),
+    ("pre-battle-weapons", "pre-battle-weapon-panel", ["Return"]),
+    ("pre-battle-weapon-panel", "pre-battle-weapons", ["Escape"]),
+    ("pre-battle", "pre-battle-officers", ["Down", "Down", "Down", "Down", "Return"]),
+    ("pre-battle-officers", "pre-battle", ["Escape", "Down", "Down", "Down"]),  # 7 items: 4 + 3 wraps to the top
+    ("pause", "battle-history", ["Down", "Down", "Down", "Return"]),
+    ("battle-history", "pause", ["Escape", "Up", "Up", "Up"]),
+]
+NAVIGATION = {"key", "keys", "pad", "click", "win", "lose"}  # actions that can move the game off a screen
+
+
+def route_plan(start: str, target: str) -> list[tuple]:
+    """The fewest edges from start to target; target "menu" is any main-menu cursor position."""
+    goal = (lambda node: node.startswith("menu@")) if target == "menu" else (lambda node: node == target)
+    if target != "menu" and target not in ROUTE_SCREENS:
+        raise ValueError(f"no screen {target!r} in the route library")
+    paths, frontier = {start: []}, [start]
+    while frontier:
+        node = frontier.pop(0)
+        if goal(node):
+            return paths[node]
+        for edge in ROUTE_EDGES:
+            if edge[0] == node and edge[1] not in paths:
+                paths[edge[1]] = paths[node] + [edge]
+                frontier.append(edge[1])
+    raise ValueError(f"no route from {start} to {target}")
+
+
+def route_position(root: Path) -> str | None:
+    """The screen the last route left the game on: "boot" for a run with no input yet, None once
+    input was sent after it (by hand, or by a route that then failed)."""
+    journal = root / "evidence/actions.jsonl"
+    lines = journal.read_text().splitlines() if journal.is_file() else []
+    state_path = root / "evidence/route.json"
+    state = json.loads(state_path.read_text()) if state_path.is_file() else {"at": "boot", "journal": 0}
+    if any(json.loads(line)["request"]["action"] in NAVIGATION for line in lines[state["journal"]:]):
+        return None
+    return state["at"]
+
+
+def route(root: Path, target: str, stage: int = 1) -> int:
+    """Drive the game to ``target`` on a running --test build; print the screens passed."""
+    state_path = local_path(root, "evidence/route.json")
+
+    def settle(at: str) -> None:
+        journal = root / "evidence/actions.jsonl"
+        count = len(journal.read_text().splitlines()) if journal.is_file() else 0
+        write_json(state_path, {"at": at, "journal": count})
+
+    start = route_position(root)
+    try:
+        if start is None:
+            raise ValueError("position unknown: input was sent outside a route, or a route failed; "
+                             "start a fresh run")
+        plan = route_plan(start, target)
+        if not 0 <= stage <= LAST_STAGE:
+            raise ValueError(f"--stage takes 0 to {LAST_STAGE}")
+        seen = None
+        if start != "boot":
+            seen = ask(root, {"action": "screen"})
+            if not ROUTE_SCREENS[start].get("transient") and not shows(seen, ROUTE_SCREENS[start]):  # a caption is gone again
+                raise ValueError(f"the screen no longer shows {start}; start a fresh run")
+        passed = [start]
+        for source, destination, steps in plan:
+            moves = [(steps, ROUTE_SCREENS[destination])] if isinstance(steps[0], str) else steps
+            for n, (keys, until) in enumerate(moves):
+                keys = dict(keys, number=stage) if keys is STAGE_STEP else keys
+                if n == len(moves) - 1 and until is not None and "seconds" not in until:  # arriving: the screen is up before it takes input
+                    until = {"gap": MENU_SETTLE if destination.startswith("menu@") else ARRIVE_GAP, **until}
+                seen = drive_step(root, keys, until, None, f"{source} -> {destination}", quick=True, before=seen)
+            passed.append(destination)
+            settle(destination)
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"game-harness: route to {target}: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps({"at": passed[-1], "passed": passed}))
+    return 0
+
+
+def stage_chain() -> set[str]:
+    """The screens from the Dream scenario's team page to the save prompt, where the stage picked
+    at the scenario select is already loaded: those reachable from battle-camp without the Dream menu."""
+    seen, todo = {"battle-camp"}, ["battle-camp"]
+    while todo:
+        node = todo.pop()
+        for source, destination, _ in ROUTE_EDGES:
+            if source == node and destination != "menu@dream" and destination not in seen:
+                seen.add(destination)
+                todo.append(destination)
+    return seen
+
+
+def check_legs(position: str, loaded: int | None, name: str, battle: int | None, script: int | None) -> tuple:
+    """The route screens a check screen goes through, from ``position`` with stage ``loaded`` in the
+    battle chain: (legs, edge count, end position, loaded stage after, whether it unlocks the officers' weapons,
+    which changes every weapon screen after it). A script fires in the battle, so a
+    screen with one goes there first; a screen needing another stage than the loaded one goes back through the
+    Dream scenario select first. Raises ValueError when a leg has no route."""
+    need = 1 if battle is None else battle
+    legs = ["dream-select"] if position in stage_chain() and loaded != need else []
+    legs += ["battle"] if script is not None and name != "battle" else []
+    legs.append(name)
+    cost, unlocks = 0, False
+    for leg in legs:
+        plan = route_plan(position, leg)
+        cost += len(plan)
+        unlocks |= any(step[0] is UNLOCK_STEP for edge in plan if not isinstance(edge[2][0], str) for step in edge[2])
+        if any(step[0] is STAGE_STEP for edge in plan if not isinstance(edge[2][0], str) for step in edge[2]):
+            loaded = need
+        position = plan[-1][1] if plan else position
+    return legs, cost, position, loaded, unlocks
+
+
+def order_screens(screens: list[dict], position: str | None) -> list[dict]:
+    """Greedy visit order for a check: the screen with the fewest route edges from where the last one
+    ended, a screen that ends where no route leads back to the menu (story-z-narration) after all others, a screen
+    whose route unlocks the officers' weapons (the fusion weapon list) after all that leave the save as it is,
+    spec order breaking ties. Screens with no route from here keep spec order at the end."""
+    left, order, loaded = list(enumerate(screens)), [], None
+    while position is not None and left:
+        options = []
+        for index, sc in left:
+            try:
+                legs, cost, end, after, unlocks = check_legs(position, loaded, sc["route"], sc.get("battle"), sc.get("script"))
+            except ValueError:
+                continue
+            try:
+                route_plan(end, "menu")
+                dead_end = False
+            except ValueError:
+                dead_end = True
+            options.append((dead_end, unlocks, cost, index, end, after))
+        if not options:
+            break
+        _, _, _, index, position, loaded = min(options)
+        order.append(screens[index])
+        left = [(i, sc) for i, sc in left if i != index]
+    return order + [sc for _, sc in left]
+
+
+class CheckDriver:
+    """Reaches check screens only by route, so every screen in a spec is one the route table knows."""
+
+    def __init__(self, root: Path) -> None:
+        self.root, self.count, self.loaded = root, 0, None
+
+    def route(self, name: str, fixture: str | None = None, battle: int | None = None,
+              script: int | None = None) -> None:
+        if fixture:
+            seeded = self.root / "fixtures.json"
+            if not seeded.is_file() or fixture not in seeded.read_text():
+                raise ValueError(f"needs save fixture {fixture!r}; stage the run with --save {fixture}")
+        stage = 1 if battle is None else battle
+        position = route_position(self.root)
+        if position is None:  # route() refuses to send anything, and the screen is reported unreachable
+            legs, after = [name], self.loaded
+        else:
+            legs, _, _, after, _ = check_legs(position, self.loaded, name, battle, script)
+        for leg in legs:
+            if route(self.root, leg, stage):
+                raise RuntimeError(f"route to {leg} failed")
+            if script is not None and leg == "battle":  # the script fires in the battle, before the route goes on
+                self.fire(script)
+        self.loaded = after
+
+    def fire(self, script: int, seconds: float = 60) -> None:
+        """Send a battle script, retrying while the opening dialog still plays and the game refuses it."""
+        deadline = time.monotonic() + seconds
+        while True:
+            try:
+                ask(self.root, {"action": "script", "number": script})
+                return
+            except RuntimeError as exc:
+                if "retry" not in str(exc) or time.monotonic() >= deadline:
+                    raise
+                time.sleep(1)
+
+    def wait(self, until: dict) -> bool:
+        deadline = time.monotonic() + until.get("timeout", 10)
+        while time.monotonic() < deadline:
+            if shows(ask(self.root, {"action": "screen"}), until):
+                return True
+            time.sleep(0.2)
+        return False
+
+    def screen(self) -> dict:
+        return ask(self.root, {"action": "screen"})
+
+    def capture(self) -> Path:
+        self.count += 1
+        name = f"check-{self.count:03d}"
+        ask(self.root, {"action": "capture", "name": name})
+        return self.root / f"evidence/{name}.png"
+
+
+def check(root: Path, spec: Path, only: list[str] | None = None) -> int:
+    """Run a check spec (data/checks/*.toml) on a running --test build; write evidence/check-report.json.
+    ``only`` names the screens to run. They are visited in the order order_screens picks, which is printed."""
+    import screen_checks
+
+    screens = screen_checks.load_spec(spec)
+    if only:
+        unknown = sorted(set(only) - {sc["name"] for sc in screens})
+        if unknown:
+            raise ValueError(f"no screen {', '.join(unknown)} in {spec.name}")
+        screens = [sc for sc in screens if sc["name"] in only]
+    screens = order_screens(screens, route_position(root))
+    order = [sc["name"] for sc in screens]
+    print("order: " + ", ".join(order))
+    rows = screen_checks.run_spec(screens, CheckDriver(root))
+    write_json(local_path(root, "evidence/check-report.json"),
+               {"spec": str(spec), "order": order, "rows": [vars(row) for row in rows]})
+    print(screen_checks.format_table(rows))
+    return 0 if all(row.ok for row in rows) else 1
+
+
+def tour(root: Path, stages: range | None = None, dialog: float = 25) -> int:
+    """Drive TOUR, or the stage sweep over ``stages``, on a running --test --log build; write
+    evidence/tour-report.json and a PNG per stop, and copy the log into the corpus."""
+    game = Path(json.loads(local_path(root, "evidence/session.json").read_text())["game"])
+    log, logged = game / "enrt_log.txt", 0
+    report = {"build": local_path(root, "game.sha256").read_text().split("\n"), "stops": [], "failed": None}
+    try:
+        route = TOUR if stages is None else SWEEP_START + [s for n in stages for s in stage_route(n, dialog)]
+        for step, (keys, until, name) in enumerate(route):
+            drive_step(root, keys, until, 4 if step == 0 else None, f"step {step} ({name or keys})")
+            if name:
+                time.sleep(TOUR_SETTLE)  # menus slide in
+                seen = {k: v for k, v in ask(root, {"action": "screen"}).items() if k not in ("id", "ok")}
+                png = f"tour-{len(report['stops']):02d}-{name}"
+                ask(root, {"action": "capture", "name": png})
+                lines = []
+                if log.is_file():
+                    with log.open("rb") as stream:
+                        stream.seek(logged)
+                        data = stream.read()
+                    data = data[:data.rfind(b"\n") + 1]  # whole lines only
+                    logged += len(data)
+                    lines = data.decode("ascii", "replace").splitlines()
+                report["stops"].append({"name": name, "png": f"evidence/{png}.png", "screen": seen,
+                                        "log": lines, "checks": tour_checks(seen)})
+    except (OSError, ValueError, RuntimeError) as exc:
+        report["failed"] = str(exc)
+    report["summary"] = {check: sum(len(s["checks"][check]) for s in report["stops"])
+                         for check in ("cjk", "overflow", "overlap")}
+    write_json(local_path(root, "evidence/tour-report.json"), report)
+    if log.is_file():
+        corpus = REPO / "work/enrt-log-corpus"
+        corpus.mkdir(exist_ok=True)
+        shutil.copyfile(log, corpus / f"{root.name}.txt")
+    print(json.dumps({"stops": len(report["stops"]), "failed": report["failed"], **report["summary"]}))
+    return 1 if report["failed"] else 0
+
+
+def tour_diff(one: Path, two: Path) -> list[dict]:
+    """Per stop of base run one's tour: the drawn texts gone and new in run two's, and the image change."""
+    from PIL import Image, ImageChops, ImageStat
+
+    a, b = (json.loads(local_path(root, "evidence/tour-report.json").read_text()) for root in (one, two))
+    theirs = {stop["name"]: stop for stop in b["stops"]}
+    rows = []
+    for stop in a["stops"]:
+        other = theirs.get(stop["name"])
+        if other is None:
+            rows.append({"stop": stop["name"], "changed": True, "missing": True})
+            continue
+        old, new = ({t["text"] for t in s["screen"]["texts"]} for s in (stop, other))
+        with Image.open(one / stop["png"]) as p, Image.open(two / other["png"]) as q:
+            grey = ImageChops.difference(p.convert("L"), q.convert("L").resize(p.size))  # a base taken at another size
+            change = ImageStat.Stat(grey).mean[0] / 255
+        rows.append({"stop": stop["name"], "changed": bool(old ^ new) or change > IMAGE_CHANGE,
+                     "gone": sorted(old - new), "new": sorted(new - old), "image_change": round(change, 4),
+                     "checks": other["checks"]})
+    return rows
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="action", required=True)
+    for action in ("run", "status", "key", "click", "pad", "plug", "capture", "record", "peek", "poke", "find",
+                   "screen", "wait", "say", "notice", "win", "lose", "scripts", "script", "unlock", "battle",
+                   "reload", "review", "tour", "route", "check", "stop", "_serve"):
+        command = commands.add_parser(action)
+        command.add_argument("--root", required=True, type=Path)
+        command.add_argument("--timeout", type=bounded, default=1800 if action == "run" else 30)
+        if action == "run":
+            command.add_argument("--target", required=True, choices=[TARGET, XENIA])
+            command.add_argument("--game", type=Path, required=True)
+            command.add_argument("--authorize-launch", action="store_true")
+            command.add_argument("--pad", nargs="?", const="x360", choices=PAD_MODELS,
+                                 help="give the game a virtual XInput pad (default x360), driven by the pad command")
+            command.add_argument("--unplugged", action="store_true", help="the pad starts unplugged; see plug")
+        if action == "plug":
+            command.add_argument("state", choices=["on", "off"])
+        if action == "key":
+            command.add_argument("keys", nargs="+", metavar="key")
+        if action == "click":
+            command.add_argument("x", type=int)
+            command.add_argument("y", type=int)
+        if action == "pad":
+            command.add_argument("names", nargs="+", metavar="input",
+                                 help="A B X Y LB RB LT RT BACK START LS RS, UP DOWN LEFT RIGHT (D-pad), "
+                                      "L-UP ... R-RIGHT (sticks); join with + to press together")
+        if action in ("key", "pad"):
+            command.add_argument("--hold", type=bounded, default=0.08)
+            command.add_argument("--gap", type=bounded, default=0.3,
+                                 help="seconds between keys of a sequence (one key settles 1 s)")
+        if action == "capture":
+            command.add_argument("name")
+        if action == "record":
+            command.add_argument("name")
+            command.add_argument("--seconds", type=bounded, default=60,
+                                 help="record the game's audio for this long, in the background")
+        if action in ("peek", "poke"):
+            command.add_argument("address", type=lambda value: int(value, 0), help="such as 0xC2AE00")
+        if action == "peek":
+            command.add_argument("length", type=int, nargs="?", default=16)
+        if action in ("poke", "find"):
+            command.add_argument("hex", help="bytes in memory order (little-endian), such as 01000000")
+        if action == "wait":
+            wanted = command.add_mutually_exclusive_group(required=True)
+            wanted.add_argument("--text", help="drawn text containing this (line breaks match spaces)")
+            wanted.add_argument("--texture", help="drawn package texture key.member, such as 4079.12")
+            command.add_argument("--capture", metavar="NAME",
+                                 help="capture evidence/NAME.png on the frame that matches, as the capture command does")
+        if action in ("say", "notice"):
+            command.add_argument("text", help="English or stock Japanese; the runtime translates and wraps it")
+        if action == "script":
+            command.add_argument("number", type=int, help="script index from scripts")
+        if action == "battle":
+            command.add_argument("number", type=int, help="stage: its LINKDATA2 container index")
+        if action == "review":
+            command.add_argument("texture", help="key.member, or off; needs the test-only review.bin")
+            command.add_argument("--rect", type=int, nargs=4, default=[0, 0, 512, 32], metavar=("X", "Y", "W", "H"))
+        if action == "reload":
+            command.add_argument("table", type=Path, help="a table.bin from build_moz_english_runtime.py --table-only")
+        if action == "route":
+            command.add_argument("screen", choices=sorted(set(ROUTE_SCREENS) - {"boot"} | {"menu"}),
+                                 help="drive there from where the last route left the game")
+            command.add_argument("--stage", type=int, default=1, help="the stage a battle route plays (0-143)")
+        if action == "check":
+            command.add_argument("spec", type=Path, help="a check file such as data/checks/menus.toml")
+            command.add_argument("--only", type=lambda value: value.split(","), metavar="SCREEN,...",
+                                 help="run only these screens of the spec")
+        if action == "tour":
+            command.add_argument("--stages", type=lambda value: range(int(value.split("-")[0]),
+                                                                       int(value.split("-")[-1]) + 1),
+                                 metavar="A-B", help="sweep these stages (0-143) instead of touring")
+            command.add_argument("--dialog-seconds", type=bounded, default=25,
+                                 help="seconds of opening dialog before the win; shorter where the player falls first")
+            command.add_argument("--diff", type=Path, metavar="RUN",
+                                 help="compare this run's tour with a base run's, such as a golden, instead of touring")
+    args = parser.parse_args(argv)
+    try:
+        root = args.root.resolve(strict=True)
+        storage = (REPO / "work/runtime-tests").resolve()
+        xenia_storage = (REPO / "work/xenia/runs").resolve()
+        permitted = (storage, xenia_storage)
+        if args.action == "run":
+            permitted = (xenia_storage,) if args.target == XENIA else (storage,)
+        if not any(root != base and root.is_relative_to(base) for base in permitted):
+            locations = " or ".join(str(base.relative_to(REPO)) for base in permitted)
+            raise ValueError(f"--root must be a run directory inside {locations}")
+        if args.action == "run":
+            return run(root, args)
+        if args.action == "_serve":
+            try:
+                code = serve(root)
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+                print(f"game-harness: {exc}", file=sys.stderr)
+                code = 1
+            hold_for_supervisor(root, code)
+        if args.action == "tour" and args.diff:
+            rows = tour_diff(args.diff.resolve(strict=True), root)
+            print(json.dumps(rows, indent=1))
+            return 1 if any(row["changed"] for row in rows) else 0
+        if args.action == "tour":
+            return tour(root, args.stages, args.dialog_seconds)
+        if args.action == "route":
+            return route(root, args.screen, args.stage)
+        if args.action == "check":
+            return check(root, args.spec.resolve(strict=True), args.only)
+        request = {"action": args.action}
+        timeout = args.timeout
+        if args.action == "key" and len(args.keys) == 1:
+            request.update(key=args.keys[0], hold=args.hold)
+        elif args.action == "key":
+            request.update(action="keys", keys=args.keys, hold=args.hold, gap=args.gap)
+            timeout += len(args.keys) * (args.hold + args.gap)  # the acknowledgement follows the last key
+        if args.action == "click":
+            request.update(x=args.x, y=args.y)
+        if args.action == "pad":
+            request.update(names=args.names, hold=args.hold, gap=args.gap)
+            timeout += len(args.names) * (args.hold + args.gap)
+        if args.action == "review":
+            review_request(args.texture, args.rect)
+            request.update(texture=args.texture, rect=args.rect)
+        if args.action == "capture":
+            request["name"] = args.name
+        if args.action == "plug":
+            request["on"] = args.state == "on"
+        if args.action == "record":
+            request.update(name=args.name, seconds=args.seconds)
+        if args.action in ("peek", "poke"):
+            request["address"] = args.address
+        if args.action == "peek":
+            request["length"] = args.length
+        if args.action in ("poke", "find"):
+            request["hex"] = args.hex
+        if args.action == "wait":
+            request.update(text=args.text, texture=args.texture, seconds=args.timeout)
+            timeout += 2 * TEST_COMMAND_SECONDS  # the answer follows the wait
+            if args.capture:
+                request["capture"] = args.capture
+                timeout += 10  # the screenshot follows the match
+        if args.action in ("say", "notice"):
+            request["text"] = args.text
+        if args.action in ("script", "battle"):
+            request["number"] = args.number
+        if args.action == "reload":
+            request["table"] = str(args.table.resolve(strict=True))
+            timeout += RELOAD_SECONDS
+        response = send(root, request, timeout)
+        print(json.dumps(response))
+        return 0 if response["ok"] else 1
+    except KeyboardInterrupt:
+        return 130
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        print(f"game-harness: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
