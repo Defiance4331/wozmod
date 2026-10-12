@@ -72,6 +72,7 @@ ALWAYS_HOOKS = [
     (0x428E33, "d9ee d99d20020000", 45, None),  # battle camera FOV stored (mid-function)
     (0x428FB4, "8d442438 d9ee", 46, None),      # 40-degree battle camera FOV stored (mid-function)
     (0x5E4F64, "8b8660010000", 47, None),       # joystick state read (mid-function)
+    (0x5E38E0, "81ec40020000", 70, 0),          # input map load (cdecl): Xbox names before its auto-setting
     (0x58E2BC, "5f5eb801000000", 48, None),     # 4079 prompt handles made (tail)
     (0x5ADC60, "8b442404 69c0f0000000", 49, 0),  # menu word, pressed (cdecl): A/B for a pad
     (0x5ADCA0, "8b442404 69c0f0000000", 50, 0),  # menu word, repeating (cdecl)

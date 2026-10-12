@@ -1500,6 +1500,7 @@ static void distance_input(u32 repeat)
 #define PLAYER_MAP(p) (*(u8 *const *)(0x140C48C + 16 * (p)))
 #define PAD_AUTO ((u32(*)(u32))0x5E2D30)
 #define XINPUT_SHAPE(pad) (*(const u32 *)((pad) + 0x160) == 5 && *(const u32 *)((pad) + 0x168) == 10)
+#define PADS ((void **const volatile *)0x140D440)
 
 
 
@@ -1915,6 +1916,40 @@ static int move_key(const struct frame *f)
 }
 
 
+/* Windows names every XInput pad this in DirectInput; Wine passes a third-party pad's own name (an
+ * 8BitDo's, a Switch Pro's), for which the auto-setting picks layout 0, where Start reads as held and
+ * the title screen runs on by itself. The name is the pad object's first 260 bytes. */
+static int xbox_named(u8 *pad)
+{
+    if (!XINPUT_SHAPE(pad))
+        return 0;
+    lstrcpyA((char *)pad, "Controller (XBOX 360 For Windows)");
+    return 1;
+}
+
+/* With no saved Key Config, the input map load (0x5E38E0) auto-sets each player's pad by name before
+ * the first poll, so name the pads first. A saved Key Config is loaded as it is. Logs each pad once,
+ * with its own name and its shape as axes << 8 | buttons. */
+static void pads_named(void)
+{
+    static int logged;
+    char line[80];
+    u8 *pad;
+    u32 i, count = PADS[0] ? (u32)(PADS[1] - PADS[0]) / 2 : 0;
+    if (!logged)
+        note("pads at start", count);
+    for (i = 0; i < count; i++) {
+        pad = PADS[0][2 * i + 1];
+        if (!logged) {
+            lstrcpyA(line, "pad: ");
+            lstrcpynA(line + 5, (const char *)pad, sizeof line - 5);
+            note(line, *(const u32 *)(pad + 0x160) << 8 | *(const u32 *)(pad + 0x168));
+        }
+        xbox_named(pad);
+    }
+    logged = 1;
+}
+
 static void pad_read(const u8 *pad)
 {
     static int bound, was_active;
@@ -1922,13 +1957,8 @@ static void pad_read(const u8 *pad)
     u32 i, active = 0;
     u32 pov = (u32)s[8], dir;
     static const signed char dx[8] = {0, 1, 1, 1, 0, -1, -1, -1}, dy[8] = {-1, -1, 0, 1, 1, 1, 0, -1};
-    if (!XINPUT_SHAPE(pad))
+    if (!xbox_named((u8 *)pad))  /* a pad plugged in after the start */
         return;
-
-
-
-
-    lstrcpyA((char *)pad, "Controller (XBOX 360 For Windows)");
     xbox_pad_seen = 1;
     if (!bound) {
         bound = 1;
@@ -1963,7 +1993,6 @@ static void pad_read(const u8 *pad)
 #define DINPUT (*(void *const volatile *)0x140D3F8)
 #define DINPUT_CREATE ((long(__stdcall *)(HINSTANCE, u32, const void *, void **, void *))0x602710)
 #define IID_DINPUT8A ((const void *)0x75C2A4)
-#define PADS ((void **const volatile *)0x140D440)
 #define PAD_ADD ((BOOL(__stdcall *)(const u8 *, void *))0x5E6230)
 #define PAD_INIT ((void(__attribute__((thiscall)) *)(void *, const char *, u32, u32, u32, float))0x5E7940)
 #define PAD_NUMBER ((void(__attribute__((thiscall)) *)(void *, u32))0x5E8420)
@@ -3091,6 +3120,9 @@ static int always(u32 id, struct frame *f, u32 *replace)
         return 1;
     case 47:
         pad_read((const u8 *)f->esi);
+        return 1;
+    case 70:
+        pads_named();
         return 1;
     case 48:
         prompts_load();
