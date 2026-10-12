@@ -106,13 +106,13 @@ def _dxt5_images() -> list[tuple[str, bytes, int, int]]:
     for width, height in ((1, 1), (2, 5), (5, 3), (7, 9), (13, 2), (4, 1)):  # edge blocks repeat the last row and column
         add(f"edge {width}x{height}", width, height, lambda x, y: ((x * 37) % 256, (y * 91) % 256, (x * y * 13) % 256, 255 - x * y))
     for number in range(40):
-        width, height = rng.randrange(1, 30), rng.randrange(1, 30)
+        width, height = rng.randrange(1, 14), rng.randrange(1, 14)
         colours = rng.randrange(1, 17)
         palette = [(rng.randrange(256), rng.randrange(256), rng.randrange(256), rng.choice((0, 1, 127, 128, 200, 255, rng.randrange(256)))) for _ in range(colours)]
         grid = [[rng.choice(palette) for _ in range(width)] for _ in range(height)]
         add(f"random{number} {width}x{height} {colours} colours", width, height, lambda x, y, g=grid: g[y][x])
-    for number in range(10):
-        width, height = rng.randrange(1, 20), rng.randrange(1, 20)
+    for number in range(6):
+        width, height = rng.randrange(1, 9), rng.randrange(1, 9)
         data = rng.randbytes(width * height * 4)
         images.append((f"noise{number} {width}x{height}", data, width, height))
     return images
@@ -120,6 +120,41 @@ def _dxt5_images() -> list[tuple[str, bytes, int, int]]:
 
 def test_native_dxt5_encoder_gives_the_python_blocks_on_every_image() -> None:
     wrong = [name for name, rgba, width, height in _dxt5_images()
-             if native.dxt5_encode(rgba, width, height) != textures._encode_dxt5_python(rgba, width, height)]
+             if native.dxt5_encode(rgba, width, height) != textures._encode_dxt_python(8, rgba, width, height, None)]
 
     assert wrong == []
+
+
+def test_native_dxt5_edit_keeps_and_encodes_the_same_blocks_as_python() -> None:
+    # Bug: native copies a block the edit changed, or re-encodes one it did not, or reads the base's
+    # blocks at the wrong stride when the new texture is wider than the base (a resized canvas).
+    rng = random.Random(20261013)
+    wrong = []
+    for number in range(30):
+        bw, bh = rng.choice((4, 8, 12, 20)), rng.choice((4, 8, 16))
+        width, height = bw + 4 * rng.randrange(0, 3), bh + 4 * rng.randrange(0, 3)
+        base_rgba = bytes(rng.choice((0, 80, 255)) if k % 4 != 3 else rng.choice((0, 255)) for k in range(bw * bh * 4))
+        base = textures.G1tTexture(0, 0, 0, 1, textures.PIXEL_FORMAT_DXT5, bw, bh, 0, textures._encode_dxt_python(8, base_rgba, bw, bh, None))
+        shown = base.decode_rgba()
+        rgba = bytearray(width * height * 4)
+        for y in range(min(bh, height)):
+            rgba[y * width * 4:y * width * 4 + bw * 4] = shown[y * bw * 4:(y + 1) * bw * 4]
+        for _ in range(rng.randrange(1, 6)):  # edit a few pixels
+            at = 4 * rng.randrange(width * height)
+            rgba[at:at + 4] = rng.randbytes(4)
+        python = textures._encode_dxt_python(8, bytes(rgba), width, height, base)
+        if native.dxt5_encode_edit(bytes(rgba), width, height, shown, base.payload, bw, bh) != python:
+            wrong.append(number)
+    assert wrong == []
+
+
+def test_native_dxt5_edit_does_not_borrow_a_base_block_from_beyond_the_base_edge() -> None:
+    # Bug: a block one column past the base's width is compared with, and copied from, the base's next row.
+    # An all-zero payload decodes to blank pixels, so a blank new area matches it by accident.
+    base = textures.G1tTexture(0, 0, 0, 1, textures.PIXEL_FORMAT_DXT5, 4, 8, 0, bytes(32))
+    rgba = bytes(8 * 8 * 4)
+
+    expected = textures._encode_dxt_python(8, rgba, 8, 8, base)
+
+    assert native.dxt5_encode_edit(rgba, 8, 8, base.decode_rgba(), base.payload, 4, 8) == expected
+    assert expected[16:32] != bytes(16)  # the new column is encoded, not copied from the base

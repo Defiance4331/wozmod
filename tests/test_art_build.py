@@ -305,6 +305,8 @@ def test_hires_bank_does_not_serialize_a_sheet_smaller_than_its_quad(monkeypatch
     sheet = build.parse_g1t(blob[row[7]:row[7] + row[8]]).textures[0]
     assert (row[2], row[3], row[5] >> 16, sheet.width) == (2, 520, 520, 2048)
     assert (entries / "4060.bin").read_bytes() == source
+    # Bug: the threaded encode (native codecs, jobs > 1) hands back an unfinished or different sheet.
+    assert build.hires_bin(entries, None, (mapping, {}), jobs=4) == blob
 
 
 def test_hires_bank_does_not_shrink_frozen_attribute_samples(monkeypatch, tmp_path):
@@ -619,3 +621,28 @@ def test_worker_pool_falls_back_to_threads_where_fork_does_not_exist(monkeypatch
     with build.worker_pool(2) as pool:
         assert isinstance(pool, ThreadPoolExecutor)
         assert pool.submit(sum, [1, 2]).result() == 3
+
+
+def test_a_lettering_face_survives_the_trip_from_a_worker_with_its_fill_test(monkeypatch):
+    # Bug: the face cannot be pickled (its fill test is a lambda), so the build with workers fails, or the
+    # face comes back with another fill test and finds other pixels.
+    import pickle
+
+    face = build.Face.__new__(build.Face)
+    face.__dict__.update(is_fill=build.FILLS["help"], glyphs={}, kern={})
+    back = pickle.loads(pickle.dumps(face))
+    assert back.is_fill is build.FILLS["help"] and back.__dict__.keys() == face.__dict__.keys()
+
+
+def _slow_early_face(name):  # at module level so a worker process can be handed it
+    import time
+    time.sleep({"stage": 0.3, "title": 0.2}.get(name, 0.0))
+    return name.upper()
+
+
+def test_faces_built_by_workers_come_back_in_the_order_of_the_recipe(monkeypatch):
+    # Bug: faces are kept in the order the workers finish, so the recipe order (and what reads it) changes per run.
+    monkeypatch.setattr(build, "_face", _slow_early_face)
+    mapping = {"faces": {"list": {}, "header": {}, "tabs": {}}}
+    assert list(build.faces(mapping, {}, 4).values()) == ["STAGE", "TITLE", "LIST", "HEADER", "TABS"]
+    assert list(build.faces(mapping, {}, 1)) == ["stage", "title", "list", "header", "tabs"]

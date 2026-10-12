@@ -1,6 +1,7 @@
 # Builds the Windows and Linux release zips when a v* tag is pushed, and attaches them to the
 # draft release of that tag. Make that draft first with packaging/release_assets.py: it holds
-# d3d9.dll and lettering.zip, which need the stock game and cannot be built here.
+# d3d9.dll and lettering.zip, which need the stock game and cannot be built here. The zip holds the
+# wozmod and wozmod-setup programs; build.py puts those two files inside their shared _internal folder.
 name: release
 
 on:

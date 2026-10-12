@@ -20,7 +20,7 @@ CATALOG = REPO / "data/art/menu_visuals.json"
 @lru_cache(maxsize=1)
 def load_catalog() -> dict:
     """Read the recipe catalog."""
-    data = json.loads(CATALOG.read_text())
+    data = json.loads(CATALOG.read_text(encoding="utf-8"))
     if data.get("schema") != "moz-menu-visual-references-v1":
         raise ValueError(f"unsupported menu visual catalog: {CATALOG}")
     return data["textures"]

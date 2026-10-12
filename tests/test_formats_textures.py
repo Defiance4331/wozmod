@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import random
 import struct
 
 import pytest
 
+from wozmod.formats import textures
 from wozmod.formats.textures import TextureCodecError, parse_g1t, parse_texture_package, x360_g1t
 
 
@@ -87,17 +89,93 @@ def test_dxt_encode_does_not_quantize_red_to_the_wrong_rgb565_endpoint() -> None
         assert texture.encode_rgba(bytes((255, 0, 0, 255)) * 16) == expected
 
 
-def test_dxt5_blocks_pick_baseline_endpoints_and_each_pixels_own_nearest_colour() -> None:
-    # Bug: two colours that share red and green get one palette index, or the brightest endpoint is
-    # taken by channel sum alone (blue before red on a tie) instead of by sum, then red, green, blue.
+def _blocks_under_test() -> list[tuple[str, tuple[tuple[int, int, int, int], ...]]]:
+    rng = random.Random(20261012)
     black, blue, red = (0, 0, 0, 255), (0, 0, 255, 255), (255, 0, 0, 255)
-    left = [black, blue] * 8  # endpoints blue/black: black is index 1, blue index 0
-    right = [blue, red] + [black] * 14  # red outranks blue at equal sum; blue is nearest to black
-    rgba = b"".join(bytes(p) for y in range(4) for p in left[4 * y:4 * y + 4] + right[4 * y:4 * y + 4])
-    opaque = bytes((255, 255)) + bytes(6)
-    texture = parse_g1t(_g1t((8, 3, 2, bytes(32)))).textures[0]
-    assert texture.encode_rgba(rgba) == (opaque + struct.pack("<HHI", 0x001F, 0x0000, 0x11111111)
-                                         + opaque + struct.pack("<HHI", 0xF800, 0x0000, 0x55555551))
+    rows = [("two exact colours", tuple([black, blue] * 8)), ("red, blue, black", tuple([blue, red] + [black] * 14))]
+    for number in range(60):  # a stroke edge: two colours, a ramp between them, antialiased alpha
+        low, high = (rng.randrange(256) for _ in range(3)), (rng.randrange(256) for _ in range(3))
+        low, high = tuple(low), tuple(high)
+        rows.append((f"edge{number}", tuple(
+            (*(low[k] + (high[k] - low[k]) * t // 15 for k in range(3)), rng.choice((0, 255, 255, rng.randrange(256))))
+            for t in rng.sample(range(16), 16))))
+    for number in range(30):
+        rows.append((f"noise{number}", tuple((rng.randrange(256), rng.randrange(256), rng.randrange(256), 255) for _ in range(16))))
+    return rows
+
+
+def _visible_cost(pixels, ends) -> int:
+    return textures._visible_error(pixels, ends)
+
+
+def test_dxt5_colour_search_is_never_worse_than_the_quick_endpoints_and_beats_them() -> None:
+    # Bug: the search keeps a candidate that is worse than its start (error is not compared), or does not
+    # search at all and returns the darkest/brightest-pixel endpoints that the old encoder used.
+    worse, new_total, old_total = [], 0, 0
+    for name, pixels in _blocks_under_test():
+        block = textures._encode_color_block(pixels, allow_transparency=False)
+        ends = struct.unpack_from("<HH", block)
+        old = textures._baseline_endpoints(pixels, allow_transparency=False)
+        new_total, old_total = new_total + _visible_cost(pixels, ends), old_total + _visible_cost(pixels, old)
+        if _visible_cost(pixels, ends) > _visible_cost(pixels, old):
+            worse.append(name)
+    assert worse == []
+    assert new_total < 0.8 * old_total
+
+
+def test_dxt5_alpha_search_is_never_worse_than_the_extremes_and_beats_them() -> None:
+    # Bug: alpha endpoints stay at (max, min) although another pair, or the six-level mode with its exact
+    # 0 and 255, fits antialiased edges better; or a worse pair is kept.
+    worse, new_total, old_total = [], 0, 0
+    for name, pixels in _blocks_under_test():
+        alphas = [p[3] for p in pixels]
+        counts = tuple(sorted((v, alphas.count(v)) for v in set(alphas)))
+        a0, a1 = struct.unpack_from("BB", textures._encode_alpha_block(pixels))
+        new, old = textures._alpha_error(counts, a0, a1), textures._alpha_error(counts, max(alphas), min(alphas))
+        new_total, old_total = new_total + new, old_total + old
+        if new > old:
+            worse.append(name)
+    assert worse == []
+    assert new_total < 0.8 * old_total
+
+
+def _g1t_dxt5(width: int, height: int, payload: bytes):
+    return parse_g1t(_g1t((8, width.bit_length() - 1, height.bit_length() - 1, payload))).textures[0]
+
+
+def test_a_dxt_edit_leaves_every_block_it_did_not_touch_byte_exact() -> None:
+    # Bug: the whole texture is decoded and encoded again, so blocks the edit never touched lose a
+    # generation (each is re-quantised against a fresh endpoint search).
+    rng = random.Random(7)
+    payload = b"".join(rng.randbytes(16) for _ in range(16))  # 16x16 DXT5, arbitrary valid blocks
+    texture = _g1t_dxt5(16, 16, payload)
+    rgba = bytearray(texture.decode_rgba())
+    for y in range(4, 8):  # one block, row 1 column 1, painted white
+        rgba[(y * 16 + 4) * 4:(y * 16 + 8) * 4] = bytes((255, 255, 255, 255)) * 4
+
+    out = texture.encode_rgba(bytes(rgba))
+
+    blocks = lambda data: [data[i:i + 16] for i in range(0, 256, 16)]
+    assert [i for i, (a, b) in enumerate(zip(blocks(payload), blocks(out))) if a != b] == [5]
+    assert _g1t_dxt5(16, 16, out).decode_rgba()[(4 * 16 + 4) * 4:(4 * 16 + 8) * 4] == bytes((255, 255, 255, 255)) * 4
+
+
+def test_a_resized_dxt_texture_keeps_the_old_area_byte_exact() -> None:
+    # Bug: enlarging a texture decodes the old art and encodes it again with the new blocks.
+    rng = random.Random(8)
+    payload = b"".join(rng.randbytes(16) for _ in range(4))  # 8x8
+    source = _g1t((8, 3, 3, payload))
+    g1t = parse_g1t(source)
+    canvas = bytearray(16 * 16 * 4)
+    old = g1t.textures[0].decode_rgba()
+    for y in range(8):
+        canvas[y * 16 * 4:y * 16 * 4 + 32] = old[y * 32:(y + 1) * 32]
+
+    grown = g1t.with_texture_resized(0, 16, 16, bytes(canvas)).textures[0].payload
+
+    assert [grown[i:i + 16] for i in (0, 16, 64, 80)] == [payload[i:i + 16] for i in (0, 16, 32, 48)]
+    decoded = _g1t_dxt5(16, 16, grown).decode_rgba()
+    assert all(decoded[(y * 16 + x) * 4 + 3] == 0 for y in range(16) for x in range(16) if x >= 8 or y >= 8)
 
 
 def test_dxt5_endpoint_selection_does_not_flatten_glow_or_band_opaque_pixels() -> None:
@@ -183,3 +261,19 @@ def test_x360_conversion_does_not_miss_word_swaps_or_header_nibble_swaps() -> No
     expected = _g1t((6, 3, 2, struct.pack("<HHI", 0xF800, 0x001F, 0) + struct.pack("<HHI", 0x001F, 0xF800, 0)))
     assert converted.encode() == expected
     assert converted.textures[0].decode_rgba() == (bytes((255, 0, 0, 255)) * 4 + bytes((0, 0, 255, 255)) * 4) * 4
+
+
+def test_a_texture_resized_into_bgra8_keeps_every_pixel_and_says_bgra8() -> None:
+    # Bug: the new pixel format is written into the payload but not the texture header (or the reverse),
+    # so the game reads uncompressed pixels as DXT blocks, and every later texture offset moves wrongly.
+    g1t = parse_g1t(_g1t((8, 2, 2, bytes(16)), (6, 2, 2, bytes(8))))
+    rgba = bytes((i * 7) % 256 for i in range(8 * 8 * 4))
+
+    grown = g1t.with_texture_resized(0, 8, 8, rgba, textures.PIXEL_FORMAT_BGRA8)
+
+    first, second = grown.textures
+    assert (first.pixel_format_name, first.width, first.height) == ("bgra8", 8, 8)
+    assert first.decode_rgba() == rgba
+    assert second.pixel_format_name == "dxt1" and second.payload == bytes(8)
+    with pytest.raises(TextureCodecError):
+        g1t.with_texture_resized(0, 8, 8, rgba, 0x7F)

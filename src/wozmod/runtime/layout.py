@@ -9,7 +9,7 @@ from .english_runtime import C_SOURCE, SURROGATES, encode_english
 from .latin_font import CELL, LATIN_GLYPH
 
 UNSURROGATES = {ord(v): k for k, v in SURROGATES.items()}
-SOURCE = C_SOURCE.read_text()
+SOURCE = C_SOURCE.read_text(encoding="utf-8")
 DEFINES = {name: int(value, 16) for name, value in re.findall(r"#define (\w+) (0x[0-9A-Fa-f]+)", SOURCE)}
 JAPANESE = re.compile(r"[\u3000-\u30ff\u3400-\u9fff\uff00-\uffef]")
 WINDOW_TEXT, NOTICE_FORMATS, NOT_TEXT = 0x4F4D1F, 0x05, {0x08, 0x15, 0x16}

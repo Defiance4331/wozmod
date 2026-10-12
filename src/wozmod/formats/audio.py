@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import BinaryIO, Iterator
 
 from wozmod import resources
+from wozmod.progress import report
 
 KOVS_HEADER_BYTES = 32
 VOICE_RECORD_ALIGNMENT = 16
@@ -383,7 +384,7 @@ WO1_RECORD_BASE = 1473
 WO2_STAGES = range(0x28)
 WO2_SUFFIX_BASE = 0x3078
 WO2_CLIP_BASE = 1644
-WO2_VORBIS_QUALITY = 4
+WO2_VORBIS_QUALITY = 7
 
 
 WO1_EVENT_VOICES = (0x8F4, 957, 511)
@@ -458,15 +459,23 @@ def kovs_record(ogg: bytes) -> bytes:
     return b"KOVS" + struct.pack("<Ii", len(stream), 0) + bytes(20) + stream
 
 
-# Clips per ffmpeg process: starting ffmpeg costs more than encoding one short clip.
-FFMPEG_BATCH = 32
+# Clips per ffmpeg process: starting ffmpeg costs more than encoding one short clip, but each clip in a process
+# keeps its own encoder alive, and 32 of them cost 12 % more CPU than 8 (measured, same output).
+FFMPEG_BATCH = 8
 
 
-def _ffmpeg_each(jobs: list[tuple[list[str], bytes, list[str]]], workers: int | None = None) -> list[bytes]:
-    """Run ffmpeg once per (input options, input bytes, output options) job, FFMPEG_BATCH jobs per process."""
+def _ffmpeg_each(jobs: list[tuple[list[str], bytes, list[str]]], workers: int | None = None,
+                 label: str = "converting audio", span: tuple[float, float] = (0.0, 1.0)) -> list[bytes]:
+    """Run ffmpeg once per (input options, input bytes, output options) job, FFMPEG_BATCH jobs per process.
+
+    label and span say what the progress view shows: the part of the voices stage this call covers.
+    """
     import subprocess
     import tempfile
+    import threading
     from concurrent.futures import ThreadPoolExecutor
+
+    finished, lock = [0], threading.Lock()
 
     def batch(start: int) -> list[bytes]:
         part = jobs[start:start + FFMPEG_BATCH]
@@ -477,8 +486,12 @@ def _ffmpeg_each(jobs: list[tuple[list[str], bytes, list[str]]], workers: int | 
                 command += [*before, "-i", str(Path(folder, f"{k}.in"))]
             for k, (_, _, after) in enumerate(part):
                 command += ["-map", f"{k}:a", *after, str(Path(folder, f"{k}.out"))]
-            subprocess.run(command, capture_output=True, check=True)
-            return [Path(folder, f"{k}.out").read_bytes() for k in range(len(part))]
+            subprocess.run(command, capture_output=True, check=True, stdin=subprocess.DEVNULL)  # never read the terminal
+            outputs = [Path(folder, f"{k}.out").read_bytes() for k in range(len(part))]
+        with lock:  # report() raises Cancelled when the player cancelled, which stops the other batches too
+            finished[0] += len(part)
+            report("voices", label, span[0] + (span[1] - span[0]) * finished[0] / len(jobs), (finished[0], len(jobs)))
+        return outputs
 
     with ThreadPoolExecutor(workers or os.process_cpu_count()) as pool:
         return [out for part in pool.map(batch, range(0, len(jobs), FFMPEG_BATCH)) for out in part]
@@ -492,10 +505,20 @@ def wo2_voice_clips(mapping: dict[int, int], index: bytes, bank: Path, jobs: int
         riffs = {moz_id: _read_at(stream, *records[clip]) for moz_id, clip in mapping.items()}
         copies = Counter(hashlib.sha256(_read_at(stream, *record)).digest() for record in records)
     riffs = {moz_id: riff for moz_id, riff in riffs.items() if copies[hashlib.sha256(riff).digest()] <= 2}
-    vorbis = ["-ac", "1", "-ar", "48000", "-c:a", "libvorbis", "-threads", "1",
-              "-q:a", str(WO2_VORBIS_QUALITY), "-fflags", "+bitexact", "-flags:a", "+bitexact", "-f", "ogg"]
-    oggs = _ffmpeg_each([(["-threads", "1", "-f", "wav"], riff, vorbis) for riff in riffs.values()], jobs)
-    return dict(zip(riffs, map(kovs_record, oggs)))
+    def encode(moz_ids: list[int], quality: int, span: tuple[float, float]) -> dict[int, bytes]:
+        vorbis = ["-ac", "1", "-ar", "48000", "-c:a", "libvorbis", "-threads", "1",
+                  "-q:a", str(quality), "-fflags", "+bitexact", "-flags:a", "+bitexact", "-f", "ogg"]
+        oggs = _ffmpeg_each([(["-threads", "1", "-f", "wav"], riffs[i], vorbis) for i in moz_ids], jobs,
+                            "converting voice clips", span)
+        return dict(zip(moz_ids, map(kovs_record, oggs)))
+
+    clips = encode(list(riffs), WO2_VORBIS_QUALITY, (0.1, 0.85))
+    # The game reads a clip whole into a SLOT_BYTES buffer: a clip that does not fit is encoded again, one step lower.
+    for quality in range(WO2_VORBIS_QUALITY - 1, -1, -1):
+        if not (long := [i for i, clip in clips.items() if len(clip) > SLOT_BYTES]):
+            break
+        clips |= encode(long, quality, (0.85, 0.85))  # progress stays put
+    return clips
 
 
 def english_voice_clips(wo1_mapping: dict[int, int], wo1_index: bytes, wo1_bank: Path,
@@ -528,8 +551,6 @@ def english_voice_bank(clips: dict[int, bytes]) -> bytes:
 
 
 SE_BANKS = 122
-SE_BLOCK = 512
-SE_BLOCK_SAMPLES = 1017
 SE_ENTRY_BYTES = 40
 
 
@@ -600,35 +621,34 @@ def _xma2_riff(packets: bytes, rate: int) -> bytes:
     return b"RIFF" + struct.pack("<I", 4 + len(body)) + b"WAVE" + body
 
 
-def _ima_adpcm(clips: list[tuple[bytes, bool, int, int]], jobs: int | None) -> list[tuple[int, bytes]]:
-    """Convert (clip, is WO1, donor rate, rate) donor clips to IMA ADPCM in 512-byte blocks."""
-    pcms = _ffmpeg_each([
-        (["-f", "s16le", "-ar", str(donor_rate), "-ac", "1"] if wo1 else ["-f", "wav"],
-         clip if wo1 else _xma2_riff(clip, donor_rate), ["-ac", "1", "-ar", str(rate), "-f", "s16le"])
-        for clip, wo1, donor_rate, rate in clips], jobs)
-    wavs = _ffmpeg_each([
-        (["-f", "s16le", "-ar", str(rate), "-ac", "1"], pcm,
-         ["-c:a", "adpcm_ima_wav", "-block_size", str(SE_BLOCK), "-fflags", "+bitexact", "-f", "wav"])
-        for pcm, (_, _, _, rate) in zip(pcms, clips)], jobs)
-    out = []
-    for pcm, wav in zip(pcms, wavs):
-        at = 12
-        while wav[at:at + 4] != b"data":
-            at += 8 + struct.unpack_from("<I", wav, at + 4)[0]
-        samples = len(pcm) // 2
-        out.append((samples, wav[at + 8:at + 8 + -(-samples // SE_BLOCK_SAMPLES) * SE_BLOCK]))
-    return out
+def _pcm16(clips: list[tuple[bytes, bool, int, int]], jobs: int | None) -> list[tuple[int, bytes]]:
+    """Convert (clip, is WO1, donor rate, rate) donor clips to 16-bit mono PCM at the entry's rate.
+
+    WO1 clips already are PCM and are used as they are; X360 clips are decoded once."""
+    todo = [k for k, (_, wo1, donor_rate, rate) in enumerate(clips) if not wo1 or donor_rate != rate]
+    converted = iter(_ffmpeg_each([
+        (["-f", "s16le", "-ar", str(clips[k][2]), "-ac", "1"] if clips[k][1] else ["-f", "wav"],
+         clips[k][0] if clips[k][1] else _xma2_riff(clips[k][0], clips[k][2]),
+         ["-ac", "1", "-ar", str(clips[k][3]), "-f", "s16le"]) for k in todo], jobs, "converting sound effects", (0.85, 1.0)))
+    pcms = {k: next(converted) for k in todo}
+    return [(len(pcm := pcms.get(k, clip)) // 2, pcm) for k, (clip, _, _, _) in enumerate(clips)]
+
+
+# Entry bytes 6 to 11: format, block bytes, samples per block. Stock banks use 0x8800 (IMA ADPCM, 512-byte
+# blocks of 1,017 samples); the game also plays 0x4800, 16-bit PCM, which is what the donor effects are.
+SE_FORMAT_PCM = (0x4800, 2, 1)
 
 
 def se_bank(header: bytes, clips: list[tuple[int, bytes]]) -> tuple[bytes, bytes]:
-    """Replace sound-bank sample counts, offsets and data."""
+    """Replace sound-bank formats, sample counts, offsets and data with 16-bit PCM clips."""
     entries = se_entries(header)
-    if len(clips) != len(entries) or any(len(ima) != -(-n // SE_BLOCK_SAMPLES) * SE_BLOCK for n, ima in clips):
+    if len(clips) != len(entries) or any(len(pcm) != 2 * n for n, pcm in clips):
         raise VoiceBankError("English SE clips do not fit the bank's entries")
     out, data = bytearray(header), bytearray()
-    for at, (samples, ima) in zip(entries, clips):
-        struct.pack_into("<III", out, at + 16, samples, len(data), len(ima))
-        data += ima
+    for at, (samples, pcm) in zip(entries, clips):
+        struct.pack_into("<HHH", out, at + 6, *SE_FORMAT_PCM)
+        struct.pack_into("<III", out, at + 16, samples, len(data), len(pcm))
+        data += pcm
     struct.pack_into("<I", out, 16, len(data))
     return bytes(out), b"_DBW0000" + struct.pack("<I", 12 + len(data)) + bytes(data)
 
@@ -655,7 +675,7 @@ def english_se_bank(seidx: bytes, se: bytes, wo1_hdx: bytes, wo1_bdx: Path, wo2_
                 clip = _read_at(two if j is None else one, offset, size)
                 work[moz].append((clip, j is not None, donor_rate, rate))
                 tiers["wo2-x360" if j is None else "wo1-pc"] += 1
-    converted = iter(_ima_adpcm([job for entries in work.values() for job in entries], jobs))
+    converted = iter(_pcm16([job for entries in work.values() for job in entries], jobs))
     banks = {moz: se_bank(stock[moz][0], [next(converted) for _ in entries]) for moz, entries in work.items()}
     table, body = bytearray(_aligned_size(4 + 16 * SE_BANKS)), bytearray()
     struct.pack_into("<I", table, 0, SE_BANKS)

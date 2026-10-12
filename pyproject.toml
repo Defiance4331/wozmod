@@ -14,6 +14,9 @@ dependencies = ["pillow>=12.1,<13"]
 [project.scripts]
 wozmod = "wozmod.__main__:main"
 
+[project.gui-scripts]
+wozmod-setup = "wozmod.window:main"
+
 [project.optional-dependencies]
 native = ["wozmod-native"]
 

@@ -118,3 +118,22 @@ def test_truncated_folder_data_cannot_silently_return_a_short_file(tmp_path):
     reader = CabinetSet(lambda name: (tmp_path / name).open("rb"), "short.cab")
     with pytest.raises(DiscError, match="exceeds its folder"):
         b"".join(reader.iter_file("chosen.dat"))
+
+
+def test_cabinet_checksum_matches_the_word_by_word_definition_for_every_length():
+    # A fold that pairs the wrong words turns this red for an odd word count; a lost tail for any length % 4.
+    import random
+    import struct
+
+    from wozmod.discs.cabinet import _checksum
+
+    def by_definition(data: bytes) -> int:
+        aligned = len(data) & ~3
+        result = 0
+        for (word,) in struct.iter_unpack("<I", data[:aligned]):
+            result ^= word
+        return result ^ int.from_bytes(data[aligned:], "big")
+
+    rng = random.Random(7)
+    wrong = [n for n in [*range(0, 70), 1021, 4097, 32768 + 3] if _checksum(blob := rng.randbytes(n)) != by_definition(blob)]
+    assert wrong == []

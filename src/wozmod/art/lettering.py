@@ -48,12 +48,12 @@ def get(request: dict, producer) -> tuple[Image.Image, dict]:
         folder = Path(TRACE)
         folder.mkdir(parents=True, exist_ok=True)
         record = folder / f"{identity}.json"
-        record.write_text(json.dumps(request, ensure_ascii=False, sort_keys=True))
+        record.write_text(json.dumps(request, ensure_ascii=False, sort_keys=True), encoding="utf-8")
         cached = folder / f"{identity}.png"
         metadata = folder / f"{identity}.metrics"
         if cached.exists() and metadata.exists():
             return (_traced(Image.open(cached).copy(), folder, identity),
-                    dict(json.loads(metadata.read_text()), _lettering=identity))
+                    dict(json.loads(metadata.read_text(encoding="utf-8")), _lettering=identity))
     if request.get("kind") == "squish":
         with untracked():
             image, metrics = producer()
@@ -62,7 +62,7 @@ def get(request: dict, producer) -> tuple[Image.Image, dict]:
     metrics = dict(metrics)
     if TRACE:
         image.save(cached)
-        metadata.write_text(json.dumps(metrics, ensure_ascii=False, sort_keys=True))
+        metadata.write_text(json.dumps(metrics, ensure_ascii=False, sort_keys=True), encoding="utf-8")
         image = _traced(image, folder, identity)
     return image, dict(metrics, _lettering=identity)
 

@@ -105,7 +105,7 @@ class G1tTexture:
         if rgba == self.decode_rgba():
             return self.payload
         top_bytes = _mip_payload_bytes(self.pixel_format, self.width, self.height)
-        top = _encode_top(self.pixel_format, rgba, self.width, self.height)
+        top = _encode_top(self.pixel_format, rgba, self.width, self.height, self)
         if len(top) != top_bytes:
             raise AssertionError("texture encoder changed the top-level span")
         return top + self.payload[top_bytes:]
@@ -182,22 +182,25 @@ class G1tFile:
         return self.with_texture_payload(texture_index, texture.encode_rgba(rgba))
 
     def with_texture_resized(
-        self, texture_index: int, width: int, height: int, rgba: bytes
+        self, texture_index: int, width: int, height: int, rgba: bytes, pixel_format: int | None = None
     ) -> G1tFile:
-        """Resize a single-mip texture and move later textures."""
+        """Resize a single-mip texture, optionally in another pixel format, and move later textures."""
 
         texture = self.textures[texture_index]
+        pixel_format = texture.pixel_format if pixel_format is None else pixel_format
+        if pixel_format not in SUPPORTED_PIXEL_FORMATS:
+            raise TextureCodecError(f"unsupported pixel format {pixel_format}")
         if texture.mipmap_count != 1:
             raise TextureCodecError("only single-mip textures can be resized")
         if width & (width - 1) or height & (height - 1) or len(rgba) != width * height * 4:
             raise TextureCodecError("resized texture needs power-of-two RGBA pixels")
         header = G1T_TEXTURE_HEADER.pack(
             1 << 4,
-            texture.pixel_format,
+            pixel_format,
             (width.bit_length() - 1) | (height.bit_length() - 1) << 4,
             texture.flags,
         )
-        span = header + _encode_top(texture.pixel_format, bytes(rgba), width, height)
+        span = header + _encode_top(pixel_format, bytes(rgba), width, height, texture)
         delta = len(span) - (texture.end - texture.offset)
         changed = bytearray(
             self.source[: texture.offset] + span + self.source[texture.end :]
@@ -441,14 +444,42 @@ def _swap_red_blue(pixels: bytes) -> bytes:
     return bytes(swapped)
 
 
-def _encode_top(pixel_format: int, rgba: bytes, width: int, height: int) -> bytes:
+def _encode_top(pixel_format: int, rgba: bytes, width: int, height: int, base: G1tTexture | None = None) -> bytes:
+    """Encode the top mip. Every block of a DXT texture that `base` already shows the same pixels in, at the
+    same block position, keeps `base`'s compressed bytes, so only edited blocks pass through the encoder."""
     if pixel_format == PIXEL_FORMAT_BGRA8:
         return _swap_red_blue(rgba)
-    if pixel_format == PIXEL_FORMAT_DXT1:
-        return _encode_dxt1(rgba, width, height)
-    if pixel_format == PIXEL_FORMAT_DXT5:
-        return _encode_dxt5(rgba, width, height)
-    raise AssertionError("unreachable pixel format")
+    if pixel_format not in (PIXEL_FORMAT_DXT1, PIXEL_FORMAT_DXT5):
+        raise AssertionError("unreachable pixel format")
+    if base is not None and base.pixel_format != pixel_format:
+        base = None
+    return _encode_dxt(pixel_format, rgba, width, height, base)
+
+
+def _encode_dxt(pixel_format: int, rgba: bytes, width: int, height: int, base: G1tTexture | None) -> bytes:
+    if pixel_format == PIXEL_FORMAT_DXT5 and native.module:
+        if base is None:
+            return native.module.dxt5_encode(rgba, width, height)
+        return native.module.dxt5_encode_edit(
+            rgba, width, height, base.decode_rgba(), base.payload, base.width, base.height)
+    return _encode_dxt_python(pixel_format, rgba, width, height, base)
+
+
+def _encode_dxt_python(pixel_format: int, rgba: bytes, width: int, height: int, base: G1tTexture | None) -> bytes:
+    encode, size = (_dxt5_block, 16) if pixel_format == PIXEL_FORMAT_DXT5 else (_dxt1_block, 8)
+    if base is None:
+        return b"".join(map(encode, _blocks(rgba, width, height)))
+    kept = list(_blocks(base.decode_rgba(), base.width, base.height))
+    whole_columns, whole_rows = base.width // 4, base.height // 4  # edge blocks repeat pixels: never copied
+    columns, out = max(1, (base.width + 3) // 4), []
+    for index, block in enumerate(_blocks(rgba, width, height)):
+        row, column = divmod(index, max(1, (width + 3) // 4))
+        if column < whole_columns and row < whole_rows and kept[row * columns + column] == block:
+            at = (row * columns + column) * size
+            out.append(base.payload[at:at + size])
+        else:
+            out.append(encode(block))
+    return b"".join(out)
 
 
 def _rgb565_to_rgba(value: int) -> tuple[int, int, int, int]:
@@ -572,16 +603,128 @@ def _visible_error(
                for red, green, blue, alpha in pixels if alpha)
 
 
-def _encode_color_block(
+def _baseline_endpoints(
     pixels: tuple[tuple[int, int, int, int], ...], *, allow_transparency: bool
-) -> bytes:
+) -> tuple[int, int]:
+    """The quick endpoints (darkest and brightest pixel) that the search starts from; it never ends worse."""
     transparent = allow_transparency and any(pixel[3] < 128 for pixel in pixels)
     color0, color1 = _color_endpoints(pixels, transparent=transparent)
     if not allow_transparency:  # DXT5 endpoint candidates include faint pixels.
         lit = _color_endpoints(pixels, transparent=False, visible=1)
         if lit != (color0, color1) and _visible_error(pixels, lit) < _visible_error(pixels, (color0, color1)):
             color0, color1 = lit
-    palette = _color_palette(color0, color1, force_four=not allow_transparency)
+    return color0, color1
+
+
+@lru_cache(maxsize=1 << 16)
+def _palette_rgb(color0: int, color1: int, transparent: bool) -> tuple[tuple[int, int, int], ...]:
+    """The palette colours a block with these endpoints shows (three colours before the transparent one)."""
+    first, second = _rgb565_to_rgba(color0)[:3], _rgb565_to_rgba(color1)[:3]
+    if transparent:
+        return first, second, tuple((a + b) // 2 for a, b in zip(first, second))
+    return (first, second, tuple((2 * a + b) // 3 for a, b in zip(first, second)),
+            tuple((a + 2 * b) // 3 for a, b in zip(first, second)))
+
+
+def _rounded_quotient(numerator: int, denominator: int) -> int:
+    """numerator / denominator rounded to nearest, halves up; the denominator is positive."""
+    return (2 * numerator + denominator) // (2 * denominator)
+
+
+def _color_error(colors, color0: int, color1: int, transparent: bool) -> int:
+    palette = _palette_rgb(color0, color1, transparent)
+    return sum(weight * min((red - r) ** 2 + (green - g) ** 2 + (blue - b) ** 2 for r, g, b in palette)
+               for red, green, blue, weight in colors)
+
+
+def _least_squares_endpoints(colors, color0: int, color1: int, transparent: bool) -> tuple[int, int] | None:
+    """Endpoints that best fit the pixels each palette index claims now; None when they cannot move."""
+    palette = _palette_rgb(color0, color1, transparent)
+    shares, divisor = (((2, 0), (0, 2), (1, 1)), 2) if transparent else (((3, 0), (0, 3), (2, 1), (1, 2)), 3)
+    aa = ab = bb = 0
+    xa, xb = [0, 0, 0], [0, 0, 0]
+    for red, green, blue, weight in colors:
+        distances = [(red - r) ** 2 + (green - g) ** 2 + (blue - b) ** 2 for r, g, b in palette]
+        first, second = shares[distances.index(min(distances))]
+        aa += weight * first * first
+        ab += weight * first * second
+        bb += weight * second * second
+        for channel, value in enumerate((red, green, blue)):
+            xa[channel] += weight * first * value
+            xb[channel] += weight * second * value
+    determinant = aa * bb - ab * ab
+    if determinant == 0:
+        return None
+    ends = []
+    for numbers in ((xa, xb, bb, ab), (xb, xa, aa, ab)):
+        near, far, own, cross = numbers
+        ends.append(_rgba_to_rgb565((*(min(255, max(0, _rounded_quotient(
+            divisor * (near[channel] * own - far[channel] * cross), determinant)))
+            for channel in range(3)), 255)))
+    return ends[0], ends[1]
+
+
+_RGB565_STEPS = tuple((1 << shift, limit, shift) for shift, limit in ((11, 31), (5, 63), (0, 31)))
+
+
+def _color_neighbours(color0: int, color1: int):
+    """Every endpoint pair one step of one channel away, in a fixed order."""
+    for which in (0, 1):
+        value = (color0, color1)[which]
+        for step, limit, shift in _RGB565_STEPS:
+            field = value >> shift & limit
+            for delta in (-1, 1):
+                if 0 <= field + delta <= limit:
+                    moved = value + delta * step
+                    yield (moved, color1) if which == 0 else (color0, moved)
+
+
+def _search_color(colors, starts, transparent: bool) -> tuple[int, int]:
+    """Endpoints with the least weighted error: fit by least squares, then step to better neighbours."""
+    def valid(ends):
+        return ends[0] <= ends[1] if transparent else ends[0] > ends[1]
+
+    best: tuple[int, tuple[int, int]] | None = None
+    for start in starts:
+        ends, error = start, _color_error(colors, *start, transparent)
+        for _ in range(64):
+            changed = False
+            if (fitted := _least_squares_endpoints(colors, *ends, transparent)) is not None:
+                fitted = (fitted[1], fitted[0]) if not valid(fitted) else fitted
+                if valid(fitted) and (e := _color_error(colors, *fitted, transparent)) < error:
+                    ends, error, changed = fitted, e, True
+            step = min(((e, i, n) for i, n in enumerate(_color_neighbours(*ends)) if valid(n)
+                        and (e := _color_error(colors, *n, transparent)) < error), default=None)
+            if step:
+                ends, error, changed = step[2], step[0], True
+            if not changed or error == 0:
+                break
+        if best is None or error < best[0]:
+            best = error, ends
+    return best[1]
+
+
+def _encode_color_block(
+    pixels: tuple[tuple[int, int, int, int], ...], *, allow_transparency: bool
+) -> bytes:
+    transparent = allow_transparency and any(pixel[3] < 128 for pixel in pixels)
+    start = _baseline_endpoints(pixels, allow_transparency=allow_transparency)
+    # What a pixel costs: 1 when only the colour counts (DXT1), else its squared alpha.
+    weights: dict[tuple[int, int, int], int] = {}
+    for red, green, blue, alpha in pixels:
+        weight = (alpha >= 128) if allow_transparency else alpha * alpha
+        if weight:
+            weights[red, green, blue] = weights.get((red, green, blue), 0) + int(weight)
+    colors = tuple((*rgb, weight) for rgb, weight in weights.items())
+    color0, color1 = start
+    if colors:
+        low = tuple(min(rgb[c] for rgb in weights) for c in range(3))
+        high = tuple(max(rgb[c] for rgb in weights) for c in range(3))
+        corners = [_rgba_to_rgb565((*low, 255)), _rgba_to_rgb565((*high, 255))]
+        corners = sorted(corners, reverse=not transparent)
+        starts = [start] + ([tuple(corners)] if corners[0] != corners[1] or transparent else [])
+        color0, color1 = _search_color(colors, starts, transparent)
+    palette = _palette_rgb(color0, color1, transparent)
     candidates = palette[:3] if transparent else palette
     indices = 0
     nearest: dict[tuple[int, int, int], int] = {}
@@ -591,18 +734,64 @@ def _encode_color_block(
         else:
             selected = nearest.get((red, green, blue))
             if selected is None:
-                selected = nearest[red, green, blue] = _nearest(red, green, blue, candidates)[0]
+                distances = [(red - r) ** 2 + (green - g) ** 2 + (blue - b) ** 2 for r, g, b in candidates]
+                selected = nearest[red, green, blue] = distances.index(min(distances))
         indices |= selected << (ordinal * 2)
     return struct.pack("<HHI", color0, color1, indices)
+
+
+@lru_cache(maxsize=1 << 12)
+def _alpha_levels(a0: int, a1: int) -> tuple[int, ...]:
+    return _alpha_palette(a0, a1)
+
+
+_ALPHA_SIZES = (16, 8, 4, 2, 1)
+_ALPHA_GRID = (0, 64, 128, 192, 255)
+
+
+def _alpha_error(counts, a0: int, a1: int) -> int:
+    levels = _alpha_levels(a0, a1)
+    return sum(count * min((value - level) ** 2 for level in levels) for value, count in counts)
+
+
+@lru_cache(maxsize=1 << 16)
+def _search_alpha(counts) -> tuple[int, int]:
+    """Alpha endpoints with the least squared error. Two or fewer alphas are exact at (max, min). Otherwise
+    each start (the extremes in either interpolation mode, and a coarse grid of pairs) moves by steps of 16,
+    8, 4, 2 and 1 to its best neighbour, until none is better: the grid finds the endpoints inside the range
+    that the extremes cannot."""
+    low, high = counts[0][0], counts[-1][0]
+    if len(counts) <= 2:
+        return high, low
+    known: dict[tuple[int, int], int] = {}
+
+    def error(ends: tuple[int, int]) -> int:
+        if ends not in known:
+            known[ends] = _alpha_error(counts, *ends)
+        return known[ends]
+
+    best: tuple[int, tuple[int, int]] | None = None
+    for ends in ((high, low), (low, high), *((x, y) for x in _ALPHA_GRID for y in _ALPHA_GRID)):
+        for size in _ALPHA_SIZES:
+            while True:
+                moves = ((-size, 0), (size, 0), (0, -size), (0, size), (-size, -size), (size, size), (-size, size), (size, -size))
+                step = min(((error(n), i, n) for i, (d0, d1) in enumerate(moves)
+                            if 0 <= (n := (ends[0] + d0, ends[1] + d1))[0] <= 255 and 0 <= n[1] <= 255
+                            and error(n) < error(ends)), default=None)
+                if step is None:
+                    break
+                ends = step[2]
+        if best is None or error(ends) < best[0]:
+            best = error(ends), ends
+    return best[1]
 
 
 def _encode_alpha_block(
     pixels: tuple[tuple[int, int, int, int], ...]
 ) -> bytes:
     alphas = [pixel[3] for pixel in pixels]
-    alpha0 = max(alphas)
-    alpha1 = min(alphas)
-    palette = _alpha_palette(alpha0, alpha1)
+    a0, a1 = _search_alpha(tuple(sorted((value, alphas.count(value)) for value in set(alphas))))
+    palette = _alpha_palette(a0, a1)
     indices = 0
     nearest: dict[int, int] = {}
     for ordinal, alpha in enumerate(alphas):
@@ -611,7 +800,7 @@ def _encode_alpha_block(
             distances = [abs(alpha - value) for value in palette]
             selected = nearest[alpha] = distances.index(min(distances))
         indices |= selected << (ordinal * 3)
-    return bytes((alpha0, alpha1)) + indices.to_bytes(6, "little")
+    return bytes((a0, a1)) + indices.to_bytes(6, "little")
 
 
 # Cache repeated DXT blocks.
@@ -624,20 +813,6 @@ def _dxt1_block(block: bytes) -> bytes:
 def _dxt5_block(block: bytes) -> bytes:
     pixels = _pixels(block)
     return _encode_alpha_block(pixels) + _encode_color_block(pixels, allow_transparency=False)
-
-
-def _encode_dxt1(rgba: bytes, width: int, height: int) -> bytes:
-    return b"".join(map(_dxt1_block, _blocks(rgba, width, height)))
-
-
-def _encode_dxt5_python(rgba: bytes, width: int, height: int) -> bytes:
-    return b"".join(map(_dxt5_block, _blocks(rgba, width, height)))
-
-
-def _encode_dxt5(rgba: bytes, width: int, height: int) -> bytes:
-    if native.module:
-        return native.module.dxt5_encode(rgba, width, height)
-    return _encode_dxt5_python(rgba, width, height)
 
 
 def x360_g1t(data: bytes) -> G1tFile:

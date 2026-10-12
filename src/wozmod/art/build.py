@@ -11,7 +11,7 @@ import sys
 import subprocess
 import tempfile
 import zlib
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from multiprocessing import get_all_start_methods, get_context
 from pathlib import Path
@@ -23,6 +23,7 @@ from wozmod.formats.linkdata import (
     encode_lzp2, parse_index, parse_lzp2, wo1_entries,
 )
 from wozmod import native, resources
+from wozmod.progress import report as report_progress
 from wozmod.runtime.english_runtime import write_manifest
 from . import lettering
 from .hires import HIRES_OVERLAY, HIRES_RIGHT_GROW, hires_blob
@@ -554,6 +555,12 @@ def piece(glyph, box):
 
 class Face:
 
+    def __getstate__(self):  # the fill test is a lambda: pickle its name in FILLS instead
+        return {**self.__dict__, "is_fill": next(name for name, test in FILLS.items() if test is self.is_fill)}
+
+    def __setstate__(self, state):
+        self.__dict__.update(state, is_fill=FILLS[state["is_fill"]])
+
     def __init__(self, rows: list[tuple[Image.Image, str, object, int]], ink: float = 0, optical: bool = False):
 
         self.optical, self.is_fill, self.kern = optical, rows[0][2], {}
@@ -724,38 +731,71 @@ def face_rows(image: Image.Image, texts: list, is_fill=yellow, least: int = 3, c
     return [(image.crop((0, top, image.width, bottom)), text, is_fill, least, counts)
             for (top, bottom), text in zip(ink_rows(image), texts, strict=True) if text]
 
-def faces(mapping: dict, donors: dict) -> dict:
+FACE_WORK: tuple = ()  # (mapping, donors) for the face workers; set before they start, so forked workers share it
 
+
+def _face(name: str) -> Face:
+    """One lettering face, built from the donors in FACE_WORK."""
+    mapping, donors = FACE_WORK
     stages = mapping["stage_names"]
-    entry, item, texture = stages["font"]
-    stage = Face(face_rows(rgba(donors[entry][item].textures[texture]), stages["rows"]))
-    stage.synthesize(stages["synth"])
-    titles = stages["titles"]  
-    title = Face([row for k, text in enumerate(stages["rows"]) if k not in titles["skip"]
-                  for row in face_rows(rgba(donors[titles["donor"]][k].textures[0]), [text])])
-    title.synthesize(titles["synth"])
-    found = {"stage": stage, "title": title}
-    for name, spec in mapping.get("faces", {}).items():
-        rows = []
-        for source in spec["rows"]:
-            
-            image = stock_image(source["base"], donors) if "base" in source else source_image(source, donors, None)
-            shape = (FILLS[source.get("fill", spec.get("fill", "yellow"))], source.get("least", spec.get("least", 3)),
-                     source.get("strokes", spec.get("strokes")))
-            if "against" in source:  
-                rows.append((lettering_layer(image, stock_image(source["against"], donors), source["box"]),
-                             source["text"], *shape))
-                continue
-            image = image.crop(source.get("box"))
-            if "drop" in source:  
-                image.putdata([(*p[:3], 0) if FILLS[source["drop"]](p) else p for p in image.get_flattened_data()])
-            if "glow" in source:  
-                image = unglowed(image, *source["glow"])
-            rows += face_rows(keyed(image, *source["key"]) if "key" in source else image, source["texts"], *shape)
-        found[name] = Face(rows, spec.get("ink", 0), spec.get("optical", False))
-        found[name].kern = spec.get("kern", {})  
-        found[name].synthesize(spec.get("synth", {}), FILLS[spec.get("fill", "yellow")])
-    return found
+    if name == "stage":
+        entry, item, texture = stages["font"]
+        stage = Face(face_rows(rgba(donors[entry][item].textures[texture]), stages["rows"]))
+        stage.synthesize(stages["synth"])
+        return stage
+    if name == "title":
+        titles = stages["titles"]
+        title = Face([row for k, text in enumerate(stages["rows"]) if k not in titles["skip"]
+                      for row in face_rows(rgba(donors[titles["donor"]][k].textures[0]), [text])])
+        title.synthesize(titles["synth"])
+        return title
+    spec = mapping["faces"][name]
+    rows = []
+    for source in spec["rows"]:
+
+        image = stock_image(source["base"], donors) if "base" in source else source_image(source, donors, None)
+        shape = (FILLS[source.get("fill", spec.get("fill", "yellow"))], source.get("least", spec.get("least", 3)),
+                 source.get("strokes", spec.get("strokes")))
+        if "against" in source:
+            rows.append((lettering_layer(image, stock_image(source["against"], donors), source["box"]),
+                         source["text"], *shape))
+            continue
+        image = image.crop(source.get("box"))
+        if "drop" in source:
+            image.putdata([(*p[:3], 0) if FILLS[source["drop"]](p) else p for p in image.get_flattened_data()])
+        if "glow" in source:
+            image = unglowed(image, *source["glow"])
+        rows += face_rows(keyed(image, *source["key"]) if "key" in source else image, source["texts"], *shape)
+    face = Face(rows, spec.get("ink", 0), spec.get("optical", False))
+    face.kern = spec.get("kern", {})
+    face.synthesize(spec.get("synth", {}), FILLS[spec.get("fill", "yellow")])
+    return face
+
+
+def faces(mapping: dict, donors: dict, jobs: int = 1) -> dict:
+    """The lettering faces, one worker process each when jobs > 1 (the longest step before the worker pool)."""
+    global FACE_WORK
+    names = ["stage", "title", *mapping.get("faces", {})]
+    FACE_WORK = mapping, donors
+    report_progress("art", "reading the lettering faces", 0.05, (0, len(names)))
+    found = {}
+    if jobs > 1:
+        with worker_pool(min(jobs, len(names))) as pool:
+            pending = {pool.submit(_face, name): name for name in names}
+            try:
+                for count, future in enumerate(as_completed(pending), 1):
+                    found[pending[future]] = future.result()
+                    report_progress("art", "reading the lettering faces", 0.05 + 0.45 * count / len(names),
+                                    (count, len(names)))
+            except BaseException:
+                pool.shutdown(wait=False, cancel_futures=True)
+                raise
+    else:
+        for count, name in enumerate(names, 1):
+            found[name] = _face(name)
+            report_progress("art", "reading the lettering faces", 0.05 + 0.45 * count / len(names),
+                            (count, len(names)))
+    return {name: found[name] for name in names}
 
 def stage_strip(text: str, font: Face, width: int, height: int) -> Image.Image:
 
@@ -952,7 +992,7 @@ def prepare_menu_labels(mapping: dict, output_dir: Path | None = None) -> dict:
         path.write_text(json.dumps(ordered, ensure_ascii=False), encoding="utf-8")
         subprocess.run([FONT_PYTHON, "-m", MENU_BATCH, str(path), str(output)],
                        check=True, stdout=subprocess.PIPE, text=True, env=font_environment())
-        manifest = json.loads((output / "manifest.json").read_text())
+        manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
         if len(manifest) != len(ordered):
             raise ValueError("menu batch dropped a requested native label")
         labels = {}
@@ -2280,15 +2320,36 @@ def native_menu_art(entry: int, item: int, served: Image.Image, mapping: dict,
     })
     return art
 
+def _now(function, *args) -> Future:
+    done = Future()
+    done.set_result(function(*args))
+    return done
+
+
 def hires_bin(entries: Path, source: Path | None, vector: tuple | None = None,
               squeeze: bool = False, jobs: int = 1) -> bytes:
+    """The large-menu sheets. With the native codecs (they let go of the GIL) the texture encoding and the
+    LZP2 packing of each sheet run on `jobs` threads while the next sheet is drawn; the bytes are the same."""
+    if not (native.module and jobs > 1):
+        return _hires_bin(entries, source, vector, squeeze, jobs, _now)
+    with ThreadPoolExecutor(jobs) as pool:
+        return _hires_bin(entries, source, vector, squeeze, jobs, pool.submit)
 
+
+def _sheet_g1t(g1t, size, pixels: bytes) -> bytes:
+    return rekeyed(g1t.with_texture_resized(0, *size, pixels)).encode()
+
+
+def _hires_bin(entries: Path, source: Path | None, vector: tuple | None, squeeze: bool, jobs: int, later) -> bytes:
     rows, packages, parsed = [], {}, {}
     plate_sources = entries.parent.parent / "vector-plate-sources"
     if vector:
         plate_sources.mkdir(parents=True, exist_ok=True)
     extras = list(DARK) + (sorted(HIRES_NATIVE_MENU) if vector else [])
-    for entry, item, scale, w, h, band, per_col in HIRES + [(e, i, 2, 0, 0, 0, 0) for e, i in extras]:
+    plates = HIRES + [(e, i, 2, 0, 0, 0, 0) for e, i in extras]
+    for number, (entry, item, scale, w, h, band, per_col) in enumerate(plates):
+        report_progress("art", "drawing the large menu plates", 0.65 + 0.3 * number / len(plates),
+               (number, len(plates)))
         if entry not in parsed:  # decode each entry once, however many of its items are used
             data = (entries / f"{entry}.bin").read_bytes()
             parsed[entry] = parse_texture_package(parse_lzp2(data).decoded if data[:4] == b"LZP2" else data)
@@ -2319,7 +2380,7 @@ def hires_bin(entries: Path, source: Path | None, vector: tuple | None = None,
                 details = entries.parent.parent / "native-menu-layout"
                 details.mkdir(parents=True, exist_ok=True)
                 (details / f"{entry}.{item}.json").write_text(
-                    json.dumps(art.info["native_layout"], indent=2) + "\n")
+                    json.dumps(art.info["native_layout"], indent=2) + "\n", encoding="utf-8")
                 edit = None
             else:
                 art = None
@@ -2346,7 +2407,7 @@ def hires_bin(entries: Path, source: Path | None, vector: tuple | None = None,
                 if "plate" in art.info:
                     details = entries.parent.parent / "plate-cleanup"
                     details.mkdir(parents=True, exist_ok=True)
-                    (details / f"{entry}.{item}.json").write_text(json.dumps(art.info["plate"], indent=2) + "\n")
+                    (details / f"{entry}.{item}.json").write_text(json.dumps(art.info["plate"], indent=2) + "\n", encoding="utf-8")
             else:
                 art = vector_art(edit, served, texts, scale, VECTOR_WINDOW.get((entry, item)), squeeze)
         else:
@@ -2371,18 +2432,20 @@ def hires_bin(entries: Path, source: Path | None, vector: tuple | None = None,
             if vector and (entry, item) in ATTRIBUTE_QUAD_MINIMUM:
                 minimum = max(minimum, ATTRIBUTE_QUAD_MINIMUM[entry, item])
         rows.append((entry, item, scale, w, h, band | (minimum << 16), per_col,
-                     rekeyed(g1t.with_texture_resized(0, *sheet.size, sheet.tobytes())).encode()))
+                     later(_sheet_g1t, g1t, sheet.size, sheet.tobytes())))
     encoded = {entry: package.encode() for entry, package in packages.items()}
     packed = [entry for entry in encoded if (entries / f"{entry}.bin").read_bytes()[:4] == b"LZP2"]
     if jobs > 1 and len(packed) > 1 and not native.module:  # the Python encoder is slow: one entry per process
         with worker_pool(min(jobs, len(packed))) as pool:
             results = dict(zip(packed, pool.map(packed_lzp2, [encoded[entry] for entry in packed])))
     else:
-        results = {entry: packed_lzp2(encoded[entry]) for entry in packed}
+        packing = {entry: later(packed_lzp2, encoded[entry]) for entry in packed}
+        results = {entry: done.result() for entry, done in packing.items()}
     for entry, data in encoded.items():
         (entries / f"{entry}.bin").write_bytes(results.get(entry, data))
-    return hires_blob(rows)
+    return hires_blob([(*row[:-1], row[-1].result()) for row in rows])
 
+# Shares of the art stage (measured): loading the donors 0 to 0.5, the entries to 0.65, the large plates to 0.95.
 LINKDATA2_FIRST = 4251  
 
 def archive(key: int) -> tuple[Path, object]:
@@ -2504,7 +2567,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.hires_only:
         write_hires(args)
         return 0
-    mapping = json.loads(MAPPING.read_text())
+    mapping = json.loads(MAPPING.read_text(encoding="utf-8"))
     edits: dict[int, list[dict]] = {}
     for edit in mapping["textures"]:  
         for ordinal, first in [(edit["entry"], edit.get("item")), *edit.get("also", [])]:  
@@ -2562,7 +2625,7 @@ def main(argv: list[str] | None = None) -> int:
     with base_bin.open("rb") as stream:
         donors |= {("moz", k): donor_g1ts(read_entry(stream, index.entries[k])[0])
                    for k in sorted({e[key][0] for e in flat for key in ("against", "base") if key in e})}
-    donors["faces"] = faces(mapping, donors)
+    donors["faces"] = faces(mapping, donors, args.jobs)
     donors["menu_labels"] = prepare_menu_labels(
         mapping, (args.output_dir / "review/native-menu-labels" if args.output_dir
                   else args.preview_dir / "native-menu-labels"))
@@ -2575,7 +2638,7 @@ def main(argv: list[str] | None = None) -> int:
         native_width_path.parent.mkdir(parents=True, exist_ok=True)
         with lettering.untracked():
             report = native_menu_widths(mapping, donors)
-        native_width_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+        native_width_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     ld2_bin = stock / "LINKDATA2.BIN"
     SHARED.update(base_bin=base_bin, index=index, donors=donors, edits=edits,
                   ld2_bin=ld2_bin, ld2_index=parse_index((stock / "LINKDATA2.IDX").read_bytes(), ld2_bin.stat().st_size),
@@ -2588,6 +2651,8 @@ def main(argv: list[str] | None = None) -> int:
             for future in as_completed(futures):
                 ordinal, data, count = future.result()
                 stored[ordinal] = data
+                report_progress("art", "building menu textures", 0.5 + 0.15 * len(stored) / len(edits),
+                                (len(stored), len(edits)))
                 print(f"entry {ordinal}: {count} textures, {archive(ordinal)[1].stored_bytes} -> {len(data)} bytes",
                       flush=True)
         except BaseException:
@@ -2615,7 +2680,7 @@ def write_hires(args) -> None:
     source = None if args.hires in ("fixture", "vector") else Path(args.hires)
     vector = None
     if args.hires == "vector":
-        mapping = json.loads(MAPPING.read_text())
+        mapping = json.loads(MAPPING.read_text(encoding="utf-8"))
         if not args.hires_only:
             cache = args.output_dir / "vector-plate-sources"
             for old in cache.glob("*.g1t"):
@@ -2636,7 +2701,7 @@ def write_hires(args) -> None:
     (args.output_dir / "review-variant.json").write_text(json.dumps({
         "schema": "moz-menu-review-variant-v1", "selection": selected,
         "runtime_edits": "shared", "geometry": "per-bank minima and right-anchor growth",
-    }, indent=2) + "\n")
+    }, indent=2) + "\n", encoding="utf-8")
     write_manifest(args.output_dir)
     print(f"{args.output_dir}: hires.bin ({args.hires})")
 

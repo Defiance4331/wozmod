@@ -7,7 +7,7 @@ import os
 import tempfile
 from contextlib import ExitStack
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from wozmod.discs.cabinet import CabinetSet
 from wozmod.discs.common import DiscError
@@ -28,6 +28,37 @@ def verify_file(path: Path | str, identity: DonorFile) -> Path:
     return path
 
 
+def _open_disc(image: Path | str, donor: Donor):
+    return (Iso9660 if donor.format == "iso9660" else Xdvdfs)(image)
+
+
+def check_donor_image(image: Path | str, donor: Donor | str) -> None:
+    """Raise DiscError (or OSError) unless the image lists every donor member at its pinned size.
+
+    A listing check, not a hash check: extract_donor hashes the members it reads.
+    """
+    if isinstance(donor, str):
+        donor = DONORS[donor]
+    with _open_disc(image, donor) as disc:
+        archive = CabinetSet(disc.open, donor.first_cabinet) if donor.first_cabinet else disc
+        available = {member.path.casefold(): member.size for member in archive.files()}
+    for member in donor.files:
+        if available.get(member.source.casefold()) != member.size:
+            raise DiscError(f"Missing or wrong-sized donor member: {member.source}")
+
+
+def read_disc_member(image: Path | str, donor: Donor | str, path: str) -> bytes | None:
+    """The bytes of one file in the image, or None when the image does not hold it."""
+    if isinstance(donor, str):
+        donor = DONORS[donor]
+    with _open_disc(image, donor) as disc:
+        try:
+            with disc.open(path) as stream:
+                return stream.read()
+        except FileNotFoundError:
+            return None
+
+
 def _target(destination: Path, name: str) -> Path:
     target = destination / name
     if not target.parent.resolve().is_relative_to(destination.resolve()):
@@ -41,8 +72,12 @@ def extract_donor(
     destination: Path | str,
     *,
     files: Iterable[str] | None = None,
+    on_bytes: Callable[[int, int], None] | None = None,
 ) -> tuple[Path, ...]:
-    """Publish selected members only after every size and hash matches."""
+    """Publish selected members only after every size and hash matches.
+
+    on_bytes(done, total) is called as the members are read (it may raise to stop).
+    """
     if isinstance(donor, str):
         donor = DONORS[donor]
     by_path = {member.path: member for member in donor.files}
@@ -54,8 +89,7 @@ def extract_donor(
     destination = Path(destination)
     targets = tuple(_target(destination, member.path) for member in selected)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    reader_type = Iso9660 if donor.format == "iso9660" else Xdvdfs
-    with reader_type(image) as disc, tempfile.TemporaryDirectory(
+    with _open_disc(image, donor) as disc, tempfile.TemporaryDirectory(
         prefix=".donor-", dir=destination.parent
     ) as staging:
         archive = CabinetSet(disc.open, donor.first_cabinet) if donor.first_cabinet else disc
@@ -66,6 +100,7 @@ def extract_donor(
             if actual is None or actual.size != member.size:
                 raise DiscError(f"Missing or wrong-sized donor member: {member.source}")
             resolved[member.source] = actual.path
+        total, done = sum(member.size for member in selected), 0
         with ExitStack() as stack:
             outputs = {}
             staged = {}
@@ -77,11 +112,17 @@ def extract_donor(
             if donor.first_cabinet:
                 for name, chunk in archive.iter_files(resolved[member.source] for member in selected):
                     outputs[name.casefold()].write(chunk)
+                    done += len(chunk)
+                    if on_bytes:
+                        on_bytes(done, total)
             else:
                 for member in selected:
                     with disc.open(resolved[member.source]) as source:
                         while chunk := source.read(1024 * 1024):
                             outputs[member.source.casefold()].write(chunk)
+                            done += len(chunk)
+                            if on_bytes:
+                                on_bytes(done, total)
         for member in selected:
             verify_file(staged[member.path], member)
         for member, target in zip(selected, targets, strict=True):

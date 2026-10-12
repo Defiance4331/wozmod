@@ -1,241 +1,97 @@
-"""Public program-input checks using small authored files and external tools."""
+"""Running a player's decryption program: fake programs in tmp_path stand in for the real ones."""
 
 from __future__ import annotations
 
 import hashlib
+import os
+import stat
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
-from wozmod.donors.programs import ProgramError, ProgramIdentity, prepare_program, verify_program
-
+from wozmod.donors.programs import ProgramError, ProgramIdentity, run_tool, verify_program
 
 PAYLOAD = b"an authored test program"
 ENCRYPTED = b"an authored encrypted input"
 
+pytestmark = pytest.mark.skipif(os.name == "nt", reason="the fake programs are scripts with a #! line")
 
-def _identity(platform: str = "x360", *, size: int | None = None) -> ProgramIdentity:
-    return ProgramIdentity(
-        "Test program", len(PAYLOAD) if size is None else size,
-        hashlib.sha256(PAYLOAD).hexdigest(), platform,
-    )
+SHAPES = {  # how each known program is called, written out from the real command lines
+    "psp": "args[0] == '-o' and len(args) == 3", "xex2ool": "args[0] == 'basefile' and args[2] == '-o' and len(args) == 4",
+    "xextool": "args[0] == '-b' and len(args) == 3",
+}
+OUTPUT_AT = {"psp": "args[1]", "xex2ool": "args[3]", "xextool": "args[1]"}
+INPUT_AT = {"psp": "args[2]", "xex2ool": "args[1]", "xextool": "args[2]"}
 
 
-def _tool(tmp_path: Path, body: str) -> list[str]:
-    path = tmp_path / "tool argument.py"
-    path.write_text("import sys\nfrom pathlib import Path\n" + body, encoding="utf-8")
-    return [sys.executable, str(path)]
+def _identity(platform: str = "x360") -> ProgramIdentity:
+    return ProgramIdentity("Test program", len(PAYLOAD), hashlib.sha256(PAYLOAD).hexdigest(), platform)
+
+
+def fake(path: Path, shape: str, *, produces: bytes = PAYLOAD, zeros: int = 0, body: str = "") -> Path:
+    """A program that behaves like `shape` and only works when its input is ENCRYPTED."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"#!{sys.executable}\nimport sys, time\nfrom pathlib import Path\nargs = sys.argv[1:]\n{body}\n"
+                    f"if not ({SHAPES[shape]}):\n    print('usage: wrong arguments'); sys.exit(2)\n"
+                    f"if Path({INPUT_AT[shape]}).read_bytes() != {ENCRYPTED!r}:\n    sys.exit(3)\n"
+                    f"print('working...')\nPath({OUTPUT_AT[shape]}).write_bytes({produces!r} + bytes({zeros}))\n",
+                    encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return path
 
 
 def test_verify_program_rejects_wrong_size_even_when_hash_matches(tmp_path: Path) -> None:
     source = tmp_path / "program"
     source.write_bytes(PAYLOAD)
-
+    smaller = ProgramIdentity("Test program", len(PAYLOAD) - 1, hashlib.sha256(PAYLOAD).hexdigest(), "x360")
     with pytest.raises(ProgramError, match="size"):
-        verify_program(source, _identity(size=len(PAYLOAD) - 1))
+        verify_program(source, smaller)
 
 
-def test_decrypted_route_rejects_same_size_wrong_hash(tmp_path: Path) -> None:
-    source = tmp_path / "supplied program"
-    source.write_bytes(PAYLOAD)
-    identity = _identity()
-    assert prepare_program(identity, tmp_path / "scratch", decrypted_file=source) == source
-
-    wrong = b"X" + PAYLOAD[1:]
-    source.write_bytes(wrong)
-    with pytest.raises(ProgramError, match="SHA-256"):
-        prepare_program(identity, tmp_path / "scratch", decrypted_file=source)
-    assert source.read_bytes() == wrong
+@pytest.mark.parametrize("shape, platform, zeros", [("psp", "psp", 0), ("xex2ool", "x360", 0), ("xextool", "x360", 32_768)])
+def test_each_known_program_is_recognised_whatever_its_file_is_called(tmp_path, shape, platform, zeros):
+    # Bug: a profile has the wrong argument order or output place (the program fails with its usage text),
+    # the program is only tried under the first profile, or XexTool's zero padding makes its output refused.
+    tool = fake(tmp_path / "my decryptor", shape, zeros=zeros)
+    program, transcript = run_tool(tool, _identity(platform), ENCRYPTED)
+    assert program == PAYLOAD, transcript
+    assert "working..." in transcript
 
 
-@pytest.mark.parametrize(
-    ("recipe", "platform", "argument_check", "suffix"),
-    [
-        ("xex2ool", "x360", "assert args[0] == 'basefile' and args[2] == '-o'\nsource, output = Path(args[1]), Path(args[3])", 0),
-        ("xextool", "x360", "assert args[0] == '-b'\noutput, source = Path(args[1]), Path(args[2])", 32768),
-        ("pspdecrypt", "psp", "assert args[0] == '-o'\noutput, source = Path(args[1]), Path(args[2])", 0),
-    ],
-)
-def test_tool_recipes_pass_copied_input_and_explicit_output(
-    tmp_path: Path, recipe: str, platform: str, argument_check: str, suffix: int,
-) -> None:
-    original = tmp_path / "encrypted source ; with spaces"
-    original.write_bytes(ENCRYPTED)
-    tool = _tool(
-        tmp_path,
-        "original = Path(sys.argv[1])\nargs = sys.argv[2:]\n" + argument_check + "\n"
-        "assert source.resolve() != original.resolve()\n"
-        "assert source.read_bytes() == original.read_bytes()\n"
-        "assert source.parent == output.parent == Path.cwd()\n"
-        "assert not output.exists()\n"
-        "source.write_bytes(b'changed scratch input')\n"
-        f"output.write_bytes({PAYLOAD!r} + bytes({suffix}))\n",
-    )
-    result = prepare_program(
-        _identity(platform), tmp_path / "scratch space", encrypted_file=original,
-        tool=[*tool, str(original)], recipe=recipe,
-    )
-
-    assert result.is_relative_to(tmp_path / "scratch space")
-    assert result.read_bytes() == PAYLOAD
-    assert original.read_bytes() == ENCRYPTED
+def test_output_that_does_not_match_the_pin_is_refused(tmp_path):
+    # Bug: a zero exit code or the right size is trusted, so a wrong file (a changed byte) is installed.
+    tool = fake(tmp_path / "psp tool", "psp", produces=b"X" + PAYLOAD[1:])
+    program, transcript = run_tool(tool, _identity("psp"), ENCRYPTED)
+    assert program is None and "output not accepted" in transcript
 
 
-def test_zero_exit_without_new_output_cannot_reuse_previous_result(tmp_path: Path) -> None:
-    original = tmp_path / "encrypted input"
-    original.write_bytes(ENCRYPTED)
-    tool = _tool(tmp_path, f"Path(sys.argv[-1]).write_bytes({PAYLOAD!r})\n")
-    first = prepare_program(
-        _identity(), tmp_path / "scratch", encrypted_file=original,
-        tool=tool, recipe="xex2ool",
-    )
-    assert first.read_bytes() == PAYLOAD
-    tool = _tool(tmp_path, "pass\n")
-
-    with pytest.raises(ProgramError, match="create its output"):
-        prepare_program(
-            _identity(), tmp_path / "scratch", encrypted_file=original,
-            tool=tool, recipe="xex2ool",
-        )
-    assert first.read_bytes() == PAYLOAD
+def test_a_program_that_hangs_is_stopped_by_the_timeout(tmp_path):
+    # Bug: no timeout, so the install waits forever on a program that never ends (or holds the output open).
+    tool = fake(tmp_path / "hang", "psp", body="time.sleep(60)")
+    started = time.monotonic()
+    program, transcript = run_tool(tool, _identity("psp"), ENCRYPTED, timeout=1)
+    assert program is None and "stopped after 1 seconds" in transcript
+    assert time.monotonic() - started < 10
 
 
-def test_nonzero_exit_rejects_matching_output(tmp_path: Path) -> None:
-    original = tmp_path / "encrypted input"
-    original.write_bytes(ENCRYPTED)
-    tool = _tool(
-        tmp_path, f"Path(sys.argv[-1]).write_bytes({PAYLOAD!r})\nraise SystemExit(7)\n",
-    )
-
-    with pytest.raises(ProgramError, match="complete successfully"):
-        prepare_program(
-            _identity(), tmp_path / "scratch", encrypted_file=original,
-            tool=tool, recipe="xex2ool",
-        )
-
-
-def test_tool_route_rejects_same_size_wrong_hash(tmp_path: Path) -> None:
-    original = tmp_path / "encrypted input"
-    original.write_bytes(ENCRYPTED)
-    wrong = b"X" + PAYLOAD[1:]
-    tool = _tool(tmp_path, f"Path(sys.argv[-1]).write_bytes({wrong!r})\n")
-
-    with pytest.raises(ProgramError, match="SHA-256"):
-        prepare_program(
-            _identity(), tmp_path / "scratch", encrypted_file=original,
-            tool=tool, recipe="xex2ool",
-        )
+def test_paths_with_spaces_and_shell_characters_are_run_as_given_with_no_shell(tmp_path, monkeypatch):
+    # Bug: the command is joined into one string or given to a shell, so a space splits the path and
+    # "; touch" or "$(...)" in a name runs a second command.
+    folder = tmp_path / "my tools; touch pwned $(echo x)"
+    tool = fake(folder / "de crypt & go", "xex2ool")
+    work = tmp_path / "temp with spaces"
+    work.mkdir()
+    monkeypatch.setenv("TMPDIR", str(work))
+    monkeypatch.chdir(tmp_path)
+    program, transcript = run_tool(tool, _identity(), ENCRYPTED)
+    assert program == PAYLOAD, transcript
+    assert not (tmp_path / "pwned").exists() and not (folder / "pwned").exists()
 
 
-def test_xextool_rejects_nonzero_trailer_on_matching_prefix(tmp_path: Path) -> None:
-    original = tmp_path / "encrypted input"
-    original.write_bytes(ENCRYPTED)
-    tool = _tool(
-        tmp_path,
-        f"Path(sys.argv[2]).write_bytes({PAYLOAD!r} + bytes(32767) + b'X')\n",
-    )
-
-    with pytest.raises(ProgramError, match="padding"):
-        prepare_program(
-            _identity(), tmp_path / "scratch", encrypted_file=original,
-            tool=tool, recipe="xextool",
-        )
-
-
-@pytest.mark.parametrize("padding_size", [0, 32767, 32769])
-def test_xextool_rejects_wrong_padding_length_on_matching_prefix(
-    tmp_path: Path, padding_size: int,
-) -> None:
-    original = tmp_path / "encrypted input"
-    original.write_bytes(ENCRYPTED)
-    tool = _tool(
-        tmp_path, f"Path(sys.argv[2]).write_bytes({PAYLOAD!r} + bytes({padding_size}))\n",
-    )
-
-    with pytest.raises(ProgramError, match="padded size"):
-        prepare_program(
-            _identity(), tmp_path / "scratch", encrypted_file=original,
-            tool=tool, recipe="xextool",
-        )
-
-
-@pytest.mark.parametrize(
-    ("platform", "recipe"), [("psp", "xex2ool"), ("psp", "xextool"), ("x360", "pspdecrypt")],
-)
-def test_program_platform_cannot_select_the_other_platform_recipe(
-    tmp_path: Path, platform: str, recipe: str,
-) -> None:
-    original = tmp_path / "encrypted input"
-    original.write_bytes(ENCRYPTED)
-    tool = _tool(
-        tmp_path,
-        "args = sys.argv[1:]\n"
-        "output = Path(args[3] if args[0] == 'basefile' else args[1])\n"
-        f"output.write_bytes({PAYLOAD!r} + (bytes(32768) if args[0] == '-b' else b''))\n",
-    )
-
-    with pytest.raises(ProgramError, match="platform"):
-        prepare_program(
-            _identity(platform), tmp_path / "scratch", encrypted_file=original,
-            tool=tool, recipe=recipe,
-        )
-
-
-def test_ambiguous_inputs_cannot_silently_choose_decrypted_route(tmp_path: Path) -> None:
-    supplied = tmp_path / "supplied program"
-    supplied.write_bytes(PAYLOAD)
-    original = tmp_path / "encrypted input"
-    original.write_bytes(ENCRYPTED)
-    tool = _tool(tmp_path, f"Path(sys.argv[-1]).write_bytes({PAYLOAD!r})\n")
-
-    with pytest.raises(ProgramError, match="either"):
-        prepare_program(
-            _identity(), tmp_path / "scratch", decrypted_file=supplied,
-            encrypted_file=original, tool=tool, recipe="xex2ool",
-        )
-
-
-@pytest.mark.parametrize("link_method", ["symlink_to", "hardlink_to"])
-def test_tool_output_link_cannot_alias_player_file(tmp_path: Path, link_method: str) -> None:
-    original = tmp_path / "encrypted input"
-    original.write_bytes(ENCRYPTED)
-    outside = tmp_path / "outside supplied program"
-    outside.write_bytes(PAYLOAD)
-    tool = _tool(
-        tmp_path,
-        f"Path(sys.argv[-1]).{link_method}(Path(sys.argv[1]))\n",
-    )
-
-    with pytest.raises(ProgramError, match="new regular file"):
-        prepare_program(
-            _identity(), tmp_path / "scratch", encrypted_file=original,
-            tool=[*tool, str(outside)], recipe="xex2ool",
-        )
-    assert outside.read_bytes() == PAYLOAD
-
-
-@pytest.mark.parametrize(("platform", "recipe"), [("x360", "xex2ool"), ("psp", "pspdecrypt")])
-def test_tool_created_result_link_cannot_overwrite_player_file(
-    tmp_path: Path, platform: str, recipe: str,
-) -> None:
-    original = tmp_path / "encrypted input"
-    original.write_bytes(ENCRYPTED)
-    outside = tmp_path / "protected player input"
-    protected = b"independent protected input"
-    outside.write_bytes(protected)
-    result_name = "program.pe" if platform == "x360" else "eboot.prx"
-    tool = _tool(
-        tmp_path,
-        "target = Path(sys.argv[1])\nargs = sys.argv[2:]\n"
-        "output = Path(args[3] if args[0] == 'basefile' else args[1])\n"
-        f"(output.parent / {result_name!r}).symlink_to(target)\n"
-        f"output.write_bytes({PAYLOAD!r})\n",
-    )
-
-    with pytest.raises(ProgramError):
-        prepare_program(
-            _identity(platform), tmp_path / "scratch", encrypted_file=original,
-            tool=[*tool, str(outside)], recipe=recipe,
-        )
-    assert outside.read_bytes() == protected
+def test_a_program_that_cannot_start_gives_a_plain_failure(tmp_path):
+    # Bug: a file that is not executable raises and the window shows a traceback.
+    tool = tmp_path / "not a program"
+    tool.write_text("text")
+    assert run_tool(tool, _identity(), ENCRYPTED)[0] is None

@@ -51,10 +51,13 @@ def _name(stream: BinaryIO, limit: int, utf: bool = False) -> str:
 
 def _checksum(data: bytes) -> int:
     aligned = len(data) & ~3
-    result = 0
-    for (word,) in struct.iter_unpack("<I", data[:aligned]):
-        result ^= word
-    return result ^ int.from_bytes(data[aligned:], "big")
+    words = aligned // 4
+    folded = int.from_bytes(data[:aligned], "little")
+    while words > 1:  # XOR the upper half of the words onto the lower half until one word is left
+        half = (words + 1) // 2
+        folded = (folded & ((1 << 32 * half) - 1)) ^ (folded >> 32 * half)
+        words = half
+    return folded ^ int.from_bytes(data[aligned:], "big")
 
 
 @dataclass(frozen=True)

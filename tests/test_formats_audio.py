@@ -188,7 +188,7 @@ def test_voice_bank_table_serves_sparse_ids_with_their_own_aligned_records() -> 
 
 def test_se_replacement_keeps_each_clip_offset_and_preserves_non_audio_fields() -> None:
     original = [struct.pack("<IHHHH4xIII12s", 0x01000000, 48_000, 0x8800, 512, 1017, 9, 0, 512, bytes((k,)) * 12) for k in range(3)]
-    clips = [(1017, bytes((1,)) * 512), (1018, bytes((2,)) * 1024), (0, b"")]
+    clips = [(256, bytes((1,)) * 512), (512, bytes((2,)) * 1024), (0, b"")]
     header, data = se_bank(_se_header(original), clips)
 
     assert data == b"_DBW0000" + struct.pack("<I", 1548) + bytes((1,)) * 512 + bytes((2,)) * 1024
@@ -196,7 +196,7 @@ def test_se_replacement_keeps_each_clip_offset_and_preserves_non_audio_fields() 
     for offset, old, (samples, ima) in zip(se_entries(header), original, clips):
         entry = header[offset:offset + 40]
         count, start, size = struct.unpack_from("<III", entry, 16)
-        assert (count, data[12 + start:12 + start + size], entry[:16] + entry[28:]) == (samples, ima, old[:16] + old[28:])
+        assert (count, data[12 + start:12 + start + size], entry[:16] + entry[28:]) == (samples, ima, old[:6] + struct.pack('<HHH', 0x4800, 2, 1) + old[12:16] + old[28:])
 
 
 def test_se_index_reads_header_and_data_as_pairs_without_swapping_offsets() -> None:
@@ -316,3 +316,54 @@ def test_real_donor_indices_do_not_drop_rows_in_large_record_tables() -> None:
         assert (new_result[:2], dataclasses.astuple(new_result[2])) == (old_result[:2], dataclasses.astuple(old_result[2]))
     finally:
         sys.modules.pop(old.__name__, None)
+
+
+def test_pcm_se_entries_say_pcm_not_adpcm_and_point_at_whole_samples() -> None:
+    # Bug: PCM data under the stock entry's IMA ADPCM format fields, which the game would decode as
+    # noise, or sizes counted in ADPCM blocks so that every later clip starts in the wrong place.
+    original = [struct.pack("<IHHHH4xIII12s", 0x01000000, 48_000, 0x8800, 512, 1017, 9, 0, 512, bytes(12)) for _ in range(2)]
+    clips = [(3, struct.pack("<3h", 1, -2, 3)), (2, struct.pack("<2h", 4, 5))]
+
+    header, data = se_bank(_se_header(original), clips)
+
+    assert data == b"_DBW0000" + struct.pack("<I", 12 + 10) + clips[0][1] + clips[1][1]
+    entries = [header[at:at + 40] for at in se_entries(header)]
+    assert [struct.unpack_from("<HHHH", e, 4) for e in entries] == [(48_000, 0x4800, 2, 1)] * 2
+    assert [struct.unpack_from("<III", e, 16) for e in entries] == [(3, 0, 6), (2, 6, 4)]
+    with pytest.raises(VoiceBankError):  # ADPCM-sized data does not pass for PCM
+        se_bank(_se_header(original[:1]), [(3, bytes(512))])
+
+
+def test_voice_clip_too_long_for_the_game_slot_is_encoded_again_one_step_lower(tmp_path: Path, monkeypatch) -> None:
+    # Bug: a clip above the game's slot buffer stays in the bank (the build then fails or the game cuts it),
+    # or the whole bank drops in quality because one clip is long.
+    import wozmod.formats.audio as audio
+
+    riffs = [b"A" * 2048, b"B" * 2048]
+    bank = tmp_path / "x360.bdx"
+    bank.write_bytes(b"".join(riffs))
+    index = struct.pack(">II", 2, 0) + b"".join(struct.pack(">5I", i, i, 1, 2048, 48_000) for i in range(2))
+    calls = []
+
+    def fake(jobs, workers=None, *progress):
+        quality = int(jobs[0][2][jobs[0][2].index("-q:a") + 1])
+        calls.append((quality, [job[1] for job in jobs]))
+        # clip B is too long at the top quality and fits one step lower
+        return [b"x" * (audio.SLOT_BYTES if job[1][:1] == b"B" and quality == audio.WO2_VORBIS_QUALITY else 100) for job in jobs]
+
+    monkeypatch.setattr(audio, "_ffmpeg_each", fake)
+    clips = audio.wo2_voice_clips({7: 0, 8: 1}, index, bank)
+
+    assert calls == [(audio.WO2_VORBIS_QUALITY, riffs), (audio.WO2_VORBIS_QUALITY - 1, [riffs[1]])]
+    assert {i: len(c) for i, c in clips.items()} == {7: 132, 8: 132}
+
+
+def test_wo1_effect_pcm_is_copied_not_converted(monkeypatch) -> None:
+    # Bug: a donor effect that already is 16-bit PCM at the entry's rate is decoded and encoded again
+    # (a generation of loss, and a resample when the rates agree).
+    import wozmod.formats.audio as audio
+
+    pcm = struct.pack("<4h", 1, -2, 3, -4)
+    monkeypatch.setattr(audio, "_ffmpeg_each", lambda jobs, *a, **k: pytest.fail("ffmpeg ran for a PCM donor clip") if jobs else [])
+
+    assert audio._pcm16([(pcm, True, 48_000, 48_000)], None) == [(4, pcm)]

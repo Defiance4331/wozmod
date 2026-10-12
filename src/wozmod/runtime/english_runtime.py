@@ -214,7 +214,7 @@ def compile_dll(output: Path, header: str, defines: tuple[str, ...] = ()) -> Non
     with tempfile.TemporaryDirectory() as tmp:
         shutil.copyfile(C_SOURCE, Path(tmp, "english_runtime.c"))
         shutil.copyfile(C_SOURCE.with_name("text_fit.h"), Path(tmp, "text_fit.h"))
-        Path(tmp, "enrt_data.h").write_text(header)
+        Path(tmp, "enrt_data.h").write_text(header, encoding="utf-8")
         if shutil.which("i686-w64-mingw32-gcc"):
             subprocess.run(["i686-w64-mingw32-gcc", *flags], cwd=tmp, check=True)
         else:
@@ -230,7 +230,7 @@ def write_manifest(directory: Path) -> None:
     """manifest.json: every other file under ``directory`` with its SHA-256, by relative path."""
     files = sorted(p for p in directory.rglob("*") if p.is_file() and p.name != "manifest.json")
     manifest = {p.relative_to(directory).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in files}
-    (directory / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n")
+    (directory / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
 
 
 def table_blob(pairs: dict[bytes, bytes], names: list[bytes | None] = ()) -> bytes:

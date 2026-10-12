@@ -193,7 +193,7 @@ def _render_full(identity: str, request: dict, folder: Path) -> tuple[Image.Imag
     if kind == "latin":
         subprocess.run([build.FONT_PYTHON, "-m", "wozmod.fonts.raster", str(output),
                         "--px", "24", "--spacing", "legacy"],
-                       check=True, capture_output=True, text=True, env=build.font_environment())
+                       check=True, capture_output=True, text=True, encoding="utf-8", env=build.font_environment())
         with Image.open(output) as image:
             return image.convert("L"), {}
     raise ValueError(f"unsupported full-width lettering request: {kind}")
@@ -207,7 +207,7 @@ def _render_native(requests: dict[str, dict], folder: Path) -> dict[str, tuple]:
     path, output = folder / "native-requests.json", folder / "native"
     path.write_text(json.dumps([request for _, request in ordered], ensure_ascii=False), encoding="utf-8")
     subprocess.run([build.FONT_PYTHON, "-m", build.MENU_BATCH, str(path), str(output)],
-                   check=True, capture_output=True, text=True, env=build.font_environment())
+                   check=True, capture_output=True, text=True, encoding="utf-8", env=build.font_environment())
     manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
     if len(manifest) != len(ordered):
         raise ValueError("native lettering render dropped a requested layer")

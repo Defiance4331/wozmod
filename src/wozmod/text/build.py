@@ -9,6 +9,7 @@ import struct
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from wozmod.progress import report
 from wozmod.runtime.english_runtime import (
     SURROGATES, encode_english, file_offset, pe_layout, table_blob,
 )
@@ -164,7 +165,9 @@ def build_table(stock: Path, donors: DonorResolver, data: Path, output: Path) ->
     payload = _load_data(data)
     catalog = stock_strings(stock)
     rows = []
-    for row in payload["rows"]:
+    for number, row in enumerate(payload["rows"]):
+        if number % 20 == 0:
+            report("text", "building the text table", 0.9 * number / len(payload["rows"]), (number, len(payload["rows"])))
         stock_bytes = catalog.get(row["key"])
         if stock_bytes is None and "key_ref" in row:
             stock_bytes = resolve_stock_ref(stock, row["key_ref"], row["key"])

@@ -84,7 +84,7 @@ class DonorResolver:
             raise ValueError("Invalid PE donor")
         path = self.root / "wo2-x360/default.pe"
         verify_program(path, X360_PROGRAM)
-        return path.read_bytes()
+        return path.read_bytes()[:X360_PROGRAM.size]
 
     @cache
     def psp_pool(self) -> list[str | None]:

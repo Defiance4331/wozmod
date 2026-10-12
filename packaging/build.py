@@ -1,4 +1,4 @@
-"""Build wozmod-<version>-<windows|linux>.zip for this platform.
+"""Build wozmod-<version>-<windows|linux>.zip (the wozmod and wozmod-setup programs) for this platform.
 
     uv sync --extra native --group build
     uv run python packaging/build.py --assets DIR
@@ -26,6 +26,7 @@ OUT = ROOT / "build/packaging"
 WINDOWS = sys.platform == "win32"
 PLATFORM = "windows" if WINDOWS else "linux"
 EXE = "wozmod.exe" if WINDOWS else "wozmod"
+SETUP = "wozmod-setup.exe" if WINDOWS else "wozmod-setup"
 
 
 def sha256(path: Path) -> str:
@@ -110,8 +111,9 @@ def main() -> int:
     shutil.rmtree(OUT / "stage", ignore_errors=True)
     shutil.copytree(OUT / "dist/wozmod", stage, symlinks=True)
     shutil.copytree(OUT / "ffmpeg", stage / "_internal/ffmpeg")
-    for file in (args.assets / "d3d9.dll", args.assets / "lettering.zip", ROOT / "LICENSE"):
-        shutil.copy2(file, stage)
+    for file in (args.assets / "d3d9.dll", args.assets / "lettering.zip"):
+        shutil.copy2(file, stage / "_internal")  # players see only the programs and the licences
+    shutil.copy2(ROOT / "LICENSE", stage)
     (stage / "licenses").mkdir()
     shutil.copy2(OUT / "ffmpeg-LICENSE.txt", stage / "licenses")
     shutil.copy2(ROOT / "packaging/FFMPEG-NOTICE.txt", stage / "licenses")
@@ -119,6 +121,11 @@ def main() -> int:
     codecs = list((stage / "_internal").rglob("wozmod_native*"))
     if not codecs or not (stage / "_internal/ffmpeg").is_dir():
         raise SystemExit("the packaged program lacks the Rust codecs or ffmpeg")
+    internal = stage / "_internal"
+    tk_data = all((internal / folder).is_dir() for folder in ("_tcl_data", "_tk_data")) or all(
+        list(internal.glob(f"libt{name}*.zip")) for name in ("cl", "k"))  # Tcl 9 on Windows ships zips
+    if not (stage / SETUP).is_file() or not tk_data:
+        raise SystemExit("the packaged setup window is missing or lacks the Tcl and Tk files")
     smoke = subprocess.run([stage / EXE, "--help"], capture_output=True, text=True)
     if smoke.returncode or "install" not in smoke.stdout:
         raise SystemExit(f"the packaged program does not start:\n{smoke.stdout}{smoke.stderr}")

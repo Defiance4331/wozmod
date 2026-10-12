@@ -72,17 +72,21 @@ def test_lzp2_cache_key_needs_no_source_file(monkeypatch):
         build._lzp2_codec.cache_clear()
 
 
-def test_packaged_install_takes_the_dll_and_lettering_from_the_release_folder(tmp_path, monkeypatch):
-    # Bug: the defaults resolve against the working folder or the bundle, so a player who runs the program
-    # from elsewhere installs with a missing DLL, or the defaults leak into source runs.
+def test_packaged_install_takes_the_dll_and_lettering_from_inside_the_bundle(tmp_path, monkeypatch, capsys):
+    # Bug: the defaults still point beside the program (where players no longer see the files), resolve against
+    # the working folder, or leak into source runs; or --dll and --lettering show up in --help.
     from wozmod import __main__ as cli
     seen = {}
     monkeypatch.setattr(cli, "install", lambda game, inputs, **_: seen.update(inputs))
-    discs = [arg for name in ("wo1", "x360", "psp", "x360-exe", "psp-eboot") for arg in (f"--{name}", name)]
+    discs = [arg for name in ("wo1", "x360", "psp", "x360-tool", "psp-tool") for arg in (f"--{name}", name)]
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "executable", str(tmp_path / "release" / "wozmod"))
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path / "release/_internal"), raising=False)
     assert cli.main(["install", "--game", "g", *discs]) == 0
-    assert (seen["dll"], seen["lettering"]) == (tmp_path / "release/d3d9.dll", tmp_path / "release/lettering.zip")
+    assert (seen["dll"], seen["lettering"]) == (tmp_path / "release/_internal/d3d9.dll",
+                                                tmp_path / "release/_internal/lettering.zip")
     monkeypatch.setattr(sys, "frozen", False)
+    assert cli.main(["install", "--game", "g", *discs]) == 2
     with pytest.raises(SystemExit):
-        cli.main(["install", "--game", "g", *discs])
+        cli.main(["install", "--help"])
+    assert "--dll" not in capsys.readouterr().out

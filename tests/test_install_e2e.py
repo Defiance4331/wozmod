@@ -21,7 +21,7 @@ import pytest
 from wozmod.__main__ import main
 
 INPUTS = {"wo1": "WOZMOD_WO1_ISO", "x360": "WOZMOD_X360_ISO", "psp": "WOZMOD_PSP_ISO",
-          "x360-exe": "WOZMOD_X360_EXE", "psp-eboot": "WOZMOD_PSP_EBOOT",
+          "x360-tool": "WOZMOD_X360_TOOL", "psp-tool": "WOZMOD_PSP_TOOL",
           "lettering": "WOZMOD_LETTERING", "dll": "WOZMOD_DLL"}
 
 pytestmark = pytest.mark.skipif(
@@ -56,7 +56,7 @@ def test_install_finishes_within_its_time_budget(installed, capsys):
     assert seconds <= budget
 
 
-def test_install_refuses_a_second_time_and_uninstall_restores_the_stock_folder(installed):
+def test_install_lists_every_file_it_wrote_and_uninstall_restores_the_stock_folder(installed):
     # Bug: a built file missing from install.json (left by uninstall), a stale hash, or a stock file touched.
     game, command, _, _ = installed
     stock = Path(os.environ["WOZMOD_GAME"])
@@ -67,8 +67,7 @@ def test_install_refuses_a_second_time_and_uninstall_restores_the_stock_folder(i
     assert all(hashlib.sha256((game / name).read_bytes()).hexdigest() == digest
                for name, digest in listed.items())
 
-    assert main(command) == 1
-    assert main(["uninstall", "--game", str(game)]) == 0
+    assert main(["uninstall", "--game", str(game), "--remove-settings"]) == 0
     assert sorted(p.relative_to(game) for p in game.rglob("*")) == sorted(
         p.relative_to(stock) for p in stock.rglob("*"))
     assert all(filecmp.cmp(p, game / p.relative_to(stock), shallow=False)
