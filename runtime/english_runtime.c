@@ -1313,6 +1313,11 @@ static u32 read_loose(struct frame *f)
 #define VALUE_CENTRE 417
 #define VALUE_STEP 180
 #define SHADOW 2
+#ifdef ENRT_RENDER_DISTANCE
+#define LAST_ROW 5 /* the render distance row ends the list */
+#else
+#define LAST_ROW 4 /* the frame rate row ends the list */
+#endif
 
 
 
@@ -1429,6 +1434,7 @@ static void fov_input(u32 repeat)
 
 
 
+#ifdef ENRT_RENDER_DISTANCE
 #define VIEW_GETTER 0x475BA0
 #define CROWD_GETTER 0x475B60
 #define VIEW_SCALE 2.0f
@@ -1484,7 +1490,7 @@ static void distance_input(u32 repeat)
     WritePrivateProfileStringW(L"display", L"distance", distance ? L"on" : L"off", path(name, L"settings.ini"));
     GAME_SOUND(1, 0, 0x2CDC, 0x2CDC, 0x1000);
 }
-
+#endif
 
 
 
@@ -1561,6 +1567,8 @@ static unsigned long long hires_handle[HIRES_MAX];
 static const u32 *hires_root[HIRES_MAX];
 static u32 hires_rows;
 static int hires_native;
+/* The row after the last stock one, entry 0: the sheet of the Game Settings rows wozmod adds (1-based, 0 = none). */
+static u32 option_sheet;
 
 static u32 hires_width(u32 entry, u32 item)
 {
@@ -1582,14 +1590,16 @@ static void hires_load(void)
     for (i = 0; i < count && i < HIRES_MAX; i++) {
         struct hires *r = hires_row + hires_rows;
         *r = ((const struct hires *)(data + 4))[i];
-        for (j = 0; j < sizeof roots / sizeof *roots; j++)
+        for (j = 0; r->entry && j < sizeof roots / sizeof *roots; j++)
             if (roots[j][2] == r->entry && r->item < roots[j][1])
                 break;
-        if (j == sizeof roots / sizeof *roots || r->offset + r->size > size || !r->scale) {
+        if ((r->entry && j == sizeof roots / sizeof *roots) || r->offset + r->size > size || !r->scale) {
             note("refused: hires.bin row", i);
             continue;
         }
-        hires_root[hires_rows] = (const u32 *)roots[j][0];
+        hires_root[hires_rows] = r->entry ? (const u32 *)roots[j][0] : 0;
+        if (!r->entry)
+            option_sheet = hires_rows + 1;
         hires_handle[hires_rows] = TEXTURE_HANDLE(data + r->offset, 0x1F00, 0x3EE4 + i);
         hires_rows++;
     }
@@ -1652,7 +1662,7 @@ static void hires_quad(u32 id, struct frame *f)
         const struct hires *r = hires_row + i;
         u32 scale = r->scale & HIRES_SCALE_MASK, minimum = r->band >> 16;
         u32 original_w = w, expanded;
-        const u32 *table = *(const u32 *const *)hires_root[i];
+        const u32 *table = hires_root[i] ? *(const u32 *const *)hires_root[i] : 0;
         if (!table || table[2 * r->item] != f->arg[0])
             continue;
         if (!scale || !w || !h || x > r->w || w > r->w - x ||
@@ -2967,6 +2977,53 @@ static u32 english_hook(u32 id, struct frame *f)
 }
 
 
+/* The added Game Settings rows, drawn from the option sheet (build.OPTION_ROWS) the way the stock rows are: a 310x42
+   quad per text, white art tinted by the quad colour. Bands: 0-3 labels (text, voice, field of view, frame rate),
+   4-7 values (English, Japanese, 60, 120), 8 on the field of view numbers from 100. */
+#define OPTION_W 310
+#define OPTION_BAND 42
+#define OPTION_SCALE 2
+#define LABEL_LEFT (-54)
+#define BAND_ENGLISH 4
+#define BAND_60 6
+#define BAND_FOV 8
+#define VALUE_NEXT_LANGUAGE 563
+#define VALUE_NEXT_FPS 557
+#define FOV_CENTRE (VALUE_CENTRE + 70)
+static const u32 cursor_tint = 0x80808080, idle_tint = 0x80404040, value_lit = 0x804E777F, value_dim = 0x804E4E4E;
+
+static void option_text(u32 band, int x, u32 y, u32 tint)
+{
+    unsigned long long handle = hires_handle[option_sheet - 1];
+    u32 *quad;
+    hires_native = 1;
+    quad = ((u32 *(*)(u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32))0x5DDAB0)(
+        (u32)handle, (u32)(handle >> 32), x, y, 0, OPTION_W, OPTION_BAND, 0, band * OPTION_BAND * OPTION_SCALE,
+        OPTION_W * OPTION_SCALE, OPTION_BAND * OPTION_SCALE, 0x80, 1);
+    hires_native = 0;
+    quad[8] = tint, quad[9] = 0x3f800000;
+    ((void (*)(u32 *, u32))0x5DCA30)(quad, 0);
+    ((void (*)(u32))0x5DD700)(0);
+}
+
+static void option_row(u32 row, u32 x, u32 y)
+{
+    u32 label, first = BAND_ENGLISH, chosen = 0, next = VALUE_NEXT_LANGUAGE;
+    if ((int)x < 0)
+        return;
+    if (row < rows)
+        label = row, chosen = row ? voice_saved : text_saved;
+    else if (row == rows)
+        label = 2, first = 0;
+    else
+        label = 3, first = BAND_60, chosen = fps == 120, next = VALUE_NEXT_FPS;
+    option_text(label, x + LABEL_LEFT, y, SETTINGS_CURSOR == 3 + row ? cursor_tint : idle_tint);
+    if (row == rows)
+        return option_text(BAND_FOV + (fov - FOV_MIN) / FOV_STEP, x + FOV_CENTRE - OPTION_W / 2, y, value_lit);
+    option_text(first, x + VALUE_CENTRE - OPTION_W / 2, y, chosen == 0 ? value_lit : value_dim);
+    option_text(first + 1, x + next - OPTION_W / 2, y, chosen == 1 ? value_lit : value_dim);
+}
+
 static int always(u32 id, struct frame *f, u32 *replace)
 {
     struct loose *e;
@@ -2996,21 +3053,23 @@ static int always(u32 id, struct frame *f, u32 *replace)
 #endif
         return 1;
     case 28:
-        if (f->ebp - 3 < rows)
+        if (option_sheet && f->ebp - 3 <= rows + 1)
+            option_row(f->ebp - 3, f->edi, f->ebx);
+        else if (f->ebp - 3 < rows)
             language_row(f->ebp - 3, f->edi, f->ebx);
         else if (f->ebp - 3 == rows)
             fov_row(f->edi, f->ebx, SETTINGS_CURSOR == 3 + rows);
         else if (f->ebp - 4 == rows)
             choice_row(fps_label[!english], fps_value[!english], fps == 120, f->edi, f->ebx, SETTINGS_CURSOR == 4 + rows);
-        else if (f->ebp - 5 == rows) {
+#ifdef ENRT_RENDER_DISTANCE
+        else if (f->ebp - 5 == rows)
             choice_row(distance_label[!english], switch_value, !distance, f->edi, f->ebx, SETTINGS_CURSOR == 5 + rows);
-
-
-            if ((int)f->edi >= 0 && text_saved != (u32)!english)
-                shadowed(restart_note[!english], f->edi + VALUE_CENTRE - VALUE_STEP / 2, f->ebx + 42, NOTE_CELL,
-                         &dim_colour);
-        } else
+#endif
+        else
             return 1;
+        if (f->ebp - LAST_ROW == rows && (int)f->edi >= 0 && text_saved != (u32)!english)
+            shadowed(restart_note[!english], f->edi + VALUE_CENTRE - VALUE_STEP / 2, f->ebx + 42, NOTE_CELL,
+                     &dim_colour);
         f->edi = (u32)-1000;
         return 1;
     case 29:
@@ -3018,8 +3077,10 @@ static int always(u32 id, struct frame *f, u32 *replace)
             fov_input(f->eax);
         else if (*(const u32 *)(f->ebp + 0x1C) - 4 == rows && !INPUT_BLOCKED)
             fps_input(f->eax);
+#ifdef ENRT_RENDER_DISTANCE
         else if (*(const u32 *)(f->ebp + 0x1C) - 5 == rows && !INPUT_BLOCKED)
             distance_input(f->eax);
+#endif
         else
             language_input(*(const u32 *)(f->ebp + 0x1C) - 3, f->eax);
         return 1;
@@ -3381,8 +3442,10 @@ static void install(HINSTANCE self)
     if (!(fps_ok = stock_at(FPS_LIMITER, (const u8 *)"\x6a\x3c", 2)))
         note("refused: 120 FPS, the present limiter differs from stock at", FPS_LIMITER);
     fps = fps_ok && GetPrivateProfileIntW(L"display", L"fps", 60, name) == 120 ? 120 : 60;
+#ifdef ENRT_RENDER_DISTANCE
     GetPrivateProfileStringW(L"display", L"distance", L"on", value, 16, name);
     distance = !!lstrcmpiW(value, L"off");
+#endif
     english = !text_saved;
     rows = GetFileAttributesW(path(name, VOICE_BANK)) == INVALID_FILE_ATTRIBUTES ? 1 : 2;
     if (!stock_exe()) {
@@ -3396,8 +3459,11 @@ static void install(HINSTANCE self)
     table_time(&table_stamp);
     index_entries();
     open_voices();
-    if (patch())
+    if (patch()) {
+#ifdef ENRT_RENDER_DISTANCE
         distance_install();
+#endif
+    }
 }
 
 

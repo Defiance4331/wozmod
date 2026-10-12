@@ -11,7 +11,7 @@ OVER_T, OVER_B = 0.0, 26.0
 DK = 0.9525
 DOT = BAR
 
-AUTHORED = frozenset("JZ013456789.,'&():!?+")
+AUTHORED = frozenset("JZ013456789.,'&():!?+<>%")
 
 
 PARAMS = {
@@ -69,6 +69,9 @@ PARAMS = {
     "?": dict(xl=1.13, yt=7.17, xr=9.0, ym=13.93, xc=5.0, ys=19.26, ry1=4.71, rx1=4.0, ry2=3.48, rx2=3.0, r4=2.2,
               t=0.552),
     "+": dict(w=10.0),
+    "<": dict(w=8.0, y0=5.5, y1=19.5),
+    ">": dict(w=8.0, y0=5.5, y1=19.5),
+    "%": dict(w=18.0, d=7.6, h=10.6, pv=2.0, ph=2.4, k=0.9),
     "(": dict(w=6.0, yt=-1.64, yd=3.0, t=0.9),
     ")": dict(),
     "&": dict(xa=3.4, ya=9.22, xb=8.8, yb=6.66, yc=15.88, xw=7.0, xe=11.8, yw=13.32, xg=11.8, r1=2.5, ru=2.9,
@@ -89,7 +92,7 @@ BEARINGS = {
     "3": (2.00, 2.41), "4": (1.70, 1.74), "5": (2.00, 2.41), "6": (2.10, 2.10), "7": (1.20, 1.20),
     "8": (2.10, 2.10), "9": (2.10, 2.10), ".": (2.68, 2.74), ",": (2.68, 2.74), "'": (2.68, 2.74),
     ":": (2.68, 2.74), "!": (2.68, 2.74), "?": (2.00, 2.20), "+": (2.00, 2.00), "(": (2.10, 0.92),
-    ")": (0.92, 2.10), "&": (2.10, 0.92),
+    ")": (0.92, 2.10), "&": (2.10, 0.92), "<": (2.40, 2.40), ">": (2.40, 2.40), "%": (1.30, 1.30),
 }
 SPACE = 8.63
 
@@ -612,6 +615,36 @@ def _(s, p):
     xc = p["xb"] + pen[0] / 2 + 0.05
     return [s.remove(l, [(xc, p["yw"] - 12), (30, p["yw"] - 12), (30, p["yw"]),
                          (xc, p["yw"])])]
+
+
+def chevron(s, p, left):
+    w, y0, y1, ym = p["w"], p["y0"], p["y1"], B / 2
+    a, c = (w, 0.0) if left else (0.0, w), (0.0, w) if left else (w, 0.0)
+    return [s.line((a[0], y0), (c[0], ym), pen=dpen(1.0), box=(0, 0, w, B)),
+            s.line((c[0], ym), (a[0], y1), pen=dpen(1.0), box=(0, 0, w, B))]
+
+
+@glyph("<")
+def _(s, p):
+    return chevron(s, p, True)
+
+
+@glyph(">")
+def _(s, p):
+    return chevron(s, p, False)
+
+
+@glyph("%")
+def _(s, p):
+    pen, d, h = (p["pv"], p["ph"]), p["d"], p["h"]
+
+    def ring(x, y):
+        x0, y0, x1, y1 = x + pen[0] / 2, y + pen[1] / 2, x + d - pen[0] / 2, y + h - pen[1] / 2
+        return chain(s, oval([(x1, y1), (x1, y0), (x0, y0), (x0, y1)], (x1 - x0) / 2 * 0.98, (y1 - y0) / 2 * 0.9,
+                             0.552), closed=True, pen=pen)
+    k = DK * p["k"]
+    return [ring(0.0, 0.5), ring(p["w"] - d, B - h - 0.5),
+            s.line((1.2, B), (p["w"] - 1.2, 0), ext=2.0, pen=(STEM * k, BAR * k), box=(-5, 0, 30, B))]
 
 
 def layer(ch, cap=DESIGN_CAP, p=None):

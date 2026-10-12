@@ -23,11 +23,13 @@ def test_detour_does_not_pad_past_the_overwritten_stock_span() -> None:
     ]
 
 
-@pytest.mark.parametrize(("rows", "count", "value_stop", "default"), [(1, 8, 5, 7), (2, 9, 6, 8)])
+@pytest.mark.parametrize(("rows", "distance", "count", "value_stop", "default"),
+                         [(1, True, 8, 5, 7), (2, True, 9, 6, 8), (1, False, 7, 4, 6), (2, False, 8, 5, 7)])
 def test_settings_rows_does_not_leave_default_at_the_old_index(
-    rows: int, count: int, value_stop: int, default: int,
+    rows: int, distance: bool, count: int, value_stop: int, default: int,
 ) -> None:
-    edits = runtime_edits.settings_rows(rows)
+    # Bug: a release build keeps a cursor slot for the compiled-out render distance row, an empty row.
+    edits = runtime_edits.settings_rows(rows, distance)
     assert [(va, len(stock), len(patched)) for va, stock, patched in edits] == [
         (0x56B2ED, 17, 17), (0x56B60B, 3, 3), (0x56B750, 3, 3),
         (0x56B7E4, 3, 3), (0x56B806, 3, 3), (0x56B86A, 19, 19), (0x56B8AB, 19, 19),
@@ -111,7 +113,7 @@ def test_wave4_does_not_restore_live_text_growth_or_change_other_baseline_bytes(
     }
     actual = {
         "CODE_EDITS": runtime_edits.CODE_EDITS, "FONT_ROUTE": runtime_edits.FONT_ROUTE,
-        "settings_rows(1)": runtime_edits.settings_rows(1), "settings_rows(2)": runtime_edits.settings_rows(2),
+        "settings_rows(1)": runtime_edits.settings_rows(1, True), "settings_rows(2)": runtime_edits.settings_rows(2, True),
     }
     assert actual == expected
     # The screens that keep the MOZ layout get the baseline bytes back, except the gallery list name y

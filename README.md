@@ -25,7 +25,6 @@ options.
 - **A language switch.** Choose English or Japanese for text and for voices.
 - **120 FPS** in battle.
 - **A wider field of view**, up to 150%.
-- **A longer view distance** and more soldiers on screen.
 - **Xbox controller support** with the Warriors Orochi 2 controls and Xbox
   button prompts.
 
@@ -136,7 +135,6 @@ Open **Options**, then **Game Settings**. wozmod adds these rows:
 | VOICE LANGUAGE | English or Japanese. The change applies from the next line. This row shows only if you installed the English voices. |
 | FIELD OF VIEW | 100% (original) to 150%. |
 | FRAME RATE | 60 or 120 FPS in battle. |
-| RENDER DISTANCE | ON doubles the view distance and shows more soldiers. |
 
 wozmod keeps these settings in `wozmod/settings.ini`. Your save file does not
 change.

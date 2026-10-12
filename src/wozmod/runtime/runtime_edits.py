@@ -696,8 +696,9 @@ FONT_ROUTE = [
       for b in range(0x20, 0x7E) if b not in b"\\`{|}"],
 ]
 
-def settings_rows(rows: int) -> list:
-    count = 7 + rows
+def settings_rows(rows: int, distance: bool = False) -> list:
+    """The cursor list: the stock rows, the language rows, FOV, frame rate and (a dev build) render distance."""
+    count = 6 + rows + distance
     return [
 
         (0x56B2ED, bytes.fromhex("015010 c740140b000000 c7401800000000"),

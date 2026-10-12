@@ -1601,6 +1601,15 @@ TRACK = {493: 1.070, 508: 1.894, 501: 0.0}
 TRACK_AUTHORED = 0.338  
 CONDENSED, CONDENSED_MIN = 0.75, 4.0
 
+# The rows wozmod adds to Game Settings: one sheet of 42 px bands in the stock label face (the runtime draws
+# them, tinted, where the stock code draws no row). Labels first, then the values; every text is centred in the
+# 310 px quad the stock labels use.
+OPTION_ROWS = ["TEXT LANGUAGE", "VOICE LANGUAGE", "FIELD OF VIEW", "FRAME RATE", "ENGLISH", "JAPANESE", "60 FPS",
+               "120 FPS", *(f"< {v}% >" for v in range(100, 151, 5))]
+OPTION_LABELS = 4
+OPTION_W, OPTION_BAND, OPTION_ROOM = 310, 42, 300
+OPTION_BASELINES = (34, 31)  # labels, and values 3 px higher as the stock values sit against the stock labels
+
 PAUSE_BUTTON_ROWS = {
     (4080, 0, 0): ('donor:ae75b2880b5b5e40', 108.342679, 6.657321, 32, None, None),
     (4080, 0, 1): ('donor:cf888f8318b597b5', 122.068536, 4.975078, 32, None, None),
@@ -2137,6 +2146,20 @@ def main_art(served: Image.Image, scale: int, style: str, squeeze: bool = False)
     art.putalpha(ImageChops.multiply(art.getchannel("A"), fade))
     return art
 
+def option_rows_art(scale: int, squeeze: bool) -> Image.Image:
+    """The sheet of the added Game Settings rows, one OPTION_ROWS text per band, white for the runtime to tint."""
+    art = Image.new("RGBA", (OPTION_W * scale, len(OPTION_ROWS) * OPTION_BAND * scale))
+    with tempfile.TemporaryDirectory() as tmp:
+        for k, text in enumerate(OPTION_ROWS):
+            geometry = ((OPTION_W - OPTION_ROOM) / 2, (OPTION_W + OPTION_ROOM) / 2, OPTION_BASELINES[k >= OPTION_LABELS])
+            label, metrics = button_label(text, scale, Path(tmp) / f"{k}.png", TRACK_AUTHORED)
+            label, metrics = squeezed_label(label, metrics, geometry, scale, squeeze)
+            x, y = row_offset(geometry, metrics, scale, "full")
+            band = Image.new("RGBA", (art.width, OPTION_BAND * scale))
+            band.paste(label, (x, y))
+            art.paste(band, (0, k * OPTION_BAND * scale))
+    return art
+
 def hires_sheet(art: Image.Image, stock_w: int, band_h: int, per_col: int, scale: int) -> Image.Image:
 
     bands = art.height // (band_h * scale)
@@ -2433,6 +2456,10 @@ def _hires_bin(entries: Path, source: Path | None, vector: tuple | None, squeeze
                 minimum = max(minimum, ATTRIBUTE_QUAD_MINIMUM[entry, item])
         rows.append((entry, item, scale, w, h, band | (minimum << 16), per_col,
                      later(_sheet_g1t, g1t, sheet.size, sheet.tobytes())))
+    if vector and (4069, 2) in {plate[:2] for plate in plates}:  # entry 0: no stock texture, the runtime draws it
+        sheet = hires_sheet(option_rows_art(2, squeeze), OPTION_W, OPTION_BAND, 0, 2)
+        rows.append((0, 0, 2, OPTION_W, len(OPTION_ROWS) * OPTION_BAND, OPTION_BAND, 0,
+                     later(_sheet_g1t, parsed[4069].items[2].g1t, sheet.size, sheet.tobytes())))
     encoded = {entry: package.encode() for entry, package in packages.items()}
     packed = [entry for entry in encoded if (entries / f"{entry}.bin").read_bytes()[:4] == b"LZP2"]
     if jobs > 1 and len(packed) > 1 and not native.module:  # the Python encoder is slow: one entry per process

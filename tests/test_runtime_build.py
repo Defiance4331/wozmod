@@ -158,6 +158,7 @@ def test_compiler_prefers_native_and_falls_back_to_pinned_docker(
     ({}, ()),
     ({"log": True, "preview": True, "test": True, "cell": 48},
      ("ENRT_LOG", "ENRT_TAG_PREVIEW", "ENRT_TEST", "ENRT_CELL=48")),
+    ({"render_distance": True}, ("ENRT_RENDER_DISTANCE",)),
 ])
 def test_build_options_do_not_drop_preview_edits_or_runtime_defines(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, options: dict, expected_defines: tuple,
@@ -171,11 +172,12 @@ def test_build_options_do_not_drop_preview_edits_or_runtime_defines(
     font = [(0x1000, b"a", b"b")]
     code = [(0x2000, b"c", b"d")]
     rows = {1: [(0x3000, b"e", b"f")], 2: [(0x3000, b"e", b"g")]}
+    asked = []
     calls = []
     monkeypatch.setattr(build, "FONT_ROUTE", font)
     monkeypatch.setattr(build, "CODE_EDITS", code)
     monkeypatch.setattr(build, "WIDTHS", b"widths")
-    monkeypatch.setattr(build, "settings_rows", lambda count: rows[count])
+    monkeypatch.setattr(build, "settings_rows", lambda count, distance: asked.append((count, distance)) or rows[count])
     monkeypatch.setattr(build, "hook_sites", lambda defines: [("hooks", defines)])
 
     def fake_header(*args):
@@ -190,38 +192,62 @@ def test_build_options_do_not_drop_preview_edits_or_runtime_defines(
     monkeypatch.setattr(build, "compile_dll", fake_compile)
     assert build.build_dll(source, output, **options) == output
     assert output.read_bytes() == b"synthetic result"
+    # Bug: a release build keeps the cursor slot of the compiled-out RENDER DISTANCE row.
+    assert asked == [(1, options.get("render_distance", False)), (2, options.get("render_distance", False))]
     preview_edits = [(va, b"\x74\x04", b"\x90\x90")
-                     for va in (0x57296B, 0x572991, 0x5729B4, 0x5729DA, 0x572A01)] if options else []
+                     for va in (0x57296B, 0x572991, 0x5729B4, 0x5729DA, 0x572A01)] if options.get("preview") else []
     assert calls == [(stock, {0: font + code + preview_edits, 1: rows[1], 2: rows[2]},
                       [("hooks", expected_defines)], b"widths", hashlib.sha256(stock).hexdigest())]
 
 
+def _need_compiler() -> None:
+    if shutil.which("i686-w64-mingw32-gcc"):
+        return
+    if not shutil.which("docker"):
+        pytest.skip("native compiler and Docker executable absent")
+    inspection = subprocess.run(
+        ["docker", "image", "inspect", runtime.MINGW_IMAGE], capture_output=True, text=True,
+    )
+    if inspection.returncode:
+        if "No such image" in inspection.stderr:
+            pytest.skip("pinned Docker image absent")
+        if "Cannot connect to the Docker daemon" in inspection.stderr:
+            pytest.skip("Docker service unavailable")
+        pytest.fail(f"Docker image inspection failed: {inspection.stderr.strip()}")
+
+
+SYNTHETIC_HEADER = "\n".join([
+    "static const u8 enrt_stock_sha256[32] = {0};",
+    "static const u8 enrt_edits[] = {0xff};",
+    "static const struct site enrt_hooks[] = {{0x5c9fd0, 0, 24, 0, 5, {0x83,0xec,0x1c,0x53,0x55}}};",
+    "static const u8 enrt_widths[1] = {24};",
+    "#define WIDTH_POINTER 0x79bac0", "",
+])
+
+
 @pytest.fixture(scope="module")
 def compiled_test_dlls(tmp_path_factory: pytest.TempPathFactory) -> tuple[bytes, bytes]:
-    if not shutil.which("i686-w64-mingw32-gcc"):
-        if not shutil.which("docker"):
-            pytest.skip("native compiler and Docker executable absent")
-        inspection = subprocess.run(
-            ["docker", "image", "inspect", runtime.MINGW_IMAGE], capture_output=True, text=True,
-        )
-        if inspection.returncode:
-            if "No such image" in inspection.stderr:
-                pytest.skip("pinned Docker image absent")
-            if "Cannot connect to the Docker daemon" in inspection.stderr:
-                pytest.skip("Docker service unavailable")
-            pytest.fail(f"Docker image inspection failed: {inspection.stderr.strip()}")
-    header = "\n".join([
-        "static const u8 enrt_stock_sha256[32] = {0};",
-        "static const u8 enrt_edits[] = {0xff};",
-        "static const struct site enrt_hooks[] = {{0x5c9fd0, 0, 24, 0, 5, {0x83,0xec,0x1c,0x53,0x55}}};",
-        "static const u8 enrt_widths[1] = {24};",
-        "#define WIDTH_POINTER 0x79bac0", "",
-    ])
+    _need_compiler()
     directory = tmp_path_factory.mktemp("runtime-compile")
     first, second = directory / "first.dll", directory / "second.dll"
     for output in (first, second):
-        runtime.compile_dll(output, header, ("ENRT_TEST", "ENRT_LOG"))
+        runtime.compile_dll(output, SYNTHETIC_HEADER, ("ENRT_TEST", "ENRT_LOG"))
     return first.read_bytes(), second.read_bytes()
+
+
+@pytest.mark.skipif(os.environ.get("WOZMOD_RUNTIME_COMPILE") != "1",
+                    reason="set WOZMOD_RUNTIME_COMPILE=1")
+def test_release_runtime_has_no_render_distance_row_key_or_patch(tmp_path: Path) -> None:
+    """Bug: the release build still shows the unreleased RENDER DISTANCE row, reads or writes its settings.ini
+    key, or patches the view getter. The development build is compiled as the control that the probes see them."""
+    _need_compiler()
+    probes = [b"RENDER DISTANCE", "distance".encode("utf-16-le"), "refused: RENDER DISTANCE".encode()]
+    dlls = {}
+    for name, defines in [("release", ()), ("development", ("ENRT_RENDER_DISTANCE",))]:
+        runtime.compile_dll(tmp_path / f"{name}.dll", SYNTHETIC_HEADER, defines)
+        dlls[name] = (tmp_path / f"{name}.dll").read_bytes()
+    assert [probe in dlls["release"] for probe in probes] == [False] * 3
+    assert [probe in dlls["development"] for probe in probes] == [True] * 3
 
 
 @pytest.mark.skipif(os.environ.get("WOZMOD_RUNTIME_COMPILE") != "1",
