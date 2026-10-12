@@ -2139,6 +2139,17 @@ static volatile u32 *const deferred_count[4] = {
 
 
 #define HUD_TARGETS (*(volatile u16 *)(0xC2FCF8 + 0x1C902))
+/* Battle HUD state the HUD steps once per draw (0x573CF0's step block), so the extra frame would step it again:
+ * the full-Musou pulse (gauge +0xA), the life trail and team-switch slide (0x5792C0), the KO bump and hundreds
+ * flash (0x574AA0), the target officer's gauge timer and drain (0x574F40), the HUD pop timers (0x573AC0) and an
+ * overlay counter (0x58EB20). Put back after the extra frame, they step once per tick. */
+#define HUD_STEPS X(0xC52588, 0x3C) X(0xC4D1E8, 0x10) X(0xC54618, 0x20) X(0xC549F8, 0x0C) X(0xC5D478, 4)
+#define X(at, n) {at, n},
+static const struct { u32 at, bytes; } hud_steps[] = {HUD_STEPS};
+#undef X
+#define X(at, n) + n
+enum { HUD_STEP_BYTES = 0 HUD_STEPS };
+#undef X
 
 
 
@@ -2269,7 +2280,7 @@ static u32 hfr_draw(void)
     float *cam = CAMERA_POSE(CAMERA0);
     u32 i, deferred[4], ring, parity = PACKET_INDEX, buffer;
     u16 targets;
-    u8 fades[FADES_BYTES];
+    u8 fades[FADES_BYTES], hud[HUD_STEP_BYTES], *h;
     if (fps != 120 || hfr_busy || SCENE != 2)
         return 0;
     for (i = 0; i < 8; i++)
@@ -2287,6 +2298,8 @@ static u32 hfr_draw(void)
     for (i = 0; i < 4; i++)
         deferred[i] = *deferred_count[i];
     targets = HUD_TARGETS;
+    for (i = 0, h = hud; i < sizeof hud_steps / sizeof *hud_steps; h += hud_steps[i++].bytes)
+        CopyMemory(h, (const void *)hud_steps[i].at, hud_steps[i].bytes);
     ring = RENDER_RING;
     CopyMemory(far_camera, FAR_CAMERA, FAR_CAMERA_BYTES);
     SCENE_CAMERA_BUILD((void *)SCENE_CAMERA0, CAMERA0);
@@ -2308,6 +2321,8 @@ static u32 hfr_draw(void)
     for (i = 0; i < 4; i++)
         *deferred_count[i] = deferred[i];
     HUD_TARGETS = targets;
+    for (i = 0, h = hud; i < sizeof hud_steps / sizeof *hud_steps; h += hud_steps[i++].bytes)
+        CopyMemory((void *)hud_steps[i].at, h, hud_steps[i].bytes);
     RENDER_RING = ring;
     extra = 0;
     hfr_stats.extras++;
