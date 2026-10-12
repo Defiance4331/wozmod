@@ -4,6 +4,7 @@ wozmod is an unofficial fan mod for **Musou Orochi Z**, the Japanese PC
 release of Warriors Orochi Z. It translates the game into English and adds new
 options.
 
+> [!IMPORTANT]
 > **Legal notice:** wozmod is an unofficial fan project. It is not affiliated
 > with, endorsed by, or sponsored by Koei Tecmo. wozmod does not include or
 > distribute game assets: no text, art, audio, video or program code from
@@ -11,6 +12,7 @@ options.
 > games and supply the files yourself. wozmod contains no decryption code, and
 > this project does not help you get game files or decryption programs.
 
+> [!WARNING]
 > **Status:** wozmod is in development. Expect bugs.
 
 ## What you get
