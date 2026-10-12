@@ -313,10 +313,10 @@ def test_a_long_path_box_shows_the_end_of_the_path(shown):
     assert win.entries["wo1"].xview()[0] > 0
 
 
-def test_the_help_link_opens_the_page_that_says_where_to_get_the_programs(shown, monkeypatch):
+def test_the_help_link_opens_the_list_of_tested_programs(shown, monkeypatch):
     # Bug: the link opens a wrong or broken address, or a click does nothing.
     win, root = shown
     opened = []
     monkeypatch.setattr(window.webbrowser, "open", opened.append)
     win.help_link.event_generate("<Button-1>")
-    assert opened == ["https://github.com/Defiance4331/wozmod#what-you-need"]
+    assert opened == ["https://github.com/Defiance4331/wozmod#tested-decryption-programs"]

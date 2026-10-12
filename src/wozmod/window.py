@@ -22,8 +22,8 @@ from wozmod.remembered import load_settings, save_settings
 NOTICE = "Use your own copies of the games. wozmod includes no game files."
 LANGUAGES = "Switch the text and voice languages in the game's Options."
 TOOLS_HELP = "Programs you already have."
-HELP_TEXT = "More about these files"
-HELP_URL = "https://github.com/Defiance4331/wozmod#what-you-need"
+HELP_TEXT = "Which programs we tested"
+HELP_URL = "https://github.com/Defiance4331/wozmod#tested-decryption-programs"
 # name, label, kind of picker, what to pick
 ROWS = (
     ("game", "Musou Orochi Z folder", "folder",

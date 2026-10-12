@@ -47,71 +47,66 @@ folder, `wozmod`, to the game folder.
    Tecmo. You need all three.
 3. **A decryption program for each of the two encrypted files.** The
    program files of the two Warriors Orochi 2 games are encrypted on the
-   disc, and wozmod does not decrypt files. Bring a decryption program you
-   already have for each one, and wozmod runs it on the file from your disc
-   image:
+   disc, and wozmod does not decrypt files. Bring a decryption program for
+   each one, and wozmod runs it on the file from your disc image:
 
    | Game | File on the disc image |
    |---|---|
    | Warriors Orochi 2 for Xbox 360 | `default.xex` |
    | Warriors Orochi 2 for PSP | `PSP_GAME/SYSDIR/EBOOT.BIN` |
 
-   If you already have a decrypted file, you can give it instead, under
-   **Advanced** in the window, or with `--x360-file` and `--psp-file` in the
-   terminal. If a disc image already holds the decrypted file, wozmod uses it
-   and needs no program for that game.
+   We tested wozmod with the programs listed under
+   [Tested decryption programs](#tested-decryption-programs). Other programs
+   may not work.
+
+   If a disc image already holds the decrypted file, wozmod uses it and needs
+   no program for that game. If you already have a decrypted file, you can
+   give it instead of the program.
 
    wozmod checks what the program makes against a fixed hash. If it is not
    the file wozmod needs, wozmod says so before it changes anything.
-
-   Optional note: these tools have been tested to produce files that wozmod
-   accepts: pspdecrypt 1.0 for the PSP EBOOT, and xex2ool 0.3.0 and XexTool
-   7.0 for the Xbox 360 program file. We do not ship, provide or endorse
-   any tool, and we make no legal claim about using one. wozmod only runs
-   the program you choose, on files from your own disc images.
 4. **Windows 10 or later**, or **Linux** with Steam (Proton) or Wine.
+
+### Tested decryption programs
+
+These programs have been tested to produce files that wozmod accepts:
+
+| Game file | Program |
+|---|---|
+| Warriors Orochi 2 for PSP, `EBOOT.BIN` | pspdecrypt 1.0 |
+| Warriors Orochi 2 for Xbox 360, `default.xex` | xex2ool 0.3.0, or XexTool 7.0 |
+
+We do not ship, provide or endorse any tool, and we make no legal claim about
+using one. wozmod only runs the program you choose, on files from your own
+disc images.
 
 ## Install
 
 1. Download the release for your system (Windows or Linux) from the
-   **Releases** page, and unzip it to any folder. It holds two programs,
-   `wozmod-setup` and `wozmod`.
-2. Open `wozmod-setup`. It shows a window.
-3. Pick your files. Click **Browse** next to each one:
-   - the Musou Orochi Z folder;
-   - the disc image of each of the three games;
-   - the decryption program for the Xbox 360 file, and the one for the PSP
-     file, from "What you need".
+   **Releases** page, and unzip it to any folder. It holds two programs that
+   do the same job: `wozmod-setup`, a window, and `wozmod`, for a terminal.
+   Most players want `wozmod-setup`. To use the terminal instead, see
+   [Use the terminal instead](#use-the-terminal-instead).
+2. Open `wozmod-setup`.
+3. Pick your files. Click **Browse...** next to each one:
+   - **1. Your game:** the Musou Orochi Z folder.
+   - **2. Your disc images:** the disc image of each of the three games.
+   - **3. Your decryption programs:** the program for the Xbox 360 file, and
+     the one for the PSP file, from "What you need".
 
    wozmod checks each file when you pick it. For a decryption program, it
    runs the program on the file from your disc image. A tick means the file
-   is right. If it is wrong, the window says why.
+   is right. If it is wrong, the window says why. To give an already
+   decrypted file instead of a program, open
+   **Advanced: use decrypted files instead**.
 4. Click **Install**. wozmod builds the English files on your computer. This
-   takes about two minutes. The window shows the progress and the time left,
-   and **Cancel** stops the install and leaves the game folder as it was.
-   When it is done, the window says so.
+   takes about two minutes. The window shows the progress and the time left.
+   Until wozmod starts placing files, **Cancel** stops the install and leaves
+   the game folder as it was. When it is done, the window says so.
+5. On Linux, also follow [Extra steps on Linux](#extra-steps-on-linux-steam-or-proton).
 
-wozmod remembers your files for next time. To update, unzip the new release
-and open its `wozmod-setup`. The button then says **Update**, and your
-settings stay. To remove wozmod, click **Uninstall** in the same window.
-
-If you prefer a terminal, open one in the release folder, and run `wozmod`.
-It asks for each file. Or give them all in one command:
-
-```
-wozmod install --game "<Musou Orochi Z folder>" \
-  --wo1 <Warriors Orochi .iso> --x360 <Warriors Orochi 2 360 .iso> \
-  --psp <Warriors Orochi 2 PSP .iso> \
-  --x360-tool <decryption program for default.xex> \
-  --psp-tool <decryption program for EBOOT.BIN>
-```
-
-Advanced: instead of `--x360-tool` or `--psp-tool`, you can give a file that
-is already decrypted with `--x360-file` or `--psp-file`. For each game, give
-one of the two. If you give both, wozmod uses the file and does not run the
-program.
-
-To use fewer processor cores, set `WOZMOD_JOBS`, for example `WOZMOD_JOBS=2`.
+Then start the game as usual, and choose your languages in
+[Settings](#settings). wozmod remembers your files for next time.
 
 ### Extra steps on Linux (Steam or Proton)
 
@@ -125,6 +120,18 @@ WINEDLLOVERRIDES="d3d9=n,b" DXVK_CONFIG="d3d9.cachedWriteOnlyBuffers = True" %co
 The `DXVK_CONFIG` part is for the game itself, with or without wozmod. Without
 it, some battles slow down to one frame per second.
 
+### Update
+
+Unzip the new release and open its `wozmod-setup`. Your files are already
+filled in, and the button says **Update from** your version **to** the new
+one. Your settings stay.
+
+### Uninstall
+
+Open `wozmod-setup` and click **Uninstall**. It asks whether to keep your
+wozmod settings. Or delete `d3d9.dll` and the `wozmod` folder from the game
+folder yourself. Your game and your saves stay as they were.
+
 ## Settings
 
 Open **Options**, then **Game Settings**. wozmod adds these rows:
@@ -132,58 +139,92 @@ Open **Options**, then **Game Settings**. wozmod adds these rows:
 | Row | What it does |
 |---|---|
 | TEXT LANGUAGE | English or Japanese. The change applies the next time you start the game. |
-| VOICE LANGUAGE | English or Japanese. The change applies from the next line. This row shows only if you installed the English voices. |
+| VOICE LANGUAGE | English or Japanese. The change applies from the next line. |
 | FIELD OF VIEW | 100% (original) to 150%. |
 | FRAME RATE | 60 or 120 FPS in battle. |
 
 wozmod keeps these settings in `wozmod/settings.ini`. Your save file does not
 change.
 
-## Uninstall
-
-Run `wozmod uninstall --game "<Musou Orochi Z folder>"`. Or delete
-`d3d9.dll` and the `wozmod` folder from the game folder. Your game and your
-saves stay as they were.
-
-## Problems
+## Troubleshooting
 
 - **Windows says "Windows protected your PC" when you open wozmod.** wozmod
   is not signed, so Windows does not know the publisher. Click **More info**,
   then **Run anyway**.
 - **The game is still in Japanese, and the new settings are missing.** The game
   did not load wozmod. Make sure that `d3d9.dll` is in the same folder as
-  `OROCHI_Z.exe`. On Linux, add the launch options above.
-- **`wozmod/runtime.log` says "refused".** Your `OROCHI_Z.exe` is not the
-  version that wozmod supports. If you installed a different English patch,
-  reinstall the game. Then install wozmod again.
+  `OROCHI_Z.exe`. On Linux, add the launch options from
+  [Extra steps on Linux](#extra-steps-on-linux-steam-or-proton).
+- **`wozmod/runtime.log` says "refused: OROCHI_Z.exe is not the stock
+  executable".** Your `OROCHI_Z.exe` is not the version that wozmod supports.
+  If you installed a different English patch, reinstall the game. Then install
+  wozmod again.
+- **`wozmod/runtime.log` has another line that starts with "refused".** wozmod
+  switched that part off because something did not match. If the line names a
+  file in the `wozmod` folder, install wozmod again.
 - **The screen stays black at start (Linux).** The game must start in its own
   folder. If you added it to Steam as a non-Steam game, set **Start In** to the
   game folder.
 
+## Use the terminal instead
+
+`wozmod` does the same as the setup window, in a terminal. Open a terminal in
+the release folder and run `wozmod`. It asks whether to install or uninstall,
+then asks for each file. It remembers your files, as the window does.
+
+To give everything in one command:
+
+```
+wozmod install --game "<Musou Orochi Z folder>" \
+  --wo1 <Warriors Orochi .iso> --x360 <Warriors Orochi 2 360 .iso> \
+  --psp <Warriors Orochi 2 PSP .iso> \
+  --x360-tool <decryption program for default.xex> \
+  --psp-tool <decryption program for EBOOT.BIN>
+```
+
+- **Already decrypted files:** use `--x360-file` or `--psp-file` in place of
+  `--x360-tool` or `--psp-tool`. If you give both, wozmod uses the file and
+  does not run the program.
+- **Update:** run the same command with the new release. To reinstall the
+  same version, or go back to an older one, add `--force`.
+- **Uninstall:** run `wozmod uninstall --game "<Musou Orochi Z folder>"`. Add
+  `--remove-settings` to also delete your wozmod settings and log, or
+  `--keep-settings` to keep them without being asked.
+- **Fewer processor cores:** set `WOZMOD_JOBS`, for example `WOZMOD_JOBS=2`.
+- **Version:** `wozmod --version`.
+
+The Linux launch options in
+[Extra steps on Linux](#extra-steps-on-linux-steam-or-proton) apply here too.
+
 ## Build from source
 
 Install [uv](https://docs.astral.sh/uv/), [ffmpeg](https://ffmpeg.org/) and
-[Rust](https://rustup.rs). In the repository folder, run
-`uv run --extra native wozmod install ...` with the options above, plus
-`--lettering` and `--dll` (the two release files, which the repository does
-not hold). `uv run wozmod-setup` opens the window. Without `--extra native`,
-wozmod uses its slower Python code, and builds the same files.
+[Rust](https://rustup.rs). wozmod needs Python 3.14 or later, which uv
+installs if it is missing. In the repository folder:
+
+- `uv run --extra native wozmod install ...` installs, with the options
+  above, plus `--lettering` and `--dll` (the two release files, which the
+  repository does not hold).
+- `uv run wozmod-setup` opens the window.
+- `uv run pytest -q` runs the tests.
+
+Without `--extra native`, or with `WOZMOD_NATIVE=0`, wozmod uses its slower
+Python code, and builds the same files.
 
 To build the release zip for your system, run
 `uv sync --extra native --group build`, then
 `uv run python packaging/build.py --assets <folder with d3d9.dll and lettering.zip>`.
-`packaging/release_assets.py` explains how those two files are made and
-published, and the release workflow in `.github/workflows/` builds the zips
-for Windows and Linux when a `v*` tag is pushed.
+`packaging/release_assets.py` makes those two files and puts them on a draft
+GitHub release for the tag. Make that draft first: pushing a `v*` tag runs
+the release workflow in `.github/workflows/`, which takes the two files from
+the draft and builds the zips for Windows and Linux.
 
 ## Legal
 
-wozmod is an unofficial fan-made modification for Musou Orochi Z. It is not
-affiliated with, endorsed by, or sponsored by Koei Tecmo. Game and company
-names identify compatibility and the games that wozmod needs. This repository
-holds no files from the games, and you need your own copies to use it.
-The installer reads your copies on your own computer and builds the English
-files there. Nothing from the games leaves your computer or comes with wozmod.
+See also the legal notice at the top. Game and company names identify
+compatibility and the games that wozmod needs. The installer reads your
+copies on your own computer and builds the English files there. Nothing from
+the games leaves your computer or comes with wozmod.
 
 The English menu lettering is original artwork: vector letters drawn for
 wozmod to match the look of the official menus, which the release ships

@@ -30,8 +30,6 @@ copies.
 | `src/wozmod/` | build and install tooling |
 | `data/` | our authored data: translations, layout rules, art recipes, donor pointers |
 | `tools/` | developer-only tools such as the game harness |
-| `tests/` | the offline test suite |
-| `docs/` | developer notes: formats and build |
 | `work/` | ignored: stock and donor extracts, builds, disposable game copies |
 
 ## Inputs and the game
@@ -48,16 +46,32 @@ copies.
 
 ## Testing
 
-Run `uv run pytest -q`. The global testing rules apply. Bugs worth naming here
-are a shifted offset, a dropped translation row, and an edit over the wrong
-stock bytes. Synthetic bytes in `tmp_path` cover formats and patch logic. Use
-stock or donor files only for what synthetic bytes cannot show, and skip when
-they are absent. Slow tests run only behind a `WOZMOD_<NAME>=1` skipif.
+Run `uv run pytest -q`. Bugs worth naming here are a shifted offset, a dropped
+translation row, and an edit over the wrong stock bytes. Synthetic bytes in
+`tmp_path` cover formats and patch logic. Use stock or donor files only for
+what synthetic bytes cannot show, and skip when they are absent. Slow tests run only behind a `WOZMOD_<NAME>=1` skipif.
 
-## Commits and reports
+## Commits
 
-Commit messages have a sentence-case summary and a body with a `Changes:`
-section, one line per change, no blank lines between entries.
+Write each one as a short public changelog entry. This format overrides any user-level commit rule.
+
+```
+Show the version and redesign the setup window
+
+Players who are not developers could not tell what to pick.
+
+Changes:
+- Add -v/--version, and show the version in the window's corner.
+- Say why Install is disabled, and what to do after an error.
+```
+
+- Subject: sentence case, imperative, at most 72 characters.
+- Why: at most two sentences, about what changes for players or contributors.
+- Changes: 2 to 6 lines, one behaviour each, in words a player could follow,
+  with no blank lines between them.
+- Keep test counts, file lists, to-dos, hashes and how the work was organised
+  (agents, branches, phases, migrations) in the agent's hand-back.
+- Work on a branch merges into main as one squashed commit in this format.
 
 ## Decisions
 
