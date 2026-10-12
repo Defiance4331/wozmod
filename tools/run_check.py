@@ -25,7 +25,7 @@ import game_harness as harness
 import prepare_run
 import screen_checks
 
-LOCK = Path.home() / "Games/musou-orochi-z-eng/work/.game-run.lock"
+LOCK = harness.REPO / "work/.game-run.lock"
 DEFAULT_SPEC = harness.REPO / "data/checks/layout.toml"
 START_WAIT = 300  # seconds from launch (lock wait included) until the game answers the test mailbox
 STOP_WAIT = 60  # seconds for the supervisor to end after stop
