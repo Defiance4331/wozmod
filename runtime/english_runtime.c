@@ -987,6 +987,9 @@ static void row_columns(struct frame *f)
     case 0x533497:
         f->arg[1] += 0xF8 - 0x65 - measure(s);
         break;
+    case 0x5973F5: case 0x5974CC:  /* Conditions STATUS "OK": X360 keeps 20 px a byte for it, stock 12 */
+        f->arg[1] -= 8 * (u32)lstrlenA(s);
+        break;
     }
 }
 

@@ -439,6 +439,23 @@ CODE_EDITS = [
     (0x5976A7, bytes.fromhex("68f1010000"), bytes.fromhex("685d020000")),
     (0x5976D1, bytes.fromhex("6886010000"), bytes.fromhex("68a5010000")),
     (0x596E9E, bytes.fromhex("81c151010000"), bytes.fromhex("81c171010000")),
+    # Conditions STATUS rows as X360 draws them: plates 573 wide and values right-aligned at x+681. The time
+    # and KOs rows draw no "Left" (stock sized it at 12 px a byte, so English "Left" ran under the count);
+    # the gauge rows keep "OK", with room for it in row_columns.
+    *[(va, bytes.fromhex("6868010000"), bytes.fromhex("683d020000"))
+      for va in (0x596F82, 0x5970E0, 0x59721B, 0x597347, 0x597468)],
+    *[(va, bytes.fromhex("81c1d4010000"), bytes.fromhex("81c1a9020000")) for va in (0x597051, 0x5973E8)],
+    # The count font steps 21 px a character, as X360 reserves it; stock reserves 12, so each digit pushed the
+    # count 9 px right. The KOs counts ("%d?") end in a blank glyph, so their digits end at x+681 from x+702.
+    *[(va, bytes.fromhex("8d3c40"), bytes.fromhex("6bf815")) for va in (0x59701F, 0x59715B, 0x59728D)],
+    *[(va, bytes.fromhex("03ff"), bytes.fromhex("8bff"))
+      for va in (0x597031, 0x597037, 0x597176, 0x59717C, 0x5972A8, 0x5972AE)],
+    *[(va, bytes.fromhex("81c1d4010000"), bytes.fromhex("81c1be020000")) for va in (0x597196, 0x5972C8)],
+    (0x597402, bytes.fromhex("8d8fd4010000"), bytes.fromhex("8d8fa9020000")),  # the Life Gauge percent
+    (0x5974BF, bytes.fromhex("81c5d4010000"), bytes.fromhex("81c5a9020000")),  # the Musou Gauge "OK"
+    (0x597045, bytes.fromhex("e88647fbff"), bytes.fromhex("0f1f440000")),  # the args go with the row's later cleanup
+    (0x59718A, bytes.fromhex("e84146fbff"), bytes.fromhex("0f1f440000")),
+    (0x5972BC, bytes.fromhex("e80f45fbff"), bytes.fromhex("0f1f440000")),
 
     (0x598099, bytes.fromhex("83e05b"), bytes.fromhex("83e07b")),
     (0x5980A1, bytes.fromhex("05c4000000"), bytes.fromhex("05f4000000")),
