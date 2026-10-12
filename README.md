@@ -7,12 +7,11 @@ options.
 > **Legal notice:** wozmod is an unofficial fan project. It is not affiliated
 > with, endorsed by, or sponsored by Koei Tecmo. wozmod does not include or
 > distribute game assets: no text, art, audio, video or program code from
-> Musou Orochi Z or from the games it reads. You must own legal copies of all
-> four games and supply the files yourself. wozmod contains no decryption code,
-> and this project does not help you get or decrypt game files.
+> Musou Orochi Z or from the games it reads. You must own copies of all four
+> games and supply the files yourself. wozmod contains no decryption code, and
+> this project does not help you get game files or decryption programs.
 
-> **Status:** wozmod is in development, and there is no download yet. This page
-> describes the first release.
+> **Status:** wozmod is in development. Expect bugs.
 
 ## What you get
 
@@ -33,10 +32,10 @@ folder, `wozmod`, to the game folder.
 
 ## What you need
 
-1. **Musou Orochi Z for Windows** (the Japanese release), a legal copy,
+1. **Musou Orochi Z for Windows** (the Japanese release), a copy you own,
    installed. wozmod checks the game files first. If they are a different
    version, wozmod changes nothing.
-2. **Your own legal copies of these three games:**
+2. **Your own copies of these three games:**
    - **Warriors Orochi for PC** (the European release), as a disc image
      (`.iso`).
    - **Warriors Orochi 2 for Xbox 360** (the US release), as a disc image
@@ -67,8 +66,9 @@ folder, `wozmod`, to the game folder.
 
    Optional note: these tools have been tested to produce files that wozmod
    accepts: pspdecrypt 1.0 for the PSP EBOOT, and xex2ool 0.3.0 and XexTool
-   7.0 for the Xbox 360 program file. We do not ship, run or endorse any
-   tool, and we make no legal claim about using one.
+   7.0 for the Xbox 360 program file. We do not ship, provide or endorse
+   any tool, and we make no legal claim about using one. wozmod only runs
+   the program you choose, on files from your own disc images.
 4. **Windows 10 or later**, or **Linux** with Steam (Proton) or Wine.
 
 ## Install
@@ -181,7 +181,7 @@ for Windows and Linux when a `v*` tag is pushed.
 wozmod is an unofficial fan-made modification for Musou Orochi Z. It is not
 affiliated with, endorsed by, or sponsored by Koei Tecmo. Game and company
 names identify compatibility and the games that wozmod needs. This repository
-holds no files from the games, and you need your own legal copies to use it.
+holds no files from the games, and you need your own copies to use it.
 The installer reads your copies on your own computer and builds the English
 files there. Nothing from the games leaves your computer or comes with wozmod.
 

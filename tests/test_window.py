@@ -67,15 +67,24 @@ def _wait(root, until):
 
 
 def test_a_fresh_window_cannot_install_and_says_where_the_files_come_from(shown):
-    # Bug: Install is clickable with nothing picked, or the legal line is missing.
+    # Bug: Install is clickable with nothing picked, or the own-copies notice is missing.
     win, root = shown
     assert "disabled" in win.install_button.state() and "disabled" in win.uninstall_button.state()
     assert [w.cget("text") for w in root.winfo_children()[0].winfo_children() if w.winfo_class() == "TLabel"
             ].count(window.NOTICE) == 1
 
 
+
+def test_the_window_shows_the_released_version(shown):
+    # Bug: the version label is missing, or shows a version other than the release's.
+    import tomllib
+    win, root = shown
+    version = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())["project"]["version"]
+    labels = [w.cget("text") for w in root.winfo_children()[0].winfo_children() if w.winfo_class() == "TLabel"]
+    assert f"wozmod {version}" in labels
+
 @pytest.mark.parametrize("outcome, expected", [
-    (None, "Done. Start the game as usual."),
+    (None, "Done. Start the game as usual. Switch the text and voice languages in the game's Options."),
     (InstallError("Game folder: Not a folder."), "Game folder: Not a folder."),
 ])
 def test_a_finished_run_shows_its_log_and_its_result_in_the_window(shown, monkeypatch, outcome, expected):
@@ -246,7 +255,7 @@ def test_a_good_advanced_file_makes_its_program_row_not_required_and_a_bad_one_d
         win.vars[name].set(str(tmp_path))
     win.vars["x360"].set(str(xbox_image(tmp_path, b"default.xex", encrypted)))
     win.vars["x360-file"].set(str(wrong))
-    _wait(root, lambda: win.status["x360-file"].cget("text") == "This is not the decrypted file wozmod needs.")
+    _wait(root, lambda: win.status["x360-file"].cget("text") == installer.WRONG_FILE)
     win.check_program("psp-tool")
     _wait(root, lambda: win.good["psp-tool"] and win.good["game"])
     assert not win.good["x360-tool"] and "disabled" in win.install_button.state()
@@ -262,3 +271,52 @@ def test_a_decrypted_copy_in_the_disc_image_says_so_in_the_program_row(shown, pr
     win.vars["x360"].set(str(xbox_image(tmp_path, b"default.xex", plain)))
     _wait(root, lambda: win.status["x360-tool"].cget("text") == "Not needed: your disc image already has the decrypted file")
     assert win.good["x360-tool"]
+
+
+def test_the_install_reason_counts_the_rows_still_missing(shown):
+    # Bug: the reason miscounts (off by one, or counts the Advanced file rows the program rows stand in for),
+    # or it stays stale after a row turns good.
+    win, root = shown
+    assert "Pick the 6 missing items above" in win.reason.cget("text")
+    for name in ("game", "wo1", "x360"):
+        win.good[name] = True
+    win.refresh_buttons()
+    assert "Pick the 3 missing items above" in win.reason.cget("text")
+    win.good["psp"] = win.good["x360-tool"] = True
+    win.refresh_buttons()
+    assert win.reason.cget("text") == "Pick the missing item above to enable Install."
+    win.good["psp-tool"] = True
+    win.refresh_buttons()
+    assert win.reason.cget("text") == "" and "disabled" not in win.install_button.state()
+
+
+def test_the_run_controls_are_hidden_until_a_run_starts(shown, monkeypatch):
+    # Bug: an empty progress bar, Cancel and "Show details" sit on screen before anything has run.
+    win, root = shown
+    gate = __import__("threading").Event()
+    monkeypatch.setattr(window, "install", lambda *a, **k: gate.wait(10))
+    assert not win.run_frame.winfo_manager()
+    win.vars["game"].set("/g")
+    win.run("install")
+    assert win.run_frame.winfo_manager() == "grid" and win.cancel_button.winfo_manager() == "grid"
+    gate.set()
+    _wait(root, lambda: not win.busy)
+    assert win.run_frame.winfo_manager() == "grid" and not win.cancel_button.winfo_manager()  # result stays
+
+
+def test_a_long_path_box_shows_the_end_of_the_path(shown):
+    # Bug: a path longer than the box shows its start, so the player never sees the file name.
+    win, root = shown
+    root.deiconify()
+    win.vars["wo1"].set("/very/long/" + "folder/" * 30 + "Warriors Orochi.iso")
+    _wait(root, lambda: win.entries["wo1"].xview()[1] == 1.0)
+    assert win.entries["wo1"].xview()[0] > 0
+
+
+def test_the_help_link_opens_the_page_that_says_where_to_get_the_programs(shown, monkeypatch):
+    # Bug: the link opens a wrong or broken address, or a click does nothing.
+    win, root = shown
+    opened = []
+    monkeypatch.setattr(window.webbrowser, "open", opened.append)
+    win.help_link.event_generate("<Button-1>")
+    assert opened == ["https://github.com/Defiance4331/wozmod#what-you-need"]

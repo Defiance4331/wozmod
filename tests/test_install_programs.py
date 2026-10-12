@@ -169,7 +169,7 @@ def test_a_wrong_file_is_refused_with_the_plain_message_and_the_install_stops_be
     # Bug: any file of about the right size passes, or a bad file falls through to the program.
     bad = tmp_path / "bad"
     bad.write_bytes(content)
-    assert installer.resolve_program("x360-tool", {"x360-file": bad}) == ("x360-file", "This is not the decrypted file wozmod needs.")
+    assert installer.resolve_program("x360-tool", {"x360-file": bad}) == ("x360-file", installer.WRONG_FILE)
     game = tmp_path / "game"
     game.mkdir()
     monkeypatch.setattr(installer, "_build", lambda *args: (args[-1](), pytest.fail("the build must not go on past the checks"))[1])

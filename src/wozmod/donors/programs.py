@@ -87,7 +87,7 @@ PROFILES = (
     ("xextool", "x360", lambda src, dst: ["-b", dst, src]),  # leaves 32 KiB of zeros after the program
 )
 TOOL_TIMEOUT = 300  # seconds for one run of one profile
-NOT_PRODUCED = "This program did not produce the file wozmod needs."
+NOT_PRODUCED = "This program did not produce the file wozmod needs. Check that you picked the right program for this game."
 
 
 def run_tool(

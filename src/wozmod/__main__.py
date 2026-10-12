@@ -120,6 +120,7 @@ def run_uninstall(args: argparse.Namespace) -> int:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="wozmod", description=__doc__)
+    parser.add_argument("-v", "--version", action="version", version=f"wozmod {__version__}")
     commands = parser.add_subparsers(dest="command")
     add = commands.add_parser(
         "install", help="build the mod into a Musou Orochi Z folder (also updates an older install)",

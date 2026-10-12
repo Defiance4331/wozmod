@@ -7,10 +7,11 @@ import os
 import queue
 import sys
 import threading
+import webbrowser
 import traceback
 import tkinter
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 from wozmod import resources
 from wozmod import __version__
@@ -18,27 +19,33 @@ from wozmod.install import FILES, PROGRAMS, InstallError, check_input, install, 
 from wozmod.progress import DONE, Cancelled, Progress, duration, minutes_left
 from wozmod.remembered import load_settings, save_settings
 
-NOTICE = "Use files from your own legal copies of the games. wozmod includes no game files."
-TOOL_NOTE = "A decryption program you already have. wozmod runs it on the file from your disc image."
-# name, label, kind of picker, small note under the label
+NOTICE = "Use your own copies of the games. wozmod includes no game files."
+LANGUAGES = "Switch the text and voice languages in the game's Options."
+TOOLS_HELP = "Programs you already have."
+HELP_TEXT = "More about these files"
+HELP_URL = "https://github.com/Defiance4331/wozmod#what-you-need"
+# name, label, kind of picker, what to pick
 ROWS = (
-    ("game", "Musou Orochi Z folder", "folder", "The Japanese PC release."),
-    ("wo1", "Warriors Orochi (PC) disc image", "image", "The European release."),
-    ("x360", "Warriors Orochi 2 (Xbox 360) disc image", "image", "The US release."),
-    ("psp", "Warriors Orochi 2 (PSP) disc image", "image", "The US release."),
-    ("x360-tool", "Xbox 360 decryption program", "file", TOOL_NOTE),
-    ("psp-tool", "PSP decryption program", "file", TOOL_NOTE),
+    ("game", "Musou Orochi Z folder", "folder",
+     "The folder that contains the game's .exe (the Japanese PC release)."),
+    ("wo1", "Warriors Orochi (PC, Europe)", "image", "The .iso file made from this disc."),
+    ("x360", "Warriors Orochi 2 (Xbox 360, US)", "image", "The .iso file made from this disc."),
+    ("psp", "Warriors Orochi 2 (PSP, US)", "image", "The .iso file made from this disc."),
+    ("x360-tool", "Xbox 360 decryption program", "file",
+     "A decryption program you already have for default.xex, the Xbox 360 game's encrypted file."),
+    ("psp-tool", "PSP decryption program", "file", "A decryption program you already have for EBOOT.BIN, the PSP game's encrypted file."),
 )
 # Hidden until "Advanced" is opened. A good one replaces its program row.
 ADVANCED = (
     ("x360-file", "Already decrypted Xbox 360 program file", "file",
-     "The plain program inside default.xex, decrypted and decompressed (about 18 MB). Use it in place of the program above."),
+     "The decrypted program inside default.xex (about 18 MB). Use it instead of the program above."),
     ("psp-file", "Already decrypted PSP EBOOT", "file",
-     "PSP_GAME/SYSDIR/EBOOT.BIN, decrypted. Use it in place of the program above."),
+     "The decrypted PSP_GAME/SYSDIR/EBOOT.BIN. Use it instead of the program above."),
 )
+SECTIONS = {"game": "1. Your game", "wo1": "2. Your disc images", "x360-tool": "3. Your decryption programs"}
 NOT_NEEDED = {"disc": "Not needed: your disc image already has the decrypted file",
               "file": "Not needed: using the decrypted file under Advanced"}
-GOOD, BAD, QUIET = "#1a7f37", "#b42318", "#555555"
+GOOD, BAD, QUIET, ACCENT = "#1a7f37", "#b42318", "#595959", "#0b5cad"
 
 
 def check_row(name: str, values: dict[str, str]) -> tuple[str | None, str]:
@@ -61,86 +68,184 @@ class SetupWindow:
     def __init__(self, root: tkinter.Tk):
         self.root = root
         root.title("wozmod setup")
-        root.minsize(900, 600)
-        root.geometry("1020x680")  # the path boxes take the extra width
         self.events: queue.Queue = queue.Queue()
         self.vars = {name: tkinter.StringVar() for name, *_ in (*ROWS, *ADVANCED)}
         self.status: dict[str, ttk.Label] = {}
+        self.entries: dict[str, ttk.Entry] = {}
         self.good = dict.fromkeys(self.vars, False)
         self.ticket = dict.fromkeys(self.vars, 0)
         self.pending: dict[str, str] = {}
         self.busy = False
         self.rows: list = []
         self.log_lines: list[str] = []
+        self.status_row: dict[str, int] = {}
+        self.make_styles()
 
-        frame = ttk.Frame(root, padding=12)
+        frame = ttk.Frame(root, padding=(20, 16, 20, 12))
         frame.pack(fill="both", expand=True)
         frame.columnconfigure(1, weight=1)
+        self.frame = frame
         ttk.Label(frame, text="Install English text, voices and menus into Musou Orochi Z.",
-                  font=("TkDefaultFont", 11, "bold")).grid(row=0, column=0, columnspan=4, sticky="w")
-        ttk.Label(frame, text=NOTICE).grid(row=1, column=0, columnspan=4, sticky="w", pady=(0, 8))
+                  style="Title.TLabel").grid(row=0, column=0, columnspan=3, sticky="w")
+        ttk.Label(frame, text=NOTICE, style="Quiet.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(2, 0))
         saved = load_settings()
         self.advanced_widgets: list = []
-        self.advanced_button = ttk.Button(frame, command=self.toggle_advanced)
-        self.advanced_button.grid(row=len(ROWS) + 2, column=0, sticky="w", pady=(6, 0))
-        rows = [*enumerate(ROWS, start=2), *enumerate(ADVANCED, start=len(ROWS) + 3)]
-        for row, (name, label, kind, note) in rows:
-            box = ttk.Frame(frame)
-            box.grid(row=row, column=0, sticky="w", padx=(0, 8), pady=3)
-            ttk.Label(box, text=label).pack(anchor="w")
-            if note:
-                ttk.Label(box, text=note, foreground=QUIET, font=("TkDefaultFont", 8), wraplength=330,
-                          justify="left").pack(anchor="w")
-            entry = ttk.Entry(frame, textvariable=self.vars[name], width=20)
-            entry.grid(row=row, column=1, sticky="ew")
-            if name in PROGRAMS:  # a typed path runs only when finished, never on a half-typed name
-                for event in ("<Return>", "<FocusOut>"):
-                    entry.bind(event, lambda _, n=name: self.check_program(n))
-            browse = ttk.Button(frame, text="Browse...", command=lambda n=name, k=kind: self.browse(n, k))
-            browse.grid(row=row, column=2, padx=6)
-            self.status[name] = ttk.Label(frame, wraplength=320, justify="left")
-            self.status[name].grid(row=row, column=3, sticky="w")
-            if name in FILES.values():
-                self.advanced_widgets += [box, entry, browse, self.status[name]]
-            self.vars[name].set(saved.get(name, ""))
-            self.vars[name].trace_add("write", lambda *_, n=name: self.changed(n))
+        row = 2
+        for name, label, kind, note in ROWS:
+            if name in SECTIONS:
+                ttk.Label(frame, text=SECTIONS[name], style="Heading.TLabel").grid(
+                    row=row, column=0, columnspan=3, sticky="w", pady=(18, 4))
+                row += 1
+                if name == "x360-tool":
+                    help_line = ttk.Frame(frame)
+                    help_line.grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 2))
+                    ttk.Label(help_line, text=TOOLS_HELP + " ", style="Quiet.TLabel").pack(side="left")
+                    self.help_link = ttk.Label(help_line, text=HELP_TEXT, style="Link.TLabel", cursor="hand2",
+                                               takefocus=True)
+                    self.help_link.pack(side="left")
+                    for event in ("<Button-1>", "<Return>", "<space>"):
+                        self.help_link.bind(event, lambda _: self.open_help())
+                    row += 1
+            self.add_row(row, name, label, kind, note, saved)
+            row += 2
+        self.advanced_button = ttk.Button(frame, command=self.toggle_advanced, style="Link.Toolbutton")
+        self.advanced_button.grid(row=row, column=0, sticky="w", pady=(8, 0))
+        row += 1
+        for name, label, kind, note in ADVANCED:
+            self.add_row(row, name, label, kind, note, saved)
+            row += 2
         self.set_advanced(any(saved.get(name) for name, *_ in ADVANCED))  # a returning player sees what is used
-        first = len(ROWS) + len(ADVANCED) + 3
+
+        ttk.Label(frame, text="4. Install", style="Heading.TLabel").grid(
+            row=row, column=0, columnspan=3, sticky="w", pady=(18, 6))
         buttons = ttk.Frame(frame)
-        buttons.grid(row=first, column=0, columnspan=4, sticky="w", pady=(10, 4))
-        self.install_button = ttk.Button(buttons, text="Install", command=lambda: self.run("install"))
-        self.uninstall_button = ttk.Button(buttons, text="Uninstall", command=lambda: self.run("uninstall"))
-        self.cancel_button = ttk.Button(buttons, text="Cancel", command=self.cancel_run)
-        self.install_button.pack(side="left")
-        self.uninstall_button.pack(side="left", padx=8)
-        self.cancel_button.pack(side="left")
-        self.bar = ttk.Progressbar(frame, mode="determinate", maximum=100)
-        self.bar.grid(row=first + 1, column=0, columnspan=3, sticky="ew", pady=4)
-        self.left = ttk.Label(frame, text="")
-        self.left.grid(row=first + 1, column=3, sticky="w", padx=6)
-        self.now = ttk.Label(frame, text="", justify="left", wraplength=700)
-        self.now.grid(row=first + 2, column=0, columnspan=4, sticky="w")
-        self.toggle = ttk.Button(frame, text="\u25b8 Show details", command=self.toggle_details)
-        self.toggle.grid(row=first + 3, column=0, sticky="w", pady=(4, 0))
-        self.details = tkinter.Text(frame, height=9, width=1, state="disabled", wrap="word")
-        self.details.grid(row=first + 4, column=0, columnspan=4, sticky="nsew", pady=(4, 0))
+        buttons.grid(row=row + 1, column=0, columnspan=3, sticky="ew")
+        buttons.columnconfigure(1, weight=1)
+        self.install_button = ttk.Button(buttons, text="Install", style="Accent.TButton",
+                                         command=lambda: self.run("install"))
+        self.install_button.grid(row=0, column=0)
+        self.reason = ttk.Label(buttons, style="Quiet.TLabel", wraplength=420, justify="left")
+        self.reason.grid(row=0, column=1, sticky="w", padx=12)
+        self.uninstall_button = ttk.Button(buttons, text="Uninstall", style="Link.Toolbutton",
+                                           command=lambda: self.run("uninstall"))
+        self.uninstall_button.grid(row=0, column=2, sticky="e")
+
+        # Nothing here shows until a run starts.
+        self.run_frame = ttk.Frame(frame)
+        self.run_frame.grid(row=row + 2, column=0, columnspan=3, sticky="nsew", pady=(12, 0))
+        self.run_frame.columnconfigure(0, weight=1)
+        self.bar = ttk.Progressbar(self.run_frame, mode="determinate", maximum=100)
+        self.bar.grid(row=0, column=0, sticky="ew")
+        self.left = ttk.Label(self.run_frame, text="")
+        self.left.grid(row=0, column=1, sticky="w", padx=10)
+        self.cancel_button = ttk.Button(self.run_frame, text="Cancel", command=self.cancel_run)
+        self.cancel_button.grid(row=0, column=2)
+        self.now = ttk.Label(self.run_frame, text="", justify="left")
+        self.now.grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        self.result = ttk.Label(self.run_frame, text="", justify="left", style="Result.TLabel")
+        self.result.grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        self.toggle = ttk.Button(self.run_frame, text="▸ Show details", command=self.toggle_details,
+                                 style="Link.Toolbutton")
+        self.toggle.grid(row=3, column=0, sticky="w", pady=(6, 0))
+        self.details = tkinter.Text(self.run_frame, height=9, width=1, state="disabled", wrap="word",
+                                    font="TkFixedFont", relief="flat", borderwidth=1, highlightthickness=1,
+                                    highlightbackground="#c8c8c8")
+        self.details.grid(row=4, column=0, columnspan=3, sticky="nsew", pady=(4, 0))
         self.details.grid_remove()
-        self.result = ttk.Label(frame, text="", wraplength=700, justify="left", font=("TkDefaultFont", 10, "bold"))
-        self.result.grid(row=first + 5, column=0, columnspan=4, sticky="w", pady=(6, 0))
-        frame.rowconfigure(first + 4, weight=1)
+        self.run_frame.rowconfigure(4, weight=1)
+        self.run_frame.grid_remove()
+        frame.rowconfigure(row + 2, weight=1)
+        ttk.Label(frame, text=f"wozmod {__version__}", style="Quiet.TLabel").grid(
+            row=row + 3, column=0, columnspan=3, sticky="se", pady=(10, 0))
+        self.run_frame.bind("<Configure>", lambda _: self.wrap_to(self.run_frame, self.now, self.result))
         self.cancel = threading.Event()
         self.refresh_buttons()
         for name in self.vars:
             self.changed(name, run=True)
+        root.update_idletasks()
+        root.minsize(frame.winfo_reqwidth(), frame.winfo_reqheight())  # sized to its content; still resizable
         self.pump_id = root.after(100, self.pump)
+
+    def make_styles(self) -> None:
+        """Named fonts and styles derived from the system font, so Windows keeps Segoe UI and Linux its own."""
+        base = tkfont.nametofont("TkDefaultFont")
+        size = base.cget("size")
+        grow = lambda factor: (1 if size > 0 else -1) * round(abs(size) * factor)  # noqa: E731  (negative means pixels)
+        self.fonts = {
+            "title": base.copy(), "heading": base.copy(), "label": base.copy(), "result": base.copy(),
+            "link": base.copy()}
+        self.fonts["title"].configure(weight="bold", size=grow(1.3))
+        self.fonts["heading"].configure(weight="bold", size=grow(1.2))
+        self.fonts["label"].configure(weight="bold")
+        self.fonts["result"].configure(weight="bold", size=grow(1.1))
+        self.fonts["link"].configure(underline=True)
+        style = ttk.Style(self.root)
+        style.configure("Title.TLabel", font=self.fonts["title"])
+        style.configure("Heading.TLabel", font=self.fonts["heading"], foreground=ACCENT)
+        style.configure("Label.TLabel", font=self.fonts["label"])
+        style.configure("Quiet.TLabel", foreground=QUIET)
+        style.configure("Result.TLabel", font=self.fonts["result"])
+        style.configure("Accent.TButton", font=self.fonts["label"], padding=(18, 6))
+        style.configure("Link.TLabel", font=self.fonts["link"], foreground=ACCENT)
+        style.configure("Link.Toolbutton", font=self.fonts["link"], foreground=ACCENT)
+
+    def add_row(self, row: int, name: str, label: str, kind: str, note: str, saved: dict) -> None:
+        """Two grid rows: the name and what to pick on the left; the path box, then its verdict, on the right."""
+        frame = self.frame
+        box = ttk.Frame(frame)
+        box.grid(row=row, column=0, rowspan=2, sticky="nw", padx=(0, 16), pady=(6, 0))
+        ttk.Label(box, text=label, style="Label.TLabel").pack(anchor="w")
+        ttk.Label(box, text=note, style="Quiet.TLabel", wraplength=300, justify="left").pack(anchor="w")
+        entry = ttk.Entry(frame, textvariable=self.vars[name], width=40)
+        entry.grid(row=row, column=1, sticky="ew", pady=(6, 0))
+        self.entries[name] = entry
+        for event in ("<Configure>", "<FocusOut>"):  # show the end of a long path, the file name
+            entry.bind(event, lambda _, e=entry: self.show_end(e), add=True)
+        if name in PROGRAMS:  # a typed path runs only when finished, never on a half-typed name
+            for event in ("<Return>", "<FocusOut>"):
+                entry.bind(event, lambda _, n=name: self.check_program(n), add=True)
+        browse = ttk.Button(frame, text="Browse...", command=lambda: self.browse(name, kind))
+        browse.grid(row=row, column=2, padx=(8, 0), pady=(6, 0))
+        status = ttk.Label(frame, wraplength=400, justify="left")
+        status.grid(row=row + 1, column=1, columnspan=2, sticky="nw", pady=(2, 0))
+        self.status[name] = status
+        entry.bind("<Configure>", lambda _, s=status, e=entry: s.configure(wraplength=max(e.winfo_width(), 200)),
+                   add=True)
+        # room for two lines, so a long reason wraps in place and does not push the rows below
+        self.status_row[name] = row + 1
+        self.reserve(name, name not in FILES.values())
+        if name in FILES.values():
+            self.advanced_widgets += [box, entry, browse, status]
+        self.vars[name].set(saved.get(name, ""))
+        self.vars[name].trace_add("write", lambda *_: self.changed(name))
+
+    def reserve(self, name: str, on: bool) -> None:
+        """Keep two lines of height under a path box. A hidden row must give it back, or it leaves a gap."""
+        lines = 2 * tkfont.nametofont("TkDefaultFont").metrics("linespace") + 2 if on else 0
+        self.frame.rowconfigure(self.status_row[name], minsize=lines)
+
+    def open_help(self) -> None:
+        webbrowser.open(HELP_URL)
+
+    def wrap_to(self, frame, *labels) -> None:
+        for label in labels:
+            label.configure(wraplength=max(frame.winfo_width() - 20, 200))
+
+    def show_end(self, entry: ttk.Entry) -> None:
+        """Scroll a path box to its end so the file name shows, unless the player is typing in it."""
+        if self.root.focus_get() is not entry:
+            entry.xview_moveto(1)
 
     # --- the input rows
 
     def set_advanced(self, show: bool) -> None:
         for widget in self.advanced_widgets:
             (widget.grid if show else widget.grid_remove)()
+        for name in FILES.values():
+            self.reserve(name, show)
         self.advanced_open = show
-        self.advanced_button.configure(text="\u25be Advanced" if show else "\u25b8 Advanced")
+        self.advanced_button.configure(text="▾ Advanced: use decrypted files instead" if show
+                                       else "▸ Advanced: use decrypted files instead")
 
     def toggle_advanced(self) -> None:
         self.set_advanced(not self.advanced_open)
@@ -155,6 +260,7 @@ class SetupWindow:
             chosen = filedialog.askopenfilename(initialdir=initial, filetypes=types)
         if chosen:
             self.vars[name].set(chosen)
+            self.show_end(self.entries[name])
             if name in PROGRAMS:
                 self.check_program(name)
 
@@ -162,6 +268,7 @@ class SetupWindow:
         return {name: var.get().strip() for name, var in self.vars.items()}
 
     def changed(self, name: str, run: bool = False) -> None:
+        self.root.after_idle(self.show_end, self.entries[name])  # after a load or a pick, show the file name
         save_settings(self.inputs())
         if name in PROGRAMS and not run:  # typing a program path: wait for Enter, focus-out or Browse
             self.ticket[name] += 1
@@ -213,16 +320,25 @@ class SetupWindow:
             return "none", None
 
     def refresh_buttons(self) -> None:
-        ready = all(good for name, good in self.good.items() if name not in FILES.values())  # the program rows carry the file rows
+        unmet = [name for name, good in self.good.items() if not good and name not in FILES.values()]  # the program rows carry the file rows
+        ready = not unmet
         state, found = self.install_state()
         self.install_button.configure(text={
             "update": f"Update from {found or 'an earlier version'} to {__version__}",
             "reinstall": "Reinstall"}.get(state, "Install"))
         self.install_button.state(["!disabled"] if ready and not self.busy else ["disabled"])
+        self.reason.configure(text="" if ready or self.busy else self.install_reason(len(unmet)))
         self.uninstall_button.state(["!disabled"] if self.vars["game"].get().strip() and not self.busy
                                     else ["disabled"])
-        self.cancel_button.state(["!disabled"] if self.busy and self.action == "install"
-                                 and not self.cancel.is_set() else ["disabled"])
+        showing = self.busy and self.action == "install"
+        (self.cancel_button.grid if showing else self.cancel_button.grid_remove)()
+        self.cancel_button.state(["!disabled"] if showing and not self.cancel.is_set() else ["disabled"])
+
+    @staticmethod
+    def install_reason(count: int) -> str:
+        """Why Install is greyed out: how many rows above are empty or marked with a problem."""
+        return ("Pick the missing item above to enable Install." if count == 1
+                else f"Pick the {count} missing items above to enable Install.")
 
     # --- install and uninstall
 
@@ -268,6 +384,7 @@ class SetupWindow:
                     f"{__version__}, which is older.\n\nGo back to this version?"):
                 return
         self.busy, self.action = True, action
+        self.run_frame.grid()
         self.cancel = threading.Event()
         self.refresh_buttons()
         self.result.configure(text="", foreground=QUIET)
@@ -293,9 +410,9 @@ class SetupWindow:
                 inputs["lettering"] = resources.root() / "lettering.zip"
                 inputs["dll"] = resources.root() / "d3d9.dll"
                 install(Path(values["game"]), inputs, force=True, log=log, progress=progress)
-                message = "Done. Start the game as usual."
+                message = f"Done. Start the game as usual. {LANGUAGES}"
                 if cancel.is_set():
-                    message = "The files were already being placed, so the install finished. Start the game as usual."
+                    message = f"The files were already being placed, so the install finished. Start the game as usual. {LANGUAGES}"
             else:
                 changed = uninstall(Path(values["game"]), log=log, keep_settings=keep)
                 message = "Done. wozmod is removed." if not changed else (

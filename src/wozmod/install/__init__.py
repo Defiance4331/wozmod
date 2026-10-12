@@ -135,7 +135,7 @@ PROGRAMS = {
 FILES = {"x360-tool": "x360-file", "psp-tool": "psp-file"}
 FILE_PROGRAMS = {file: tool for tool, file in FILES.items()}
 NEITHER = "Pick a decryption program, or a decrypted file under Advanced."
-WRONG_FILE = "This is not the decrypted file wozmod needs."
+WRONG_FILE = "This is not the decrypted file wozmod needs. Pick the file your decryption program made."
 _TOOL_RUNS: dict[tuple, tuple[bytes | None, str]] = {}  # one run per program and image, whoever asks (window, check, build)
 _TOOL_LOCK = threading.Lock()
 
@@ -227,32 +227,32 @@ def check_input(name: str, path: Path | str) -> str | None:
     path = Path(path)
     if name == "game":
         if not path.is_dir():
-            return "Not a folder."
+            return "Not a folder. Pick the folder that contains the game's .exe."
         with ThreadPoolExecutor(len(STOCK_FILES)) as pool:  # hashlib lets go of the GIL: hash the big files side by side
             results = list(pool.map(lambda item: _pinned(path / item[0], item[1]), STOCK_FILES.items()))
         for stock, wrong in zip(STOCK_FILES, results):
             if wrong:
-                return (f"{stock} is missing. The stock Japanese PC release of Musou Orochi Z is needed."
+                return (f"{stock} is missing. Pick the folder that contains the game's .exe (the Japanese PC release)."
                         if wrong == "missing" else
-                        f"{stock} is not the stock Japanese PC release. Use a fresh copy of Musou Orochi Z.")
+                        f"{stock} is not the stock Japanese PC release. Reinstall the game, then pick its folder.")
         return None
     if name in DISCS:
         from wozmod.donors import check_donor_image
 
         if not path.is_file():
-            return "File not found."
+            return "File not found. Pick the .iso file again."
         try:
             check_donor_image(path, DISCS[name][0])
         except (OSError, ValueError):
-            return f"Not {DISCS[name][1]}."
+            return f"Not {DISCS[name][1]}. Pick the .iso made from that disc."
         return None
     if name in FILE_PROGRAMS:  # an already decrypted file: read, never run
         if not path.is_file():
-            return "File not found."
+            return "File not found. Pick the file again."
         return None if _trimmed(FILE_PROGRAMS[name], path) is not None else WRONG_FILE
     pin = {"lettering": LETTERING, "dll": DLL}[name]
     if wrong := _pinned(path, pin):
-        return "File not found." if wrong == "missing" else "Not the file that goes with this release."
+        return "File not found. Download wozmod again." if wrong == "missing" else "Not the file that goes with this release. Download wozmod again."
     return None
 
 

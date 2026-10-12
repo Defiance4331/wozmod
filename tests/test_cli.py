@@ -142,3 +142,16 @@ def test_a_program_whose_platform_disc_image_holds_the_decrypted_file_is_neither
     assert cli.main(["install", "--game", str(tmp_path), "--wo1", "a", "--x360", "b", "--psp", "c"]) == 2
     error = capsys.readouterr().err
     assert "--psp-tool or --psp-file" in error and "--x360-tool" not in error
+
+
+def _released_version() -> str:
+    import tomllib
+    return tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())["project"]["version"]
+
+
+@pytest.mark.parametrize("flag", ["--version", "-v"])
+def test_the_version_flag_prints_the_released_version(flag, capsys):
+    # Bug: the flag is missing, takes a subcommand first, or prints a version other than the release's.
+    with pytest.raises(SystemExit) as exit:
+        cli.main([flag])
+    assert exit.value.code == 0 and capsys.readouterr().out.strip() == f"wozmod {_released_version()}"
