@@ -7,12 +7,20 @@ Japanese source string.
 
 from __future__ import annotations
 
+import io
 import json
+import os
 import re
 import subprocess
+import zipfile
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[1]
+# Our own work is source and data text; anything else (a .png, .tga, .xma, .dat) is a build output or game file.
+OWN_SUFFIXES = {"", ".c", ".h", ".json", ".lock", ".md", ".py", ".rs", ".sh", ".spec", ".toml", ".txt", ".yml"}
+# Game and media formats a release must not carry; the release legitimately holds .exe, .dll, .so, .png and .zip.
 PAYLOAD_SUFFIXES = {
     ".7z", ".avi", ".bdx", ".bik", ".bin", ".dds", ".dll", ".exe", ".flac", ".g1t", ".hdx", ".idx",
     ".img", ".iso", ".kovs", ".lnk", ".mkv", ".mp3", ".mp4", ".ogg", ".otf", ".png", ".ttf", ".wav",
@@ -20,7 +28,11 @@ PAYLOAD_SUFFIXES = {
 }
 DUMP_KEY_SUFFIXES = ("_hex", "_base64")
 MACHINE_PATHS = ("/home/", "/Users/", "C:\\\\")
-JAPANESE = re.compile("[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uff66-\uff9f]")
+# Kana, kanji, and the ideographic punctuation and fullwidth forms Japanese text carries.
+JAPANESE = re.compile("[\u3000-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uff01-\uff9f\uffe0-\uffe6]")
+# Our private notes and memory: tracked files name the behaviour, not the note that decided it.
+PRIVATE = re.compile(r"\bADR[ -]?\d+|\bprivate/|\.agent-outputs|\bvault\b")
+PRIVATE_GUARDS = {".gitignore", "tests/test_repository_hygiene.py", "tests/test_githooks.py", "tools/githooks/commit-msg"}
 
 
 def _files() -> list[Path]:
@@ -32,10 +44,14 @@ def _files() -> list[Path]:
 
 
 def _text(path: Path) -> str | None:
+    """The file as text, JSON with its \\u escapes decoded; None when it is not UTF-8."""
     try:
-        return path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
         return None
+    if path.suffix == ".json":
+        text = json.dumps(json.loads(text), ensure_ascii=False)
+    return text
 
 
 def _keys(value):
@@ -48,15 +64,31 @@ def _keys(value):
             yield from _keys(item)
 
 
-def test_no_payload_files_are_tracked() -> None:
-    payloads = [str(p.relative_to(REPO)) for p in _files() if p.suffix.lower() in PAYLOAD_SUFFIXES]
+def test_only_our_source_and_data_types_are_tracked() -> None:
+    # Bug: an extracted texture, sound or archive (.tga, .xma, .dat) is committed under a type no list names.
+    others = [str(p.relative_to(REPO)) for p in _files() if p.suffix.lower() not in OWN_SUFFIXES]
 
-    assert payloads == []
+    assert others == []
 
 
 def test_no_japanese_game_text_is_tracked() -> None:
     """Japanese is the game's own text; rows are keyed by hash, never by the stock string."""
-    offending = [str(p.relative_to(REPO)) for p in _files() if JAPANESE.search(_text(p) or "")]
+    # Bug: the stock string is saved in the game's own Shift-JIS or UTF-16 (not UTF-8, so never searched),
+    # or as JSON \\u escapes, and slips past a search of the raw UTF-8 text.
+    offending = []
+    for path in _files():
+        text = _text(path)
+        if text is None or JAPANESE.search(text):
+            offending.append(str(path.relative_to(REPO)) + (" (not UTF-8)" if text is None else ""))
+
+    assert offending == []
+
+
+def test_no_tracked_file_cites_the_private_notes() -> None:
+    # Bug: a comment cites a private ADR number or private/ path, which the public repo cannot resolve and
+    # which once had to be scrubbed from history. The guards name the patterns on purpose.
+    offending = [f"{p.relative_to(REPO)}:{n}" for p in _files() if p.relative_to(REPO).as_posix() not in PRIVATE_GUARDS
+                 for n, line in enumerate((_text(p) or "").splitlines(), 1) if PRIVATE.search(line)]
 
     assert offending == []
 
@@ -71,5 +103,37 @@ def test_json_holds_no_byte_dumps_or_machine_paths() -> None:
             str(key).endswith(DUMP_KEY_SUFFIXES) for key in _keys(json.loads(text))
         ):
             offending.append(str(path.relative_to(REPO)))
+
+    assert offending == []
+
+
+def _members(archive: zipfile.ZipFile, prefix: str = ""):
+    """(name, bytes) of every member, nested zips opened in place."""
+    for name in archive.namelist():
+        data = archive.read(name)
+        if name.lower().endswith(".zip"):
+            with zipfile.ZipFile(io.BytesIO(data)) as inner:
+                yield from _members(inner, f"{prefix}{name}!")
+        else:
+            yield prefix + name, data
+
+
+@pytest.mark.skipif(not os.environ.get("WOZMOD_RELEASE"), reason="set WOZMOD_RELEASE to release zips (os.pathsep list)")
+def test_release_zips_carry_no_game_files_or_game_text() -> None:
+    # Bug: a build output with game content (a texture, voice bank or archive entry, or a data file holding
+    # the stock Japanese) is packed into the release zip or into lettering.zip inside it.
+    offending = []
+    for release in os.environ["WOZMOD_RELEASE"].split(os.pathsep):
+        with zipfile.ZipFile(release) as archive:
+            for name, data in _members(archive):
+                suffix = Path(name).suffix.lower()
+                if suffix in PAYLOAD_SUFFIXES - {".dll", ".exe", ".png", ".zip"}:
+                    offending.append(f"{release}!{name}")
+                elif suffix in (".json", ".md", ".txt", ".ini"):  # our data; third-party .msg/.enc may hold Japanese
+                    text = data.decode("utf-8", "replace")
+                    if suffix == ".json":
+                        text = json.dumps(json.loads(text), ensure_ascii=False)
+                    if JAPANESE.search(text) or PRIVATE.search(text):
+                        offending.append(f"{release}!{name}")
 
     assert offending == []

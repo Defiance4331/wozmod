@@ -9,10 +9,9 @@ import sys
 
 import pytest
 
+from wozmod.formats.scripts import Line, Table
 from wozmod.text.script_alignment import (
-    Line,
     Script,
-    Table,
     caption_pairs,
     event_pairs,
     moz_scripts,

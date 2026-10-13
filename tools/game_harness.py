@@ -941,7 +941,7 @@ def send(root: Path, request: dict, timeout: float) -> dict:
                 break
             except BlockingIOError:
                 if time.monotonic() >= deadline:
-                    raise TimeoutError("another agent holds this run's control lock")
+                    raise TimeoutError("another agent holds this run's control lock") from None
                 time.sleep(0.1)
         if not (control / "ready.json").exists():
             raise ValueError(ended(root) or "harness is not ready; read evidence/harness.log and launcher.log")

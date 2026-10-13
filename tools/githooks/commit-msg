@@ -1,0 +1,15 @@
+#!/bin/sh
+# Keep commit messages short public changelog entries (AGENTS.md, section Commits).
+msg=$(grep -v '^#' "$1")
+fail() { echo "commit-msg: $1" >&2; echo "Format: AGENTS.md, section Commits." >&2; exit 1; }
+subject=$(printf '%s\n' "$msg" | head -n 1)
+[ ${#subject} -le 72 ] || fail "the subject is ${#subject} characters; keep it to 72."
+case $subject in Merge*) exit 0;; esac
+[ "$(printf '%s\n' "$msg" | grep -c .)" -le 14 ] || fail "the message is over 14 lines; keep the why to two sentences and the Changes list to 6 lines."
+changes=$(printf '%s\n' "$msg" | sed -n '/^Changes:/,$p' | grep -c '^- ')
+[ "$changes" -ge 2 ] && [ "$changes" -le 6 ] || fail "the Changes list has $changes lines; give 2 to 6."
+printf '%s\n' "$msg" | grep -qiE '[0-9]+ (passed|failed|skipped)|^- *open:|\bphases?\b|migrat|^- *[A-Za-z0-9_./-]+\.(py|rs|c|h|md|toml|sh|spec|yml|json):' &&
+  fail "it has test counts, to-dos, phases or migrations, or a file list; those belong in the hand-back."
+printf '%s\n' "$msg" | grep -qE '\bADR[ -]?[0-9]+|private/|\.agent-outputs|\bvault\b' &&
+  fail "it names the private notes (an ADR, private/, the vault); say what changed for players instead."
+exit 0

@@ -7,7 +7,6 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import cairo
-import numpy as np
 from PIL import Image
 
 from . import menusans

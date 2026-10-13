@@ -90,10 +90,12 @@ WRAPS = {
 
 @pytest.fixture(scope="module")
 def x360() -> bytes:
-    old_repo = os.environ.get("WOZMOD_OLD_REPO")
-    program = Path(old_repo or "", "work/donors/wo2-x360/default.pe")
-    if not old_repo or not program.is_file():
-        pytest.skip("set WOZMOD_OLD_REPO to a checkout holding the decrypted X360 program")
+    candidates = [Path(os.environ[name], *parts, "wo2-x360/default.pe")
+                  for name, parts in (("WOZMOD_DONORS", ()), ("WOZMOD_OLD_REPO", ("work", "donors")))
+                  if os.environ.get(name)]
+    program = next((p for p in candidates if p.is_file()), None)
+    if program is None:
+        pytest.skip("set WOZMOD_DONORS (or WOZMOD_OLD_REPO) to a folder holding the decrypted X360 program")
     return program.read_bytes()
 
 

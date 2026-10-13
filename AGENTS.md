@@ -50,6 +50,11 @@ Run `uv run pytest -q`. Bugs worth naming here are a shifted offset, a dropped
 translation row, and an edit over the wrong stock bytes. Synthetic bytes in
 `tmp_path` cover formats and patch logic. Use stock or donor files only for
 what synthetic bytes cannot show, and skip when they are absent. Slow tests run only behind a `WOZMOD_<NAME>=1` skipif.
+Input paths come from `[tests]` in `work/harness.toml` (see `tests/conftest.py`).
+`tools/verify.sh` also runs the slow ones; run it before handing back a change to
+the runtime, the art or the install. The hooks in `tools/githooks/` lint each
+commit and test each push on the pushed commits alone, in `.worktrees/pre-push`
+(`git config core.hooksPath tools/githooks` on a new clone).
 
 ## Commits
 

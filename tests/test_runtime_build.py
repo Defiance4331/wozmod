@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from wozmod.install import STOCK_FILES
+from wozmod.runtime import build
 from wozmod.runtime import english_runtime as runtime
 
 
@@ -163,7 +165,6 @@ def test_compiler_prefers_native_and_falls_back_to_pinned_docker(
 def test_build_options_do_not_drop_preview_edits_or_runtime_defines(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, options: dict, expected_defines: tuple,
 ) -> None:
-    from wozmod.runtime import build
 
     stock = b"synthetic stock image"
     source = tmp_path / "stock.exe"
@@ -263,6 +264,21 @@ def test_test_build_keeps_the_harness_mailbox_version_and_size(compiled_test_dll
 def test_repeated_dll_builds_do_not_add_wall_clock_timestamps(compiled_test_dlls: tuple[bytes, bytes]) -> None:
     first, second = compiled_test_dlls
     assert first == second
+
+
+def test_every_edit_and_hook_sits_on_the_supported_stock_exe(tmp_path: Path, monkeypatch) -> None:
+    """Bug: an edit or hook prologue sits over the wrong stock bytes (a shifted address), or overlaps another,
+    in a release or development build; the DLL build against the real exe is the oracle, minus the compiler."""
+    exe = Path(os.environ.get("WOZMOD_GAME") or "", "OROCHI_Z.exe")
+    if not exe.is_file():
+        pytest.skip("set WOZMOD_GAME to the stock game folder")
+    stock = exe.read_bytes()
+    assert (len(stock), hashlib.sha256(stock).hexdigest()) == STOCK_FILES["OROCHI_Z.exe"]
+    compiled = []
+    monkeypatch.setattr(build, "compile_dll", lambda path, header, defines: compiled.append(defines))
+    for options in ({}, {"log": True, "preview": True, "test": True, "render_distance": True}):
+        build.build_dll(exe, tmp_path / "d3d9.dll", **options)
+    assert len(compiled) == 2
 
 
 def test_xbox_prompt_writes_land_on_the_stock_icon_width_and_advance_bytes() -> None:

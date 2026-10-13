@@ -11,8 +11,7 @@ from wozmod.formats.linkdata import (
     decoded_member, entry_bytes, moz_entries, parse_index, wo1_entries, wo2_members,
 )
 from wozmod.formats.scripts import (
-    DONOR_LETTERS, DIALOG_SUFFIX, EVENT_LINE, SECTIONS,
-    Line, Script, ScriptError, Table, caption_cues, donor_text,
+    Script, ScriptError, caption_cues, donor_text,
     event_lines, mesc_blocks, parse_script, quote_tables, quote_text,
 )
 

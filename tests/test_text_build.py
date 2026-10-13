@@ -10,8 +10,22 @@ from pathlib import Path
 
 import pytest
 
-from wozmod.text.build import TableBuildError, build_table, name_parts, table_index, table_pairs
+from wozmod.text.build import TableBuildError, _load_data, build_table, name_parts, table_index, table_pairs
 from wozmod.text.stock import resolve_stock_ref, stock_strings
+
+TABLE = Path(__file__).resolve().parents[1] / "data/text/table.json"
+# The shipped table's rows: their count and the SHA-256 of their sorted keys, one per line.
+ROW_COUNT = 23924
+ROW_KEYS_SHA256 = "ce047999a171984c7003413b3ed3f3415e6d3b61add3de5db421251865db1064"
+
+
+def test_shipped_table_is_valid_and_keeps_every_row() -> None:
+    # Bug: a hand edit to data/text/table.json drops, duplicates or rekeys a row, or breaks the schema; the
+    # row's line stays Japanese, or the install fails on the player's machine. The build checks only at install.
+    keys = sorted(row["key"] for row in _load_data(TABLE)["rows"])
+    found = (len(keys), hashlib.sha256("\n".join(keys).encode()).hexdigest())
+
+    assert found == (ROW_COUNT, ROW_KEYS_SHA256), f"rows added or removed; if on purpose, pin {found}"
 
 
 def _token(role: str) -> bytes:

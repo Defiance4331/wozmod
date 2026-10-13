@@ -1,0 +1,12 @@
+#!/bin/sh
+# Re-stamp the commit just made in UTC, so commits never record the local timezone.
+# Also installed as post-merge. Rebuilds HEAD with the same tree, parents, people and message.
+[ "$(git log -1 --format='%ad %cd' --date=format:%z)" = "+0000 +0000" ] && exit 0
+old=$(git rev-parse HEAD)
+parents=$(git log -1 --format=%P | sed 's/[^ ][^ ]*/-p &/g')
+new=$(git cat-file commit HEAD | sed '1,/^$/d' |
+  GIT_AUTHOR_NAME="$(git log -1 --format=%an)" GIT_AUTHOR_EMAIL="$(git log -1 --format=%ae)" \
+  GIT_COMMITTER_NAME="$(git log -1 --format=%cn)" GIT_COMMITTER_EMAIL="$(git log -1 --format=%ce)" \
+  GIT_AUTHOR_DATE="@$(git log -1 --format=%at) +0000" GIT_COMMITTER_DATE="@$(git log -1 --format=%ct) +0000" \
+  git commit-tree "$(git rev-parse HEAD^{tree})" $parents) &&
+git update-ref -m "re-stamp in UTC" HEAD "$new" "$old"

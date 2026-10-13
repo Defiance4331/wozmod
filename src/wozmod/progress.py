@@ -7,7 +7,6 @@ process the install attaches a queue that the parent drains. Both front ends rea
 from __future__ import annotations
 
 import os
-import queue
 import sys
 import threading
 import time

@@ -30,7 +30,7 @@ from .hires import HIRES_OVERLAY, HIRES_RIGHT_GROW, hires_blob
 from wozmod.runtime.latin_font import CELL, LATIN_GLYPH
 from wozmod.donors import WO1, X360, extract_donor, verify_file
 from wozmod.formats.textures import (
-    G1T_TEXTURE_HEADER, G1tFile, parse_g1t, parse_texture_package, x360_g1t,
+    G1T_TEXTURE_HEADER, G1tFile, parse_g1t, parse_texture_package,
 )
 
 REPO = resources.root()
@@ -2573,7 +2573,7 @@ def main(argv: list[str] | None = None) -> int:
     if working is not None:
         LZP2_CACHE = args.cache_dir or working / "lzp2-cache"
     try:
-        selected = set_review_variants(args.variant)
+        set_review_variants(args.variant)
     except ValueError as error:
         parser.error(str(error))
     if args.variant and args.hires != "vector":

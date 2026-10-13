@@ -1,6 +1,5 @@
 """Differential guard for the active font renderers."""
 
-import json
 import os
 from pathlib import Path
 import subprocess

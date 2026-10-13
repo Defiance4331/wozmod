@@ -24,7 +24,10 @@ native = ["wozmod-native"]
 wozmod-native = { path = "native" }
 
 [dependency-groups]
-dev = ["pytest>=9.0.2,<10"]
+dev = [
+    "pytest>=9.0.2,<10",
+    "ruff>=0.15.12,<1",
+]
 build = ["pyinstaller>=6.19,<7"]
 
 [tool.setuptools.packages.find]
@@ -33,3 +36,16 @@ where = ["src"]
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
+
+[tool.ruff]
+src = ["src", "tests", "tools"]
+extend-exclude = ["work", "build", "native"]
+
+[tool.ruff.lint]
+# Pyflakes (unused or undefined names) and the bugbear checks that find real bugs here. B905 (zip without
+# strict) waits for the shifted-pair zips to become pairwise; B023 and B019 only flagged safe code.
+select = ["F", "B"]
+ignore = ["B007", "B019", "B023", "B905"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["menusans.Axes"]  # a frozen dataclass, safe as a default
