@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Stage a disposable MOZ harness run under work/runtime-tests/.
 
-The run gets a reflinked copy of the stock backup, the install's d3d9.dll and wozmod/ folder,
-the template Proton prefix and Steam runtime, a seeded save and a game.sha256 over everything
-launch.sh must find unchanged. Machine paths come from the ignored work/harness.toml.
+The run gets links to the stock backup's files, reflinks of the install's d3d9.dll and wozmod/ folder (checked
+against the installer's record), overlay folders over the template Proton prefix and Steam runtime, a seeded save
+and a game.sha256 over the mod files launch.sh must find unchanged. Machine paths come from the ignored
+work/harness.toml.
 """
 
 from __future__ import annotations
@@ -29,6 +30,13 @@ STOCK_HASHED = ["OROCHI_Z.exe", *(f"LINKDATA{n}.{ext}" for n in "123" for ext in
 
 
 HASH_CACHE = WORK / "hash-cache.json"
+MANIFEST = "wozmod/install.json"  # the installer's record of every file it wrote, with its SHA-256
+# the mod's own settings, as its Settings menu writes them to wozmod/settings.ini: section.key -> allowed values
+SETTINGS = {"language.text": ("english", "japanese"), "language.voice": ("english", "japanese"),
+            "camera.fov": None, "camera.moving_fix": ("on", "off"), "display.fps": ("60", "120"),
+            "display.distance": ("on", "off")}
+OVERLAID = ("prefix", "steamrt")  # template parts a run sees through an overlay instead of a copy
+EXTRAS = {"wozmod/review.bin"}  # test-only files a run may hold beyond the record: the `review` reference
 
 
 def sha256(path: Path) -> str:
@@ -39,20 +47,26 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def cached_sha256(path: Path, cache_file: Path = HASH_CACHE) -> str:
-    """sha256 of a read-only stock file, remembered by path, size, mtime and inode; any change rehashes.
-    Shortcut: a file edited in place with its size and mtime restored is not noticed; keep the stock backup read-only."""
-    info = path.stat()
-    key, stamp = str(path.resolve()), [info.st_size, info.st_mtime_ns, info.st_ino]
+def cached_sha256s(paths: list[Path], cache_file: Path = HASH_CACHE) -> list[str]:
+    """sha256 of each file, remembered by path, size, mtime and inode; any change rehashes. The misses are hashed in
+    threads and the cache is written once.
+    Shortcut: a file edited in place with its size and mtime restored is not noticed; keep the stock backup and
+    installs read-only."""
     cache = json.loads(cache_file.read_text()) if cache_file.is_file() else {}
-    if (hit := cache.get(key)) and hit["stamp"] == stamp:
-        return hit["sha256"]
-    cache[key] = {"stamp": stamp, "sha256": sha256(path)}
-    cache_file.parent.mkdir(parents=True, exist_ok=True)
-    temporary = cache_file.with_suffix(".next")
-    temporary.write_text(json.dumps(cache, indent=1) + "\n")
-    temporary.replace(cache_file)
-    return cache[key]["sha256"]
+    keys = []
+    for path in paths:
+        info = path.stat()
+        keys.append((str(path.resolve()), [info.st_size, info.st_mtime_ns, info.st_ino]))
+    missing = [(key, stamp) for key, stamp in keys if (cache.get(key) or {}).get("stamp") != stamp]
+    if missing:
+        with ThreadPoolExecutor() as pool:
+            for (key, stamp), digest in zip(missing, pool.map(lambda m: sha256(Path(m[0])), missing)):
+                cache[key] = {"stamp": stamp, "sha256": digest}
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        temporary = cache_file.with_suffix(".next")
+        temporary.write_text(json.dumps(cache, indent=1) + "\n")
+        temporary.replace(cache_file)
+    return [cache[key]["sha256"] for key, _ in keys]
 
 
 def reflink(source: Path, target: Path) -> None:
@@ -68,12 +82,51 @@ def stock_backup() -> Path:
     return stock
 
 
-def prepare(name: str, install: Path, dll: Path | None, save: str, cache_file: Path = HASH_CACHE) -> Path:
+def installed_files(install: Path, cache_file: Path = HASH_CACHE) -> dict[str, str]:
+    """The install's files and their SHA-256, each matching the installer's own record, so a run plays what a
+    player's install holds and nothing else (EXTRAS aside)."""
+    try:
+        listed = json.loads((install / MANIFEST).read_text())["files"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ValueError(f"{install} has no installer record {MANIFEST}; stage a folder `wozmod install` wrote") from exc
+    names = sorted(p.relative_to(install).as_posix() for p in [install / "d3d9.dll", *(install / "wozmod").rglob("*")]
+                   if p.is_file())
+    found = dict(zip(names, cached_sha256s([install / f for f in names], cache_file)))
+    found.pop(MANIFEST)
+    wrong = sorted(f for f in set(found) | set(listed)
+                   if f not in EXTRAS and found.get(f) != listed.get(f))
+    if wrong:
+        raise ValueError(f"{install} differs from its installer record at: {', '.join(wrong[:8])}")
+    return found
+
+
+def settings_ini(settings: list[str]) -> str:
+    """settings.ini for section.key=value pairs, the file a player's earlier session left (Windows INI, CRLF)."""
+    sections: dict[str, list[str]] = {}
+    for pair in settings:
+        key, _, value = pair.partition("=")
+        allowed = SETTINGS.get(key, ())
+        if key not in SETTINGS or (value not in allowed if allowed else not value.isdigit()):
+            raise ValueError(f"setting {pair!r}: use one of {', '.join(SETTINGS)} with a value the Settings menu writes")
+        section, _, name = key.partition(".")
+        sections.setdefault(section, []).append(f"{name}={value}")
+    return "".join(f"[{section}]\r\n" + "".join(f"{line}\r\n" for line in lines) for section, lines in sections.items())
+
+
+def prepare(name: str, install: Path, dll: Path | None, save: str, cache_file: Path = HASH_CACHE,
+            settings: list[str] = (), replace: list[str] = ()) -> Path:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}", name):
         raise ValueError("run name is a short filename of letters, digits, . _ and -")
+    files = installed_files(install, cache_file)
+    replaced = {}  # an installed file swapped for a working build, as --dll does for d3d9.dll; fixtures.json lists them
+    for pair in replace:
+        listed, _, source = pair.partition("=")
+        if listed not in files or listed == "d3d9.dll":
+            raise ValueError(f"--file {pair!r}: name a file of the install record, such as wozmod/table.bin=PATH "
+                             "(d3d9.dll goes in with --dll)")
+        replaced[listed] = Path(source).resolve(strict=True)
+    ini = settings_ini(settings) if settings else None
     dll = (dll or install / "d3d9.dll").resolve(strict=True)
-    if not (install / "wozmod").is_dir() or not dll.is_file():
-        raise ValueError(f"{install} needs d3d9.dll (or --dll) and a wozmod/ folder")
     template = WORK / "runtime-tests/_template"
     fixture = WORK / "saves" / save
     meta = json.loads((fixture / "meta.json").read_text())
@@ -87,31 +140,43 @@ def prepare(name: str, install: Path, dll: Path | None, save: str, cache_file: P
     (root / "home/.steam").mkdir(parents=True)
     for sdk in ("sdk32", "sdk64"):
         (root / "home/.steam" / sdk).symlink_to((Path.home() / ".steam" / sdk).resolve(strict=True))
-    reflink(stock, root / "game")
-    shutil.rmtree(root / "game/moz-english", ignore_errors=True)  # the old build's folder
-    reflink(dll, root / "game/d3d9.dll")
-    reflink(install / "wozmod", root / "game/wozmod")
+    # The game reads the stock files through links into the read-only backup (it only adds files of its own), so a
+    # run copies none of its 5.5 GB and launch.sh hashes only the mod's files.
     game = root / "game"
-    # d3d9.dll and wozmod/ are hashed fresh, in threads beside the prefix copies; the stock files come from the
-    # read-only backup (the run's copies are reflinks of it) through the cache
-    fresh = ["d3d9.dll", *sorted(p.relative_to(game).as_posix() for p in (game / "wozmod").rglob("*") if p.is_file())]
-    with ThreadPoolExecutor() as pool:
-        digests = pool.map(lambda f: sha256(game / f), fresh)
-        for part in ("prefix", "steamrt"):
-            reflink(template / part, root / part)
-        (root / "prefix/pfx/drive_c/Games/Musou Orochi Z").unlink(missing_ok=True)
-        (root / "prefix/pfx/drive_c/Games/Musou Orochi Z").symlink_to(root / "game")
-        shutil.copyfile(template / "launch.sh", root / "launch.sh")
-        shutil.copymode(template / "launch.sh", root / "launch.sh")
-        (root / "game.sha256").write_text(
-            "".join(f"{cached_sha256(stock / f, cache_file)}  {f}\n" for f in STOCK_HASHED)
-            + "".join(f"{digest}  {f}\n" for digest, f in zip(digests, fresh)))
+    game.mkdir()
+    for entry in sorted(stock.iterdir()):
+        if entry.name not in ("d3d9.dll", "wozmod", "moz-english"):  # moz-english: the old build's folder
+            (game / entry.name).symlink_to(entry)
+    reflink(dll, game / "d3d9.dll")
+    reflink(install / "wozmod", game / "wozmod")
+    for listed, source in replaced.items():
+        (game / listed).unlink()  # never write through the install's shared extent
+        reflink(source, game / listed)
+    if ini:  # the game rewrites it, so game.sha256 leaves it out
+        (game / "wozmod/settings.ini").write_text(ini, newline="")
+    files |= dict(zip(["d3d9.dll", MANIFEST, *replaced], cached_sha256s([dll, install / MANIFEST, *replaced.values()],
+                                                                       cache_file)))
+    # The prefix and the Steam runtime are the template seen through an overlay (game_harness.py run): the run's
+    # prefix/ and steamrt/ hold only what the run writes, here the game link and the save.
+    for part in OVERLAID:
+        (root / part).mkdir()
+    link = root / "prefix/pfx/drive_c/Games/Musou Orochi Z"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(game)
+    shutil.copyfile(template / "launch.sh", root / "launch.sh")
+    shutil.copymode(template / "launch.sh", root / "launch.sh")
+    (root / "game.sha256").write_text("".join(f"{files[f]}  {f}\n" for f in sorted(files)))
     target = root / SAVE
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.unlink(missing_ok=True)  # never write through the template's shared extent
     target.write_bytes(data)
+    stock_sha256 = dict(zip(STOCK_HASHED, cached_sha256s([stock / f for f in STOCK_HASHED], cache_file)))
     (root / "fixtures.json").write_text(json.dumps(
-        {"save": {"name": save, "sha256": meta["save_sha256"]}, "dll": str(dll), "install": str(install)},
+        {"save": {"name": save, "sha256": meta["save_sha256"]}, "dll": str(dll), "install": str(install),
+         "version": json.loads((install / MANIFEST).read_text()).get("version"),
+         "extras": sorted(EXTRAS & set(files)), "settings": list(settings),
+         "replaced": {listed: str(source) for listed, source in replaced.items()},
+         "stock": {"path": str(stock), "sha256": stock_sha256},
+         "overlays": {part: str(template / part) for part in OVERLAID}},
         indent=2) + "\n")
     return root
 
@@ -122,9 +187,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--install", type=Path, required=True, help="directory holding d3d9.dll and wozmod/")
     parser.add_argument("--dll", type=Path, help="use this d3d9.dll instead of the install's, such as instrumented/d3d9.dll")
     parser.add_argument("--save", default="full-unlock", help="fixture under work/saves (default full-unlock)")
+    parser.add_argument("--setting", action="append", default=[], metavar="SECTION.KEY=VALUE",
+                        help="a mod setting the player saved earlier, such as display.fps=120 (default: none, as installed)")
+    parser.add_argument("--file", action="append", default=[], metavar="INSTALLED=PATH",
+                        help="swap one installed file for a working build, such as wozmod/table.bin=work/x/table.bin")
     args = parser.parse_args(argv)
     try:
-        print(prepare(args.name, args.install.resolve(strict=True), args.dll, args.save))
+        print(prepare(args.name, args.install.resolve(strict=True), args.dll, args.save, settings=args.setting,
+                      replace=args.file))
         return 0
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as exc:
         print(f"prepare_run: {exc}", file=sys.stderr)

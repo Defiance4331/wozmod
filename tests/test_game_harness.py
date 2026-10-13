@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -124,10 +125,6 @@ def test_xenia_launch_keeps_native_frame_and_save_inside_its_storage(tmp_path, m
     game = root / "game"
     game.mkdir(parents=True)
     (root / "launch.sh").write_text("exit 0\n")
-    save = root / harness.SAVE
-    save.parent.mkdir(parents=True)
-    original = bytes([0x40]) * harness.SAVE_SIZE
-    save.write_bytes(original)
     calls = []
 
     def launch(command, **kwargs):
@@ -143,7 +140,6 @@ def test_xenia_launch_keeps_native_frame_and_save_inside_its_storage(tmp_path, m
     assert "-F" not in command
     for flag in ("--unshare-net", "--unshare-pid", "--unshare-ipc", "--die-with-parent"):
         assert flag in command
-    assert save.read_bytes() == original
     session = json.loads((root / "evidence/session.json").read_text())
     assert session["render_size"] == session["output_size"] == [1280, 720]
     assert not session["fsr"]
@@ -346,12 +342,8 @@ def test_test_mailbox_screen_wait_and_say(tmp_path, monkeypatch):
         with pytest.raises(RuntimeError, match="not in a battle"):
             harness.perform(tmp_path, {"action": "lose"})
         assert harness.perform(tmp_path, {"action": "script", "number": 12}) == {"queued": 12}
-        assert harness.perform(tmp_path, {"action": "battle", "number": 3}) == {"next_battle_stage": 3}
-        with pytest.raises(ValueError, match="0 to 143"):
-            harness.perform(tmp_path, {"action": "battle", "number": 144})
         harness.perform(tmp_path, {"action": "unlock"})
-        assert received == [(1, b"\x84\x40da"), (2, "\u6575".encode("cp932")), (3, 7), (3, 8), (4, 12), (4, 12), (6, 3),
-                            (5, 0)]
+        assert received == [(1, b"\x84\x40da"), (2, "\u6575".encode("cp932")), (3, 7), (3, 8), (4, 12), (4, 12), (5, 0)]
     finally:
         stop.set()
         thread.join()
@@ -429,16 +421,6 @@ def test_tour_checks_screens_and_diff(tmp_path):
     row, = harness.tour_diff(*runs)
     assert row["changed"] and row["gone"] == ["Sound"] and row["new"] == ["Sounds"]
     assert row["image_change"] == round(200 / 255, 4)
-
-
-def test_saves_run_at_1080p():
-    save = bytearray(harness.SAVE_SIZE)
-    save[0], save[harness.SAVE_MODE], save[harness.SAVE_SUM] = 200, 1, 201  # 800x450 and its sum
-    fixed = harness.at_1080p(bytes(save))
-    assert fixed[harness.SAVE_MODE] == 9 and len(fixed) == len(save)
-    assert int.from_bytes(fixed[harness.SAVE_SUM:harness.SAVE_SUM + 4], "little") == 209
-    with pytest.raises(ValueError):
-        harness.at_1080p(b"short")
 
 
 def test_renderer_review_refuses_rectangles_that_wrap_the_game_uv_fields():
@@ -530,7 +512,8 @@ def test_route_library_reaches_every_screen_and_back_to_the_menu():
     names = set(harness.ROUTE_SCREENS)
     assert {n for edge in harness.ROUTE_EDGES for n in edge[:2]} == names
     dead_ends = {"story-z-narration", "story-z-still", "story-z-still-2",  # story pages: no verified way out, so a check spec lists them last
-                 "story-narration", "story-wei-pre-battle", "story-wei-battle", "story-victory-still"}
+                 "story-narration", "story-wei-pre-battle", "story-wei-battle", "story-victory-still",
+                 "story-stage-camp", "story-stage-scenario", "story-pre-battle", "story-battle"}
     for start in names:
         for target in names - {"boot"} | {"menu"}:
             try:
@@ -906,13 +889,13 @@ def test_check_orders_a_screen_that_needs_a_stage_through_the_scenario_select():
     """Bug: a screen needing stage 5 is checked on the stage an earlier screen loaded, because the route
     from inside the battle never passes the scenario select that picks the stage."""
     legs = lambda at, loaded, battle: harness.check_legs(at, loaded, "briefing", battle, None)
-    assert legs("pause", 1, 5)[0][0] == "dream-select"
-    assert legs("pause", 5, 5)[0] == ["briefing"] and legs("pause", 1, None)[0] == ["briefing"]  # the stage it has
-    assert legs("menu@dream", None, 5)[3] == 5  # the route plays the stage the screen names
-    assert legs("pause", 1, 5)[3] == 5
-    screens = [{"name": "a", "route": "briefing", "battle": 5}, {"name": "b", "route": "pre-battle"},
-               {"name": "c", "route": "pre-battle", "battle": 5}]
-    # a loads stage 5; c is next to it on that stage, b (stage 1) goes back to the scenario select, so it comes last
+    assert legs("pause", 40, 45)[0][0] == "dream-select"
+    assert legs("pause", 45, 45)[0] == ["briefing"] and legs("pause", 40, None)[0] == ["briefing"]  # the stage it has
+    assert legs("menu@dream", None, 45)[3] == 45  # the route plays the stage the screen names
+    assert legs("pause", 40, 45)[3] == 45
+    screens = [{"name": "a", "route": "briefing", "battle": 45}, {"name": "b", "route": "pre-battle"},
+               {"name": "c", "route": "pre-battle", "battle": 45}]
+    # a loads stage 45; c is next to it on that stage, b (stage 40) goes back to the scenario select, so it comes last
     assert [sc["name"] for sc in harness.order_screens(screens, "menu@dream")] == ["a", "c", "b"]
 
 
@@ -924,9 +907,9 @@ def test_check_driver_goes_back_to_the_scenario_select_for_another_stage(tmp_pat
     monkeypatch.setattr(harness, "route", lambda root, name, stage: legs.append((name, stage)) or 0)
     monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
     driver = harness.CheckDriver(tmp_path)
-    driver.loaded = 1
-    driver.route("briefing", battle=5)
-    assert legs == [("dream-select", 5), ("briefing", 5)] and driver.loaded == 5
+    driver.loaded = 40
+    driver.route("briefing", battle=45)
+    assert legs == [("dream-select", 45), ("briefing", 45)] and driver.loaded == 45
 
 
 def test_check_only_runs_the_named_screens_and_refuses_a_misspelt_one(tmp_path, monkeypatch):
@@ -1057,3 +1040,107 @@ def test_route_leaves_a_gallery_movie_between_two_captions_and_keeps_its_place_a
     journal = tmp_path / "evidence/actions.jsonl"
     journal.write_text(json.dumps({"request": {"action": "unlock"}, "response": {"ok": True}}) + "\n")
     assert harness.route_position(tmp_path) == "gallery-movies"
+
+
+def test_stage_keys_land_on_every_stage_by_the_games_own_cursor_rules():
+    """Bugs: a Left where a Right belongs, a row and a column swapped, or a story stage put in the wrong slot, so a
+    route confirms another stage than the one it names. The oracle replays the keys with the select screens' rules
+    (Dream 0x548200: a row of 10 wraps, Up and Down step 10 over 40; chapter screen 0x58BC50: slot c sits over c + 15)."""
+    def dream(cursor, keys):
+        for key in keys:
+            row, col = divmod(cursor, 10)
+            col = (col + {"Right": 1, "Left": -1}.get(key, 0)) % 10
+            row = (row + {"Down": 1, "Up": -1}.get(key, 0)) % 4
+            cursor = row * 10 + col
+        return cursor
+    stages = [s for c in range(40) for s in [c + 40 if c < 28 else c + 104]]
+    wrong = [(start, stage) for start in range(40) for stage in stages
+             if stages[dream(start, harness.dream_keys(stage, start))] != stage]
+    assert not wrong
+    left = harness.STORIES
+    for stage in [*range(40), *range(72, 132)]:
+        rows, chapter = harness.story_keys(stage)
+        column = 1 if "Right" in rows else 0
+        row = (rows.count("Down") - rows.count("Up")) % (5 if column else 4)
+        slot = chapter.count("Right") + 15 * chapter.count("Down")
+        if column == 0:
+            got = left[row][slot if slot < 8 else slot - 8]
+        else:
+            got = 32 + slot if row == 4 else 8 * row + slot
+        assert got == stage, (stage, rows, chapter)
+    with pytest.raises(ValueError):
+        harness.dream_keys(1, 0)
+    with pytest.raises(ValueError):
+        harness.story_keys(45)
+
+
+def test_staged_run_sees_the_template_prefix_and_runtime_through_overlays_on_its_own_folders(tmp_path, monkeypatch):
+    """Bug: the overlays are missing, or mounted before the run's own bind hides them, so Proton finds an empty
+    prefix (or writes into the shared template) and the run plays a different Wine setup than the template's."""
+    monkeypatch.setattr(harness, "REPO", tmp_path)
+    root = tmp_path / "work/runtime-tests/overlay"
+    (root / "game").mkdir(parents=True)
+    (root / "launch.sh").write_text("exit 0\n")
+    template = tmp_path / "work/runtime-tests/_template"
+    overlays = {part: str(template / part) for part in ("prefix", "steamrt")}
+    (root / "fixtures.json").write_text(json.dumps({"overlays": overlays}))
+    calls = []
+    monkeypatch.setattr(harness.subprocess, "Popen", lambda command, **kwargs: calls.append(command) or
+                        SimpleNamespace(wait=lambda: 0, poll=lambda: 0, returncode=0))
+    monkeypatch.setattr(harness, "start_audio", lambda root: None)
+    harness.main(["run", "--root", str(root), "--game", str(root / "game"), "--authorize-launch", "--target", harness.TARGET])
+    command = next(c for c in calls if "bwrap" in c)
+    after = command.index("--bind") + 3  # the run's own bind comes first
+    for part, lower in overlays.items():
+        at = command.index(lower) - 1
+        assert at > after and command[at:at + 6] == ["--overlay-src", lower, "--overlay", str(root / part),
+                                                      str(root / "overlay-work" / part), str(root / part)]
+
+
+def test_check_report_names_the_shortcuts_behind_each_capture(tmp_path, monkeypatch):
+    """Bugs: a results screen reached by `win` (seconds of battle, no KOs), or any screen after `unlock`, is reported
+    as plain play, so its capture passes for a typical one; or a later screen keeps a one-off shortcut's label."""
+    (tmp_path / "evidence").mkdir()
+    monkeypatch.setattr(harness, "route", lambda root, name, stage: 0)
+    monkeypatch.setattr(harness, "ask", lambda root, request: {"ok": True})
+    driver = harness.CheckDriver(tmp_path)
+
+    def visit(at, name):
+        harness.write_json(tmp_path / "evidence/route.json", {"at": at, "journal": 0})
+        driver.route(name)
+        driver.capture()
+
+    visit("pause", "save-prompt")  # through `win` and the results
+    visit("customize-fusion-officers", "customize-fusion-weapons")  # sends `unlock`
+    visit("menu@story", "options")
+    assert driver.shortcuts == {"save-prompt": ["win"], "customize-fusion-weapons": ["unlock"], "options": ["unlock"]}
+
+
+def test_two_runs_hold_the_two_game_slots_and_a_third_waits(tmp_path, monkeypatch):
+    """Bugs: two runs lock the same slot file (one waits for nothing, or both slots go to one run), or a third run
+    starts while two games are up."""
+    (tmp_path / "work").mkdir()
+    monkeypatch.setattr(harness, "REPO", tmp_path)
+    first, second = harness.take_slot(0.01), harness.take_slot(0.01)
+    third, got = threading.Event(), []
+    thread = threading.Thread(target=lambda: got.append(harness.take_slot(0.01)) or third.set(), daemon=True)
+    thread.start()
+    assert not third.wait(0.3)
+    os.close(first)
+    assert third.wait(2)
+    for fd in (second, *got):
+        os.close(fd)
+
+
+def test_a_resend_loop_sends_nothing_when_its_screen_is_up_already(monkeypatch):
+    """Bug: after `win` on a stage with no victory event the results are up at once, and the Escape meant to skip the
+    event lands on the results screen."""
+    sent = []
+    results = {"textures": [{"texture": "4079.52", "caller": "0x1"}], "texts": []}
+    monkeypatch.setattr(harness, "ask", lambda root, request, *a: sent.append(request) or results)
+    monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
+    until = {**harness.ROUTE_SCREENS["results"], "every": 3}
+    assert harness.drive_step(Path("."), ["Escape"], until, None, "skip", quick=True, before=results) is results
+    assert sent == []
+    event = {"textures": [], "texts": [{"caller": "0x49dace", "text": "a", "x": 0, "y": 0}]}
+    assert harness.shows(event, {"any": [harness.ROUTE_SCREENS["results"], {"caller": "0x49dace"}]})

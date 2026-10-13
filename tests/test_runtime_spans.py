@@ -9,6 +9,7 @@ import pytest
 from wozmod.runtime.english_runtime import (
     ENGLISH,
     ONE_ROW,
+    TEST_HOOKS,
     TWO_ROWS,
     RuntimeBuildError,
     check_spans,
@@ -104,7 +105,7 @@ def test_test_only_hook_does_not_leak_into_release_or_log_builds(
     hooks = hook_sites(defines)
     ids = [hook[2] for hook in hooks]
     assert len(ids) == len(set(ids))
-    assert (25 in ids) is test_enabled
+    assert {hook[2] for hook in TEST_HOOKS} <= set(ids) if test_enabled else set(ids).isdisjoint(hook[2] for hook in TEST_HOOKS)
     assert next(h for h in hooks if h[2] == 1) == (
         0x54B7D0, bytes.fromhex("83ec348b442448"), 1, 0, True,
     )

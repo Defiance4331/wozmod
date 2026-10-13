@@ -101,9 +101,7 @@ ALWAYS_HOOKS = [
 # ENRT_LOG and ENRT_TEST builds only.
 LOG_HOOKS = []
 # ENRT_TEST builds only.
-TEST_HOOKS = [
-    (0x4B12D0, "83ec28 56 33f6", 25, None),     # battle init
-]
+TEST_HOOKS = []
 # Cyrillic surrogate codes 0x8440-0x8444 route to glyphs 2794-2798.
 SURROGATES = str.maketrans({"Ō": "А", "ō": "Б", "Ū": "В", "ū": "Г", "ï": "Д"})
 

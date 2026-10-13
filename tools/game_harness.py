@@ -32,10 +32,8 @@ GAME_PROCESS = "OROCHI_Z.exe"  # /proc/<pid>/comm of the game under Proton
 ADDRESS_LIMIT = 1 << 32  # the game is 32-bit
 MAX_PEEK, MAX_POKE, MAX_PATTERN, MAX_HITS = 65536, 4096, 256, 64
 FIND_CHUNK = 1 << 24  # bytes read at a time by find
-SAVE = "prefix/pfx/drive_c/users/steamuser/Documents/KOEI/Musou OROCHI Z/Savedata/save.dat"
 # save.dat holds the game's state from 0x7FB650 at offset 8, so the resolution index (0x80152D, into
 # the table at 0x6FDE2C) sits at 0x5EE5. At 0x25F24 is the file's byte sum, taken with that 20-byte field zeroed.
-SAVE_SIZE, SAVE_MODE, SAVE_SUM, MODE_1080P = 0x25F48, 0x5EE5, 0x25F24, 9
 # The mailbox of a --test runtime build; english_runtime.c struct test_block.
 TEST_MAGIC, TEST_VERSION = b"ENRT-TEST-BLOCK\0", 2
 TEST_TEXTS, TEST_QUADS, TEST_SETS, TEST_INPUT = 256, 2048, 16, 1024
@@ -49,7 +47,6 @@ RELOAD_SECONDS = 5  # the runtime looks at table.bin about once a second
 TEST_COMMAND_SECONDS = 5  # the game runs a command at its next frame
 # Battle state the stock exe keeps at fixed addresses; see english_runtime.c.
 STAGE, STAGE_DATA, SCRIPT_TABLE, SCRIPT_EVENTS = 0x801AA0, 0x9C8FD4, 0x9C919C, 0x9C91B0
-LAST_STAGE = 0x8F  # stage numbers are LINKDATA2 container indices; 0x90 is no stage and quits the game
 UNSURROGATES = {ord(v): k for k, v in SURROGATES.items()}
 # The virtual pad (run --pad): a uinput Xbox 360 pad, the device Steam Input and xpad present to
 # Wine. Evdev codes: buttons, then (axis, value) presses for the triggers, D-pad and sticks.
@@ -80,17 +77,6 @@ def local_path(root: Path, name: str) -> Path:
     if path.resolve() != path or not path.is_relative_to(root):
         raise ValueError(f"run path must not contain symlinks: {path}")
     return path
-
-
-def at_1080p(save: bytes) -> bytes:
-    """The save with the game's resolution set to 1920x1080, which the game applies at boot."""
-    if len(save) != SAVE_SIZE:
-        raise ValueError(f"save.dat is {len(save)} bytes, not {SAVE_SIZE}")
-    data = bytearray(save)
-    data[SAVE_MODE] = MODE_1080P
-    data[SAVE_SUM:SAVE_SUM + 20] = bytes(20)
-    data[SAVE_SUM:SAVE_SUM + 4] = sum(data).to_bytes(4, "little")
-    return bytes(data)
 
 
 def write_json(path: Path, value: dict) -> None:
@@ -496,7 +482,7 @@ def perform(root: Path, request: dict) -> dict:
     if action == "scripts":
         with open(f"/proc/{game_pid()}/mem", "rb", buffering=0) as memory:
             return stage_scripts(memory.fileno())
-    if action in ("screen", "wait", "say", "notice", "win", "lose", "script", "unlock", "battle", "review"):
+    if action in ("screen", "wait", "say", "notice", "win", "lose", "script", "unlock", "review"):
         with open(f"/proc/{game_pid()}/mem", "r+b", buffering=0) as memory:
             block = test_block(memory.fileno())
             if action == "screen":
@@ -505,15 +491,12 @@ def perform(root: Path, request: dict) -> dict:
                 name, rect = review_request(request["texture"], request["rect"])
                 test_command(memory.fileno(), block, 7, name, struct.pack("<4I", *rect))
                 return {"review": request["texture"], "rect": rect, "reference": "top", "vector": "bottom"}
-            if action in ("script", "battle"):
-                number, highest = request["number"], LAST_STAGE if action == "battle" else 0xFF
-                if not isinstance(number, int) or not 0 <= number <= highest:
-                    raise ValueError(f"{action} takes a number from 0 to {highest}")
-                if action == "script":  # waits out a script already playing
-                    test_command(memory.fileno(), block, 4, number, busy=10)
-                else:
-                    test_command(memory.fileno(), block, 6, number)
-                return {"queued": number} if action == "script" else {"next_battle_stage": number}
+            if action == "script":
+                number = request["number"]
+                if not isinstance(number, int) or not 0 <= number <= 0xFF:
+                    raise ValueError("script takes a number from 0 to 255")
+                test_command(memory.fileno(), block, 4, number, busy=10)  # waits out a script already playing
+                return {"queued": number}
             if action == "unlock":
                 test_command(memory.fileno(), block, 5)
                 return {"officers": "level 99, four weapons each"}
@@ -801,9 +784,29 @@ def ended(root: Path) -> str | None:
     return f"the run has ended: {record.get('reason', 'unknown')}{code}; last actions: {last}"
 
 
+# Two games may run at once: a run holds one of these for its whole life. `flock work/.game-run.lock run`
+# holds the first; `run --slot` takes whichever is free.
+SLOTS = ("work/.game-run.lock", "work/.game-run.1.lock")
+
+
+def take_slot(poll: float = 1.0) -> int:
+    """Wait for a free game slot and lock it; the descriptor stays open, so the lock lasts until the process ends."""
+    while True:
+        for slot in SLOTS:
+            fd = os.open(REPO / slot, os.O_RDWR | os.O_CREAT, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return fd
+            except BlockingIOError:
+                os.close(fd)
+        time.sleep(poll)
+
+
 def run(root: Path, args: argparse.Namespace) -> int:
     if not args.authorize_launch:
         raise ValueError("launch needs current-task permission and --authorize-launch")
+    if getattr(args, "slot", False):
+        take_slot()
     game = args.game.resolve(strict=True)
     if not game.is_dir() or not game.is_relative_to(root):
         raise ValueError("--game must be a disposable directory inside --root")
@@ -812,11 +815,6 @@ def run(root: Path, args: argparse.Namespace) -> int:
         raise ValueError("prepare and review a run-local launch.sh first")
     for name in ("tmp", "runtime", "home", "prefix", "steamrt"):
         local_path(root, name).mkdir(mode=0o700, exist_ok=True)
-    save = local_path(root, SAVE)
-    if args.target == TARGET and save.is_file():  # MOZ applies this mode at boot
-        replaced = save.with_name("save.dat.next")
-        replaced.write_bytes(at_1080p(save.read_bytes()))
-        replaced.replace(save)  # a new inode, so a reflinked template never changes
     # Run directories are single-use: never replay stale input after a restart.
     local_path(root, "control").mkdir(mode=0o700)
     local_path(root, "evidence").mkdir(mode=0o700)
@@ -841,6 +839,12 @@ def run(root: Path, args: argparse.Namespace) -> int:
         "--bind", str(root / "runtime"), runtime,
         "--dev", "/dev", "--proc", "/proc",
     ]
+    fixtures = root / "fixtures.json"
+    for part, lower in (json.loads(fixtures.read_text()).get("overlays", {}) if fixtures.is_file() else {}).items():
+        # the template under the run's own folder, which keeps what the run writes (prepare_run.py)
+        upper, scratch = local_path(root, part), local_path(root, f"overlay-work/{part}")
+        scratch.mkdir(parents=True)
+        command += ["--overlay-src", lower, "--overlay", str(upper), str(scratch), str(upper)]
     for device in (
         "/dev/dri", "/dev/nvidia0", "/dev/nvidiactl", "/dev/nvidia-modeset",
         "/dev/nvidia-uvm", "/dev/nvidia-uvm-tools",
@@ -981,8 +985,7 @@ TOUR = [
     (["Down", "Down", "Down", "Return"], {"texture": "4079.169"}, "gallery"),
     (["Escape"], {"texture": MENU}, None),  # cursor on GALLERY
     (["Up", "Up", "Up", "Return"], {"texture": "4094.5"}, None),
-    ({"action": "battle", "number": 1}, None, None),
-    (["Return"], None, None),  # the first scenario; stage 1 plays in its place
+    (["Return"], None, None),  # the first scenario, stage 40
     (["Left"], None, None),  # difficulty wraps, and the save leaves it on CHAOS: three Lefts reach EASY
     (["Left"], None, None),
     (["Left"], None, None),
@@ -1008,7 +1011,7 @@ SWEEP_START = TOUR[:2] + [(["Down", "Down"], None, None)]
 def stage_route(stage: int, dialog: float = 25) -> list:
     return [
         (["Return"], {"texture": "4094.5"}, None),
-        ({"action": "battle", "number": stage}, None, None),
+        ({"stage": stage}, None, None),  # the cursor to its scenario
         *[([key], None, None) for key in ("Return", "Left", "Left", "Left", "Return")],
         (["Return"], {"texture": "4079.170"}, None),
         (["Up", "Return"], {"caller": "0x548f52"}, f"{stage:03d}-briefing"),
@@ -1052,6 +1055,8 @@ def tour_checks(seen: dict) -> dict:
 
 
 def shows(seen: dict, until: dict) -> bool:
+    if "any" in until:  # either fingerprint
+        return any(shows(seen, one) for one in until["any"])
     drawn = {q["texture"] for q in seen["textures"]}
     if "caller" in until:  # `lines`: a text of that many lines; `texts`: at least that many texts of the caller at once
         drawn_by = [t for t in seen["texts"] if t["caller"] == until["caller"]
@@ -1097,6 +1102,8 @@ def drive_step(root: Path, keys: list | dict, until: dict | None, every: float |
             time.sleep(until["gap"])
         return seen
 
+    if every and until and before is not None and "seconds" not in until and shows(before, until):
+        return arrived(before)  # a resend loop whose screen is up already: its key would land on that screen
     while True:
         if sent is None or (every and time.monotonic() - sent > every):
             if sent is not None and until is not None and "seconds" not in until and (seen := drawn()):
@@ -1185,6 +1192,11 @@ ROUTE_SCREENS = {
     "battle-history": {"texture": "4080.38"},  # the entries (caller 0x539f9f) are empty at the start of a battle
     "results": {"texture": "4079.52", "without": "4080.0"},
     "save-prompt": {"caller": "0x54e76f"},  # message box, cursor on NO
+    # any story chapter's camp, chapter screen (one of the strips 4077.30 to 4077.166), pre-battle and battle
+    "story-stage-camp": {"texture": "4060.39"},
+    "story-stage-scenario": {"texture": "|".join(f"4077.{30 + m}" for m in range(137))},
+    "story-pre-battle": {"texture": "4079.168"},
+    "story-battle": {"texture": "4079.148"},
 }
 
 
@@ -1193,7 +1205,53 @@ def slow(screen: str, gap: float = 1.0) -> dict:
     return {**ROUTE_SCREENS[screen], "gap": gap}
 
 
-STAGE_STEP = {"action": "battle", "number": None}  # filled with route --stage
+# A route picks its stage as a player does, on the select screen: no stage is written into the game.
+DREAM_STAGES = [*range(40, 68), *range(132, 144)]  # the Dream grid in cursor order, 10 a row (confirm at 0x5486EF)
+DREAM_STATE = 0xC275E4  # pointer to the Dream select state; its +0x64 is the cursor index
+# The four stories of the story select's left column (0x6D5710): chapter slots 0-7 on the top row, then 16-22 on
+# the row below, where slot 16 + b sits under slot 1 + b. The right column is Z sets 0-3 (stages 8j to 8j + 7) and
+# Orochi (32-39), one row each.
+STORIES = [(107, 121, 90, 96, 82, 79, 108, 130, 76, 117, 88, 98, 127, 72, 125),
+           (119, 97, 85, 95, 112, 99, 126, 128, 92, 77, 123, 104, 74, 73, 100),
+           (93, 86, 110, 109, 118, 91, 116, 129, 80, 105, 103, 106, 122, 75, 87),
+           (81, 124, 115, 89, 84, 94, 102, 131, 114, 83, 78, 120, 111, 113, 101)]
+DREAM_STEP, STORY_STEP, CHAPTER_STEP = {"stage": "dream"}, {"stage": "story"}, {"stage": "chapter"}  # filled by route
+
+
+def title_index(stage: int) -> int:
+    """The stage's title index m, shared by every stage-name texture: the chapter strip is 4077.(30 + m)."""
+    return stage if stage < 68 else stage - 4 if stage <= 128 else 124 if stage <= 131 else stage - 7
+
+
+def wrapped(delta: int, size: int, ahead: str, back: str) -> list[str]:
+    """The fewest keys that move a cursor ``delta`` places on a wrapping row or column of ``size``."""
+    delta %= size
+    return [ahead] * delta if delta <= size // 2 else [back] * (size - delta)
+
+
+def dream_keys(stage: int, cursor: int) -> list[str]:
+    if stage not in DREAM_STAGES:
+        raise ValueError(f"stage {stage} is not a Dream scenario; Dream stages are 40-67 and 132-143")
+    target = DREAM_STAGES.index(stage)
+    return (wrapped(target % 10 - cursor % 10, 10, "Right", "Left")
+            + wrapped(target // 10 - cursor // 10, 4, "Down", "Up"))
+
+
+def story_keys(stage: int) -> tuple[list[str], list[str]]:
+    """The story select keys from its first row (Shu), then the chapter keys from the first chapter."""
+    if stage < 32:
+        return ["Right"] + ["Down"] * (stage // 8), ["Right"] * (stage % 8)
+    if stage < 40:
+        return ["Right", "Up"], ["Right"] * (stage - 32)
+    for row, chapters in enumerate(STORIES):
+        if stage in chapters:
+            slot = chapters.index(stage)
+            return ["Down"] * row, ["Right"] * slot if slot < 8 else ["Right"] * (slot - 7) + ["Down"]
+    raise ValueError(f"stage {stage} is not a story chapter; story stages are 0-39 and 72-131")
+
+
+def strip(stage: int) -> dict:
+    return {"texture": f"4077.{30 + title_index(stage)}"}
 UNLOCK_STEP = {"action": "unlock"}  # every officer gets four weapons: the rest of the run is no longer the plain save
 # (from, to, steps): each step is (keys or one request, screen to wait for); a bare key list is one
 # step that waits for the destination screen. A move up a level that leaves a submenu cursor on the
@@ -1224,7 +1282,7 @@ ROUTE_EDGES = [
     ("dream-select", "menu@dream", ["Escape"]),
     ("menu@gallery", "gallery", ["Return"]),
     ("gallery", "menu@gallery", ["Escape"]),
-    ("dream-select", "battle-camp", [(STAGE_STEP, None), *[([key], None) for key in ("Return", "Left", "Left", "Left",
+    ("dream-select", "battle-camp", [(DREAM_STEP, None), *[([key], None) for key in ("Return", "Left", "Left", "Left",
                                                                                  "Return")],
                                      (["Return"], slow("battle-camp", 2.0))]),  # first scenario, EASY, team; the story camp's plates fade out for seconds after its fingerprint shows
     ("battle-camp", "briefing", ["Up", "Return"]),  # NEXT
@@ -1233,7 +1291,10 @@ ROUTE_EDGES = [
     ("pre-battle", "battle", [(["Up", "Return"], slow("battle", 3.0))]),
     ("battle", "pause", ["Escape"]),
     ("pause", "battle", ["Escape"]),
-    ("battle", "results", [({"action": "win"}, slow("results", 2.0))]),  # the results screen takes no input while it counts up
+    # the results screen takes no input while it counts up; a stage's victory event (caption caller 0x49dace) comes
+    # first and waits, and Escape skips it as a player can (run fid-win, stage 133)
+    ("battle", "results", [({"action": "win"}, {"any": [ROUTE_SCREENS["results"], {"caller": "0x49dace"}]}),
+                           (["Escape"], {**slow("results", 2.0), "every": 3})]),
     ("results", "save-prompt", ["Return"]),
     ("save-prompt", "menu@dream", [(["Return"], None), (["Return"], ROUTE_SCREENS["menu@dream"])]),
     # 1107-B: VS and Survival menus, the options pages
@@ -1325,6 +1386,15 @@ ROUTE_EDGES = [
     ("pre-battle-officers", "pre-battle", ["Escape", "Down", "Down", "Down"]),  # 7 items: 4 + 3 wraps to the top
     ("pause", "battle-history", ["Down", "Down", "Down", "Return"]),
     ("battle-history", "pause", ["Escape", "Up", "Up", "Up"]),
+    # any story chapter, picked on its chapter screen (no way back: a run plays one story chapter)
+    ("story-select", "story-stage-camp", [(STORY_STEP, None), (["Return"], ROUTE_SCREENS["story-stage-camp"])]),
+    # NEXT, then the chapter's strip; keys sent while the chapter screen slides in are lost (run v-s76)
+    ("story-stage-camp", "story-stage-scenario", [(["Up", "Return"], slow("story-stage-scenario", ARRIVE_GAP)),
+                                                  (CHAPTER_STEP, None)]),
+    # difficulty page, EASY, then any opening movie, narration or still page until the pre-battle screen
+    ("story-stage-scenario", "story-pre-battle", [(["Return"], None), (["Left", "Left", "Left", "Return"], None),
+                                                  (["Escape"], {**ROUTE_SCREENS["story-pre-battle"], "every": 3})]),
+    ("story-pre-battle", "story-battle", [(["Up", "Return"], slow("story-battle", 3.0))]),
 ]
 NAVIGATION = {"key", "keys", "pad", "click", "win", "lose"}  # actions that can move the game off a screen
 
@@ -1358,7 +1428,19 @@ def route_position(root: Path) -> str | None:
     return state["at"]
 
 
-def route(root: Path, target: str, stage: int = 1) -> int:
+def dream_cursor(root: Path) -> int:
+    state = int.from_bytes(bytes.fromhex(ask(root, {"action": "peek", "address": DREAM_STATE, "length": 4})["hex"]), "little")
+    return int.from_bytes(bytes.fromhex(ask(root, {"action": "peek", "address": state + 0x64, "length": 4})["hex"]), "little")
+
+
+def pick_dream(root: Path, stage: int, label: str, before: dict | None = None) -> None:
+    """Move the Dream select cursor to the stage's scenario, from wherever it is, and check the game's own cursor."""
+    drive_step(root, dream_keys(stage, dream_cursor(root)), None, None, label, quick=True, before=before)
+    if (cursor := dream_cursor(root)) != DREAM_STAGES.index(stage):
+        raise RuntimeError(f"the Dream cursor is on scenario {cursor}, not {DREAM_STAGES.index(stage)} (stage {stage})")
+
+
+def route(root: Path, target: str, stage: int | None = None) -> int:
     """Drive the game to ``target`` on a running --test build; print the screens passed."""
     state_path = local_path(root, "evidence/route.json")
 
@@ -1372,9 +1454,20 @@ def route(root: Path, target: str, stage: int = 1) -> int:
         if start is None:
             raise ValueError("position unknown: input was sent outside a route, or a route failed; "
                              "start a fresh run")
+        if start == "boot":  # the title can be up already (a `wait` for it): its Escape would leave it for the menu
+            try:
+                start = "title" if shows(ask(root, {"action": "screen"}), ROUTE_SCREENS["title"]) else start
+            except RuntimeError:  # still loading
+                pass
         plan = route_plan(start, target)
-        if not 0 <= stage <= LAST_STAGE:
-            raise ValueError(f"--stage takes 0 to {LAST_STAGE}")
+        steps = [step[0] for edge in plan if not isinstance(edge[2][0], str) for step in edge[2]]
+        if DREAM_STEP in steps:
+            stage = DREAM_STAGES[0] if stage is None else stage
+            dream_keys(stage, 0)  # refuses a stage that is no Dream scenario before any key is sent
+        if STORY_STEP in steps:
+            if stage is None:
+                raise ValueError(f"route {target} needs --stage, the story chapter to play")
+            story_keys(stage)
         seen = None
         if start != "boot":
             seen = ask(root, {"action": "screen"})
@@ -1384,7 +1477,13 @@ def route(root: Path, target: str, stage: int = 1) -> int:
         for source, destination, steps in plan:
             moves = [(steps, ROUTE_SCREENS[destination])] if isinstance(steps[0], str) else steps
             for n, (keys, until) in enumerate(moves):
-                keys = dict(keys, number=stage) if keys is STAGE_STEP else keys
+                if keys is DREAM_STEP:
+                    pick_dream(root, stage, f"{source} -> {destination}", seen)
+                    continue
+                if keys is STORY_STEP:
+                    keys = story_keys(stage)[0]
+                elif keys is CHAPTER_STEP:
+                    keys, until = story_keys(stage)[1], strip(stage)
                 if n == len(moves) - 1 and until is not None and "seconds" not in until:  # arriving: the screen is up before it takes input
                     until = {"gap": MENU_SETTLE if destination.startswith("menu@") else ARRIVE_GAP, **until}
                 seen = drive_step(root, keys, until, None, f"{source} -> {destination}", quick=True, before=seen)
@@ -1416,7 +1515,7 @@ def check_legs(position: str, loaded: int | None, name: str, battle: int | None,
     which changes every weapon screen after it). A script fires in the battle, so a
     screen with one goes there first; a screen needing another stage than the loaded one goes back through the
     Dream scenario select first. Raises ValueError when a leg has no route."""
-    need = 1 if battle is None else battle
+    need = DREAM_STAGES[0] if battle is None else battle
     legs = ["dream-select"] if position in stage_chain() and loaded != need else []
     legs += ["battle"] if script is not None and name != "battle" else []
     legs.append(name)
@@ -1425,7 +1524,7 @@ def check_legs(position: str, loaded: int | None, name: str, battle: int | None,
         plan = route_plan(position, leg)
         cost += len(plan)
         unlocks |= any(step[0] is UNLOCK_STEP for edge in plan if not isinstance(edge[2][0], str) for step in edge[2])
-        if any(step[0] is STAGE_STEP for edge in plan if not isinstance(edge[2][0], str) for step in edge[2]):
+        if any(step[0] is DREAM_STEP for edge in plan if not isinstance(edge[2][0], str) for step in edge[2]):
             loaded = need
         position = plan[-1][1] if plan else position
     return legs, cost, position, loaded, unlocks
@@ -1463,6 +1562,9 @@ class CheckDriver:
 
     def __init__(self, root: Path) -> None:
         self.root, self.count, self.loaded = root, 0, None
+        # test shortcuts that put the game where a player gets only by playing (win, unlock, a fired script):
+        # the report names them for each screen, as its capture is real but not a typical one
+        self.unlocked, self.used, self.name, self.shortcuts = False, [], None, {}
 
     def route(self, name: str, fixture: str | None = None, battle: int | None = None,
               script: int | None = None) -> None:
@@ -1470,12 +1572,23 @@ class CheckDriver:
             seeded = self.root / "fixtures.json"
             if not seeded.is_file() or fixture not in seeded.read_text():
                 raise ValueError(f"needs save fixture {fixture!r}; stage the run with --save {fixture}")
-        stage = 1 if battle is None else battle
+        stage = battle
         position = route_position(self.root)
+        used = set()
         if position is None:  # route() refuses to send anything, and the screen is reported unreachable
             legs, after = [name], self.loaded
         else:
             legs, _, _, after, _ = check_legs(position, self.loaded, name, battle, script)
+            at = position
+            for leg in legs:
+                plan = route_plan(at, leg)
+                used |= {step[0]["action"] for edge in plan if not isinstance(edge[2][0], str) for step in edge[2]
+                         if isinstance(step[0], dict) and step[0].get("action") in ("win", "lose", "unlock")}
+                at = plan[-1][1] if plan else at
+        self.unlocked |= "unlock" in used
+        self.name = name
+        self.used = sorted(used - {"unlock"} | ({"unlock"} if self.unlocked else set())
+                           | ({f"script {script}"} if script is not None else set()))
         for leg in legs:
             if route(self.root, leg, stage):
                 raise RuntimeError(f"route to {leg} failed")
@@ -1510,6 +1623,8 @@ class CheckDriver:
         self.count += 1
         name = f"check-{self.count:03d}"
         ask(self.root, {"action": "capture", "name": name})
+        if self.used:
+            self.shortcuts[self.name] = self.used
         return self.root / f"evidence/{name}.png"
 
 
@@ -1527,10 +1642,13 @@ def check(root: Path, spec: Path, only: list[str] | None = None) -> int:
     screens = order_screens(screens, route_position(root))
     order = [sc["name"] for sc in screens]
     print("order: " + ", ".join(order))
-    rows = screen_checks.run_spec(screens, CheckDriver(root))
+    driver = CheckDriver(root)
+    rows = screen_checks.run_spec(screens, driver)
     write_json(local_path(root, "evidence/check-report.json"),
-               {"spec": str(spec), "order": order, "rows": [vars(row) for row in rows]})
+               {"spec": str(spec), "order": order, "shortcuts": driver.shortcuts, "rows": [vars(row) for row in rows]})
     print(screen_checks.format_table(rows))
+    for screen_name, used in driver.shortcuts.items():
+        print(f"shortcut: {screen_name} was reached with {', '.join(used)}, so its capture is not a typical one")
     return 0 if all(row.ok for row in rows) else 1
 
 
@@ -1542,7 +1660,12 @@ def tour(root: Path, stages: range | None = None, dialog: float = 25) -> int:
     report = {"build": local_path(root, "game.sha256").read_text().split("\n"), "stops": [], "failed": None}
     try:
         route = TOUR if stages is None else SWEEP_START + [s for n in stages for s in stage_route(n, dialog)]
+        for n in stages or ():
+            dream_keys(n, 0)  # the sweep plays Dream scenarios; it refuses a story stage before any key
         for step, (keys, until, name) in enumerate(route):
+            if isinstance(keys, dict) and "stage" in keys:
+                pick_dream(root, keys["stage"], f"step {step} (stage {keys['stage']})")
+                continue
             drive_step(root, keys, until, 4 if step == 0 else None, f"step {step} ({name or keys})")
             if name:
                 time.sleep(TOUR_SETTLE)  # menus slide in
@@ -1598,7 +1721,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="action", required=True)
     for action in ("run", "status", "key", "click", "pad", "plug", "capture", "record", "video", "peek", "poke",
-                   "find", "screen", "wait", "say", "notice", "win", "lose", "scripts", "script", "unlock", "battle",
+                   "find", "screen", "wait", "say", "notice", "win", "lose", "scripts", "script", "unlock",
                    "reload", "review", "tour", "route", "check", "stop", "_audio", "_serve"):
         command = commands.add_parser(action)
         command.add_argument("--root", required=True, type=Path)
@@ -1612,6 +1735,8 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--unplugged", action="store_true", help="the pad starts unplugged; see plug")
             command.add_argument("--video", action="store_true",
                                  help="output 1080p without FSR, so the video command keeps the game at full speed")
+            command.add_argument("--slot", action="store_true",
+                                 help="wait for one of the two game slots and hold it (instead of a flock wrapper)")
         if action == "plug":
             command.add_argument("state", choices=["on", "off"])
         if action == "key":
@@ -1651,8 +1776,6 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("text", help="English or stock Japanese; the runtime translates and wraps it")
         if action == "script":
             command.add_argument("number", type=int, help="script index from scripts")
-        if action == "battle":
-            command.add_argument("number", type=int, help="stage: its LINKDATA2 container index")
         if action == "review":
             command.add_argument("texture", help="key.member, or off; needs the test-only review.bin")
             command.add_argument("--rect", type=int, nargs=4, default=[0, 0, 512, 32], metavar=("X", "Y", "W", "H"))
@@ -1661,7 +1784,8 @@ def main(argv: list[str] | None = None) -> int:
         if action == "route":
             command.add_argument("screen", choices=sorted(set(ROUTE_SCREENS) - {"boot"} | {"menu"}),
                                  help="drive there from where the last route left the game")
-            command.add_argument("--stage", type=int, default=1, help="the stage a battle route plays (0-143)")
+            command.add_argument("--stage", type=int, help="the stage a battle route picks on the scenario or chapter "
+                                 f"select, as a player does (Dream default {DREAM_STAGES[0]}; a story chapter needs it)")
         if action == "check":
             command.add_argument("spec", type=Path, help="a check file such as data/checks/menus.toml")
             command.add_argument("--only", type=lambda value: value.split(","), metavar="SCREEN,...",
@@ -1744,7 +1868,7 @@ def main(argv: list[str] | None = None) -> int:
                 timeout += 10  # the screenshot follows the match
         if args.action in ("say", "notice"):
             request["text"] = args.text
-        if args.action in ("script", "battle"):
+        if args.action == "script":
             request["number"] = args.number
         if args.action == "reload":
             request["table"] = str(args.table.resolve(strict=True))

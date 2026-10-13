@@ -222,7 +222,7 @@ static int log_begin(u32 h)
         ;
     for (i = h;; i++) {
         u32 *slot = &seen[i & 0xffff];
-        if (*slot == h)
+        if (*slot == h || i - h == 64) /* a full table drops new lines rather than stall the game thread */
             return 0;
         if (!*slot) {
             *slot = h;
@@ -338,9 +338,6 @@ static u32 texture(u32 handle)
 
 #define RUNNING ((volatile u8 *)0x9C9640)
 #define STAGE_DATA (*(volatile u32 *)0x9C8FD4)
-#define STAGE (*(volatile u32 *)0x801AA0)
-#define STAGE_MAP (*(volatile u32 *)0x801AA4)
-#define STAGE_TABLE (*(const u8 *const volatile *)0x9C8FC4)
 #define OFFICERS 0x60
 #define GAIN_EXP ((u32 (*)(u32, u32))0x47A410)
 #define GIVE_WEAPON ((void (*)(u32, u32, const u32 *))0x475980)
@@ -376,7 +373,6 @@ static struct test_block {
 } enrt_test = {"ENRT-TEST-BLOCK", TEST_VERSION, sizeof(struct test_block)};
 
 static struct test_report reports[2], *current = reports, *last = reports + 1;
-static u32 next_stage;
 
 static void words(void *dst, const void *src, u32 bytes)
 {
@@ -502,9 +498,6 @@ static void test_frame(void)
         break;
     case 7:
         b->result = test_review_set(b->arg, (const u32 *)b->input);
-        break;
-    case 6:
-        next_stage = b->arg + 1;
         break;
     default:
         b->result = 2;
@@ -3364,15 +3357,6 @@ static int always(u32 id, struct frame *f, u32 *replace)
 #endif
         hires_quad(id, f);
         return 1;
-#ifdef ENRT_TEST
-    case 25:
-        if (next_stage) {
-            STAGE = next_stage - 1;
-            STAGE_MAP = STAGE == 0x90 ? 0x8E : STAGE_TABLE[STAGE * 0x26];
-            next_stage = 0;
-        }
-        return 1;
-#endif
     }
     return 0;
 }
