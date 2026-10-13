@@ -372,7 +372,7 @@ class SetupWindow:
             if not self.ask_yes("Uninstall wozmod", f"Remove wozmod from this folder?\n\n{values['game']}"):
                 return
             keep = self.ask_yes("Your settings", "Keep your wozmod settings (language, field of view, "
-                                "frame rate)?", default="yes")
+                                "frame rate, camera)?", default="yes")
         else:
             state, found = self.install_state()
             if state == "reinstall" and not self.ask_yes(

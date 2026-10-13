@@ -1338,9 +1338,9 @@ static u32 read_loose(struct frame *f)
 #define VALUE_STEP 180
 #define SHADOW 2
 #ifdef ENRT_RENDER_DISTANCE
-#define LAST_ROW 5 /* the render distance row ends the list */
+#define LAST_ROW 6 /* the render distance row ends the list */
 #else
-#define LAST_ROW 4 /* the frame rate row ends the list */
+#define LAST_ROW 5 /* the moving camera fix row ends the list */
 #endif
 
 
@@ -1473,7 +1473,6 @@ static const float view_stock[3] = {15000.0f, 12500.0f, 10000.0f};
 static float view[3];
 static u32 distance = 1, distance_ok;
 static const char *const distance_label[2] = {"RENDER DISTANCE", "\x95\x60\x89\xe6\x8b\x97\x97\xa3"};
-static const char *const switch_value[2] = {"ON", "OFF"};
 
 static void distance_apply(void)
 {
@@ -2137,6 +2136,46 @@ static void pads_rescan(void)
 #define CAMERA_REBUILD ((void (*)(u32))0x4F9BD0)
 #define CAMERA0 0x9DA958
 #define CAMERA_POSE(camera) ((float *)((camera) + 0x1C0))
+#define CAMERA_CONTROL0 0x9D1090
+#define CAMERA_PAD(k) (*(const u8 *)(0x801B6C + 0xC0 * (k)))
+#define CAMERA_STICK_X(pad) (*(const volatile u8 *)(0xC87F78 + 0xF0 * (pad)))
+#define CAMERA_EPSILON (*(const float *)0x6CE45C)
+static u32 moving_fix = 1;
+static const char *const moving_fix_label[2] = {"MOVING CAMERA FIX",
+    "\x88\xda\x93\xae\x92\x86\x83\x4a\x83\x81\x83\x89\x95\xe2\x90\xb3"};
+
+
+static void moving_fix_input(u32 repeat)
+{
+    WCHAR name[MAX_PATH];
+    if (!(repeat & 0x0C))
+        return;
+    moving_fix = !moving_fix;
+    WritePrivateProfileStringW(L"camera", L"moving_fix", moving_fix ? L"on" : L"off", path(name, L"settings.ini"));
+    GAME_SOUND(1, 0, 0x2CDC, 0x2CDC, 0x1000);
+}
+
+
+/* The follow camera (0x427E70) re-aims at a strafing player, a turn that works against
+   the camera stick. While the stick turns the view, keep the camera's own facing instead. */
+static void camera_follow(const struct frame *f)
+{
+    u32 k = (f->edi - CAMERA_CONTROL0) / 0xF0;
+    const float *pose;
+    float *facing = (float *)(f->esp + 0x30), x, y, z, len;
+    int push;
+    if (!moving_fix || k > 1)
+        return;
+    push = (int)CAMERA_STICK_X(CAMERA_PAD(k)) - 0x7F;
+    if (push >= -0x40 && push <= 0x40) // the stick camera ignores these too (0x4AF6C9)
+        return;
+    pose = CAMERA_POSE(f->esi);
+    x = pose[4] - pose[0], y = pose[5] - pose[1], z = pose[6] - pose[2];
+    len = x * x + y * y + z * z;
+    __asm__("fsqrt" : "+t"(len));
+    if (len > CAMERA_EPSILON)
+        facing[0] = x / len, facing[2] = z / len;
+}
 
 
 #define SCENE_BEGUN (*(volatile u32 *)0xCB9280)
@@ -2237,6 +2276,7 @@ static void trace_hooks(void *device);
 #endif
 static const char *const fps_label[2] = {"FRAME RATE", "\x83\x74\x83\x8c\x81\x5b\x83\x80\x83\x8c\x81\x5b\x83\x67"};
 static const char *const fps_value[2][2] = {{"60 FPS", "120 FPS"}, {"60FPS", "120FPS"}};
+static const char *const switch_value[2] = {"ON", "OFF"};
 
 static void limiter(u8 rate)
 {
@@ -3063,15 +3103,16 @@ static u32 english_hook(u32 id, struct frame *f)
 
 
 /* The added Game Settings rows, drawn from the option sheet (build.OPTION_ROWS) the way the stock rows are: a 310x42
-   quad per text, white art tinted by the quad colour. Bands: 0-3 labels (text, voice, field of view, frame rate),
-   4-7 values (English, Japanese, 60, 120), 8 on the field of view numbers from 100. */
+   quad per text, white art tinted by the quad colour. Bands: 0-4 labels (text, voice, field of view, frame rate,
+   moving camera fix), 5-10 values (English, Japanese, 60, 120, on, off), 11 on the field of view numbers from 100. */
 #define OPTION_W 310
 #define OPTION_BAND 42
 #define OPTION_SCALE 2
 #define LABEL_LEFT (-54)
-#define BAND_ENGLISH 4
-#define BAND_60 6
-#define BAND_FOV 8
+#define BAND_ENGLISH 5
+#define BAND_60 7
+#define BAND_ON 9
+#define BAND_FOV 11
 #define VALUE_NEXT_LANGUAGE 563
 #define VALUE_NEXT_FPS 557
 #define FOV_CENTRE (VALUE_CENTRE + 70)
@@ -3100,8 +3141,10 @@ static void option_row(u32 row, u32 x, u32 y)
         label = row, chosen = row ? voice_saved : text_saved;
     else if (row == rows)
         label = 2, first = 0;
-    else
+    else if (row == rows + 1)
         label = 3, first = BAND_60, chosen = fps == 120, next = VALUE_NEXT_FPS;
+    else
+        label = 4, first = BAND_ON, chosen = !moving_fix, next = VALUE_NEXT_FPS;
     option_text(label, x + LABEL_LEFT, y, SETTINGS_CURSOR == 3 + row ? cursor_tint : idle_tint);
     if (row == rows)
         return option_text(BAND_FOV + (fov - FOV_MIN) / FOV_STEP, x + FOV_CENTRE - OPTION_W / 2, y, value_lit);
@@ -3139,7 +3182,7 @@ static int always(u32 id, struct frame *f, u32 *replace)
 #endif
         return 1;
     case 28:
-        if (option_sheet && f->ebp - 3 <= rows + 1)
+        if (option_sheet && f->ebp - 3 <= rows + 2)
             option_row(f->ebp - 3, f->edi, f->ebx);
         else if (f->ebp - 3 < rows)
             language_row(f->ebp - 3, f->edi, f->ebx);
@@ -3147,9 +3190,12 @@ static int always(u32 id, struct frame *f, u32 *replace)
             fov_row(f->edi, f->ebx, SETTINGS_CURSOR == 3 + rows);
         else if (f->ebp - 4 == rows)
             choice_row(fps_label[!english], fps_value[!english], fps == 120, f->edi, f->ebx, SETTINGS_CURSOR == 4 + rows);
-#ifdef ENRT_RENDER_DISTANCE
         else if (f->ebp - 5 == rows)
-            choice_row(distance_label[!english], switch_value, !distance, f->edi, f->ebx, SETTINGS_CURSOR == 5 + rows);
+            choice_row(moving_fix_label[!english], switch_value, !moving_fix, f->edi, f->ebx,
+                       SETTINGS_CURSOR == 5 + rows);
+#ifdef ENRT_RENDER_DISTANCE
+        else if (f->ebp - 6 == rows)
+            choice_row(distance_label[!english], switch_value, !distance, f->edi, f->ebx, SETTINGS_CURSOR == 6 + rows);
 #endif
         else
             return 1;
@@ -3163,8 +3209,10 @@ static int always(u32 id, struct frame *f, u32 *replace)
             fov_input(f->eax);
         else if (*(const u32 *)(f->ebp + 0x1C) - 4 == rows && !INPUT_BLOCKED)
             fps_input(f->eax);
-#ifdef ENRT_RENDER_DISTANCE
         else if (*(const u32 *)(f->ebp + 0x1C) - 5 == rows && !INPUT_BLOCKED)
+            moving_fix_input(f->eax);
+#ifdef ENRT_RENDER_DISTANCE
+        else if (*(const u32 *)(f->ebp + 0x1C) - 6 == rows && !INPUT_BLOCKED)
             distance_input(f->eax);
 #endif
         else
@@ -3174,6 +3222,9 @@ static int always(u32 id, struct frame *f, u32 *replace)
     case 46:
         if (fov != FOV_MIN)
             CAMERA_FOV(f->ebp) *= fov / 100.0f;
+        return 1;
+    case 72:
+        camera_follow(f);
         return 1;
     case 47:
         pad_read((const u8 *)f->esi);
@@ -3547,6 +3598,8 @@ static void install(HINSTANCE self)
     if (!(fps_ok = stock_at(FPS_LIMITER, (const u8 *)"\x6a\x3c", 2)))
         note("refused: 120 FPS, the present limiter differs from stock at", FPS_LIMITER);
     fps = fps_ok && GetPrivateProfileIntW(L"display", L"fps", 60, name) == 120 ? 120 : 60;
+    GetPrivateProfileStringW(L"camera", L"moving_fix", L"on", value, 16, name);
+    moving_fix = !!lstrcmpiW(value, L"off");
 #ifdef ENRT_RENDER_DISTANCE
     GetPrivateProfileStringW(L"display", L"distance", L"on", value, 16, name);
     distance = !!lstrcmpiW(value, L"off");

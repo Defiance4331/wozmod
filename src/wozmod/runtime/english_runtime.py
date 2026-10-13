@@ -72,6 +72,7 @@ ALWAYS_HOOKS = [
     (0x5D5A20, "8b442404 83f87d", 41, 4),       # SE bank data size (thiscall)
     (0x428E33, "d9ee d99d20020000", 45, None),  # battle camera FOV stored (mid-function)
     (0x428FB4, "8d442438 d9ee", 46, None),      # 40-degree battle camera FOV stored (mid-function)
+    (0x427F61, "8b4704 d9470c", 72, None),      # follow camera facing set: the camera stick keeps it (mid-function)
     (0x5E4F64, "8b8660010000", 47, None),       # joystick state read (mid-function)
     (0x5E38E0, "81ec40020000", 70, 0),          # input map load (cdecl): Xbox names before its auto-setting
     (0x58E2BC, "5f5eb801000000", 48, None),     # 4079 prompt handles made (tail)

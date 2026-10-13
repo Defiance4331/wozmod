@@ -114,7 +114,7 @@ def run_uninstall(args: argparse.Namespace) -> int:
                              lambda p: None if (p / "wozmod/install.json").is_file() else "wozmod is not installed there.")
     keep = not args.remove_settings
     if not (args.keep_settings or args.remove_settings) and interactive():
-        keep = ask_yes("Keep your wozmod settings (language, field of view, frame rate)?", True)
+        keep = ask_yes("Keep your wozmod settings (language, field of view, frame rate, camera)?", True)
     return 1 if uninstall(args.game, log=print, keep_settings=keep) else 0
 
 

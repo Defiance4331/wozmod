@@ -714,8 +714,9 @@ FONT_ROUTE = [
 ]
 
 def settings_rows(rows: int, distance: bool = False) -> list:
-    """The cursor list: the stock rows, the language rows, FOV, frame rate and (a dev build) render distance."""
-    count = 6 + rows + distance
+    """The cursor list: the stock rows, the language rows, FOV, frame rate, moving camera fix and (a dev build)
+    render distance."""
+    count = 7 + rows + distance
     return [
 
         (0x56B2ED, bytes.fromhex("015010 c740140b000000 c7401800000000"),

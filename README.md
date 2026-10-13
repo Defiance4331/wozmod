@@ -26,6 +26,9 @@ options.
 - **A language switch.** Choose English or Japanese for text and for voices.
 - **120 FPS** in battle.
 - **A wider field of view**, up to 150%.
+- **A steady camera stick while you move.** In the original game, running
+  sideways turns the camera against the right stick, so the camera can seem
+  to invert once you move. wozmod lets the stick win.
 - **Xbox controller support** with the Warriors Orochi 2 controls and Xbox
   button prompts.
 
@@ -144,6 +147,7 @@ Open **Options**, then **Game Settings**. wozmod adds these rows:
 | VOICE LANGUAGE | English or Japanese. The change applies from the next line. |
 | FIELD OF VIEW | 100% (original) to 150%. |
 | FRAME RATE | 60 or 120 FPS in battle. |
+| MOVING CAMERA FIX | ON (default): the right stick turns the camera the same way whether you stand or move. OFF: the original camera. |
 
 wozmod keeps these settings in `wozmod/settings.ini`. Your save file does not
 change.

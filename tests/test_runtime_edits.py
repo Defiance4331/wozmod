@@ -24,7 +24,7 @@ def test_detour_does_not_pad_past_the_overwritten_stock_span() -> None:
 
 
 @pytest.mark.parametrize(("rows", "distance", "count", "value_stop", "default"),
-                         [(1, True, 8, 5, 7), (2, True, 9, 6, 8), (1, False, 7, 4, 6), (2, False, 8, 5, 7)])
+                         [(1, True, 9, 6, 8), (2, True, 10, 7, 9), (1, False, 8, 5, 7), (2, False, 9, 6, 8)])
 def test_settings_rows_does_not_leave_default_at_the_old_index(
     rows: int, distance: bool, count: int, value_stop: int, default: int,
 ) -> None:
