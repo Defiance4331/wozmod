@@ -258,12 +258,12 @@ def test_x360_placeholder_falls_back_without_blocking_a_usable_shared_clip(tmp_p
     stock.write_bytes(_record(96, samples=1234))
     stock_index = bytes(8) + struct.pack(">II", 0, 96) * 14
 
-    selected, tiers = english_voice_clips({10: 0, 11: 1, 12: 2}, wo1_index, wo1_bank, {10: 3, 11: 0, 12: 2, 13: 1}, wo2_index, wo2_bank, stock_index, stock)
+    selected, sources = english_voice_clips({10: 0, 11: 1, 12: 2}, wo1_index, wo1_bank, {10: 3, 11: 0, 12: 2, 13: 1}, wo2_index, wo2_bank, stock_index, stock)
 
     assert set(selected) == {10, 11}
     assert parse_kovs_record(selected[10])[2].sample_count == 9600
     assert selected[11] == wo1_clips[1]
-    assert tiers == {"wo1-pc": 1, "wo2-x360": 1}
+    assert sources == {10: "wo2-x360", 11: "wo1-pc"}
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")

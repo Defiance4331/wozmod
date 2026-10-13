@@ -64,9 +64,12 @@ def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_unde
     se_header = b"_HBW0000" + struct.pack("<IHHI", 20, 0x3200, 0, 0)
     seidx = struct.pack(">II", 244, 0) + (struct.pack(">II", 0, 20) + struct.pack(">II", 20, 0)) * 122
     _stock_archive(stock, "LINKDATA1", {4056: seidx, 4057: se_header, 4058: voiceidx, 4084: _quotes("<")}, 4085)
-    _stock_archive(stock, "LINKDATA2", {o: _script("<") for o in range(40, 68)}, 68)
-    _ens(one, {512: _quotes("<"), **{o: _script("<") for o in range(579, 639)}}, 639)
-    _ens(two, {17: _quotes(">"), **{o: _script(">") for o in range(103, 171)}}, 171)
+    events = {o: b"no lip blocks" for o in range(177, 402)}
+    _stock_archive(stock, "LINKDATA2", {**{o: _script("<") for o in range(40, 68)}, **events}, 402)
+    _ens(one, {512: _quotes("<"), **{o: _script("<") for o in range(579, 639)},
+               **{o: events[177] for o in range(640, 858)}}, 858)
+    _ens(two, {17: _quotes(">"), **{o: _script(">") for o in range(103, 171)},
+               **{o: events[177] for o in range(176, 238)}}, 238)
     (one / "linkdata_ans.idx").write_bytes(struct.pack("<4sIII", b"SM4L", 1468, 1, 0) + struct.pack("<4I", 0, 1, 96, 0) * 1468)
     (one / "link_vodat.bdx").write_bytes(record + bytes(2048 - len(record)))
     placeholder = b"Fixture"
@@ -87,9 +90,11 @@ def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_unde
     assert {str(p.relative_to(output)): p.read_bytes() for p in output.rglob("*") if p.is_file()} == {
         "voice/Voice.bin": struct.pack("<I", 22665) + bytes(181324),
         "voice/SE.bin": struct.pack("<I", 122) + bytes(1964),
+        "voice/Lips.bin": struct.pack("<I", 22665) + bytes(8 * 22665),
     }
     assert (result.voice, result.se) == (output / "voice/Voice.bin", output / "voice/SE.bin")
-    assert (result.dialogue_tiers, result.attack_tiers, result.japanese_fallback, result.english_se_banks) == (
-        {"wo1-pc": 0, "wo2-x360": 0}, {"wo1-pc": 0, "wo2-x360": 0}, 22665, 0,
+    assert (result.dialogue_tiers, result.attack_tiers, result.japanese_fallback, result.english_se_banks,
+            result.lip_tiers) == (
+        {"wo1-pc": 0, "wo2-x360": 0}, {"wo1-pc": 0, "wo2-x360": 0}, 22665, 0, {"donor": 0, "stretched": 0},
     )
     assert all(hashlib.sha256(p.read_bytes()).digest() == digest for p, digest in before.items())

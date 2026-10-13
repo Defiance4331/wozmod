@@ -1227,10 +1227,17 @@ static HANDLE open_bank(const WCHAR *file, u32 max, u32 words, u32 **table, u32 
     return INVALID_HANDLE_VALUE;
 }
 
+#define LIPS_BANK L"voice\\Lips.bin"
+static u8 *lips;
+static u32 lips_size;
+
 static void open_voices(void)
 {
+    WCHAR name[MAX_PATH];
     voice_bank = open_bank(VOICE_BANK, 0x5889, 2, &voice_table, &voice_ids);
     note("English voice ids:", voice_ids);
+    lips = load(path(name, LIPS_BANK), &lips_size);
+    note("Lips.bin bytes:", lips_size);
     se_bank = open_bank(SE_BANK, 0x7E, 4, &se_table, &se_banks);
     note("English SE banks:", se_banks);
 }
@@ -1240,6 +1247,20 @@ static const u32 *english_voice(u32 id)
 {
     const u32 *e = voice_table + 2 * id;
     return !voice_saved && id < voice_ids && e[1] && e[1] <= VOICE_SLOT ? e : 0;
+}
+
+/* Lips.bin: u32 id count, (u32 offset, u32 size) per voice id, the blocks. The stock lip block of a spoken
+ * line is timed to the Japanese clip; an English clip gets the block the installer timed to it. index is
+ * the line record's voice index, which the voice start (0x513720) adds to the story's base. */
+static const u8 *english_lips(u32 index)
+{
+    const u32 *e;
+    u32 id = (VOICE_MODE ? 0x8F4 : 0xAF3) + index;
+    if (!lips || index >= (VOICE_MODE ? 0x1FFu : 0x150u) || !english_voice(id) || lips_size < 4
+        || id >= *(const u32 *)lips || 4 + 8 * id + 8 > lips_size)
+        return 0;
+    e = (const u32 *)(lips + 4) + 2 * id;
+    return e[1] >= 0x20 && e[0] <= lips_size && e[1] <= lips_size - e[0] ? lips + e[0] : 0;
 }
 
 static u32 read_voice(struct frame *f, HANDLE bank)
@@ -3075,6 +3096,7 @@ static int always(u32 id, struct frame *f, u32 *replace)
 {
     struct loose *e;
     const u32 *voice, *se;
+    const u8 *lip = 0;
     *replace = 0;
     switch (id) {
     case 68:
@@ -3228,6 +3250,22 @@ static int always(u32 id, struct frame *f, u32 *replace)
                 line[6] = 'e', line[7] = 'n';
             put_hex(line + 9, f->arg[1], 4), line[19] = '0' + (VOICE_MODE & 1), put_hex(line + 27, VOICE_STAGE, 2);
             note(line, 0);
+        }
+#endif
+        return 1;
+    case 71:  /* the speak command (0x49E560) calls with edi at the line record: u32 -1, u16 voice index, u16 size;
+               * the state's +0x5C already holds the next line's index once the voice has started */
+        if (f->ret == 0x49E65F && f->edi + 4 + *(const u16 *)(f->edi + 6) == f->arg[2]
+            && (lip = english_lips(*(const u16 *)(f->edi + 4))))
+            f->arg[2] = (u32)lip;
+#ifdef ENRT_LOG
+        if (f->ret == 0x49E65F) {
+            char line[] = "lips ja 0000 index 000 frames";
+            if (lip)
+                line[5] = 'e', line[6] = 'n';
+            put_hex(line + 8, (VOICE_MODE ? 0x8F4 : 0xAF3) + *(const u16 *)(f->edi + 4), 4);
+            put_hex(line + 19, *(const u16 *)(f->edi + 4), 3);
+            note(line, *(const u32 *)(f->arg[2] + 12));
         }
 #endif
         return 1;

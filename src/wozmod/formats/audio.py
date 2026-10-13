@@ -524,12 +524,12 @@ def wo2_voice_clips(mapping: dict[int, int], index: bytes, bank: Path, jobs: int
 def english_voice_clips(wo1_mapping: dict[int, int], wo1_index: bytes, wo1_bank: Path,
                         wo2_mapping: dict[int, int], wo2_index: bytes, wo2_bank: Path,
                         stock_index: bytes, stock_bank: Path,
-                        jobs: int | None = None) -> tuple[dict[int, bytes], dict[str, int]]:
-    """Select usable X360 clips before WO1 fallbacks; jobs is the ffmpeg process count (default: CPU count)."""
+                        jobs: int | None = None) -> tuple[dict[int, bytes], dict[int, str]]:
+    """Select usable X360 clips before WO1 fallbacks, with each clip's source; jobs is the ffmpeg process count."""
     wo2 = wo2_voice_clips(wo2_mapping, wo2_index, wo2_bank, jobs)
     wo1 = wo1_voice_clips({i: record for i, record in wo1_mapping.items() if i not in wo2},
                           wo1_index, wo1_bank, stock_index, stock_bank)
-    return wo1 | wo2, {"wo1-pc": len(wo1), "wo2-x360": len(wo2)}
+    return wo1 | wo2, {**dict.fromkeys(wo1, "wo1-pc"), **dict.fromkeys(wo2, "wo2-x360")}
 
 
 def _read_at(stream: BinaryIO, offset: int, size: int) -> bytes:
