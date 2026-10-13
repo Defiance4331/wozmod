@@ -31,10 +31,12 @@ STOP_WAIT = 60  # seconds for the supervisor to end after stop
 RETRIES = 2  # fresh runs after one that ended before the game started
 
 
-def launch(root: Path) -> subprocess.Popen:
-    """The supervisor, in a game slot, in its own process group so it can be ended whole."""
+def launch(root: Path, pad: bool = False) -> subprocess.Popen:
+    """The supervisor, in a game slot, in its own process group so it can be ended whole; ``pad``: routes press a
+    virtual pad instead of the keyboard."""
     command = [sys.executable, str(Path(harness.__file__).resolve()), "run", "--root", str(root), "--slot",
-               "--target", harness.TARGET, "--game", str(root / "game"), "--authorize-launch", "--timeout", "1800"]
+               "--target", harness.TARGET, "--game", str(root / "game"), "--authorize-launch", "--timeout", "1800",
+               *(["--pad", "--route-input", "pad"] if pad else [])]
     with (root / "run.log").open("w") as log:
         return subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
 
@@ -99,7 +101,7 @@ def run_check(args: argparse.Namespace, stage=prepare_run.prepare, start=launch)
         root = stage(run_name(args.name, attempt), args.install.resolve(strict=True), args.dll, args.save,
                      settings=args.setting, replace=args.file)
         phases["stage"] += time.monotonic() - t
-        t, proc = time.monotonic(), start(root)
+        t, proc = time.monotonic(), start(root, getattr(args, "pad", False))
         try:
             up = wait_up(root, proc)
             phases["boot"] += time.monotonic() - t
@@ -140,6 +142,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="swap one installed file for a working build, such as wozmod/table.bin=PATH")
     parser.add_argument("--setting", action="append", default=[], metavar="SECTION.KEY=VALUE",
                         help="a mod setting saved before the run, such as display.fps=120")
+    parser.add_argument("--pad", action="store_true", help="routes press a pad, so captures show the pad's prompts")
     parser.add_argument("--only", metavar="SCREEN,...", help="run only these screens of the spec")
     parser.add_argument("--name", default="check", help="label in the run directory name")
     args = parser.parse_args(argv)

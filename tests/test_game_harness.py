@@ -1144,3 +1144,17 @@ def test_a_resend_loop_sends_nothing_when_its_screen_is_up_already(monkeypatch):
     assert sent == []
     event = {"textures": [], "texts": [{"caller": "0x49dace", "text": "a", "x": 0, "y": 0}]}
     assert harness.shows(event, {"any": [harness.ROUTE_SCREENS["results"], {"caller": "0x49dace"}]})
+
+
+def test_a_pad_run_routes_with_pad_buttons(tmp_path, monkeypatch):
+    """Bugs: a `--route-input pad` run still presses the keyboard, so every capture shows the keyboard prompts; or
+    Return becomes B (back) and the route leaves the screen it meant to enter; or a key with no button is dropped."""
+    (tmp_path / "evidence").mkdir()
+    harness.write_json(tmp_path / "evidence/session.json", {"route_input": "pad"})
+    sent = []
+    monkeypatch.setattr(harness, "ask", lambda root, request, *a: sent.append(request) or {"textures": [], "texts": []})
+    monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
+    harness.drive_step(tmp_path, ["Down", "Return", "Escape"], None, None, "pad", quick=True)
+    assert [(r["action"], r["names"]) for r in sent] == [("pad", ["DOWN", "A", "B"])]
+    with pytest.raises(ValueError, match="F1"):
+        harness.drive_step(tmp_path, ["F1"], None, None, "pad", quick=True)

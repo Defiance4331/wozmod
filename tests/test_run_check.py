@@ -152,7 +152,7 @@ class FakeSupervisor:
 
 
 def args(tmp_path, spec, only=None):
-    return SimpleNamespace(spec=spec, install=tmp_path, dll=None, save="s", setting=[], file=[], only=only, name="check")
+    return SimpleNamespace(spec=spec, install=tmp_path, dll=None, save="s", setting=[], file=[], pad=False, only=only, name="check")
 
 
 @pytest.fixture
@@ -174,7 +174,7 @@ def drive_with(tools, tmp_path, monkeypatch, spec, runs, check=0, only=None):
         staged[-1].mkdir(parents=True)
         return staged[-1]
 
-    def start(root):
+    def start(root, pad=False):
         reason, started = runs[len(staged) - 1]
         FakeSupervisor(root, reason, started)
         return SimpleNamespace()

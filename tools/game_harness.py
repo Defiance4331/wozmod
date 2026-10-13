@@ -829,6 +829,9 @@ def run(root: Path, args: argparse.Namespace) -> int:
                 "output_size": output_size, "fsr": fsr}
     pad = VirtualPad(args.pad) if args.pad else None
     identity["pad"] = pad.node if pad else None
+    identity["route_input"] = getattr(args, "route_input", "keys")
+    if identity["route_input"] == "pad" and not pad:
+        raise ValueError("--route-input pad needs --pad")
     write_json(root / "evidence/session.json", identity)
     runtime = f"/run/user/{os.getuid()}"
     command = [
@@ -1077,6 +1080,19 @@ def ask(root: Path, request: dict, timeout: float = 30) -> dict:
     return response
 
 
+# The pad buttons a route sends for its keys in a `run --route-input pad` run: A confirms, B goes back, Y is the
+# page key Tab (the prompts say so; runs fid-pad, v-pad). In a battle B attacks: Escape there is START (PAUSE_SOURCES).
+PAD_FOR_KEY = {"Return": "A", "Escape": "B", "Tab": "Y", "Up": "UP", "Down": "DOWN", "Left": "LEFT", "Right": "RIGHT"}
+PAUSE_SOURCES = {"battle", "story-battle", "story-wei-battle"}
+
+
+def route_input(root: Path) -> str:
+    try:
+        return json.loads((root / "evidence/session.json").read_text()).get("route_input", "keys")
+    except (OSError, ValueError):
+        return "keys"
+
+
 def drive_step(root: Path, keys: list | dict, until: dict | None, every: float | None, label: str,
                quick: bool = False, before: dict | None = None) -> dict | None:
     """Send keys (or one request), then wait until the screen shows ``until``, resending every
@@ -1087,6 +1103,7 @@ def drive_step(root: Path, keys: list | dict, until: dict | None, every: float |
     still moving drops the next input). An ``until`` with ``gap`` S waits S more seconds once its screen shows: the
     screen is drawn before it takes input (a battle loads for seconds after its first frame). Returns the screen that matched, None after a step with nothing to wait for."""
     deadline, sent = time.monotonic() + TOUR_WAIT * (2 if until and "every" in until else 1), None
+    pad = route_input(root) == "pad"
     every = every or (until or {}).get("every")
     gated = quick and until is not None and "seconds" not in until
     key_gap = ROUTE_KEY_GAP if quick else TOUR_GAP
@@ -1110,6 +1127,13 @@ def drive_step(root: Path, keys: list | dict, until: dict | None, every: float |
                 return arrived(seen)  # the screen came up since the last poll: a resent key would land on it
             if isinstance(keys, dict):
                 ask(root, keys)
+            elif keys and pad:  # a player on a pad: the runtime shows the pad's prompts while it is the last input
+                if not set(keys) <= set(PAD_FOR_KEY) | {"START"}:
+                    raise ValueError(f"{label}: no pad button for {sorted(set(keys) - set(PAD_FOR_KEY))}")
+                ask(root, {"action": "pad", "names": [PAD_FOR_KEY.get(k, k) for k in keys], "hold": 0.08, "gap": key_gap},
+                    30 + len(keys) * key_gap)
+                if gated and (before is None or shows(before, until)):
+                    time.sleep(ROUTE_GAP)
             elif keys:
                 extra = {"settle": ROUTE_GAP if before is None or shows(before, until) else 0} if gated else {}
                 ask(root, {"action": "key", "key": keys[0], "hold": 0.08, **extra} if len(keys) == 1 else
@@ -1188,7 +1212,8 @@ ROUTE_SCREENS = {
     "pre-battle-weapon-panel": {"caller": "0x59538a"},
     "pre-battle-officers": {"caller": "0x536742"},
     "battle": {"texture": "4079.148"},  # the opening dialog is up by then
-    "pause": {"texture": "4079.223", "without": "4079.44"},  # the pre-battle menu draws 4079.223 and 4079.44
+    # the pre-battle menu draws its frame and 4079.44; the frame is 4079.223 on stage 1 and 4079.168 on stage 40
+    "pause": {"texture": "4079.223|4079.168", "without": "4079.44"},
     "battle-history": {"texture": "4080.38"},  # the entries (caller 0x539f9f) are empty at the start of a battle
     "results": {"texture": "4079.52", "without": "4080.0"},
     "save-prompt": {"caller": "0x54e76f"},  # message box, cursor on NO
@@ -1197,6 +1222,15 @@ ROUTE_SCREENS = {
     "story-stage-scenario": {"texture": "|".join(f"4077.{30 + m}" for m in range(137))},
     "story-pre-battle": {"texture": "4079.168"},
     "story-battle": {"texture": "4079.148"},
+    # VS: character select (three picks a side, the player picks COM's too), its confirmation, the battle (stage 68,
+    # TAG TEAM) and its menu (RETRY / CHANGE CHARACTER / MAIN MENU), which Escape opens mid-match (run vs-a)
+    "vs-character-select": {"texture": "4099.1"},
+    "vs-confirm": {"texture": "4099.20", "without": "4099.1"},
+    "vs-battle": {"texture": "4081.8"},
+    "vs-pause": {"texture": "4081.40", "without": "4079.44"},
+    # in-engine events with spoken lines: a caption (caller 0x49dace) is up for seconds at a time
+    "opening-event": {"caller": "0x49dace", "transient": True},  # after FIGHT, on stages that have one (40)
+    "victory-event": {"caller": "0x49dace", "transient": True},  # after `win`, on stages that have one (133)
 }
 
 
@@ -1291,6 +1325,30 @@ ROUTE_EDGES = [
     ("pre-battle", "battle", [(["Up", "Return"], slow("battle", 3.0))]),
     ("battle", "pause", ["Escape"]),
     ("pause", "battle", ["Escape"]),
+    # VS: a row refuses a character it already has; Down changes the force, so the third pick is another force's
+    ("vs-team-select", "vs-character-select", ["Return"]),
+    ("vs-character-select", "vs-confirm", [*[([key], None) for key in ("Return", "Right", "Return", "Down", "Return",
+                                                                      "Return", "Right", "Return", "Right")],
+                                           (["Return"], ROUTE_SCREENS["vs-confirm"])]),
+    ("vs-confirm", "vs-battle", [(["Return"], slow("vs-battle", 3.0))]),
+    ("vs-battle", "vs-pause", ["Escape"]),
+    # MAIN MENU is the last item, and the cursor starts on the first: Up wraps to it (Down Down hit CHANGE CHARACTER
+    # in the menu Escape opens mid-match, run fid-vsback)
+    ("vs-pause", "menu@vs", [(["Up"], None), (["Return"], slow("save-prompt")),
+                             (["Left"], None), (["Return"], slow("menu@vs", 3.0))]),
+    # the events play themselves: the battle follows the opening one, and Escape skips the victory one (run fid-win)
+    ("pre-battle", "opening-event", [(["Up", "Return"], {**ROUTE_SCREENS["opening-event"], "gap": 0})]),
+    ("opening-event", "battle", [([], slow("battle", 3.0))]),
+    ("battle", "victory-event", [({"action": "win"}, {**ROUTE_SCREENS["victory-event"], "gap": 0})]),
+    ("victory-event", "results", [(["Escape"], {**slow("results", 2.0), "every": 3})]),
+    # MAIN MENU ends the battle after a prompt whose cursor starts on NO; it names the title screen but leads to the
+    # main menu, cursor on DREAM MODE (run fid-exit)
+    ("pre-battle", "menu@dream", [*[([key], None) for key in ("Up", "Up")], (["Return"], slow("save-prompt")),
+                                  (["Left"], None), (["Return"], ROUTE_SCREENS["menu@dream"])]),
+    # from a battle a second prompt, cursor on NO again, warns that the battle is lost unless it was saved (fid-exit2)
+    ("pause", "menu@dream", [*[([key], None) for key in ("Up", "Up")], (["Return"], slow("save-prompt")),
+                             (["Left"], None), (["Return"], {"seconds": 1.0}),
+                             (["Left"], None), (["Return"], ROUTE_SCREENS["menu@dream"])]),
     # the results screen takes no input while it counts up; a stage's victory event (caption caller 0x49dace) comes
     # first and waits, and Escape skips it as a player can (run fid-win, stage 133)
     ("battle", "results", [({"action": "win"}, {"any": [ROUTE_SCREENS["results"], {"caller": "0x49dace"}]}),
@@ -1480,6 +1538,8 @@ def route(root: Path, target: str, stage: int | None = None) -> int:
                 if keys is DREAM_STEP:
                     pick_dream(root, stage, f"{source} -> {destination}", seen)
                     continue
+                if source in PAUSE_SOURCES and isinstance(keys, list) and route_input(root) == "pad":
+                    keys = ["START" if k == "Escape" else k for k in keys]
                 if keys is STORY_STEP:
                     keys = story_keys(stage)[0]
                 elif keys is CHAPTER_STEP:
@@ -1498,12 +1558,12 @@ def route(root: Path, target: str, stage: int | None = None) -> int:
 
 def stage_chain() -> set[str]:
     """The screens from the Dream scenario's team page to the save prompt, where the stage picked
-    at the scenario select is already loaded: those reachable from battle-camp without the Dream menu."""
+    at the scenario select is already loaded: those reachable from battle-camp without the title or a menu."""
     seen, todo = {"battle-camp"}, ["battle-camp"]
     while todo:
         node = todo.pop()
         for source, destination, _ in ROUTE_EDGES:
-            if source == node and destination != "menu@dream" and destination not in seen:
+            if source == node and destination != "title" and not destination.startswith("menu@") and destination not in seen:
                 seen.add(destination)
                 todo.append(destination)
     return seen
@@ -1735,6 +1795,8 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--unplugged", action="store_true", help="the pad starts unplugged; see plug")
             command.add_argument("--video", action="store_true",
                                  help="output 1080p without FSR, so the video command keeps the game at full speed")
+            command.add_argument("--route-input", choices=["keys", "pad"], default="keys",
+                                 help="what routes press: the keyboard, or (with --pad) the pad, for the pad's prompts")
             command.add_argument("--slot", action="store_true",
                                  help="wait for one of the two game slots and hold it (instead of a flock wrapper)")
         if action == "plug":
