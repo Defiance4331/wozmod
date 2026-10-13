@@ -2689,10 +2689,27 @@ static long __stdcall present(void *device, const void *from, const void *to, vo
     return real_present(device, from, to, window, dirty);
 }
 
+/* A display Reset (resolution, full screen, a lost device) after a battle left every menu sprite a grey box. Before
+ * the Reset the engine forgets its current shaders (0x605BE0, from 0x5C9120) and trusts the Reset to unbind them,
+ * as D3D9 says it does; DXVK keeps them bound, so the menus, which unbind only what the engine thinks is bound,
+ * drew through the battle's shaders. Unbinding both after the Reset matches what the engine expects. */
+typedef long (__stdcall *reset_fn)(void *, void *);
+static reset_fn real_reset;
+
+static long __stdcall reset(void *device, void *params)
+{
+    long result = real_reset(device, params);
+    if (result >= 0)
+        COM(device, 0x170, 2)(device, 0), COM(device, 0x1AC, 2)(device, 0);  /* SetVertexShader, SetPixelShader */
+    return result;
+}
+
 static long __stdcall create_device(void *d3d, u32 adapter, u32 type, void *window, u32 flags, void *params, void **device)
 {
     long result = real_create_device(d3d, adapter, type, window, flags, params, device);
-    if (result >= 0 && !real_vs_const)
+    if (result >= 0 && !real_reset)
+        hook_slot(*device, 16, (void *)reset, &real_reset);
+    if (result >= 0 && fps_ok && !real_vs_const)
         hook_slot(*device, 94, (void *)vs_const, &real_vs_const), hook_slot(*device, 17, (void *)present, &real_present),
             trace_hooks(*device);
     return result;
@@ -3570,7 +3587,7 @@ __declspec(dllexport) void *WINAPI Direct3DCreate9(UINT version)
     }
     {
         void *d3d = real(version);
-        if (d3d && fps_ok && !real_create_device)
+        if (d3d && !real_create_device)
             hook_slot(d3d, 16, (void *)create_device, &real_create_device);
         return d3d;
     }
