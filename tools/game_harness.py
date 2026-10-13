@@ -642,6 +642,27 @@ def perform(root: Path, request: dict) -> dict:
                           "--file-format=wav", str(destination)],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return {"path": str(destination), "seconds": seconds}
+    elif action == "video":
+        # Gamescope's PipeWire screen stream and the private sink's monitor, muxed by one pipeline so they stay in step.
+        # NVENC keeps encoding off the CPU the game needs; start the run with --video (1080p output) for full speed.
+        name, seconds = request["name"], request["seconds"]
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", name):
+            raise ValueError("video name must be a short filename stem, without slashes")
+        if not isinstance(seconds, (int, float)) or not 0 < seconds <= 600:
+            raise ValueError("video seconds must be greater than 0 and at most 600")
+        destination = local_path(root, f"evidence/{name}.mkv")
+        if destination.exists():
+            raise ValueError(f"video already exists: {destination}")
+        with local_path(root, f"evidence/{name}.log").open("w") as log:
+            subprocess.Popen(
+                ["timeout", "-s", "INT", str(seconds), "gst-launch-1.0", "-e",
+                 "pipewiresrc", "target-object=gamescope", "do-timestamp=true", "!", "queue", "!",
+                 "nvh264enc", "bitrate=12000", "!", "h264parse", "!", "queue", "!", "mux.",
+                 "pulsesrc", "device=musou_harness.monitor", "do-timestamp=true", "!", "audioconvert", "!",
+                 "opusenc", "bitrate=192000", "!", "queue", "!", "mux.",
+                 "matroskamux", "name=mux", "!", "filesink", f"location={destination}"],
+                stdout=log, stderr=subprocess.STDOUT)
+        return {"path": str(destination), "seconds": seconds}
     elif action not in ("status", "stop"):
         raise ValueError(f"unknown action: {action}")
     return {"action": action}
@@ -676,7 +697,6 @@ def serve(root: Path) -> int:
     ):
         raise ValueError("serve requires the harness Gamescope environment")
     control = root / "control"
-    start_audio(root)
     with (root / "evidence/launcher.log").open("w") as log:
         process = subprocess.Popen(
             ["bash", str(root / "launch.sh")], cwd=root,
@@ -801,11 +821,14 @@ def run(root: Path, args: argparse.Namespace) -> int:
     local_path(root, "control").mkdir(mode=0o700)
     local_path(root, "evidence").mkdir(mode=0o700)
     render_size = (1280, 720) if args.target == XENIA else (1920, 1080)
-    output_size = render_size if args.target == XENIA else (3840, 2160)
+    # Gamescope copies each output frame into the screen stream on its own thread; at 3840x2160 that halves the
+    # game's frame rate, and the frame-locked game then runs slow against its real-time voices. --video outputs 1080p.
+    fsr = args.target != XENIA and not getattr(args, "video", False)
+    output_size = (3840, 2160) if fsr else render_size
     identity = {"target": args.target, "game": str(game), "root": str(root),
                 "launch_sha256": hashlib.sha256(launcher.read_bytes()).hexdigest(),
                 "timeout_seconds": args.timeout, "render_size": render_size,
-                "output_size": output_size, "fsr": args.target != XENIA}
+                "output_size": output_size, "fsr": fsr}
     pad = VirtualPad(args.pad) if args.pad else None
     identity["pad"] = pad.node if pad else None
     write_json(root / "evidence/session.json", identity)
@@ -847,10 +870,12 @@ def run(root: Path, args: argparse.Namespace) -> int:
     hz = "60" if args.target == XENIA else os.environ.get("MUSOU_HARNESS_HZ", "60")
     if hz not in ("60", "120"):
         raise ValueError("MUSOU_HARNESS_HZ must be 60 or 120")
-    command += ["dbus-run-session", "--", "gamescope", "--backend", "headless",
+    # The private audio server starts first: gamescope connects to PipeWire once, at start, for its screen stream.
+    command += ["dbus-run-session", "--", sys.executable, str(Path(__file__).resolve()), "_audio", "--root", str(root),
+                "gamescope", "--backend", "headless",
                 "-W", str(output_size[0]), "-H", str(output_size[1]),
                 "-w", str(render_size[0]), "-h", str(render_size[1])]
-    if args.target != XENIA:
+    if fsr:
         command += ["-F", "fsr"]
     command += ["-r", hz, "--",
                 sys.executable, str(Path(__file__).resolve()), "_serve", "--root", str(root)]
@@ -1572,9 +1597,9 @@ def tour_diff(one: Path, two: Path) -> list[dict]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="action", required=True)
-    for action in ("run", "status", "key", "click", "pad", "plug", "capture", "record", "peek", "poke", "find",
-                   "screen", "wait", "say", "notice", "win", "lose", "scripts", "script", "unlock", "battle",
-                   "reload", "review", "tour", "route", "check", "stop", "_serve"):
+    for action in ("run", "status", "key", "click", "pad", "plug", "capture", "record", "video", "peek", "poke",
+                   "find", "screen", "wait", "say", "notice", "win", "lose", "scripts", "script", "unlock", "battle",
+                   "reload", "review", "tour", "route", "check", "stop", "_audio", "_serve"):
         command = commands.add_parser(action)
         command.add_argument("--root", required=True, type=Path)
         command.add_argument("--timeout", type=bounded, default=1800 if action == "run" else 30)
@@ -1585,6 +1610,8 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--pad", nargs="?", const="x360", choices=PAD_MODELS,
                                  help="give the game a virtual XInput pad (default x360), driven by the pad command")
             command.add_argument("--unplugged", action="store_true", help="the pad starts unplugged; see plug")
+            command.add_argument("--video", action="store_true",
+                                 help="output 1080p without FSR, so the video command keeps the game at full speed")
         if action == "plug":
             command.add_argument("state", choices=["on", "off"])
         if action == "key":
@@ -1602,10 +1629,12 @@ def main(argv: list[str] | None = None) -> int:
                                  help="seconds between keys of a sequence (one key settles 1 s)")
         if action == "capture":
             command.add_argument("name")
-        if action == "record":
+        if action in ("record", "video"):
             command.add_argument("name")
             command.add_argument("--seconds", type=bounded, default=60,
-                                 help="record the game's audio for this long, in the background")
+                                 help="record the game's audio (video: picture and audio) this long, in the background")
+        if action == "_audio":
+            command.add_argument("compositor", nargs=argparse.REMAINDER)
         if action in ("peek", "poke"):
             command.add_argument("address", type=lambda value: int(value, 0), help="such as 0xC2AE00")
         if action == "peek":
@@ -1658,6 +1687,11 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError(f"--root must be a run directory inside {locations}")
         if args.action == "run":
             return run(root, args)
+        if args.action == "_audio":  # inside the sandbox: the audio server, then the compositor in its place
+            if os.environ.get("MUSOU_HARNESS_ROOT") != str(root):
+                raise ValueError("_audio requires the harness sandbox")
+            start_audio(root)
+            os.execvp(args.compositor[0], args.compositor)
         if args.action == "_serve":
             try:
                 code = serve(root)
@@ -1694,7 +1728,7 @@ def main(argv: list[str] | None = None) -> int:
             request["name"] = args.name
         if args.action == "plug":
             request["on"] = args.state == "on"
-        if args.action == "record":
+        if args.action in ("record", "video"):
             request.update(name=args.name, seconds=args.seconds)
         if args.action in ("peek", "poke"):
             request["address"] = args.address
