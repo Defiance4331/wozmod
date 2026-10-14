@@ -626,7 +626,7 @@ keys = ["Left"]
 # In-battle name banner: it sizes to the name, so every name ends where the label banner's text does, 77 px
 # before the plate's end at the screen edge. Stage 40 posts officer banners on its own every 10-20 s from the
 # start; the wait reads one once its plate holds still. The name is drawn by the runtime, so it is selected as the
-# text on the row of the plate pieces of banner types 2/4 and 5 (the row moves between stages).
+# text drawn on the plate of banner types 2/4 and 5 (the row moves between stages).
 [[screen]]
 name = "battle-name-banner"
 route = "battle"
@@ -634,14 +634,28 @@ wait = { box_caller = "0x5501dd|0x55006b", timeout = 120 }
 
   [[screen.assert]]
   kind = "text_position"
-  text = { row_of_box = "0x5501dd|0x55006b" }
+  text = { on_plate = "0x5501dd|0x55006b" }
   right = 1203
   tol = 2
 
-  [[screen.assert]]
-  kind = "text_stems_even"     # glyph form: no bold or thin letter among its line's
-  text = { row_of_box = "0x5501dd|0x55006b" }
 
   [[screen.assert]]
   kind = "text_on_one_line"    # glyph form: every letter ends on the line
-  text = { row_of_box = "0x5501dd|0x55006b" }
+  text = { on_plate = "0x5501dd|0x55006b" }
+
+# Glyph form on a battle notice of known text: round and flat letters side by side ("Seize" is where a raised
+# "iz" showed) and stems of every width ("minimum"). An officer name on a banner is too short and too varied to
+# carry these checks.
+[[screen]]
+name = "battle-notice-glyphs"
+route = "battle"
+notice = "Seize the eastern garrison by minimum illumination"
+wait = { caller = "0x550f0b", timeout = 30 }
+
+  [[screen.assert]]
+  kind = "text_stems_even"
+  text = { caller = "0x550f0b" }
+
+  [[screen.assert]]
+  kind = "text_on_one_line"
+  text = { caller = "0x550f0b" }

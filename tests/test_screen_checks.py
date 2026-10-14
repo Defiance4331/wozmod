@@ -196,6 +196,9 @@ class Driver:
     def keys(self, names):
         self.log.append(("keys", names))
 
+    def notice(self, text):
+        self.log.append(("notice", text))
+
     def wait(self, cond):
         self.log.append(("wait", cond))
         return self.wait_ok
@@ -234,11 +237,12 @@ def test_runner_skips_the_capture_when_no_assertion_reads_pixels_and_stops_on_wa
     assert [(r.assertion, r.ok) for r in rows] == [("wait", False)]
 
 
-def test_runner_presses_a_screens_keys_after_its_route_and_before_reading_it(tmp_path):
-    """Bug: the keys are dropped or sent before the route, so every gallery stop reads the first artwork."""
+def test_runner_presses_a_screens_keys_and_posts_its_notice_after_its_route_and_before_reading_it(tmp_path):
+    """Bug: the keys or the notice are dropped or sent before the route, so every gallery stop reads the first
+    artwork and the calibration notice is posted outside the battle."""
     d = Driver(tmp_path)
-    sc.run_spec([{**SPEC[0], "keys": ["Right", "Down"], "wait": {"caller": "0x1"}}], d)
-    assert [e[0] for e in d.log[:3]] == ["route", "keys", "wait"] and d.log[1][1] == ["Right", "Down"]
+    sc.run_spec([{**SPEC[0], "keys": ["Right", "Down"], "notice": "nnn", "wait": {"caller": "0x1"}}], d)
+    assert [e[0] for e in d.log[:4]] == ["route", "keys", "notice", "wait"] and d.log[1][1] == ["Right", "Down"]
 
 
 def test_spec_loader_rejects_unknown_kinds_and_keys_and_accepts_every_committed_spec(tmp_path):
@@ -264,13 +268,14 @@ def test_spec_loader_refuses_a_caller_inside_the_runtime_dll(tmp_path):
         sc.load_spec(p)
 
 
-def test_a_text_is_selected_by_the_row_of_the_plate_drawn_beside_it():
-    # Catches the banner check selecting by a fixed y, which finds nothing when a stage draws its banners lower,
-    # or picking up the dialog text elsewhere on screen.
-    s = {**screen([text(964, 307, 239, "Name"), text(164, 470, 702, "dialog")], []),
+def test_a_banner_name_is_selected_by_its_plate_and_an_overhead_tag_crossing_the_row_is_not():
+    # Catches the banner check reading an overhead officer tag that drifts across the banner's row (it failed with
+    # the tag's right end, 1064), or picking up the dialog text elsewhere on screen.
+    s = {**screen([text(964, 307, 239, "Name"), text(164, 470, 702, "dialog"), text(875, 288, 191, "Tag above"),
+                   text(691, 332, 191, "Tag left")], []),
          "boxes": [{"x": 894, "y": 303, "width": 28, "height": 35, "caller": "0x5501dd", "count": 1}]}
-    assert [t["text"] for t in sc._texts(s, {"row_of_box": "0x5501dd|0x55006b"})] == ["Name"]
-    assert sc._texts(s, {"row_of_box": "0x550211"}) == []
+    assert [t["text"] for t in sc._texts(s, {"on_plate": "0x5501dd|0x55006b"})] == ["Name"]
+    assert sc._texts(s, {"on_plate": "0x550211"}) == []
 
 
 def text_line(letters):
@@ -303,3 +308,13 @@ def test_a_letter_off_the_line_is_reported_and_a_descender_is_not():
     assert not c.ok and c.numbers["lines"][0]["off"] == [2.0]
     s, img = text_line(on[:3] + [(220, 10, 197)] + on[4:])
     assert sc.text_on_one_line(s, img, None).ok
+
+
+def test_a_border_running_under_the_text_does_not_join_its_letters():
+    # Catches the prompt bar's bottom border, inside the text's rect, joining every letter into one run, so the
+    # line has no letters to judge and a low letter goes unreported.
+    on = [(160 + 20 * i, 10, 190) for i in range(8)]
+    s, img = text_line(on[:3] + [(220, 10, 192)] + on[4:])
+    ImageDraw.Draw(img).rectangle((140, 193, 480, 194), fill=(180, 180, 180))  # a faint border in the rect, under the text
+    c = sc.text_on_one_line(s, img, None)
+    assert not c.ok and c.numbers["lines"][0]["off"] == [2.0]

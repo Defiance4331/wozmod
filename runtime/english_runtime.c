@@ -632,12 +632,20 @@ static u32 width24(const char *s)
 
 typedef void (*text_draw)(const char *, u32, u32, u32, u32);
 
+static float glyph_line_fit(const char *s, u32 width, float factor);
+
 static void draw_fit_at(text_draw renderer, const char *s, u32 x, u32 y, u32 layer, u32 count, u32 width, u32 align, u32 run_width)
 {
     struct text_fit saved = active_fit;
     double anchor = fit_anchor;
     u32 own = measure(s), clean = fit_clean;
-    active_fit = text_fit(run_width ? run_width : own, own, width, align, squish && text_fit_latin(s));
+    int latin = squish && text_fit_latin(s);
+    active_fit = text_fit(run_width ? run_width : own, own, width, align, latin);
+    if (latin && width) {  /* our glyphs step by whole pixels: fit those steps, not the exact width */
+        float factor = glyph_line_fit(s, width, (float)active_fit.factor);
+        if (factor < active_fit.factor)
+            active_fit.factor = factor, active_fit.shift = own * (1.0 - factor) * (align == 1 ? 0.5 : align == 2 ? 1.0 : 0.0);
+    }
     fit_anchor = (double)(int)x * SCREEN_W * 16 / 1280 + 32768;
     fit_clean = 0;
     inner++;
@@ -818,6 +826,32 @@ static const struct glyph_slot *glyph_get(u32 number, float kx, float ky, int b,
     shelf_x += w + 1, shelf_h = (u32)h > shelf_h ? (u32)h : shelf_h;
     glyph_used++;
     return slot;
+}
+
+/* The squish factor, at most `factor`, at which every line of s fits `width` layout px as our glyphs step through
+   it (gr_fit); `factor` itself without the renderer, or for text it cannot step (icons, Japanese).
+   shortcut: lines with icons or Japanese keep the game's factor; model their widths if one ever overflows. */
+static float glyph_line_fit(const char *s, u32 width, float factor)
+{
+    int advance[256], n = 0;
+    float best = factor;
+    const u8 *p = (const u8 *)s;
+    if (!glyph_handle)
+        return factor;
+    for (;; p++) {
+        if (!*p || *p == '\n') {
+            float f = gr_fit(advance, n, (float)width, SCREEN_W / 1280.0f, factor);
+            best = f < best ? f : best, n = 0;
+            if (!*p)
+                return best;
+        } else if (*p == '[' && p[1] && p[2]) {
+            p += 2;  /* a colour tag */
+        } else if (*p >= 0x20 && *p < 0x7F && n < 256) {
+            advance[n++] = enrt_widths[GLYPH_LATIN + *p - 0x20] * FONT_CELL[0] / 24;
+        } else {
+            return factor;
+        }
+    }
 }
 
 /* v rounded to a whole number, a half to the even one: the same advance is always the same pixels, and halves

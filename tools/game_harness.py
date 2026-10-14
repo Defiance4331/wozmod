@@ -1665,6 +1665,9 @@ class CheckDriver:
                 self.fire(script)
         self.loaded = after
 
+    def notice(self, text: str) -> None:
+        ask(self.root, {"action": "notice", "text": text})
+
     def keys(self, names: list[str]) -> None:
         """Keys within a screen (a cursor); the route position holds while the screen still shows."""
         at = route_position(self.root)

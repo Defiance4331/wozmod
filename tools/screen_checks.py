@@ -82,14 +82,15 @@ def select_quads(screen: dict, key: str) -> list[dict]:
 
 
 def _texts(screen: dict, sel: dict | None) -> list[dict]:
-    """`row_of_box` ("|" between callers) keeps the texts on the row of a plain box drawn by one of them: the text
-    of a plate whose pieces are drawn beside it, wherever the plate is."""
+    """`on_plate` ("|" between callers) keeps the texts drawn on a plate whose pieces are plain boxes by one of
+    those callers: a text starting right of a piece with its top inside the piece, as the in-battle banner draws
+    its name. Overhead name tags that drift across the banner's row start left of the piece or above or below it."""
     sel = sel or {}
     found = select_texts(screen, sel.get("caller"), sel.get("match"), sel.get("x"), sel.get("y"))
-    if sel.get("row_of_box"):
-        rows = [(b["y"], b["y"] + b["height"]) for b in screen.get("boxes", [])
-                if b["caller"] in sel["row_of_box"].split("|")]
-        found = [t for t in found if any(t["y"] < bottom and top < t["y"] + TEXT_H for top, bottom in rows)]
+    if sel.get("on_plate"):
+        pieces = [b for b in screen.get("boxes", []) if b["caller"] in sel["on_plate"].split("|")]
+        found = [t for t in found if any(b["y"] <= t["y"] < b["y"] + b["height"] and t["x"] >= b["x"] + b["width"]
+                                         for b in pieces)]
     return found
 
 
@@ -471,10 +472,12 @@ def text_on_one_line(screen: dict, img: Image.Image, text: dict | None, level: f
     lines = []
     for t, n, cov, top, base in _text_lines(screen, img, text):
         h, feet = base - top, []
+        # the letters' own rows: a plate's border above or below the text would join every letter into one run
+        cov = cov[max(0, top - h // 2): base - int(-hang) + 1]  # a row past the deepest letter judged
         for a, b in _runs([max(row[x] for row in cov) >= 0.2 for x in range(len(cov[0]))]):
             prof = [max(row[a:b]) for row in cov]
             full = [i for i, v in enumerate(prof) if v >= 0.95]
-            if not full or full[-1] - full[0] + 1 < 0.4 * h:
+            if not full or full[-1] - full[0] + 1 < 0.4 * h or prof[-1] >= 0.2:  # too small, or hangs past `hang`
                 continue
             last = full[-1]
             feet.append(last + 1 + (prof[last + 1] if last + 1 < len(prof) else 0.0))
@@ -505,7 +508,7 @@ ASSERTIONS: dict[str, tuple[Callable[..., Check], bool]] = {
     "text_on_one_line": (text_on_one_line, True),
 }
 INK_WIDTH = {"text_clear_of_quad", "text_clear_of_text", "text_within_edge"}  # take the capture as `img=`
-SCREEN_KEYS = {"name", "route", "fixture", "battle", "script", "keys", "wait", "assert"}
+SCREEN_KEYS = {"name", "route", "fixture", "battle", "script", "keys", "notice", "wait", "assert"}
 
 
 # ---- spec and runner -------------------------------------------------------
@@ -531,7 +534,7 @@ def load_spec(path: Path) -> list[dict]:
 def run_spec(screens: list[dict], driver, seen: dict | None = None) -> list[Row]:
     """Reach each screen through the driver, capture it, run its assertions; `seen` collects each screen's JSON
     and capture by screen name.
-    Driver: route(name, fixture=None, battle=None, script=None), keys(names),
+    Driver: route(name, fixture=None, battle=None, script=None), keys(names), notice(text),
     wait(cond: dict) -> bool, screen() -> dict, capture() -> path."""
     rows: list[Row] = []
     for sc in screens:
@@ -540,6 +543,8 @@ def run_spec(screens: list[dict], driver, seen: dict | None = None) -> list[Row]
             driver.route(sc["route"], fixture=sc.get("fixture"), battle=sc.get("battle"), script=sc.get("script"))
             if sc.get("keys"):  # pressed after the route, from wherever the screen's cursor was left
                 driver.keys(sc["keys"])
+            if sc.get("notice"):  # a battle notice of the check's own text, drawn as the game draws its notices
+                driver.notice(sc["notice"])
             if sc.get("wait") and not driver.wait(dict(sc["wait"])):
                 rows.append(Row(name, "wait", False, {"wait": sc["wait"]}, None))
                 continue

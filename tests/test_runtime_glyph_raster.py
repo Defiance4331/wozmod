@@ -34,6 +34,10 @@ void soften(unsigned char *px, int w, int h, int side)
 {
     gr_soften(px, w, h, w, side);
 }
+float fit(const int *advance, int count, float box, float scale, float factor)
+{
+    return gr_fit(advance, count, box, scale, factor);
+}
 int step(int advance, float scale)
 {
     return gr_step(advance, scale);
@@ -160,3 +164,20 @@ def test_a_step_is_the_games_advance_in_whole_pixels_with_halves_split_both_ways
     assert [f(a, 1.5) for a in (14, 15, 16, 17, 7, 9)] == [21, 22, 24, 26, 10, 14]  # 22.5 -> 22, 25.5 -> 26
     halves = [a for a in range(4, 24) if (a * 1.5) % 1]
     assert sum(f(a, 1.5) - a * 1.5 for a in halves) == 0  # as many halves round up as down
+
+
+def test_a_squished_line_fits_its_box_as_the_glyphs_step_through_it(raster):
+    # Catches the weapon-attribute line drawn 5 px past its box: the squish chosen from the exact width while each
+    # letter steps by a whole pixel, which here rounds up for most letters.
+    raster.fit.restype = raster.step.restype = ctypes.c_float
+    raster.step.restype = ctypes.c_int
+    advances = [13] * 37  # each exact step 16.58 px: every one rounds up
+    box, scale = 409, 1.5
+    exact = box / sum(advances)
+    steps = lambda f: sum(raster.step(a, ctypes.c_float(scale * f)) for a in advances)
+    factor = raster.fit((ctypes.c_int * len(advances))(*advances), len(advances), ctypes.c_float(box),
+                        ctypes.c_float(scale), ctypes.c_float(exact))
+    assert steps(exact) > box * scale  # the exact-width squish overflows
+    assert steps(factor) <= box * scale and factor > 0.97 * exact
+    assert raster.fit((ctypes.c_int * 3)(10, 10, 10), 3, ctypes.c_float(400), ctypes.c_float(scale),
+                      ctypes.c_float(1.0)) == 1.0  # room to spare: no squish

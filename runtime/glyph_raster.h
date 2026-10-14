@@ -268,6 +268,22 @@ static inline int gr_step(int advance, float scale)
     return f > 0.5f ? i + 1 : f < 0.5f ? i : i + (i & 1);
 }
 
+/* The squish factor, at most `factor`, at which a line of these advances (whole layout px, spaces included) fits
+   `box` layout px when every letter steps by gr_step at `scale` screen px per layout px. The steps round, so a line
+   can come out wider than its exact width: the fit is on the steps the renderer draws, not on the exact width. */
+static inline float gr_fit(const int *advance, int count, float box, float scale, float factor)
+{
+    int i, k, px;
+    for (k = 0; k < 16; k++) {
+        for (px = 0, i = 0; i < count; i++)
+            px += gr_step(advance[i], scale * factor);
+        if ((float)px <= box * scale)
+            break;
+        factor *= box * scale / (float)px * 0.999f;
+    }
+    return factor;
+}
+
 /* Softening of a drawn glyph, the same for every glyph so stems, baseline and spacing stay even: each pixel takes
    `side` (0..256 of 256) of its ink from each of its four neighbours' share, a tent blur across then down.
    0 leaves it sharp. The ink a glyph holds is kept (a pixel of padding round the glyph takes what spreads out). */
