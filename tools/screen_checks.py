@@ -252,6 +252,17 @@ def text_position(screen: dict, text: dict | None, x: int | None = None, y: int 
                            "bad": bad})
 
 
+def text_cell(screen: dict, text: dict | None, cell: int, tol: int = 1, allow_empty: bool = False) -> Check:
+    """Every selected text's reported width is its widest line's width from the game's width table at `cell` px
+    letters: the site keeps that letter cell (the dream summary at the stock 24, not a smaller cell that also fits)."""
+    ts = _texts(screen, text)
+    if not ts:
+        return _empty("texts=0", allow_empty)
+    seen = [{"width": t["width"], "table": max(_table_width(line, cell) for line in t["text"].split("\n"))} for t in ts]
+    bad = [s for s in seen if abs(s["width"] - s["table"]) > tol]
+    return Check(not bad, {"texts": len(ts), "cell": cell, "tol": tol, "bad": bad})
+
+
 def quad_position(screen: dict, quad: str, x: int | None = None, y: int | None = None, width: int | None = None,
                   height: int | None = None, left: int | None = None, tol: int = 1, allow_empty: bool = False) -> Check:
     """Every quad of texture `quad` sits at the given layout `x`, `y` and has the given `width`, `height`, within
@@ -512,6 +523,7 @@ ASSERTIONS: dict[str, tuple[Callable[..., Check], bool]] = {
     "line_count": (line_count, False),
     "text_within_edge": (text_within_edge, False),
     "text_position": (text_position, False),
+    "text_cell": (text_cell, False),
     "quad_position": (quad_position, False),
     "no_cjk": (no_cjk, False),
     "text_has_ink": (text_has_ink, True),

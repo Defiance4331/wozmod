@@ -11,7 +11,8 @@ from __future__ import annotations
 
 ROWS = 48  # profile samples over the body
 CELL_UNIT = 50  # font units to one cell unit (one layout px at the game's 24 px text)
-CAP_DEPTH = 120  # font units a side's profile may count as depth (about one stem): deeper openings count as this
+CAP_DEPTH = 40  # font units a side's profile may count as depth (deeper openings count as this): lower evens the
+# gaps between neighbours, 0 would be one gap for every letter
 # English letter frequencies (percent): the room is calibrated so text of this mix keeps the width it had with the
 # official WO1 PC advances, so lines, boxes and squish stay close to the game's layout.
 FREQUENCY = dict(e=12.7, t=9.1, a=8.2, o=7.5, i=7.0, n=6.7, s=6.3, h=6.1, r=6.0, d=4.3, l=4.0, c=2.8, u=2.8, m=2.4,

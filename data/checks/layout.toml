@@ -354,8 +354,7 @@ route = "story-orochi-scenario"
   quad = "4079.158"
   side = "right"
 
-# Dream summary (Old): the stock cell and pitch (28) in its column; this summary takes the full 7 lines there
-# (fewer at the X360 size) and ends inside the 240 column.
+# Dream summary (Old): the stock cell (24) and pitch (28) in its column, at most 7 lines, ending inside the 240 column.
 [[screen]]
 name = "dream-select"
 route = "dream-select"
@@ -363,8 +362,12 @@ route = "dream-select"
   [[screen.assert]]
   kind = "line_count"
   text = { x = 980, y = 408 }
-  min = 7
   max = 7
+
+  [[screen.assert]]
+  kind = "text_cell"
+  text = { x = 980, y = 408 }
+  cell = 24
 
   [[screen.assert]]
   kind = "text_within_edge"

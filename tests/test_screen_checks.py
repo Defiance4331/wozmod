@@ -332,3 +332,16 @@ def test_a_caption_line_is_checked_centred_by_the_width_table_not_by_a_fixed_sta
     assert sc.text_position(centred, {"caller": "0x56a116"}, centre=640, cell=28).ok
     assert not sc.text_position(shifted, {"caller": "0x56a116"}, centre=640, cell=28).ok
     assert not sc.text_position(centred, {"caller": "0x56a116"}, centre=640).ok  # measured at the wrong cell
+
+
+def test_a_summary_is_checked_at_its_letter_cell_not_by_how_many_lines_it_fills():
+    # Catches a site drawn at a smaller cell than the stock one: its lines still fit the column, and how many lines a
+    # summary fills depends on the letter widths, so only the width the game reports at the cell can tell.
+    from wozmod.runtime.latin_font import ADVANCES
+    order = [chr(c) for c in range(0x20, 0x7E)]
+    lines = ["Mm Mm Mm", "ii"]
+    width = {cell: max(sum(ADVANCES[order.index(c)] * cell // 24 for c in line) for line in lines) for cell in (21, 24)}
+    stock = screen([text(980, 408, width[24], "\n".join(lines))])
+    smaller = screen([text(980, 408, width[21], "\n".join(lines))])
+    assert sc.text_cell(stock, None, cell=24).ok
+    assert not sc.text_cell(smaller, None, cell=24).ok
