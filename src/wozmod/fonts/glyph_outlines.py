@@ -170,18 +170,12 @@ def encode(glyphs: dict[int, dict], zone: dict[str, int], base: int) -> bytes:
     return head + table + data
 
 
-def centred(advance: float, x0: float, x1: float) -> float:
-    """The offset that centres ink from x0 to x1 in an advance (all font units): equal room on both sides."""
-    return (advance - (x1 - x0)) / 2 - x0
-
-
 def extract() -> bytes:
-    """The face as glyphs.bin data, each glyph's ink centred in the advance the game steps by (the runtime's width
-    table), so a letter has the same room on both sides. The 24 px sheet centres it in the legacy advance instead,
-    a unit off for most letters: i and l lean on the letter before, n and o on the one after."""
-    from wozmod.runtime.latin_font import ADVANCES
-    from . import raster, wo1vec
+    """The face as glyphs.bin data, each glyph placed in its advance as the game's width table spaces it
+    (side_spacing: room for each side by the side's shape)."""
+    from . import raster, side_spacing, wo1vec
 
+    spacing = side_spacing.font_spacing()
     font = wo1vec.make()
     outlines = raster.outlines(font)
     glyphs = {}
@@ -190,7 +184,7 @@ def extract() -> bytes:
             continue
         contours = [flatten(c) for c in outlines[ch][0]]
         xs, ys = [p[0] for c in contours for p in c], [p[1] for c in contours for p in c]
-        glyphs[number] = {"ch": ch, "offset": centred(ADVANCES[number] * CELL / 24, min(xs), max(xs)),
+        glyphs[number] = {"ch": ch, "offset": spacing[ch][1] - min(xs),
                           "contours": contours,
                           "stems": stems(contours), "bars": bars(contours),
                           "ymin": round(min(ys)), "ymax": round(max(ys))}

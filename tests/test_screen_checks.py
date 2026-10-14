@@ -318,3 +318,17 @@ def test_a_border_running_under_the_text_does_not_join_its_letters():
     ImageDraw.Draw(img).rectangle((140, 193, 480, 194), fill=(180, 180, 180))  # a faint border in the rect, under the text
     c = sc.text_on_one_line(s, img, None)
     assert not c.ok and c.numbers["lines"][0]["off"] == [2.0]
+
+
+def test_a_caption_line_is_checked_centred_by_the_width_table_not_by_a_fixed_start():
+    # Catches a centring check pinned to a start x worked out with old letter widths: it fails a correctly centred
+    # line once the widths change, and passes an off-centre one that happens to start there.
+    from wozmod.runtime.latin_font import ADVANCES
+    order = [chr(c) for c in range(0x20, 0x7E)]
+    line = "Opening Movie [02Two]"
+    width = sum(ADVANCES[order.index(c)] * 28 // 24 for c in "Opening Movie Two")  # a 28 px cell, each rounded down
+    centred = screen([text(640 - width // 2, 616, 0, line, "0x56a116")], [])
+    shifted = screen([text(640 - width // 2 + 9, 616, 0, line, "0x56a116")], [])
+    assert sc.text_position(centred, {"caller": "0x56a116"}, centre=640, cell=28).ok
+    assert not sc.text_position(shifted, {"caller": "0x56a116"}, centre=640, cell=28).ok
+    assert not sc.text_position(centred, {"caller": "0x56a116"}, centre=640).ok  # measured at the wrong cell

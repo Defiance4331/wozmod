@@ -27,6 +27,9 @@ from typing import Any, Callable
 from PIL import Image
 
 from wozmod.runtime.english_runtime import DLL_BASE
+from wozmod.runtime.latin_font import ADVANCES
+
+_LATIN_ORDER = [chr(c) for c in range(0x20, 0x7E)] + list("ŌōŪūï")  # ADVANCES order
 
 LAYOUT_W = 1280
 TEXT_H = 28  # one glyph row, layout px
@@ -224,15 +227,26 @@ def text_within_edge(screen: dict, text: dict | None, edge: int = LAYOUT_W, allo
                                      "reported_ends": [t["x"] + t.get("reported_width", t["width"]) for t in ts]})
 
 
+def _table_width(line: str, cell: int = 24) -> int:
+    """Layout px the game measures a line of Latin text at with `cell` px letters: each letter's width from the
+    runtime's width table scaled to the cell, rounded down as the game does (colour tags take no room)."""
+    line = re.sub(r"\[[0-9A-Fa-f]{2}|\]", "", line)
+    return sum(ADVANCES[_LATIN_ORDER.index(c)] * cell // 24 for c in line if c in _LATIN_ORDER)
+
+
 def text_position(screen: dict, text: dict | None, x: int | None = None, y: int | None = None,
-                  right: int | None = None, tol: int = 1, allow_empty: bool = False) -> Check:
+                  right: int | None = None, centre: int | None = None, cell: int = 24, tol: int = 1,
+                  allow_empty: bool = False) -> Check:
     """Every selected text sits at the given layout `x`, `y` or reported right end (`x + width`), within `tol`
-    (the prompt bar at y 652 ending at 1192; a name column at its row x). Skipped fields are not checked."""
+    (the prompt bar at y 652 ending at 1192; a name column at its row x). `centre`: the line's middle, its width
+    from the game's width table (the game centres a caption on that width), so the rule holds whatever the letter
+    widths are; `cell` is the letter cell the site measures at. Skipped fields are not checked."""
     ts = _texts(screen, text)
     if not ts:
         return _empty("texts=0", allow_empty)
-    want = {"x": x, "y": y, "right": right}
-    seen = [{"x": t["x"], "y": t["y"], "right": t["x"] + t["width"]} for t in ts]
+    want = {"x": x, "y": y, "right": right, "centre": centre}
+    seen = [{"x": t["x"], "y": t["y"], "right": t["x"] + t["width"],
+             **({"centre": t["x"] + _table_width(t["text"], cell) / 2} if centre is not None else {})} for t in ts]
     bad = [s for s in seen if any(v is not None and abs(s[k] - v) > tol for k, v in want.items())]
     return Check(not bad, {"texts": len(ts), "want": {k: v for k, v in want.items() if v is not None}, "tol": tol,
                            "bad": bad})

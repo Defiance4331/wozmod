@@ -88,14 +88,16 @@ name = "gallery-movie-two-line"
 route = "gallery-movie-two-line"
 
   [[screen.assert]]
-  kind = "text_position"            # the longer second line starts left of the first; both centred on 640
+  kind = "text_position"            # each line centred on 640, measured by the game's width table
   text = { caller = "0x56a116", y = 616 }
-  x = 290
+  centre = 640
+  cell = 28                         # the caption's letter cell (set at 0x56A177)
 
   [[screen.assert]]
   kind = "text_position"
   text = { caller = "0x56a116", y = 652 }
-  x = 273
+  centre = 640
+  cell = 28
 
 # Treasure (Old): the MOZ list and detail panel (names from x 228, detail text from x 635 in a 416 box).
 [[screen]]

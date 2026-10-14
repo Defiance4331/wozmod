@@ -66,7 +66,7 @@ for mode in ('baseline','legacy'):
 print(json.dumps(rows))
 """, tmp_path)
     assert result == [
-        ["baseline", [2376, 24], "67b9d0b472a2a8d7306d61cf064c2239cc77f8aa3204eb19be319a52d93522e0", 99],
+        ["baseline", [2376, 24], "21f425fad9f49a01e72f3b961695a930fededa20bfc719d87a7869eaf9e94738", 99],
         ["legacy", [2376, 24], "87858af86a1c382624913442dcddfb7c3ff1826739bb065cf6dd876b5986784b", 99],
     ]
 
@@ -308,3 +308,17 @@ for style in ('banner.small', 'banner.large'):
 print(json.dumps(rows))
 """, tmp_path)
     assert all(row["core"] > 0 and row["dark"] == 0 for row in result), result
+
+
+def test_the_games_width_table_is_the_spacing_of_the_current_font(tmp_path):
+    # Catches a font edit that leaves the stored width table (latin_font.ADVANCES) stale, so the game steps by
+    # widths spaced for the old letter shapes.
+    result = system_python("""
+import json
+from wozmod.fonts import raster, side_spacing
+from wozmod.runtime.latin_font import ADVANCES, OFFICIAL
+spacing = side_spacing.font_spacing()
+print(json.dumps({ch: [spacing[ch][0] if ch in spacing else OFFICIAL[i], ADVANCES[i]]
+                  for i, ch in enumerate(raster.CHARS)}))
+""", tmp_path)
+    assert {ch: v for ch, v in result.items() if v[0] != v[1]} == {}
