@@ -542,6 +542,10 @@ X360_PANELS = [
     immediate(0x557456, "bb", 248, 216),
     immediate(0x557506, "69c9", 796, 710),
     immediate(0x557529, "c7442410", 484, 570),
+    immediate(0x5577C0, "bd", 508, 594),  # the selection frame's column-0 x follows the moved thumbnails
+    # The description bar, its text and the page arrow under the moved thumbnail panel, as in stock.
+    immediate(0x5579F7, "bd", 484, 570), immediate(0x557AAF, "68", 484, 570), immediate(0x557B6D, "68", 484, 570),
+    immediate(0x557AE8, "68", 508, 594), immediate(0x557B92, "68", 508, 594), immediate(0x557BA9, "68", 508, 594),
     immediate(0x55BAF0, "69c9", 471, 538),
     immediate(0x55BB04, "8dbc02", -225, -321),
     immediate(0x55BB15, "bf", 246, 217),

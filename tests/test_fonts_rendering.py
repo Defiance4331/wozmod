@@ -66,8 +66,8 @@ for mode in ('baseline','legacy'):
 print(json.dumps(rows))
 """, tmp_path)
     assert result == [
-        ["baseline", [2376, 24], "3912da05ea6eab55d1b38278304fe44d36770853e1e8cd3ee929aa8faf6d8049", 99],
-        ["legacy", [2376, 24], "e10566c71b9bb29ed508efd5d83a7de939f44c67cfcc3435218ab21b9086b239", 99],
+        ["baseline", [2376, 24], "67b9d0b472a2a8d7306d61cf064c2239cc77f8aa3204eb19be319a52d93522e0", 99],
+        ["legacy", [2376, 24], "87858af86a1c382624913442dcddfb7c3ff1826739bb065cf6dd876b5986784b", 99],
     ]
 
 

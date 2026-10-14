@@ -326,6 +326,7 @@ def test_test_mailbox_screen_wait_and_say(tmp_path, monkeypatch):
         assert seen["frame"] == 41 and seen["texts"][0] == {
             "x": 100, "y": 200, "width": 300, "caller": "0x53c225", "text": "Defeat Ōda\nNobunaga"}
         assert seen["texts"][1]["hook"] == "caption" and seen["unnamed_quads"] == 1
+        assert seen["boxes"] == [{"x": 0, "y": 0, "width": 1, "height": 1, "caller": "0x1", "count": 1}]
         assert seen["textures"][0] == {"texture": "4074.3", "x": 10, "y": 20, "width": 168, "height": 28,
                                        "caller": "0x581a22", "count": 2}
         assert [w["set"] for w in seen["windows"]] == ["window 2", "message box"]
@@ -744,6 +745,37 @@ def test_check_driver_retries_a_script_the_game_refuses_while_the_opening_dialog
         harness.CheckDriver(tmp_path).route("battle-history", script=10)
 
 
+def test_check_driver_reads_a_banner_once_its_plate_holds_still(tmp_path, monkeypatch):
+    """Bug: the banner is read while it still slides in, so its text is at a passing x."""
+    clock = iter(range(0, 1000, 5))
+    monkeypatch.setattr(harness.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
+    plate = lambda x: {"x": x, "y": 273, "width": 28, "height": 35, "caller": "0x550211", "count": 1}
+    frames = iter([[], [], [plate(1100)], [plate(1000)], [plate(986)], [plate(986)], [plate(986)]])
+    monkeypatch.setattr(harness, "ask", lambda root, request: {"texts": [], "textures": [], "boxes": next(frames)})
+    assert harness.CheckDriver(tmp_path).wait({"box_caller": "0x5501dd|0x550211", "timeout": 600})
+    assert next(frames, "all read") == "all read"
+
+
+def test_check_driver_keys_keep_the_route_position_only_while_its_screen_shows(tmp_path, monkeypatch):
+    """Bugs: a cursor key on a screen loses the route position, so the next screen in the check is unreachable;
+    or a key that left the screen keeps it, so the next route starts from the wrong place."""
+    (tmp_path / "evidence").mkdir()
+    harness.write_json(tmp_path / "evidence/route.json", {"at": "gallery-backgrounds", "journal": 0})
+    monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
+    for drawn, after in (("4064.17", "gallery-backgrounds"), ("4079.169", None)):
+        def ask(root, request):
+            if request["action"] == "screen":
+                return {"texts": [], "textures": [{"texture": drawn, "caller": "0x1"}], "boxes": []}
+            with (root / "evidence/actions.jsonl").open("a") as journal:
+                journal.write(json.dumps({"request": request}) + "\n")
+            return {}
+
+        monkeypatch.setattr(harness, "ask", ask)
+        harness.CheckDriver(tmp_path).keys(["Right"])
+        assert harness.route_position(tmp_path) == after
+
+
 def test_every_committed_check_names_a_route_screen():
     """Bug: a route name misspelled in a check file fails only at run time, as an unreachable screen."""
     import tomllib
@@ -930,6 +962,29 @@ def test_check_only_runs_the_named_screens_and_refuses_a_misspelt_one(tmp_path, 
     assert report["order"] == ["a", "c"] and [r["screen"] for r in report["rows"]] == ["a", "c"]
     with pytest.raises(ValueError, match="no screen zz"):
         harness.check(tmp_path, spec, ["a", "zz"])
+
+
+def test_check_learn_saves_each_screens_stock_relations_under_its_name_and_keeps_the_others(tmp_path, monkeypatch):
+    """Bugs: a learn run on some screens drops the relations of screens it did not visit, or files one screen's
+    relations under another's name, so every later check of that screen compares against the wrong layout."""
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "tools"))
+    (tmp_path / "evidence").mkdir()
+    spec = tmp_path / "spec.toml"
+    spec.write_text("".join(f'[[screen]]\nname = "{n}"\nroute = "menu"\n[[screen.assert]]\nkind = "no_cjk"\n'
+                            for n in ("a", "b")))
+    shown = iter([{"x": 0, "y": 0, "width": 1, "height": 1}, {"x": 500, "y": 0, "width": 9, "height": 9}])
+    monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(harness, "route", lambda root, name, stage: 0)
+    monkeypatch.setattr(harness, "ask", lambda root, request: {
+        "texts": [{"text": "x", "x": 0, "y": 0, "width": 1, "caller": "0x1"}], "textures": [], "windows": [],
+        "boxes": [{**next(shown), "caller": "0x2", "count": 1}]})
+    structure = tmp_path / "structure.json"
+    structure.write_text(json.dumps({"z": [{"rule": "on_screen", "el": "box@0x9#0"}]}))
+    harness.check(tmp_path, spec, learn=structure)
+    learned = json.loads(structure.read_text())
+    place = {name: [r["rect"] for r in rels if r["rule"] == "place" and r["el"] == "box@0x2#0"]
+             for name, rels in learned.items()}
+    assert place == {"a": [[0, 0, 1, 1]], "b": [[500, 0, 509, 9]], "z": []}
 
 
 def test_route_waits_for_the_main_menu_items_before_the_next_input(tmp_path, monkeypatch):

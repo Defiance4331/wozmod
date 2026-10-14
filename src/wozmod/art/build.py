@@ -30,7 +30,7 @@ from .hires import HIRES_OVERLAY, HIRES_RIGHT_GROW, hires_blob
 from wozmod.runtime.latin_font import CELL, LATIN_GLYPH
 from wozmod.donors import WO1, X360, extract_donor, verify_file
 from wozmod.formats.textures import (
-    G1T_TEXTURE_HEADER, G1tFile, parse_g1t, parse_texture_package,
+    G1T_HEADER, G1T_TEXTURE_HEADER, PIXEL_FORMAT_BGRA8, G1tFile, parse_g1t, parse_texture_package,
 )
 
 REPO = resources.root()
@@ -1433,6 +1433,29 @@ def latin_font(data: bytes, cells: Image.Image) -> bytes:
         atlas = atlas.with_texture_rgba(page, image.tobytes())
     return atlas.encode()
 
+GLYPH_SHEET = 1024  # px square of the runtime's glyph sheet (runtime/english_runtime.c GLYPH_SHEET)
+
+
+def glyph_sheet_header(atlas: bytes, size: int = GLYPH_SHEET) -> bytes:
+    """Everything of a G1T before the pixels, for one blank BGRA8 texture size x size: the runtime appends the
+    pixels and hands it to the game's texture loader. Header fields as in the stock font atlas; its identity is the
+    CRC of the blank file, as rekeyed() keys a texture."""
+    source = parse_g1t(atlas)
+    magic, _, _, table, _, *fields = G1T_HEADER.unpack_from(atlas)
+    texture = G1T_TEXTURE_HEADER.pack(1 << 4, PIXEL_FORMAT_BGRA8, (size.bit_length() - 1) * 0x11,
+                                      G1T_TEXTURE_HEADER.unpack_from(atlas, table + source.texture_offsets[0])[3])
+    head = table + 4 + len(texture)
+    body = struct.pack("<I", 4) + texture
+    blank = G1T_HEADER.pack(magic, b"\0" * 4, head + size * size * 4, table, 1, *fields) + atlas[G1T_HEADER.size:table]
+    identity = zlib.crc32(blank + body + bytes(size * size * 4)).to_bytes(4, "little")
+    return blank[:4] + identity + blank[8:] + body
+
+
+def glyphs_bin(atlas: bytes, outlines: bytes) -> bytes:
+    """wozmod/glyphs.bin: u32 header size, the glyph sheet's G1T header, then the font's outlines."""
+    header = glyph_sheet_header(atlas)
+    return struct.pack("<I", len(header)) + header + outlines
+
 PROMPT_ENTRY = 4079  
 
 XBOX_PROMPTS = {**{slot: slot for slot in range(16)}, 11: 2, 12: 3, 44: 44, 178: 178, 179: 179}
@@ -1634,8 +1657,8 @@ PAUSE_BUTTON_ROWS = {
     (4080, 45, 4): ('donor:89dbf71048801678', 113.328661, 5.993769, 31, None, None),
 
     (4081, 0, 0): ('donor:0747c96a23dbfa58', 105.095015, 165.962617, 32, None, None),
-    (4081, 0, 1): ('RETRY', 105.132399, 165.904984, 32, None, 'RESTART'),
-    (4081, 0, 2): ('CHANGE CHARACTER', 182.580996, 164.718069, 32, None, 'CHANGE CHARACTERS'),
+    (4081, 0, 1): ('RESTART', 105.132399, 165.904984, 32, None, None),
+    (4081, 0, 2): ('CHANGE CHARACTERS', 182.580996, 164.718069, 32, None, None),
     (4081, 0, 3): ('MAIN MENU', 131.076324, 165.981308, 32, None, None),
     (4079, 223, 0): ('TREASURE GUIDE', 199.037383, 5.0, 32, None, None),
 }
@@ -2696,6 +2719,12 @@ def main(argv: list[str] | None = None) -> int:
         prompts = read_entry(stream, index.entries[PROMPT_ENTRY])[0]
     wo2_prompts = wo1_entries(args.wo2_donor.with_suffix(".lnk"), args.wo2_donor.with_suffix(".idx"), [13])[13]
     (args.output_dir / "wozmod/prompts-xbox.bin").write_bytes(xbox_prompts(prompts, wo2_g1ts(wo2_prompts)))
+    outlines = working / "glyph-outlines.bin"
+    subprocess.run([FONT_PYTHON, "-m", "wozmod.fonts.glyph_outlines", str(outlines)], check=True,
+                   env=font_environment(), stdout=subprocess.PIPE, text=True)
+    with base_bin.open("rb") as stream:
+        atlas = b"".join(parse_lzp2(m).decoded for m in read_members(stream, index.entries[FONT_ENTRY]))
+    (args.output_dir / "wozmod/glyphs.bin").write_bytes(glyphs_bin(atlas, outlines.read_bytes()))
     if args.hires:
         write_hires(args)
     write_manifest(args.output_dir)

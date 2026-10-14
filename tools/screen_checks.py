@@ -82,8 +82,15 @@ def select_quads(screen: dict, key: str) -> list[dict]:
 
 
 def _texts(screen: dict, sel: dict | None) -> list[dict]:
+    """`row_of_box` ("|" between callers) keeps the texts on the row of a plain box drawn by one of them: the text
+    of a plate whose pieces are drawn beside it, wherever the plate is."""
     sel = sel or {}
-    return select_texts(screen, sel.get("caller"), sel.get("match"), sel.get("x"), sel.get("y"))
+    found = select_texts(screen, sel.get("caller"), sel.get("match"), sel.get("x"), sel.get("y"))
+    if sel.get("row_of_box"):
+        rows = [(b["y"], b["y"] + b["height"]) for b in screen.get("boxes", [])
+                if b["caller"] in sel["row_of_box"].split("|")]
+        found = [t for t in found if any(t["y"] < bottom and top < t["y"] + TEXT_H for top, bottom in rows)]
+    return found
 
 
 def text_rect(t: dict) -> tuple[int, int, int, int]:
@@ -345,6 +352,142 @@ def text_centred_in_box(screen: dict, img: Image.Image, text: dict | None, tol: 
     return Check(all(o["ok"] for o in out), {"tol": tol, "texts": out})
 
 
+STOCK_LAYOUT = Path(__file__).resolve().parents[1] / "data/checks/stock_layout.json"
+
+
+def stock_layout(screen: dict, img: Image.Image, stock: str, allow: list[list[str]] = (),
+                 structure: Path = STOCK_LAYOUT) -> Check:
+    """The layout relations learned from the stock game's screen `stock` (tools/layout_rules.py) still hold.
+    `allow` lists [rule, element] pairs we changed on purpose."""
+    import json
+    import layout_rules  # imports this module, so not at the top
+
+    relations = json.loads(Path(structure).read_text()).get(stock) if Path(structure).is_file() else None
+    if not relations:
+        return Check(False, {"error": f"no stock relations for {stock!r}; learn them on the stock game"})
+    broken = layout_rules.check(screen, relations, img, {tuple(a) for a in allow})
+    return Check(not broken, {"stock": stock, "relations": len(relations), "broken": broken})
+
+
+# ---- glyph form: stems and baseline of drawn text ---------------------------
+# A text line's ink, as coverage 0..1 against its own background, then measured the way a reader sees it: the
+# vertical stems through a band low in the letters (under the crossbars, above the bottom bars), each as the
+# columns inked in every row of the band; and each letter's bottom edge. A part-covered last row counts by its
+# coverage, so a letter one pixel low reads as one pixel low whatever the phase.
+
+STEM_BAND = (0.72, 0.9)  # of the way from the top of the tallest letters to the baseline
+STEM_RISE = 0.45  # a stem runs straight from here (inside the x-height) down through the band
+INK_CONTRAST = 60  # luminance between ink and background below which a line is not measured
+
+
+def _line_coverage(g: "_Gray", x0: int, y0: int, x1: int, y1: int) -> list[list[float]] | None:
+    box = g.box(x0, y0, x1, y1)
+    px = sorted(v for row in box for v in row)
+    if not px:
+        return None
+    bg, lo, hi = px[len(px) // 2], px[len(px) // 100], px[-1 - len(px) // 100]
+    fg = hi if hi - bg >= bg - lo else lo  # light text on a dark plate, or dark on light
+    if abs(fg - bg) < INK_CONTRAST:
+        return None
+    return [[min(1.0, max(0.0, (v - bg) / (fg - bg))) for v in row] for row in box]
+
+
+def _runs(flags: list[bool]) -> list[tuple[int, int]]:
+    out, start = [], None
+    for i, v in enumerate(flags + [False]):
+        if v and start is None:
+            start = i
+        elif not v and start is not None:
+            out.append((start, i))
+            start = None
+    return out
+
+
+def _text_lines(screen: dict, img: Image.Image, text: dict | None):
+    """(text, line number, coverage, body top, baseline) for each drawn line of the selected texts."""
+    g, s = _Gray(img), _scale(img)
+    for t in _texts(screen, text):
+        for n, line in enumerate(t["text"].split("\n")):
+            y = t["y"] + LINE_PITCH * n
+            x0, y0, x1, y1 = _cap((t["x"] - 3, y - 3, t["x"] + t["width"] + 3, y + TEXT_H + 2), s, img)
+            cov = _line_coverage(g, x0, y0, x1, y1) if x1 > x0 and y1 > y0 else None
+            if not cov or not line.strip():
+                continue
+            counts = [sum(v >= 0.6 for v in row) for row in cov]
+            body = [i for i, c in enumerate(counts) if c >= 0.3 * max(counts)]  # descenders, accents: thin rows
+            if len(body) >= 4:
+                yield t, n, cov, body[0], body[-1] + 1
+
+
+def _stems(cov: list[list[float]], top: int, base: int) -> list[int]:
+    """Solid widths of the line's vertical stems: column runs inked in every band row whose edges run straight
+    down from the middle of the letter (a slanted, round or crossing stroke, such as a w's, moves)."""
+    rise = cov[top + int(STEM_RISE * (base - top)): top + -int(-STEM_BAND[1] * (base - top))]
+    band = cov[top + int(STEM_BAND[0] * (base - top)): top + -int(-STEM_BAND[1] * (base - top))]
+    if not band:
+        return []
+    col = [min(row[x] for row in band) for x in range(len(band[0]))]
+    out = []
+    for a, b in _runs([v > 0.05 for v in col]):
+        if max(col[a:b]) < 0.9:
+            continue
+        core = a + max(range(b - a), key=lambda i: col[a + i])
+        lefts, rights = [], []
+        for row in rise:
+            l = r = core
+            while l > 0 and row[l - 1] >= 0.5:
+                l -= 1
+            while r < len(row) - 1 and row[r + 1] >= 0.5:
+                r += 1
+            lefts.append(l), rights.append(r)
+        if max(lefts) == min(lefts) and max(rights) == min(rights):  # one straight stroke down from mid-letter
+            out.append(sum(v >= 0.6 for v in col[a:b]))
+    return out
+
+
+def text_stems_even(screen: dict, img: Image.Image, text: dict | None, jump: float = 0.4,
+                    allow_empty: bool = False) -> Check:
+    """Every vertical stem of each line is as wide as the line's usual stem: a stem `jump` (a fraction) wider or
+    narrower, and a pixel or more off, reads as a bold or thin letter (a 3 px stem among 2 px ones)."""
+    lines = []
+    for t, n, cov, top, base in _text_lines(screen, img, text):
+        stems = _stems(cov, top, base)
+        if len(stems) < 3:
+            continue
+        usual = sorted(stems)[len(stems) // 2]
+        stems = [w for w in stems if w <= 1.8 * usual]  # two touching stems, a bar met edge-on
+        odd = [w for w in stems if abs(w - usual) >= 1 and abs(w - usual) > jump * usual]
+        lines.append({"at": (t["x"], t["y"]), "line": n, "usual": usual, "stems": len(stems), "odd": odd})
+    if not lines:
+        return _empty("lines=0", allow_empty)
+    return Check(not any(l["odd"] for l in lines), {"jump": jump, "lines": lines})
+
+
+def text_on_one_line(screen: dict, img: Image.Image, text: dict | None, level: float = 1.0, hang: float = 2.5,
+                     allow_empty: bool = False) -> Check:
+    """Every letter of each line ends on the line: its bottom edge within `level` capture px of the line's usual
+    bottom. Letters further down than `hang` px hang below it by design (g, p, y) and are not judged; dots,
+    quotes and dashes are too small to judge."""
+    lines = []
+    for t, n, cov, top, base in _text_lines(screen, img, text):
+        h, feet = base - top, []
+        for a, b in _runs([max(row[x] for row in cov) >= 0.2 for x in range(len(cov[0]))]):
+            prof = [max(row[a:b]) for row in cov]
+            full = [i for i, v in enumerate(prof) if v >= 0.95]
+            if not full or full[-1] - full[0] + 1 < 0.4 * h:
+                continue
+            last = full[-1]
+            feet.append(last + 1 + (prof[last + 1] if last + 1 < len(prof) else 0.0))
+        if len(feet) < 3:
+            continue
+        usual = sorted(feet)[len(feet) // 2]
+        off = [round(f - usual, 2) for f in feet if level <= abs(f - usual) <= hang]
+        lines.append({"at": (t["x"], t["y"]), "line": n, "letters": len(feet), "off": off})
+    if not lines:
+        return _empty("lines=0", allow_empty)
+    return Check(not any(l["off"] for l in lines), {"level": level, "lines": lines})
+
+
 # kind -> (function, needs the capture)
 ASSERTIONS: dict[str, tuple[Callable[..., Check], bool]] = {
     "text_clear_of_quad": (text_clear_of_quad, False),
@@ -357,9 +500,12 @@ ASSERTIONS: dict[str, tuple[Callable[..., Check], bool]] = {
     "text_has_ink": (text_has_ink, True),
     "ink_clear_of_quad_edge": (ink_clear_of_quad_edge, True),
     "text_centred_in_box": (text_centred_in_box, True),
+    "stock_layout": (stock_layout, True),
+    "text_stems_even": (text_stems_even, True),
+    "text_on_one_line": (text_on_one_line, True),
 }
 INK_WIDTH = {"text_clear_of_quad", "text_clear_of_text", "text_within_edge"}  # take the capture as `img=`
-SCREEN_KEYS = {"name", "route", "fixture", "battle", "script", "wait", "assert"}
+SCREEN_KEYS = {"name", "route", "fixture", "battle", "script", "keys", "wait", "assert"}
 
 
 # ---- spec and runner -------------------------------------------------------
@@ -382,15 +528,18 @@ def load_spec(path: Path) -> list[dict]:
     return screens
 
 
-def run_spec(screens: list[dict], driver) -> list[Row]:
-    """Reach each screen through the driver, capture it, run its assertions.
-    Driver: route(name, fixture=None, battle=None, script=None),
+def run_spec(screens: list[dict], driver, seen: dict | None = None) -> list[Row]:
+    """Reach each screen through the driver, capture it, run its assertions; `seen` collects each screen's JSON
+    and capture by screen name.
+    Driver: route(name, fixture=None, battle=None, script=None), keys(names),
     wait(cond: dict) -> bool, screen() -> dict, capture() -> path."""
     rows: list[Row] = []
     for sc in screens:
         name = sc["name"]
         try:
             driver.route(sc["route"], fixture=sc.get("fixture"), battle=sc.get("battle"), script=sc.get("script"))
+            if sc.get("keys"):  # pressed after the route, from wherever the screen's cursor was left
+                driver.keys(sc["keys"])
             if sc.get("wait") and not driver.wait(dict(sc["wait"])):
                 rows.append(Row(name, "wait", False, {"wait": sc["wait"]}, None))
                 continue
@@ -401,6 +550,8 @@ def run_spec(screens: list[dict], driver) -> list[Row]:
             rows.append(Row(name, "reach", False, {"error": f"{type(e).__name__}: {e}"}, None))
             continue
         img = Image.open(png).convert("RGB") if png else None
+        if seen is not None:
+            seen[name] = (data, img)
         for a in sc.get("assert", []):
             params = {k: v for k, v in a.items() if k != "kind"}
             fn, needs_img = ASSERTIONS[a["kind"]]

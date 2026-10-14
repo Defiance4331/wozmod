@@ -11,6 +11,8 @@ import pytest
 
 from wozmod.formats.scripts import Line, Table
 from wozmod.text.script_alignment import (
+    QUOTE_INSERT,
+    WO1_QUOTE_INSERT,
     Script,
     caption_pairs,
     event_pairs,
@@ -155,13 +157,19 @@ def test_caption_pairing_merges_split_cues_using_greatest_overlap_and_later_ties
     ]
 
 
-def test_quote_pairing_does_not_shift_rows_across_two_inserted_officers():
-    stock = _quotes([b"33F1", b"11F2"], [[b"00S%d@%d" % (index, 5000 + index), b""] for index in range(97)])
-    expected = {b"F1": "Fixture one", b"F2": "Fixture two", b"Fixture %s": "Fixture %s"}
-    expected |= {b"S%d" % index: f"Fixture {index if index < 94 else index - 2}" for index in range(97) if index not in (94, 95)}
-    for order in "<>":
-        donor = _quotes([b"33Fixture one", b"11Fixture two"], [[b"00Fixture %d@%d" % (index, 4000 + index), b"00Extra@1"] for index in range(95)], order)
-        assert dict(quote_pairs(stock, donor, order=order)) == expected
+def test_quote_pairing_joins_officer_tables_by_officer_id_for_each_donor():
+    # Catches a donor's officers shifted by the stock officers it lacks: X360 lacks MOZ 94-95; WO1 has 0-78, then
+    # its generic officers 79-87, which are MOZ 96-104.
+    stock = _quotes([b"33F1", b"11F2"], [[b"00S%d@%d" % (index, 5000 + index), b""] for index in range(107)])
+    donors = {QUOTE_INSERT: (105, lambda i: None if i in (94, 95) else i if i < 94 else i - 2),
+              WO1_QUOTE_INSERT: (88, lambda i: i if i < 79 else i - 17 if 96 <= i <= 104 else None)}
+    for insert, (count, theirs) in donors.items():
+        expected = {b"F1": "Fixture one", b"F2": "Fixture two", b"Fixture %s": "Fixture %s"}
+        expected |= {b"S%d" % i: f"Fixture {theirs(i)}" for i in range(107) if theirs(i) is not None}
+        for order in "<>":
+            donor = _quotes([b"33Fixture one", b"11Fixture two"],
+                            [[b"00Fixture %d@%d" % (index, 4000 + index), b"00Extra@1"] for index in range(count)], order)
+            assert dict(quote_pairs(stock, donor, order=order, insert=insert)) == expected, (insert, order)
 
 
 def test_quote_pairing_with_officers_disabled_keeps_only_the_two_format_tables():

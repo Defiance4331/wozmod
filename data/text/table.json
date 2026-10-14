@@ -5088,13 +5088,21 @@
     },
     {
       "key": "2d41054958bbb2e5c0310e963a1327f04411c47a01b32c11a9e277197bc45eed",
-      "source": "authored",
-      "en": "Player 1 already uses this\ngamepad."
+      "source": "wo1-pc",
+      "ref": [
+        "wo1",
+        "exe",
+        1978848
+      ]
     },
     {
       "key": "3183227eef8b6c3f36eabdf95b401dff22357f7ad4d14509b535cbcc8ea22b19",
-      "source": "authored",
-      "en": "Player 2 already uses this\ngamepad."
+      "source": "wo1-pc",
+      "ref": [
+        "wo1",
+        "exe",
+        1978800
+      ]
     },
     {
       "key": "ffdc3175eb335eadee93411047fde011749eba5b244e3821d09bc0264e7fc9a1",
@@ -5107,13 +5115,21 @@
     },
     {
       "key": "d733f4faf8fc16797a9c1565c8aa0bda6e92636c9d3e90c1f1a1a9190b623958",
-      "source": "authored",
-      "en": "Gamepad configured automatically.\nChange individual settings if needed."
+      "source": "wo1-pc",
+      "ref": [
+        "wo1",
+        "exe",
+        1978672
+      ]
     },
     {
       "key": "6c1d5d969a87fe49002545f1b4c70ac0dba06cef5a8fdae935be3dbe56975e6d",
-      "source": "authored",
-      "en": "Automatic gamepad setup failed.\nSet it up manually."
+      "source": "wo1-pc",
+      "ref": [
+        "wo1",
+        "exe",
+        1978592
+      ]
     },
     {
       "key": "c2d25d0d376b877fd734407829616c06630dadfb346213ccbc1e49755d7fffb2",
@@ -5163,50 +5179,13 @@
       "source": "edited",
       "ref": [
         "wo1",
-        "ens",
-        606,
-        "dialog",
-        28
+        "exe",
+        1978672
       ],
       "edits": [
         [
-          0,
-          5,
-          "G"
-        ],
-        [
-          7,
-          7,
-          "e"
-        ],
-        [
-          9,
-          12,
-          "d"
-        ],
-        [
-          15,
-          17,
-          "s"
-        ],
-        [
-          23,
-          24,
-          "aut"
-        ],
-        [
-          25,
-          25,
-          "-"
-        ],
-        [
           26,
-          26,
-          "e"
-        ],
-        [
-          28,
-          30,
+          77,
           ""
         ]
       ]
@@ -5293,7 +5272,7 @@
     },
     {
       "key": "89365e5defe3ea7d8755e0dd515a7a8aee8e1e0b5c112846a211cf1aaa28f50c",
-      "source": "authored",
+      "source": "wo1-pc",
       "ref": [
         "wo1",
         "exe",
@@ -5302,7 +5281,7 @@
     },
     {
       "key": "fcb09f6f5f7e91ff0d3b74063a03f8c7b98ef0e791d39732f6e08c0bf763a5d7",
-      "source": "authored",
+      "source": "wo1-pc",
       "ref": [
         "wo1",
         "exe",
@@ -6580,8 +6559,12 @@
     },
     {
       "key": "33beed76490c6c3c880ec837671d567c65f487a4adab530d4069db7d6a793d3e",
-      "source": "authored",
-      "en": "True "
+      "source": "wo2-x360",
+      "ref": [
+        "x360",
+        "pe",
+        174056
+      ]
     },
     {
       "key": "96957bb327c2f0d8ba4593d9b729ba88cb880107ab12d6f5f39fd6ee68c9a1d3",
@@ -8578,7 +8561,7 @@
       "ref": [
         "x360",
         "pe",
-        169264
+        169412
       ]
     },
     {
@@ -9667,7 +9650,7 @@
       "ref": [
         "x360",
         "pe",
-        175004
+        167072
       ]
     },
     {
@@ -18896,7 +18879,7 @@
     },
     {
       "key": "6bc51f0ee150ed28ee10fae46b8db42bc8b520a723d11fbbd47ea51e9ae5e4f0",
-      "source": "authored",
+      "source": "wo1-pc",
       "ref": [
         "wo1",
         "exe",
@@ -18932,7 +18915,7 @@
     },
     {
       "key": "c97d63b8a884030d9ddc2e0ef678fcfe09e02cb2e746115d39c771f5828efffe",
-      "source": "authored",
+      "source": "wo1-pc",
       "ref": [
         "wo1",
         "exe",
@@ -21086,8 +21069,12 @@
     },
     {
       "key": "d1ee31fb89fd40fa92e6086294a633b4d38988269bccf9ad92b7f93a64042acd",
-      "source": "authored",
-      "en": "Back"
+      "source": "wo1-pc",
+      "ref": [
+        "wo1",
+        "exe",
+        2044828
+      ]
     },
     {
       "key": "6717f5dc227ccea59789d02570887babd6e80508c72237d8cf80852ff80a9471",
@@ -21154,13 +21141,21 @@
     },
     {
       "key": "9510168de7d7e07f610ab69813e846f06d5213ed8f06e7ab74d8782c10332724",
-      "source": "authored",
-      "en": "Switch Character Left"
+      "source": "wo1-pc",
+      "ref": [
+        "wo1",
+        "exe",
+        2044804
+      ]
     },
     {
       "key": "bffe102db44353bcd7657e20dcab663ac048829f26bccaf289216e1ec6470e2c",
-      "source": "authored",
-      "en": "Switch Character Right"
+      "source": "wo1-pc",
+      "ref": [
+        "wo1",
+        "exe",
+        2044780
+      ]
     },
     {
       "key": "3492aae56ce2888065a43d79073ba31ab6453c1b69b4fe145b30a0124ca405cb",
@@ -21223,7 +21218,7 @@
     },
     {
       "key": "9225196ac32c06fea48c930eeb27ff7f020f70715c9b89c5c52449343b10c12d",
-      "source": "authored",
+      "source": "wo2-x360",
       "ref": [
         "x360",
         "pe",
@@ -35391,9 +35386,9 @@
       "ref": [
         "x360",
         "ens",
-        114,
+        129,
         "notices",
-        30
+        10
       ]
     },
     {
@@ -50007,13 +50002,13 @@
     },
     {
       "key": "47c1feb7241f3d101526debc85067215569ac2e9a4932904b4732a4691894fd5",
-      "source": "wo2-x360",
+      "source": "wo1-pc",
       "ref": [
-        "x360",
+        "wo1",
         "ens",
-        129,
+        622,
         "notices",
-        2
+        8
       ]
     },
     {
@@ -58973,13 +58968,13 @@
     },
     {
       "key": "44ab50f4fcb33d5efde43c43ae175c4f98a8d168a699d7f7620b70af1a8da7ef",
-      "source": "wo2-x360",
+      "source": "wo1-pc",
       "ref": [
-        "x360",
+        "wo1",
         "ens",
-        138,
+        592,
         "notices",
-        49
+        14
       ]
     },
     {
@@ -65867,9 +65862,9 @@
       "ref": [
         "wo1",
         "ens",
-        581,
+        613,
         "notices",
-        42
+        39
       ]
     },
     {
@@ -131151,36 +131146,24 @@
     },
     {
       "key": "b857d80effe94216cc2f392c92c7df7700a593d669e003d9f85ecf397c0113fd",
-      "source": "wo2-x360",
-      "ref": [
-        "x360",
-        "ens",
-        103,
-        "notices",
-        3
-      ]
+      "source": "authored",
+      "en": "Destroy the [02floodgates] and flood [02Fan Castle]!"
     },
     {
       "key": "f5829d95a6a575f4ee437bea5f42dfee0fe0aec1d2d207ca5fd1ed8c634698c2",
-      "source": "wo2-x360",
+      "source": "wo1-pc",
       "ref": [
-        "x360",
+        "wo1",
         "ens",
-        103,
+        587,
         "notices",
-        3
+        23
       ]
     },
     {
       "key": "810192bd9bf733d9f1c37e2717281aafdc0bb4a99d03b1b44f7eb098fc85c5af",
-      "source": "wo2-x360",
-      "ref": [
-        "x360",
-        "ens",
-        103,
-        "notices",
-        3
-      ]
+      "source": "authored",
+      "en": "The [03Oda Army] has launched a full-scale assault! The [03Oda Army]'s morale is rising!"
     },
     {
       "key": "e6fe340ae12135ee7631c5c7731a008280ab5ffabc862e68a572d6f184b13df4",
@@ -132567,14 +132550,8 @@
     },
     {
       "key": "d98895c6531695eee21ef3f14a4de8493bc929730d62f7e28bcae46c155b4d2d",
-      "source": "wo2-x360",
-      "ref": [
-        "x360",
-        "ens",
-        103,
-        "notices",
-        3
-      ]
+      "source": "authored",
+      "en": "The [03allied forces]' fire attack has set the southern end of the [01enemy naval fleet] aflame!"
     },
     {
       "key": "0b4fb06c7ec8639db2a8fd943c9b84e9938ed5ddf27cdb78150409325b46d8ec",
@@ -133595,9 +133572,9 @@
       "ref": [
         "x360",
         "ens",
-        146,
+        150,
         "notices",
-        21
+        8
       ]
     },
     {
@@ -135377,14 +135354,8 @@
     },
     {
       "key": "ffc5a53d20a73b67061abe53b70950b8635a07de583b72500e1bfb9053d3403a",
-      "source": "wo2-x360",
-      "ref": [
-        "x360",
-        "ens",
-        103,
-        "notices",
-        3
-      ]
+      "source": "authored",
+      "en": "Liu Shan's"
     },
     {
       "key": "c5648131770517feb97fafbcc9caab51f46357086aa661c3028ce4fd5575c079",
@@ -136473,14 +136444,8 @@
     },
     {
       "key": "7dda4bb211278b65213068121a91834e8c52539257bfdedd4e8ee5470ca31453",
-      "source": "wo2-x360",
-      "ref": [
-        "x360",
-        "ens",
-        103,
-        "notices",
-        3
-      ]
+      "source": "authored",
+      "en": "The [03fire attack] has eliminated the [01enemy officers] within the garrison!"
     },
     {
       "key": "a10d8f87882ee54ae19bd63d834ce4395d3d896f49d0f32ac8ca20a62f6badcc",
@@ -136572,14 +136537,8 @@
     },
     {
       "key": "f057da22c713c713bd31589b6764ba3c0be1fd70d303c7d8bdf72c571b2675f1",
-      "source": "wo2-x360",
-      "ref": [
-        "x360",
-        "ens",
-        103,
-        "notices",
-        3
-      ]
+      "source": "authored",
+      "en": "The [03Coalition Army] has secured ground for the [03allied rifle unit] to deploy!"
     },
     {
       "key": "6aa519c25f26afd9ce2e5b7575d1ed154b921d10aff785cc1c8394a1df194283",
@@ -136671,25 +136630,13 @@
     },
     {
       "key": "a7dd63f35e07762b0d37c95302dfd7dc2f9586fa29cb04ced2c864a67bbf3b76",
-      "source": "wo2-x360",
-      "ref": [
-        "x360",
-        "ens",
-        103,
-        "notices",
-        3
-      ]
+      "source": "authored",
+      "en": "[01Jian Yong] and [01Wang Ping] have been found!"
     },
     {
       "key": "cc9f116a1af846bbb3928513c4cba1e63649dfc312b4e077ff6e81bbd1d6542b",
-      "source": "wo2-x360",
-      "ref": [
-        "x360",
-        "ens",
-        103,
-        "notices",
-        3
-      ]
+      "source": "authored",
+      "en": "Eliminate the [01enemy forces] within [02Niu Zhu Garrison]!"
     },
     {
       "key": "91012998583cbc1cc403b1805930dc7fe801c7279d87a57fa1b83f4d8ba1ba23",
@@ -136741,9 +136688,9 @@
       "ref": [
         "x360",
         "ens",
-        103,
+        149,
         "notices",
-        3
+        82
       ]
     },
     {
@@ -136754,7 +136701,7 @@
         "ens",
         149,
         "notices",
-        82
+        83
       ]
     },
     {
@@ -136765,7 +136712,7 @@
         "ens",
         149,
         "notices",
-        83
+        84
       ]
     },
     {
@@ -136776,7 +136723,7 @@
         "ens",
         149,
         "notices",
-        84
+        85
       ]
     },
     {
@@ -142195,14 +142142,8 @@
     },
     {
       "key": "917e0cd1e359f94563a8740c66e36a856646b9b63f5381a9b7d565f382df0e18",
-      "source": "wo2-x360",
-      "ref": [
-        "x360",
-        "ens",
-        103,
-        "notices",
-        3
-      ]
+      "source": "authored",
+      "en": "[03Zhang Liang]'s sorcery has conjured up [03phantoms of mighty warriors]!"
     },
     {
       "key": "f3aa78bc986b089d31be7c2ce134cf591d8d21d10c53ddea980ac254f6a8daec",
@@ -153615,14 +153556,8 @@
     },
     {
       "key": "3d2a62f6cfb0e5c2e3c7310d9208c7a24eae61ca78757ded7c46d75b331d24c8",
-      "source": "wo2-x360",
-      "ref": [
-        "x360",
-        "ens",
-        103,
-        "notices",
-        3
-      ]
+      "source": "authored",
+      "en": "[03Okuni] has been defeated! [03Okuni]'s journey to gather donations has failed!"
     },
     {
       "key": "1662173411a046e81fcb983f5bce4187ae5bfbb46911a4bfd866d78d20565ea6",
@@ -155872,25 +155807,13 @@
     },
     {
       "key": "97a85c76d65bad66b504d463d027413fa3e0efebda67d201be8868e96a17beef",
-      "source": "wo2-x360",
-      "ref": [
-        "x360",
-        "ens",
-        103,
-        "notices",
-        3
-      ]
+      "source": "authored",
+      "en": "[04Zhu Rong] has a renewed respect for [03Meng Huo]'s might!"
     },
     {
       "key": "4b92fef79f5ff26305e9fecd4954ce240a7a91b7a02bbe9204c5a1fae14dc07a",
-      "source": "wo2-x360",
-      "ref": [
-        "x360",
-        "ens",
-        103,
-        "notices",
-        3
-      ]
+      "source": "authored",
+      "en": "[01Zhang Fei] appears willing to lend his strength!"
     },
     {
       "key": "510212f783d234523c911d40110ffad6d43bd79cc8ca1b9a404c6c0da2315229",
@@ -241936,8 +241859,21 @@
     },
     {
       "key": "1e5f8a2fd5a5aade9d610dbcccfcd04ddbcf543fe45aadd62881b179d71a351a",
-      "source": "authored",
-      "en": "Overwhelmed by [03%s]'s might, the [01Hōjō] have defected!"
+      "source": "edited",
+      "ref": [
+        "x360",
+        "ens",
+        150,
+        "notices",
+        21
+      ],
+      "edits": [
+        [
+          18,
+          29,
+          "%s"
+        ]
+      ]
     },
     {
       "key": "e9f87cb8211689da76d3cbf25770ed241f5ff56c38e988b41b884f6c4c82be1a",
@@ -242576,13 +242512,39 @@
     },
     {
       "key": "3467333660cc40fe5c10f0a9ea4f1942104f3d113d72a8689cc460fea1169950",
-      "source": "authored",
-      "en": "[01Enemy forces] are advancing toward [03%s]!"
+      "source": "edited",
+      "ref": [
+        "x360",
+        "ens",
+        161,
+        "notices",
+        23
+      ],
+      "edits": [
+        [
+          41,
+          56,
+          "%s"
+        ]
+      ]
     },
     {
       "key": "bdeb7b96f8cf74274a95c31c06c7c4be35aa0b1ac46e501dd67305136817e24f",
-      "source": "authored",
-      "en": "[03%s]'s escape route has been secured!"
+      "source": "edited",
+      "ref": [
+        "x360",
+        "ens",
+        161,
+        "notices",
+        25
+      ],
+      "edits": [
+        [
+          3,
+          18,
+          "%s"
+        ]
+      ]
     },
     {
       "key": "0798181b09096b9880a3d3469f6ec09ee0938402f808b60c42f3c3c61ce1b82c",
@@ -242591,8 +242553,21 @@
     },
     {
       "key": "4f50da83c6193bf5cf21c81bfc56bba90b95a8cc8ee9d51c5392f6f5f5fbbc43",
-      "source": "authored",
-      "en": "[01Enemy forces] have begun pursuit of [03%s]!"
+      "source": "edited",
+      "ref": [
+        "x360",
+        "ens",
+        161,
+        "notices",
+        28
+      ],
+      "edits": [
+        [
+          42,
+          57,
+          "%s"
+        ]
+      ]
     },
     {
       "key": "5e819eb003917146b09acafccfa281907b2b85ab2a03074b4827d16e79037205",
@@ -242601,20 +242576,32 @@
     },
     {
       "key": "00c35d9fdf19f970b7bda5996993e70253888e1f8c0f7bb5197277c9bc294177",
-      "source": "authored",
+      "source": "wo2-psp",
       "ref": [
-        "wo1",
-        "ens",
-        512,
-        "quotes",
-        1,
-        7
+        "psp",
+        "fns",
+        272,
+        "notices",
+        25
       ]
     },
     {
       "key": "a2c525c8cc893827684ef7d98f46101cfcaf884c441a8cf5202f78ed6fc1cf23",
-      "source": "authored",
-      "en": "[03%s] has reached the [03allied main camp]!"
+      "source": "edited",
+      "ref": [
+        "x360",
+        "ens",
+        161,
+        "notices",
+        44
+      ],
+      "edits": [
+        [
+          3,
+          18,
+          "%s"
+        ]
+      ]
     },
     {
       "key": "81fea28208b92bba02f10030bd8a06f2dea485f5bb8e0b2df9662b9731a87b6d",
@@ -242628,8 +242615,21 @@
     },
     {
       "key": "4e2f748f5857ffb49810aae2c38a3a6967032c010a8ea98c5232879e1ec0fc29",
-      "source": "authored",
-      "en": "[03%s] has been defeated! The battle is lost!"
+      "source": "edited",
+      "ref": [
+        "x360",
+        "ens",
+        161,
+        "notices",
+        54
+      ],
+      "edits": [
+        [
+          3,
+          18,
+          "%s"
+        ]
+      ]
     },
     {
       "key": "626e12f4732a52d13fb3f2962a3e6701dbbfb8fa2cfd29e06cd4bdef14cb8eea",
@@ -242798,13 +242798,39 @@
     },
     {
       "key": "8f4e01d9847a73978ca6cd11e6d3e56992395059127b4f957aa90f608f878aa8",
-      "source": "authored",
-      "en": "[01Zhu Rong] is charging at the [03%s unit]!"
+      "source": "edited",
+      "ref": [
+        "x360",
+        "ens",
+        163,
+        "notices",
+        6
+      ],
+      "edits": [
+        [
+          35,
+          50,
+          "%s"
+        ]
+      ]
     },
     {
       "key": "5ec888716855d06d5e872c31ed903d705356c854414f5093392460bfbad9d163",
-      "source": "authored",
-      "en": "Defeat [01Zhu Rong] and keep [03%s] safe!"
+      "source": "edited",
+      "ref": [
+        "x360",
+        "ens",
+        163,
+        "notices",
+        85
+      ],
+      "edits": [
+        [
+          32,
+          47,
+          "%s"
+        ]
+      ]
     },
     {
       "key": "c674911fad73d966cec4688c2d626016161ab6c42e0997a8e8c5f615852de55b",
@@ -243133,8 +243159,21 @@
     },
     {
       "key": "3037c8e2ab72d7a06c3584cea24cc972e82e2bd67ff6ba6966fc4cfe377903b2",
-      "source": "authored",
-      "en": "The [01enemy ambush unit] has been defeated! [03%s] is safe!"
+      "source": "edited",
+      "ref": [
+        "x360",
+        "ens",
+        168,
+        "notices",
+        17
+      ],
+      "edits": [
+        [
+          48,
+          55,
+          "%s"
+        ]
+      ]
     },
     {
       "key": "f6004ff4ab6c850c471647d1869f08eb4b23ccce3c2ea49edf3b86276968ea92",
@@ -243333,8 +243372,14 @@
     },
     {
       "key": "593fa82f44d1fc7dcc0d1fc5495e320114869786a238efa36f16eedc18259246",
-      "source": "authored",
-      "en": "Even with all my wit and courage... I can do no more..."
+      "source": "wo2-x360",
+      "ref": [
+        "x360",
+        "ens",
+        131,
+        "dialog",
+        58
+      ]
     },
     {
       "key": "b44e13ce83659803cd1622b5404c8bb33d485d6f33612e105f4d36ab523e4220",
@@ -243358,12 +243403,18 @@
     },
     {
       "key": "d7c9d71961c6589434504593be77c4ea64c9ceb26bbcca1fd690c2137bd69d65",
-      "source": "authored",
-      "en": "Tch, the decoy operation has failed..."
+      "source": "wo1-pc",
+      "ref": [
+        "wo1",
+        "ens",
+        618,
+        "dialog",
+        11
+      ]
     },
     {
       "key": "e0657907c7a8fb0be65d6b9a5a3630d08678f6e5097cdd44538a80f6ef40f3d2",
-      "source": "authored",
+      "source": "wo2-x360",
       "ref": [
         "x360",
         "ens",
@@ -243374,13 +243425,32 @@
     },
     {
       "key": "2dd2b2f67cc05aedd427ab62cf07d50f682ca6cf657e1062d48553117ad92f31",
-      "source": "authored",
-      "en": "[03Player 1] has the advantage!"
+      "source": "wo2-x360",
+      "ref": [
+        "x360",
+        "ens",
+        173,
+        "notices",
+        4
+      ]
     },
     {
       "key": "d5f5f0e2b86d0f2b60fb4c167dd704b03ddb2cf20956a8e91cc52fcad68bda40",
-      "source": "authored",
-      "en": "[01Player 2] has the advantage!"
+      "source": "edited",
+      "ref": [
+        "x360",
+        "ens",
+        173,
+        "notices",
+        5
+      ],
+      "edits": [
+        [
+          1,
+          3,
+          "01"
+        ]
+      ]
     },
     {
       "key": "c1bb837ce619f82d0aae8fa156c618fe99bc59761ea9bf2a03c2bc5aca37a3a4",
@@ -243389,23 +243459,61 @@
     },
     {
       "key": "def6e86713d1d69bcd0b1dfb1a126737474db2a8e7629177f163695a6fa6a599",
-      "source": "authored",
-      "en": "[03Player 1] has two laps to go!"
+      "source": "wo2-x360",
+      "ref": [
+        "x360",
+        "ens",
+        174,
+        "notices",
+        0
+      ]
     },
     {
       "key": "b45e42818818cd29062df7eaaabf31921d30c04f533a1b30996041fa02cc7401",
-      "source": "authored",
-      "en": "[03Player 1] has one lap to go!"
+      "source": "wo2-x360",
+      "ref": [
+        "x360",
+        "ens",
+        174,
+        "notices",
+        1
+      ]
     },
     {
       "key": "784b089e76125edb9caa0c865eca563fdb6804074aab704c2a1d57dae4c59c88",
-      "source": "authored",
-      "en": "[01Player 2] has two laps to go!"
+      "source": "edited",
+      "ref": [
+        "x360",
+        "ens",
+        174,
+        "notices",
+        4
+      ],
+      "edits": [
+        [
+          1,
+          3,
+          "01"
+        ]
+      ]
     },
     {
       "key": "881ec2d8c0370b964ebc800c815e1ba6aab8cd7bcdc0dccb7f5addf8a1b4ea9e",
-      "source": "authored",
-      "en": "[01Player 2] has one lap to go!"
+      "source": "edited",
+      "ref": [
+        "x360",
+        "ens",
+        174,
+        "notices",
+        5
+      ],
+      "edits": [
+        [
+          1,
+          3,
+          "01"
+        ]
+      ]
     },
     {
       "key": "a24adf51b67d778c62abfcfa6a817b460a8b6e5fb1011e469a62cd0cacd62e33",
@@ -245261,13 +245369,13 @@
     },
     {
       "key": "ea095834f4da14b2ef448963aa74647d4a100aec5b786a7fe5d906aaed395022",
-      "source": "authored",
+      "source": "wo2-psp",
       "ref": [
-        "wo1",
-        "ens",
-        616,
+        "psp",
+        "fns",
+        271,
         "dialog",
-        82
+        40
       ]
     },
     {
@@ -245866,13 +245974,13 @@
     },
     {
       "key": "810f4d9b9e31bc85e86ad34665ef7402973fbf3c0fe5f0aa81de2cb9bcf65d3a",
-      "source": "authored",
+      "source": "wo2-psp",
       "ref": [
-        "x360",
-        "ens",
-        140,
+        "psp",
+        "fns",
+        272,
         "notices",
-        21
+        10
       ]
     },
     {
@@ -247186,13 +247294,13 @@
     },
     {
       "key": "0e761b9240e1d0facd2e6b3aad90feabd1fe721b5adcc9e5216fb273b28d70e7",
-      "source": "authored",
+      "source": "wo2-psp",
       "ref": [
-        "x360",
-        "ens",
-        107,
+        "psp",
+        "fns",
+        272,
         "dialog",
-        24
+        110
       ]
     },
     {
@@ -248022,13 +248130,13 @@
     },
     {
       "key": "fe210e588a9dcc82e6a60fc07f9ef9dab4def686928f146a69b0d63f6b6d4474",
-      "source": "authored",
+      "source": "wo2-psp",
       "ref": [
-        "wo1",
-        "ens",
-        589,
+        "psp",
+        "fns",
+        274,
         "notices",
-        14
+        2
       ]
     },
     {
@@ -248088,13 +248196,13 @@
     },
     {
       "key": "730c4a6e2d9377c5b6ae17d57c9556992983c6f4673f2a1ca31ea80ec008ba36",
-      "source": "authored",
+      "source": "wo2-psp",
       "ref": [
-        "wo1",
-        "ens",
-        620,
+        "psp",
+        "fns",
+        274,
         "notices",
-        15
+        10
       ]
     },
     {
@@ -248121,13 +248229,13 @@
     },
     {
       "key": "a59f19d1068bb898fd252ca6758b3b556687d105ec28bc4ae8a0e17039fd94ff",
-      "source": "authored",
+      "source": "wo2-psp",
       "ref": [
-        "wo1",
-        "ens",
-        620,
+        "psp",
+        "fns",
+        274,
         "notices",
-        16
+        13
       ]
     },
     {
@@ -249842,8 +249950,14 @@
     },
     {
       "key": "458b80b789b5b9f42e9df61572d13b17bbd45a44f497aecb4c04547997873bfc",
-      "source": "authored",
-      "en": "This is bad! Our main camp is under attack!"
+      "source": "wo2-psp",
+      "ref": [
+        "psp",
+        "fns",
+        275,
+        "dialog",
+        12
+      ]
     },
     {
       "key": "eb9cd93ef4583b16cd3de4d6d6694aa0ad8e991830f52ff46ab1166791ff3655",
@@ -250936,13 +251050,13 @@
     },
     {
       "key": "601dbe08b7511b6d6af1935e475a583743b05f006df3e35873ce8458dc70241a",
-      "source": "authored",
+      "source": "wo2-psp",
       "ref": [
-        "wo1",
-        "ens",
-        620,
+        "psp",
+        "fns",
+        276,
         "notices",
-        27
+        26
       ]
     },
     {
@@ -254714,13 +254828,13 @@
     },
     {
       "key": "3afd474fdb6388b701485fba54f8a26d3758fed80cfe1b56a8635a726a86850d",
-      "source": "authored",
+      "source": "wo2-psp",
       "ref": [
-        "x360",
-        "ens",
-        108,
+        "psp",
+        "fns",
+        279,
         "notices",
-        51
+        39
       ]
     },
     {
@@ -256405,13 +256519,13 @@
     },
     {
       "key": "88ee1ab49709ecb8a3c47ad74c07ce0731abe4ecdcdcceddf4ff52e832022c86",
-      "source": "authored",
+      "source": "wo2-psp",
       "ref": [
-        "x360",
-        "ens",
-        142,
+        "psp",
+        "fns",
+        280,
         "dialog",
-        32
+        35
       ]
     },
     {

@@ -193,6 +193,9 @@ class Driver:
         if name == self.fail_route:
             raise RuntimeError("stuck")
 
+    def keys(self, names):
+        self.log.append(("keys", names))
+
     def wait(self, cond):
         self.log.append(("wait", cond))
         return self.wait_ok
@@ -231,11 +234,18 @@ def test_runner_skips_the_capture_when_no_assertion_reads_pixels_and_stops_on_wa
     assert [(r.assertion, r.ok) for r in rows] == [("wait", False)]
 
 
+def test_runner_presses_a_screens_keys_after_its_route_and_before_reading_it(tmp_path):
+    """Bug: the keys are dropped or sent before the route, so every gallery stop reads the first artwork."""
+    d = Driver(tmp_path)
+    sc.run_spec([{**SPEC[0], "keys": ["Right", "Down"], "wait": {"caller": "0x1"}}], d)
+    assert [e[0] for e in d.log[:3]] == ["route", "keys", "wait"] and d.log[1][1] == ["Right", "Down"]
+
+
 def test_spec_loader_rejects_unknown_kinds_and_keys_and_accepts_every_committed_spec(tmp_path):
     """Bug: a typo'd assertion kind or key is silently skipped, so the check never runs."""
     for body in ('[[screen]]\nname="a"\nroute="r"\n[[screen.assert]]\nkind="nope"\n',
                  '[[screen]]\nname="a"\nroute="r"\nrout="x"\n',
-                 '[[screen]]\nname="a"\nroute="r"\nkeys=["Return"]\n'):
+                 '[[screen]]\nname="a"\nroute="r"\npress=["Return"]\n'):
         p = tmp_path / "bad.toml"
         p.write_text(body)
         with pytest.raises(ValueError):
@@ -252,3 +262,44 @@ def test_spec_loader_refuses_a_caller_inside_the_runtime_dll(tmp_path):
                  'text={caller="0x680051e3"}\n')
     with pytest.raises(ValueError, match="inside the runtime DLL"):
         sc.load_spec(p)
+
+
+def test_a_text_is_selected_by_the_row_of_the_plate_drawn_beside_it():
+    # Catches the banner check selecting by a fixed y, which finds nothing when a stage draws its banners lower,
+    # or picking up the dialog text elsewhere on screen.
+    s = {**screen([text(964, 307, 239, "Name"), text(164, 470, 702, "dialog")], []),
+         "boxes": [{"x": 894, "y": 303, "width": 28, "height": 35, "caller": "0x5501dd", "count": 1}]}
+    assert [t["text"] for t in sc._texts(s, {"row_of_box": "0x5501dd|0x55006b"})] == ["Name"]
+    assert sc._texts(s, {"row_of_box": "0x550211"}) == []
+
+
+def text_line(letters):
+    """A 1080p capture of one text line at layout (100, 100): each letter a dark block (x, width, bottom row)
+    on a light plate, 28 capture px tall from row 162; the screen JSON for it."""
+    img = Image.new("RGB", (1920, 1080), (240, 240, 240))
+    d = ImageDraw.Draw(img)
+    for x, w, bottom in letters:
+        d.rectangle((x, 162, x + w - 1, bottom - 1), fill=(40, 40, 40))
+    return screen([text(100, 100, 220, "abcdefgh")], []), img
+
+
+def test_a_bold_stem_among_regular_ones_is_reported_and_a_one_pixel_difference_is_not():
+    # Catches the bold "n": one letter's stems drawn 3 px where the line's are 2 (a 50% jump). A 4 px stem among
+    # 3 px ones looks the same to the user and must pass, or every line of today's text fails.
+    regular = [(160 + 20 * i, 3, 190) for i in range(8)]
+    s, img = text_line(regular[:4] + [(240, 5, 190)] + regular[5:])
+    c = sc.text_stems_even(s, img, None)
+    assert not c.ok and c.numbers["lines"][0]["odd"] == [5]
+    s, img = text_line(regular[:4] + [(240, 4, 190)] + regular[5:])
+    assert sc.text_stems_even(s, img, None).ok
+
+
+def test_a_letter_off_the_line_is_reported_and_a_descender_is_not():
+    # Catches the raised "iz": letters ending a pixel or two above or below the rest. A g or p hangs below on
+    # purpose and must pass.
+    on = [(160 + 20 * i, 10, 190) for i in range(8)]
+    s, img = text_line(on[:3] + [(220, 10, 192)] + on[4:])
+    c = sc.text_on_one_line(s, img, None)
+    assert not c.ok and c.numbers["lines"][0]["off"] == [2.0]
+    s, img = text_line(on[:3] + [(220, 10, 197)] + on[4:])
+    assert sc.text_on_one_line(s, img, None).ok

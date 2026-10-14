@@ -46,7 +46,11 @@ EVENTS = ((range(177, 239), "wo2", 2692), (range(245, 283), "wo1", 395),
 QUOTES = (4084, 512, 45)
 
 
+# Stock officer tables a donor lacks, as (first stock officer, count). The quote table index is the officer's
+# id in all three games (MOZ 0x4F6317, X360 0x821BE828, WO1 0x49CF33). X360 lacks MOZ officers 94 and 95;
+# WO1 has officers 0-78 then its generic officers, which are MOZ 96-104, so it lacks MOZ 79-95.
 QUOTE_INSERT = (94, 2)
+WO1_QUOTE_INSERT = (79, 17)
 
 
 X360_ENS = {45: 17, 59: 32, 60: 8, **{m: m - 26 for m in range(101, 129)},
@@ -180,17 +184,19 @@ def caption_pairs(moz: bytes, donor: bytes) -> list[tuple[bytes, bytes]]:
     return [(ours[at][2], b" ".join(words)) for at, words in joined.items()]
 
 
-def paired_quote_tables(moz: bytes, donor: bytes, order: str = "<") -> list[tuple[list[bytes], list[bytes]]]:
-    """Pair format and officer tables, leaving inserted stock officers unpaired."""
+def paired_quote_tables(moz: bytes, donor: bytes, order: str = "<", insert: tuple[int, int] = QUOTE_INSERT,
+                        ) -> list[tuple[list[bytes], list[bytes]]]:
+    """Pair format and officer tables by officer id, leaving the stock officers the donor lacks unpaired."""
     ours, theirs = quote_tables(moz), quote_tables(donor, order)
-    at, count = QUOTE_INSERT
+    at, count = insert
     theirs[2 + at:2 + at] = [[]] * count
     return list(zip(ours, theirs))
 
 
-def quote_pairs(moz: bytes, donor: bytes, officers: bool = True, order: str = "<") -> list[tuple[bytes, str]]:
+def quote_pairs(moz: bytes, donor: bytes, officers: bool = True, order: str = "<",
+                insert: tuple[int, int] = QUOTE_INSERT) -> list[tuple[bytes, str]]:
     """Pair notice formats by ordinal and optionally officer quotes by slot."""
-    tables = paired_quote_tables(moz, donor, order)
+    tables = paired_quote_tables(moz, donor, order, insert)
     tables = tables if officers else tables[:2]
     return _decoded((quote_text(m), quote_text(d)) for a, b in tables for m, d in zip(a, b) if m and d)
 
@@ -217,7 +223,7 @@ def official_pairs(stock: Path, wo1: Path, wo2_donor: Wo2Donor) -> dict[bytes, t
                             [*(n for n, _, _ in NARRATION), briefing_entry, quotes_entry])
     found += [(narration_pairs(narration[n], donor[s, d]), s) for n, s, d in NARRATION]
                                                                                              
-    found += [(quote_pairs(narration[quotes_entry], donor["wo1", wo1_quotes], officers=False), "wo1"),
+    found += [(quote_pairs(narration[quotes_entry], donor["wo1", wo1_quotes], officers=False, insert=WO1_QUOTE_INSERT), "wo1"),
               (quote_pairs(narration[quotes_entry], donor["wo2", wo2_quotes], order=wo2_donor.order), "wo2")]
     found.append((narration_pairs(narration[briefing_entry], b"".join(
         decoded_member(donor["wo2", m]) for m in briefing_members)), "wo2"))

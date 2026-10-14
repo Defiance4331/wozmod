@@ -17,6 +17,7 @@
 
 #include <windows.h>
 #include "text_fit.h"
+#include "glyph_raster.h"
 
 typedef unsigned int u32;
 typedef unsigned short u16;
@@ -405,12 +406,15 @@ static void test_set(u32 hook, const struct frame *f, u32 which, const char *s)
     test_put(&enrt_test.set[enrt_test.sets++ % TEST_SETS], hook, f->ret, which, enrt_test.frame, 0, s);
 }
 
-static void test_quad(u32 hook, const struct frame *f)
+/* x, y, z, width, height start at arg[at]: after the handle for the quad consumers (2), the output record for
+   the sprite builder 0x5DDDE0 (1), first for the outline frame 0x590350 and the framed panel 0x5949E0 (0), which
+   take no texture handle. */
+static void test_quad(u32 hook, const struct frame *f, u32 at)
 {
     if (current->quads < TEST_QUADS) {
         struct test_quad *q = &current->quad[current->quads];
-        q->hook = hook, q->caller = f->ret, q->handle = f->arg[0];
-        q->x = f->arg[2], q->y = f->arg[3], q->width = f->arg[5], q->height = f->arg[6];
+        q->hook = hook, q->caller = f->ret, q->handle = at == 2 ? f->arg[0] : 0;
+        q->x = f->arg[at], q->y = f->arg[at + 1], q->width = f->arg[at + 3], q->height = f->arg[at + 4];
     }
     current->quads++;
 }
@@ -638,6 +642,234 @@ static void glyph_fit(u32 id, const struct frame *f)
             text_fit_quad(quad, id == 69, fit_anchor, active_fit, pixels, pen, &fit_clean);
             break;
         }
+}
+
+/* ---- Latin glyphs drawn from outlines at their size on screen ----
+   wozmod/glyphs.bin carries the font's outlines and a G1T header for a blank sheet. Each glyph is drawn into a
+   copy of that sheet the first time its size is met, stems and heights fitted to whole pixels, and the glyph's
+   quad is pointed at it 1:1: whole-pixel corners, the sheet's own texels. Letters of a word step by whole-pixel
+   advances, so equal gaps stay equal; a word starts where the game put it. */
+#define GLYPH_LATIN 2700             /* game glyph number of the first Latin cell (wozmod.runtime.latin_font) */
+#define GLYPH_KEY 0x5F00             /* our sheet's texture key */
+#define GLYPH_SHEET 1024
+#define GLYPH_SLOTS 2048
+#define GLYPH_MAX 96                 /* px a glyph may be wide or tall */
+#define GLYPH_PASSES 4               /* quads one glyph record may make (a shadow, then the face) */
+/* How soft text looks, chosen for a release: 0 sharp, 1 balanced, 2 soft (near the stock game's look). Every level
+   keeps even stems, one baseline and even spacing. */
+#ifndef GLYPH_SOFTNESS
+#define GLYPH_SOFTNESS 1
+#endif
+static const int glyph_soften[3] = {0, 38, 64};  /* gr_soften's share per neighbour, of 256 */
+#define TEXTURE_RECORDS ((const u8 *)0xCB9310)
+
+struct glyph_slot { u32 number, kx, ky; int b, h; u16 u, v, w; short left; };
+struct glyph_pen { u32 x, y, w, h, adv; int pen, step, valid; };
+static struct gr_font glyph_font;
+static struct gr_outline glyph_outline[128];
+static u8 glyph_has[128];
+static unsigned long long glyph_handle;
+static u8 *glyph_pixels;
+static struct glyph_slot glyph_slot[GLYPH_SLOTS];
+static u32 glyph_used, shelf_x, shelf_y, shelf_h, dirty_top = GLYPH_SHEET, dirty_bottom;
+static float glyph_acc[(GLYPH_MAX + 2) * GLYPH_MAX];
+static u8 glyph_cover[GLYPH_MAX * GLYPH_MAX];
+static struct glyph_pen glyph_chain[GLYPH_PASSES];
+static u32 glyph_pass, glyph_last_x = ~0u, glyph_last_y = ~0u;
+
+/* The IDirect3DTexture9 behind our sheet's handle, once made: the game's texture record, its resource, and the
+   resource's wrapper list at +0x10, whose first entry starts with the texture (as the draw at 0x5CD241 reads it). */
+static void *glyph_texture(void)
+{
+    u32 i;
+    for (i = 0; i < 0x800; i++) {
+        const u8 *r = TEXTURE_RECORDS + i * 0x28, *object;
+        void *const *const *wrappers;
+        if (*(const u32 *)(r + 0x14) != 0x1F00 || *(const u32 *)(r + 0x18) != GLYPH_KEY)
+            continue;
+        if (!(object = *(const u8 *const *)(r + 4)) || !(wrappers = *(void *const *const *const *)(object + 0x10))
+            || !*wrappers)
+            return 0;
+        return **wrappers;
+    }
+    return 0;
+}
+
+/* Copy the rows drawn since the last flush into the D3D texture (managed pool: it survives a reset). */
+static void glyph_flush(void)
+{
+    struct { int pitch; u8 *bits; } locked;
+    struct { long left, top, right, bottom; } area = {0, (long)dirty_top, GLYPH_SHEET, (long)dirty_bottom};
+    void **texture;
+    u32 y, x;
+    if (dirty_top >= dirty_bottom || !(texture = glyph_texture()))
+        return;
+    if (((long (__stdcall *)(void *, u32, void *, const void *, u32))(*(void ***)texture)[19])(texture, 0, &locked, &area, 0) < 0)
+        return;
+    for (y = dirty_top; y < dirty_bottom; y++) {
+        const u32 *from = (const u32 *)(glyph_pixels + y * GLYPH_SHEET * 4);
+        u32 *to = (u32 *)(locked.bits + (y - dirty_top) * locked.pitch);
+        for (x = 0; x < GLYPH_SHEET; x++)
+            to[x] = from[x];
+    }
+    ((long (__stdcall *)(void *, u32))(*(void ***)texture)[20])(texture, 0);
+    dirty_top = GLYPH_SHEET, dirty_bottom = 0;
+}
+
+static void glyph_clear(void)
+{
+    u32 i;
+    for (i = 0; i < GLYPH_SHEET * GLYPH_SHEET; i++)
+        ((u32 *)glyph_pixels)[i] = 0;
+    for (i = 0; i < GLYPH_SLOTS; i++)
+        glyph_slot[i].w = 0, glyph_slot[i].h = 0;
+    glyph_used = shelf_x = shelf_y = shelf_h = 0;
+    dirty_top = 0, dirty_bottom = GLYPH_SHEET;
+}
+
+/* The glyph drawn at this size (kx, ky px per font unit), baseline row b of an h-row cell: from the sheet, or
+   drawn into it now. 0 when it does not fit. */
+static const struct glyph_slot *glyph_get(u32 number, float kx, float ky, int b, int h)
+{
+    u32 qx = (u32)(kx * 65536.0f + 0.5f), qy = (u32)(ky * 65536.0f + 0.5f), i, at, start, j;
+    const struct gr_outline *o = &glyph_outline[number];
+    struct glyph_slot *slot;
+    struct gr_warp across, up;
+    float lo = 1e9f, hi = -1e9f;
+    int left, w, x, y;
+    at = (number * 2654435761u ^ qx * 40503u ^ qy * 9973u ^ (u32)b * 131u ^ (u32)h) & (GLYPH_SLOTS - 1);
+    for (i = 0; i < GLYPH_SLOTS; i++) {
+        slot = &glyph_slot[(at + i) & (GLYPH_SLOTS - 1)];
+        if (!slot->h)
+            break;
+        if (slot->number == number && slot->kx == qx && slot->ky == qy && slot->b == b && slot->h == h)
+            return slot;
+    }
+    if (!glyph_has[number] || !o->points || h <= 0 || h > GLYPH_MAX)
+        return 0;
+    if (glyph_used >= GLYPH_SLOTS * 3 / 4) {
+        glyph_clear();
+        return glyph_get(number, kx, ky, b, h);
+    }
+    across = gr_across(o->stem, (int)o->stems, o->offset, kx);
+    up = gr_up(&glyph_font.zones, o->bar, (int)o->bars, ky);
+    for (i = 0; i < o->points; i++) {
+        float v = gr_map(&across, o->point[2 * i] + o->offset);
+        lo = v < lo ? v : lo, hi = v > hi ? v : hi;
+    }
+    left = gr_floor(lo) - 1, w = -gr_floor(-hi) + 1 - left;
+    if (w > GLYPH_MAX)
+        return 0;
+    if (shelf_x + w + 1 >= GLYPH_SHEET)
+        shelf_y += shelf_h + 1, shelf_x = shelf_h = 0;
+    if (shelf_y + h + 1 >= GLYPH_SHEET) {
+        glyph_clear();
+        return glyph_get(number, kx, ky, b, h);
+    }
+    for (i = 0; i < (u32)((w + 2) * h); i++)
+        glyph_acc[i] = 0;
+    for (start = 0, j = 0; j < o->contours; start = o->end[j++])
+        for (i = start; i < o->end[j]; i++) {
+            u32 k = i + 1 < o->end[j] ? i + 1 : start;
+            gr_line(glyph_acc, w + 2, h,
+                    gr_map(&across, o->point[2 * i] + o->offset) - left, b - gr_map(&up, o->point[2 * i + 1]),
+                    gr_map(&across, o->point[2 * k] + o->offset) - left, b - gr_map(&up, o->point[2 * k + 1]));
+        }
+    gr_fill(glyph_acc, w + 2, w, h, glyph_cover, w);
+    gr_soften(glyph_cover, w, h, w, glyph_soften[GLYPH_SOFTNESS]);
+    for (y = 0; y < h; y++)
+        for (x = 0; x < w; x++)  /* the atlas's own texel: grey 0x80, coverage in alpha */
+            ((u32 *)glyph_pixels)[(shelf_y + y) * GLYPH_SHEET + shelf_x + x] = (u32)glyph_cover[y * w + x] << 24 | 0x808080;
+    slot->number = number, slot->kx = qx, slot->ky = qy, slot->b = b, slot->h = h;
+    slot->u = (u16)shelf_x, slot->v = (u16)shelf_y, slot->w = (u16)w, slot->left = (short)left;
+    dirty_top = shelf_y < dirty_top ? shelf_y : dirty_top;
+    dirty_bottom = shelf_y + h > dirty_bottom ? shelf_y + h : dirty_bottom;
+    shelf_x += w + 1, shelf_h = (u32)h > shelf_h ? (u32)h : shelf_h;
+    glyph_used++;
+    return slot;
+}
+
+/* v rounded to a whole number, a half to the even one: the same advance is always the same pixels, and halves
+   round both ways so a line keeps its length. */
+static int round_even(double v)
+{
+    int i = (int)v;
+    double f = v - i;
+    return f > 0.5 ? i + 1 : f < 0.5 ? i : i + (i & 1);
+}
+
+/* Point a Latin glyph's quad (two corners for id 68, four for 69) at its glyph drawn for this size. */
+static void glyph_draw(u32 id, const struct frame *f)
+{
+    u32 i, *quad = (u32 *)f->arg[0], n = id == 69 ? 4 : 2, stride = id == 69 ? 6 : 4, number;
+    u32 xlo = ~0u, xhi = 0, ylo = ~0u, yhi = 0, ulo = ~0u, uhi = 0, vlo = ~0u, vhi = 0, u0, u1, v0, v1;
+    const u32 *glyph = 0;
+    const struct glyph_slot *slot;
+    struct glyph_pen *chain;
+    float sx = SCREEN_W / 1280.0f, sy = SCREEN_H / 720.0f, factor = (float)active_fit.factor, kx, ky;
+    int top, h, b, pen, x0, x1;
+    if (!glyph_handle)
+        return;
+    for (i = 0; i < sizeof glyph_sites / sizeof *glyph_sites; i++)
+        if (f->ret == glyph_sites[i][0])
+            glyph = (const u32 *)(glyph_sites[i][1] ? f->edi : f->esi);
+    if (!glyph)
+        return;
+    if (glyph[3] != glyph_last_x || glyph[4] != glyph_last_y)
+        glyph_pass = 0, glyph_last_x = glyph[3], glyph_last_y = glyph[4];
+    chain = &glyph_chain[glyph_pass < GLYPH_PASSES ? glyph_pass : GLYPH_PASSES - 1];
+    glyph_pass++;
+    number = glyph[2] - GLYPH_LATIN;
+    if (glyph[2] < GLYPH_LATIN || number >= 128 || !glyph[5] || !glyph[6]) {
+        chain->valid = 0;
+        return;
+    }
+    for (i = 0; i < n; i++) {  /* a corner: UV word, then X and Y in the low halves of the next two words */
+        u32 xy = quad[12 + i * stride], yy = quad[13 + i * stride] & 0xffff, uv = quad[10 + i * stride];
+        xlo = (xy & 0xffff) < xlo ? xy & 0xffff : xlo, xhi = (xy & 0xffff) > xhi ? xy & 0xffff : xhi;
+        ylo = yy < ylo ? yy : ylo, yhi = yy > yhi ? yy : yhi;
+        ulo = (uv & 0xffff) < ulo ? uv & 0xffff : ulo, uhi = (uv & 0xffff) > uhi ? uv & 0xffff : uhi;
+        vlo = (uv >> 16) < vlo ? uv >> 16 : vlo, vhi = (uv >> 16) > vhi ? uv >> 16 : vhi;
+    }
+    if (xlo < 0x8000 || ylo < 0x8000) {  /* off the left or top edge, or carried past 2048 px: as the game drew it */
+        chain->valid = 0;
+        return;
+    }
+    kx = glyph[5] * sx * factor / 1200.0f, ky = glyph[6] * sy / 1200.0f;
+    top = (int)(ylo - 0x8000) >> 4, h = (int)((yhi - 0x8000 + 15) >> 4) - top;
+    b = gr_round((int)glyph[4] * sy + glyph_font.base * ky) - top;
+    /* The next letter of the line: right after the last, or after a gap the game left for spaces, which keeps its
+       own exact width so every word gap is the same. Anything else (a line, a pass or a draw of its own) starts
+       where the game put it. */
+    if (chain->valid && glyph[4] == chain->y && glyph[5] == chain->w && glyph[6] == chain->h
+        && glyph[3] >= chain->x + chain->adv && glyph[3] - chain->x - chain->adv <= 4 * glyph[5])
+        pen = chain->pen + chain->step + round_even((glyph[3] - chain->x - chain->adv) * sx * factor);
+    else
+        pen = gr_round((float)((int)xlo - 0x8000) / 16.0f);
+    slot = glyph_has[number] ? glyph_get(number, kx, ky, b, h) : 0;  /* a space has no outline: it only steps */
+    chain->x = glyph[3], chain->y = glyph[4], chain->w = glyph[5], chain->h = glyph[6];
+    chain->adv = enrt_widths[glyph[2]] * glyph[5] / 24;
+    chain->pen = pen, chain->step = gr_step((int)chain->adv, sx * factor);
+    chain->valid = 1;
+    if (!slot)
+        return;
+    glyph_flush();
+    x0 = pen + slot->left, x1 = x0 + slot->w;
+    /* One texel to a pixel: the corners sit on texel edges and span exactly the glyph's width and height. The
+       game's own cell UVs start half a texel in and span a texel short, right for stretching a 24 px cell, but
+       for ours the first squeezes each glyph a pixel (stems blur by different amounts) and the second puts every
+       pixel between two texels (each edge half covered). */
+    u0 = slot->u * 16, u1 = u0 + slot->w * 16;
+    v0 = slot->v * 16, v1 = v0 + (u32)h * 16;
+    for (i = 0; i < n; i++) {
+        u32 xy = quad[12 + i * stride], yy = quad[13 + i * stride], uv = quad[10 + i * stride];
+        u32 x = (u32)(((xy & 0xffff) == xlo ? x0 : x1) * 16 + 0x8000);
+        u32 y = (u32)(((yy & 0xffff) == ylo ? top : top + h) * 16 + 0x8000);
+        quad[12 + i * stride] = (xy & 0xffff0000u) | (x & 0xffff);
+        quad[13 + i * stride] = (yy & 0xffff0000u) | (y & 0xffff);
+        quad[10 + i * stride] = ((uv >> 16) == vlo ? v0 : v1) << 16 | (((uv & 0xffff) == ulo ? u0 : u1) & 0xffff);
+    }
+    quad[6] = (u32)glyph_handle, quad[7] = (u32)(glyph_handle >> 32);
 }
 
 static void draw(const char *s, u32 x, u32 y, u32 layer)
@@ -1622,6 +1854,32 @@ static void hires_load(void)
     }
     HeapFree(GetProcessHeap(), 0, data);
     note("hi-res sheets:", hires_rows);
+}
+
+static void glyphs_load(void)
+{
+    WCHAR name[MAX_PATH];
+    u32 size, head, i;
+    u8 *data = english ? load(path(name, L"glyphs.bin"), &size) : 0, *sheet;
+    if (!data)
+        return;
+    head = *(const u32 *)data;
+    if (size < 4 + head || !gr_open(&glyph_font, data + 4 + head, size - 4 - head)) {
+        note("refused: glyphs.bin", 0);
+        HeapFree(GetProcessHeap(), 0, data);
+        return;
+    }
+    for (i = 0; i < 128; i++)
+        glyph_has[i] = (u8)gr_outline(&glyph_font, i, &glyph_outline[i]);
+    sheet = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, head + GLYPH_SHEET * GLYPH_SHEET * 4);
+    glyph_pixels = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, GLYPH_SHEET * GLYPH_SHEET * 4);
+    if (!sheet || !glyph_pixels)
+        return;
+    for (i = 0; i < head; i++)
+        sheet[i] = data[4 + i];
+    glyph_handle = TEXTURE_HANDLE(sheet, 0x1F00, GLYPH_KEY);
+    HeapFree(GetProcessHeap(), 0, sheet);
+    note("glyph outlines:", glyph_font.count);  /* data stays loaded: the outlines are read from it */
 }
 
 
@@ -3040,9 +3298,12 @@ static u32 english_hook(u32 id, struct frame *f)
         static const int stock[] = {367, 294, 203}, inset[] = {224, 147, 157};
         u32 type = *(volatile u8 *)0xC2AF70, s = id - 33, room = 126;
         const char *label = *(const char *const *)(0x6FB7C0 + 4 * *(volatile u8 *)0xC2AF73);
-        if (type == 1 || type == 2 || type == 5)
-            room = 300;
-        else if (s == 1 && label) {
+        if (type == 1 || type == 2 || type == 5) {  /* the name's own width; longer names condense */
+            char name[96];
+            room = width24(compose(name, *(volatile u16 *)0xC2AF6C, *(volatile u16 *)0xC2AF6E));
+            if (room > 300)
+                room = 300;
+        } else if (s == 1 && label) {
             u8 w = FONT_CELL[0], h = FONT_CELL[1];
             FONT_CELL[0] = BANNER_TEXT_CELL, FONT_CELL[1] = 24;
             room = measure(enrt_translate(label));
@@ -3056,6 +3317,9 @@ static u32 english_hook(u32 id, struct frame *f)
     case 42:
     case 43:
         box_drawn(id, f);
+#ifdef ENRT_TEST
+        test_quad(id, f, 0);  /* the framed panel as drawn, after it grew to its text */
+#endif
         break;
     case 18:
         f->eax = name_cells(f->arg[0], f->arg[1]);
@@ -3155,6 +3419,7 @@ static int always(u32 id, struct frame *f, u32 *replace)
     case 68:
     case 69:
         glyph_fit(id, f);
+        glyph_draw(id, f);
         return 1;
     case 24:
         reload();
@@ -3228,6 +3493,7 @@ static int always(u32 id, struct frame *f, u32 *replace)
     case 48:
         prompts_load();
         hires_load();
+        glyphs_load();
         return 1;
     case 49:
     case 50:
@@ -3353,10 +3619,16 @@ static int always(u32 id, struct frame *f, u32 *replace)
         log_quad(id, f);
 #endif
 #ifdef ENRT_TEST
-        test_quad(id, f);
+        test_quad(id, f, 2);
 #endif
         hires_quad(id, f);
         return 1;
+#ifdef ENRT_TEST
+    case 73:
+    case 74:
+        test_quad(id, f, id == 73);
+        return 1;
+#endif
     }
     return 0;
 }
@@ -3378,6 +3650,8 @@ u32 enrt_hook(u32 id, struct frame *f)
         test_set(id, f, f->arg[0], (const char *)f->arg[1]);
     else if (id == 7)
         test_set(id, f, f->arg[1], (const char *)f->arg[0]);
+    else if (id == 43)
+        test_quad(id, f, 0);  /* the framed panel, so the stock layout has the panels the English one records */
 #endif
     return 0;
 }

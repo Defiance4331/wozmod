@@ -12,7 +12,7 @@ from wozmod.formats.audio import (
 )
 from wozmod.formats.linkdata import decoded_member, moz_entries, wo1_entries
 from wozmod.text.script_alignment import (
-    EVENTS, QUOTES, moz_scripts, paired_quote_tables, wo1_scripts, wo2_x360,
+    EVENTS, QUOTES, WO1_QUOTE_INSERT, moz_scripts, paired_quote_tables, wo1_scripts, wo2_x360,
 )
 
 from .lips import WO1_LINES, X360_LINES, donor_lips, english_lips, lip_bank, stock_lips, wo1_fits, x360_fits
@@ -45,7 +45,7 @@ def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | N
     quotes_entry, wo1_quotes, wo2_quotes = QUOTES
     quotes = moz_entries(stock / "LINKDATA1.BIN", stock / "LINKDATA1.IDX", [quotes_entry])[quotes_entry]
     wo1_tables = paired_quote_tables(quotes, wo1_entries(
-        wo1 / "linkdata_ens.lnk", wo1 / "linkdata_ens.idx", [wo1_quotes])[wo1_quotes])
+        wo1 / "linkdata_ens.lnk", wo1 / "linkdata_ens.idx", [wo1_quotes])[wo1_quotes], insert=WO1_QUOTE_INSERT)
     wo2_tables = paired_quote_tables(quotes, wo2_donor.members([wo2_quotes])[wo2_quotes], wo2_donor.order)
     one, two = dialogue_voice_maps(
         moz, wo1_scripts(wo1 / "linkdata_ens.lnk", wo1 / "linkdata_ens.idx"),

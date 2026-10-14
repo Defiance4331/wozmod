@@ -136,7 +136,7 @@ def test_compiler_prefers_native_and_falls_back_to_pinned_docker(
             build = Path(kwargs["cwd"])
         assert (build / "enrt_data.h").read_text() == "synthetic header\n"
         assert (build / "english_runtime.c").is_file()
-        assert (build / "text_fit.h").is_file()
+        assert (build / "text_fit.h").is_file() and (build / "glyph_raster.h").is_file()
         (build / "d3d9.dll").write_bytes(b"MZsynthetic-dll")
         return subprocess.CompletedProcess(command, 0)
 

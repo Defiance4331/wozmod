@@ -101,7 +101,10 @@ ALWAYS_HOOKS = [
 # ENRT_LOG and ENRT_TEST builds only.
 LOG_HOOKS = []
 # ENRT_TEST builds only.
-TEST_HOOKS = []
+TEST_HOOKS = [
+    (0x5DDDE0, "8b442424 8b4c241c", 73, None),  # sprite record builder (banner plates): a plain box in `screen`
+    (0x590350, "83ec20 53 55", 74, None),       # nine-slice outline (the gallery selection frame), the same
+]
 # Cyrillic surrogate codes 0x8440-0x8444 route to glyphs 2794-2798.
 SURROGATES = str.maketrans({"Ō": "А", "ō": "Б", "Ū": "В", "ū": "Г", "ï": "Д"})
 
@@ -214,7 +217,8 @@ def compile_dll(output: Path, header: str, defines: tuple[str, ...] = ()) -> Non
              "-o", "d3d9.dll", "english_runtime.c"]
     with tempfile.TemporaryDirectory() as tmp:
         shutil.copyfile(C_SOURCE, Path(tmp, "english_runtime.c"))
-        shutil.copyfile(C_SOURCE.with_name("text_fit.h"), Path(tmp, "text_fit.h"))
+        for name in ("text_fit.h", "glyph_raster.h"):
+            shutil.copyfile(C_SOURCE.with_name(name), Path(tmp, name))
         Path(tmp, "enrt_data.h").write_text(header, encoding="utf-8")
         if shutil.which("i686-w64-mingw32-gcc"):
             subprocess.run(["i686-w64-mingw32-gcc", *flags], cwd=tmp, check=True)

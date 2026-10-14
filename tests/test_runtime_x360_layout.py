@@ -61,6 +61,10 @@ DERIVED = {
     0x55BBE7: lambda x: 1280 - x(0x822AC004) - x(0x822AB3BC) - 43,  # its travel from the right edge
     0x52F9A9: lambda x: x(0x8228B374) - x(0x8228B370),  # resting alpha 0x80 from the resting x
     0x54FE19: lambda x: x(0x822A5990) - 0x800,  # banner backing corner without the X360 pack bias
+    # The art viewer's selection frame, description bar, its text and page arrow keep their stock place under
+    # the thumbnail panel moved to the X360 x: the panel's x, and the thumbnails' column-0 x 24 px in.
+    **{va: (lambda x: x(0x822A9C3C)) for va in (0x5579F7, 0x557AAF, 0x557B6D)},
+    **{va: (lambda x: x(0x822A9C3C) + 24) for va in (0x5577C0, 0x557AE8, 0x557B92, 0x557BA9)},
 }
 # Detour sites -> cave, and the cave values: (offset in the cave, size, value).
 DETOURS = {0x55B58C: 0x5F5E00, 0x55BBA3: 0x5F5E20, 0x59C421: 0x5F5E40, 0x49EAE4: 0x5F5F00, 0x49EB1F: 0x5F5F40}

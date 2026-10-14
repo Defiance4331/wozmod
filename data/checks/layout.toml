@@ -16,6 +16,14 @@ route = "game-settings"
   kind = "no_cjk"
 
   [[screen.assert]]
+  kind = "text_stems_even"     # glyph form: no bold or thin letter among its line's
+  text = { caller = "0x55dfd8" }
+
+  [[screen.assert]]
+  kind = "text_on_one_line"    # glyph form: every letter ends on the line
+  text = { caller = "0x55dfd8" }
+
+  [[screen.assert]]
   kind = "text_position"
   text = { caller = "0x55dfd8" }
   y = 642
@@ -543,3 +551,97 @@ route = "story-z-still-2"
   [[screen.assert]]
   kind = "text_centred_in_box"      # each name centred in its plate's dark box and inside it (lane 180)
   text = { match = "^[A-Z][a-z]+( [A-Z][a-z]+)*$" }
+
+# Stock layout (tools/layout_rules.py): each stop keeps the relations learned from the same stop in the stock
+# game (data/checks/stock_layout.json): the selection frame on its artwork, the description bar and page arrow
+# lined up with the thumbnail panel. The keys walk the cursor over six artworks on two pages, from wherever the
+# previous stop left it, so the stops run in this order.
+[[screen]]
+name = "gallery-art-1"
+route = "gallery-backgrounds"
+
+  [[screen.assert]]
+  kind = "stock_layout"
+  allow = [["place", "box@0x556d8e#0"], ["centred", "4064.9@0x5574fb#0"]]  # the X360 name panel, wider for English
+  stock = "gallery-art-1"
+
+  [[screen.assert]]
+  kind = "text_stems_even"     # glyph form: no bold or thin letter among its line's
+  text = { caller = "0x557bbd" }
+
+  [[screen.assert]]
+  kind = "text_on_one_line"    # glyph form: every letter ends on the line
+  text = { caller = "0x557bbd" }
+
+[[screen]]
+name = "gallery-art-2"
+route = "gallery-backgrounds"
+keys = ["Right"]
+
+  [[screen.assert]]
+  kind = "stock_layout"
+  allow = [["place", "box@0x556d8e#0"], ["centred", "4064.9@0x5574fb#0"]]  # the X360 name panel, wider for English
+  stock = "gallery-art-2"
+
+[[screen]]
+name = "gallery-art-3"
+route = "gallery-backgrounds"
+keys = ["Right"]
+
+  [[screen.assert]]
+  kind = "stock_layout"
+  allow = [["place", "box@0x556d8e#0"], ["centred", "4064.9@0x5574fb#0"]]  # the X360 name panel, wider for English
+  stock = "gallery-art-3"
+
+[[screen]]
+name = "gallery-art-4"
+route = "gallery-backgrounds"
+keys = ["Right"]
+
+  [[screen.assert]]
+  kind = "stock_layout"
+  allow = [["place", "box@0x556d8e#0"], ["centred", "4064.9@0x5574fb#0"]]  # the X360 name panel, wider for English
+  stock = "gallery-art-4"
+
+[[screen]]
+name = "gallery-art-5"
+route = "gallery-backgrounds"
+keys = ["Down"]
+
+  [[screen.assert]]
+  kind = "stock_layout"
+  allow = [["place", "box@0x556d8e#0"], ["centred", "4064.9@0x5574fb#0"]]  # the X360 name panel, wider for English
+  stock = "gallery-art-5"
+
+[[screen]]
+name = "gallery-art-6"
+route = "gallery-backgrounds"
+keys = ["Left"]
+
+  [[screen.assert]]
+  kind = "stock_layout"
+  allow = [["place", "box@0x556d8e#0"], ["centred", "4064.9@0x5574fb#0"]]  # the X360 name panel, wider for English
+  stock = "gallery-art-6"
+
+# In-battle name banner: it sizes to the name, so every name ends where the label banner's text does, 77 px
+# before the plate's end at the screen edge. Stage 40 posts officer banners on its own every 10-20 s from the
+# start; the wait reads one once its plate holds still. The name is drawn by the runtime, so it is selected as the
+# text on the row of the plate pieces of banner types 2/4 and 5 (the row moves between stages).
+[[screen]]
+name = "battle-name-banner"
+route = "battle"
+wait = { box_caller = "0x5501dd|0x55006b", timeout = 120 }
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { row_of_box = "0x5501dd|0x55006b" }
+  right = 1203
+  tol = 2
+
+  [[screen.assert]]
+  kind = "text_stems_even"     # glyph form: no bold or thin letter among its line's
+  text = { row_of_box = "0x5501dd|0x55006b" }
+
+  [[screen.assert]]
+  kind = "text_on_one_line"    # glyph form: every letter ends on the line
+  text = { row_of_box = "0x5501dd|0x55006b" }

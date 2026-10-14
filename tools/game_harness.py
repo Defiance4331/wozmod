@@ -395,18 +395,18 @@ def screen(memory: int, block: int) -> dict:
         hook, caller, x, y, width, raw = TEST_TEXT.unpack_from(data, TEST_SNAPSHOT + 12 + n * TEST_TEXT.size)
         drawn.append({"x": x, "y": y, "width": width, "caller": f"{caller:#x}", "text": english(raw),
                       **({"hook": "caption"} if hook == 4 else {})})
-    named, unnamed = {}, 0
+    named, unnamed = {}, {}
     for n in range(min(quads, TEST_QUADS)):
         at = TEST_SNAPSHOT + 12 + TEST_TEXTS * TEST_TEXT.size + n * TEST_QUAD.size
         _, caller, _, name, x, y, width, height = TEST_QUAD.unpack_from(data, at)
-        if not name:
-            unnamed += 1
-            continue
-        key = (f"{name >> 16}.{name & 0xFFFF}", x, y, width, height, f"{caller:#x}")
-        named[key] = named.get(key, 0) + 1
+        found = named if name else unnamed  # unnamed: plain boxes such as a cursor or a plate drawn without a texture
+        key = (f"{name >> 16}.{name & 0xFFFF}" if name else None, x, y, width, height, f"{caller:#x}")
+        found[key] = found.get(key, 0) + 1
     textures = [dict(zip(("texture", "x", "y", "width", "height", "caller"), key), count=count)
                 for key, count in named.items()]
-    return {"frame": frame, "frames_run": now, "texts": drawn, "textures": textures, "unnamed_quads": unnamed,
+    boxes = [dict(zip(("x", "y", "width", "height", "caller"), key[1:]), count=count) for key, count in unnamed.items()]
+    return {"frame": frame, "frames_run": now, "texts": drawn, "textures": textures,
+            "unnamed_quads": sum(unnamed.values()), "boxes": boxes,
             "dropped": {"texts": max(0, texts - TEST_TEXTS), "quads": max(0, quads - TEST_QUADS)},
             "windows": windows}
 
@@ -667,9 +667,11 @@ def start_audio(root: Path) -> None:
         ["pactl", "load-module", "module-null-sink", "sink_name=musou_harness"],
         check=True, timeout=10, stdout=subprocess.DEVNULL,
     )
-    subprocess.run(
-        ["pactl", "set-default-sink", "musou_harness"], check=True, timeout=10,
-    )
+    deadline = time.monotonic() + 10
+    while subprocess.run(["pactl", "set-default-sink", "musou_harness"], timeout=10).returncode:
+        if time.monotonic() > deadline:  # on a loaded machine the new sink can take seconds to be usable
+            raise RuntimeError("pactl could not make musou_harness the default sink")
+        time.sleep(0.5)
 
 
 def serve(root: Path) -> int:
@@ -1061,6 +1063,8 @@ def shows(seen: dict, until: dict) -> bool:
     if "any" in until:  # either fingerprint
         return any(shows(seen, one) for one in until["any"])
     drawn = {q["texture"] for q in seen["textures"]}
+    if "box_caller" in until:  # a plain box, such as a banner plate piece; "|" between alternatives
+        return any(b["caller"] in until["box_caller"].split("|") for b in seen.get("boxes", []))
     if "caller" in until:  # `lines`: a text of that many lines; `texts`: at least that many texts of the caller at once
         drawn_by = [t for t in seen["texts"] if t["caller"] == until["caller"]
                     and ("lines" not in until or t["text"].count("\n") + 1 == until["lines"])]
@@ -1198,8 +1202,9 @@ ROUTE_SCREENS = {
     "customize-weapon-attributes": {"caller": "0x5956fa"},  # the attribute (upgrade skill) list; its text box
     "customize-fusion-weapons": {"texture": "4060.6"},  # the weapon list of the fusion; several weapons only after `unlock`
     "dream-select": {"texture": "4094.5"},
-    "gallery": {"texture": "4079.169", "without": "4064.7|4064.9|4079.105|4079.17"},  # sub-pages draw one of these
+    "gallery": {"texture": "4079.169", "without": "4064.7|4064.9|4064.17|4079.105|4079.17"},  # sub-pages draw one of these
     "gallery-original-background": {"texture": "4064.7"},
+    "gallery-backgrounds": {"texture": "4064.17"},
     "gallery-weapons": {"texture": "4064.9"},
     "gallery-movies": {"caller": "0x556821"},
     "vs-course": {"caller": "0x5a6774"},  # the course blurb, hidden while the match-settings panel is open
@@ -1369,6 +1374,8 @@ ROUTE_EDGES = [
     ("options", "options-controller", ["Down", "Return", "Return"]),  # also 0207-B
     ("options-controller", "options", [(["Escape"], None), (["Escape"], None), (["Up"], None)]),  # a sub list sits between; Up undoes the Down
     # 0211-B2: the gallery pages
+    ("gallery", "gallery-backgrounds", ["Return", "Return"]),
+    ("gallery-backgrounds", "gallery", ["Escape", "Escape"]),
     ("gallery", "gallery-original-background", ["Down", "Return"]),
     ("gallery-original-background", "gallery", ["Escape", "Up"]),
     ("gallery", "gallery-weapons", ["Down", "Down", "Return"]),
@@ -1656,6 +1663,17 @@ class CheckDriver:
                 self.fire(script)
         self.loaded = after
 
+    def keys(self, names: list[str]) -> None:
+        """Keys within a screen (a cursor); the route position holds while the screen still shows."""
+        at = route_position(self.root)
+        for name in names:
+            ask(self.root, {"action": "key", "key": name, "hold": 0.08})
+            time.sleep(ROUTE_GAP)
+        if at in ROUTE_SCREENS and shows(ask(self.root, {"action": "screen"}), ROUTE_SCREENS[at]):
+            journal = self.root / "evidence/actions.jsonl"
+            write_json(local_path(self.root, "evidence/route.json"),
+                       {"at": at, "journal": len(journal.read_text().splitlines()) if journal.is_file() else 0})
+
     def fire(self, script: int, seconds: float = 60) -> None:
         """Send a battle script, retrying while the opening dialog still plays and the game refuses it."""
         deadline = time.monotonic() + seconds
@@ -1669,10 +1687,17 @@ class CheckDriver:
                 time.sleep(1)
 
     def wait(self, until: dict) -> bool:
-        deadline = time.monotonic() + until.get("timeout", 10)
+        deadline, steady = time.monotonic() + until.get("timeout", 10), []
         while time.monotonic() < deadline:
-            if shows(ask(self.root, {"action": "screen"}), until):
+            seen = ask(self.root, {"action": "screen"})
+            if not shows(seen, until):
+                steady = []
+            elif "box_caller" not in until:
                 return True
+            else:  # a banner slides in: take it once its boxes held still for three polls
+                steady = (steady + [[b for b in seen["boxes"] if b["caller"] in until["box_caller"].split("|")]])[-3:]
+                if len(steady) == 3 and steady[0] == steady[1] == steady[2]:
+                    return True
             time.sleep(0.2)
         return False
 
@@ -1688,9 +1713,12 @@ class CheckDriver:
         return self.root / f"evidence/{name}.png"
 
 
-def check(root: Path, spec: Path, only: list[str] | None = None) -> int:
+def check(root: Path, spec: Path, only: list[str] | None = None, learn: Path | None = None) -> int:
     """Run a check spec (data/checks/*.toml) on a running --test build; write evidence/check-report.json.
-    ``only`` names the screens to run. They are visited in the order order_screens picks, which is printed."""
+    ``only`` names the screens to run. They are visited in the order order_screens picks, which is printed.
+    On the stock game, ``learn`` merges each screen's layout relations into that structure file under the
+    screen's name, for the `stock_layout` assertions."""
+    import layout_rules
     import screen_checks
 
     screens = screen_checks.load_spec(spec)
@@ -1702,8 +1730,14 @@ def check(root: Path, spec: Path, only: list[str] | None = None) -> int:
     screens = order_screens(screens, route_position(root))
     order = [sc["name"] for sc in screens]
     print("order: " + ", ".join(order))
+    seen: dict = {}
     driver = CheckDriver(root)
-    rows = screen_checks.run_spec(screens, driver)
+    rows = screen_checks.run_spec(screens, driver, seen)
+    if learn:
+        structure = json.loads(learn.read_text()) if learn.is_file() else {}
+        structure.update({name: layout_rules.learn(data, img) for name, (data, img) in seen.items()})
+        learn.write_text(json.dumps(structure, indent=1, sort_keys=True) + "\n")
+        print(f"learned {', '.join(seen)} into {learn}")
     write_json(local_path(root, "evidence/check-report.json"),
                {"spec": str(spec), "order": order, "shortcuts": driver.shortcuts, "rows": [vars(row) for row in rows]})
     print(screen_checks.format_table(rows))
@@ -1852,6 +1886,8 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("spec", type=Path, help="a check file such as data/checks/menus.toml")
             command.add_argument("--only", type=lambda value: value.split(","), metavar="SCREEN,...",
                                  help="run only these screens of the spec")
+            command.add_argument("--learn", type=Path, metavar="STRUCTURE",
+                                 help="on the stock game: save each screen's layout relations into this file")
         if action == "tour":
             command.add_argument("--stages", type=lambda value: range(int(value.split("-")[0]),
                                                                        int(value.split("-")[-1]) + 1),
@@ -1894,7 +1930,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.action == "route":
             return route(root, args.screen, args.stage)
         if args.action == "check":
-            return check(root, args.spec.resolve(strict=True), args.only)
+            return check(root, args.spec.resolve(strict=True), args.only, args.learn)
         request = {"action": args.action}
         timeout = args.timeout
         if args.action == "key" and len(args.keys) == 1:

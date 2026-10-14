@@ -37,8 +37,8 @@ STOCK_FILES = {
     "data/Sound/Voice/Voice.bin": (971_871_792, "6d30494571b62dc1f56983c7c84c0f834c6203714ccec089a288e1a38d62f630"),
 }
 # Release assets built by us; a release updates both pins with the files it ships.
-LETTERING = (12_144_111, "e03f3559936dd375e668a0b5499364a8301660c082e03454eb8d1297b021c118")
-DLL = (171_460, "f82308a57158b94e1671cad3524555087627b446465cc42a104bccf091991821")
+LETTERING = (12_176_171, "3f2bad59e696a60c5521b1100eabe47325e13e06fa7c5be661084711d4c2da3b")
+DLL = (186_121, "a8b3950def30ab75ad815cb896bf2d56e8d7784a917dd0879086d892fe9fe522")
 
 _MOD_PATH = re.compile(r"d3d9\.dll|wozmod(/[A-Za-z0-9_][A-Za-z0-9_.-]*)+")
 
@@ -558,7 +558,7 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
             raise
     progress.finish("build")
     art = staging / "art/wozmod"
-    for name in ("entries", "hires.bin", "prompts-xbox.bin"):
+    for name in ("entries", "hires.bin", "prompts-xbox.bin", "glyphs.bin"):
         os.replace(art / name, out / "wozmod" / name)
     shutil.copyfile(inputs["dll"], out / "d3d9.dll")
     return out

@@ -78,6 +78,15 @@ Changes:
   (agents, branches, phases, migrations) in the agent's hand-back.
 - Work on a branch merges into main as one squashed commit in this format.
 
+## Root causes
+
+Fix every defect at its root cause: trace the symptom back to the code, data
+or asset that produces it, find out why it is that way, and change that. A
+change that only offsets the symptom (a compensating shift, a special case, a
+clamp, a widened tolerance, a test exception) is a workaround, and workarounds
+are not allowed, even when the result looks right. When the root cause is out of
+reach or the real fix needs a decision, report what you found and ask.
+
 ## Decisions
 
 Make implementation and workflow decisions yourself. Ask the user about

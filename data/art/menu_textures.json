@@ -2501,7 +2501,7 @@
       "draw": [
         {
           "face": "list",
-          "text": "STEEPLE",
+          "text": "STEEPLE-",
           "into": [
             0,
             68,
@@ -2813,7 +2813,7 @@
         [
           {
             "face": "pause",
-            "text": "donor:65eac2e1e3f59e24"
+            "text": "donor:5ddb04af94b48c2b"
           }
         ]
       ],
@@ -2828,7 +2828,7 @@
         [
           {
             "face": "pause",
-            "text": "donor:ced5103bf1a4663a"
+            "text": "donor:1054273ef5ec3492"
           }
         ]
       ],
@@ -2894,7 +2894,7 @@
         [
           {
             "face": "pause",
-            "text": "donor:fa015c795c293974"
+            "text": "donor:ec912df2510d14ab"
           }
         ]
       ],
@@ -2913,7 +2913,7 @@
         [
           {
             "face": "pause",
-            "text": "MUSOU GAUGE UNUSED"
+            "text": "donor:f2f15434bd2b5428"
           }
         ]
       ],
@@ -2932,7 +2932,7 @@
         [
           {
             "face": "pause",
-            "text": "TIME LEFT"
+            "text": "donor:5888675d99b95617"
           }
         ]
       ],
@@ -3841,7 +3841,7 @@
         [
           {
             "face": "help",
-            "text": "Please select officer whose weapon you wish to use."
+            "text": "Please select the character whose weapon you wish to use to create an upgrade skill."
           }
         ]
       ],
@@ -3875,7 +3875,7 @@
         [
           {
             "face": "help",
-            "text": "Please select weapon or upgrade skill to fuse."
+            "text": "Please select the weapon or upgrade skill you wish to use."
           }
         ]
       ],
@@ -9673,7 +9673,7 @@
         [
           {
             "face": "header",
-            "text": "SCENARIO SELECT"
+            "text": "SELECT SCENARIO"
           }
         ]
       ],
@@ -15846,17 +15846,13 @@
         [
           {
             "face": "list",
-            "text": "RETRY"
+            "text": "RESTART"
           }
         ],
         [
           {
-            "donor": [
-              493,
-              9,
-              0
-            ],
-            "row": 0
+            "face": "list",
+            "text": "CHANGE CHARACTERS"
           }
         ],
         [

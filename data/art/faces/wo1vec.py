@@ -25,10 +25,14 @@ T, B, XT, DS = 2.1, 19.3, 6.2, 23.0
 SV, SH = 2.6, 2.2
 CSV, CSH = 2.65, 2.25
 LSV, LSH = 2.45, 2.15
-THIN = (2.3, 2.1)
 WPEN = (2.1, 1.95)
-CT, CB = 2.85, 18.9
-LT, LB = 7.1, 18.9
+# Round letters' top and bottom stroke centres. Their outer edges overshoot the cap height, x-height and baseline
+# by OVER_C / OVER_L, a normal optical overshoot. The official bitmap's round bottoms fill the row its flat
+# letters only part-cover (its baseline falls 0.3 into a row), which traced as a 0.7 overshoot that drew round
+# letters a pixel low.
+OVER_C, OVER_L = 0.25, 0.2
+CT, CB = T - OVER_C + CSH / 2, B + OVER_C - CSH / 2
+LT, LB = XT - OVER_L + LSH / 2, B + OVER_L - LSH / 2
 BT, BB = T + CSH / 2, B - CSH / 2
 LX = XT + SH / 2
 RC, RL, RD = 5.0, 3.3, 4.0
@@ -141,8 +145,8 @@ def _():
 
 @glyph('M')
 def _():
-    d = dict(pen=THIN, **CAP)
-    return [vline(2.15, T, B, pen=THIN), vline(17.15, T, B, pen=THIN),
+    d = dict(**CAP)
+    return [vline(2.15, T, B), vline(17.15, T, B),
             line((3.28, T), (9.47, B), **d), line((16.02, T), (9.83, B), **d)]
 
 
@@ -186,7 +190,7 @@ def s_curve(xl, xr, xrb, top, bot, term_t, term_b, spine, slope, r_out, r_in, r_
 
 @glyph('S')
 def _():
-    return [s_curve(2.35, 15.0, 15.7, 3.15, 18.85, 8.0, 14.0, 10.05, 0.131, RC - 1.0, 2.6)]
+    return [s_curve(2.35, 15.0, 15.7, 3.15, CB, 8.0, 14.0, 10.05, 0.131, RC - 1.0, 2.6)]
 
 
 @glyph('T')
@@ -291,15 +295,15 @@ def _():
 
 @glyph('a')
 def _():
-    return [stroke([(2.95, 10.15), (2.95, 7.05), (12.8, 7.05), (12.8, 18.95 + SH / 2)], [0, 3.1, 2.5, 0]),
-            stroke([(12.8, 12.4), (2.45, 12.4), (2.45, 18.95), (12.8, 18.95), (12.8, 15.0)], [0, 3.35, 2.75, 3.6, 0])]
+    return [stroke([(2.95, 10.15), (2.95, 7.05), (12.8, 7.05), (12.8, B)], [0, 3.1, 2.5, 0]),
+            stroke([(12.8, 12.4), (2.45, 12.4), (2.45, LB), (12.8, LB), (12.8, 15.0)], [0, 3.35, 2.75, 3.6, 0])]
 
 
 @glyph('b')
 def _():
 
-    return [vline(2.775, T, 18.75 + SH / 2),
-            stroke([(2.775, 7.1), (13.75, 7.1), (13.75, 18.75), (2.775, 18.75)], [4.025, 3.75, 3.75, 4.025], True)]
+    return [vline(2.775, T, B),
+            stroke([(2.775, 7.1), (13.75, 7.1), (13.75, LB), (2.775, LB)], [4.025, 3.75, 3.75, 4.025], True)]
 
 
 @glyph('c')
@@ -361,9 +365,9 @@ def _():
 
 @glyph('m')
 def _():
-    return [vline(2.85, XT, B, pen=THIN),
-            stroke([(2.85, 12.0), (2.85, 7.15), (10.1, 7.15), (10.1, B)], [0, 2.4, 2.4, 0], pen=THIN),
-            stroke([(10.1, 12.0), (10.1, 7.15), (17.15, 7.15), (17.15, B)], [0, 2.4, 2.4, 0], pen=THIN)]
+    return [vline(2.85, XT, B),
+            stroke([(2.85, 12.0), (2.85, 7.15), (10.1, 7.15), (10.1, B)], [0, 2.4, 2.4, 0]),
+            stroke([(10.1, 12.0), (10.1, 7.15), (17.15, 7.15), (17.15, B)], [0, 2.4, 2.4, 0])]
 
 
 @glyph('n')
@@ -393,7 +397,7 @@ def _():
 
 @glyph('s')
 def _():
-    return [s_curve(2.325, 12.075, 12.525, 7.075, 18.925, 10.25, 15.5, 12.325, 0.14, 2.825, 2.125, r_bot=2.8)]
+    return [s_curve(2.325, 12.075, 12.525, 7.075, LB, 10.25, 15.5, 12.325, 0.14, 2.825, 2.125, r_bot=2.8)]
 
 
 @glyph('t')
@@ -495,13 +499,13 @@ def _():
 def _():
     p = (1.8, 2.0)
     x = lambda y: 16.55 - 0.79 * (y - 2.5)
-    return [rring(1.9, 3.0, 7.85, 11.0, 2.0, pen=p), rring(12.0, 11.0, 17.85, 18.85, 2.0, pen=p),
+    return [rring(1.9, 3.0, 7.85, 11.0, 2.0, pen=p), rring(12.0, 11.0, 17.85, B + OVER_L - p[1] / 2, 2.0, pen=p),
             line((x(2.0), 2.0), (x(19.7), 19.7), pen=(2.2, 2.0), box=(-5, 2.0, 25, 19.7))]
 
 
 @glyph('&')
 def _():
-    p, bot = (LSV, LSH), 18.875
+    p, bot = (LSV, LSH), LB
     return [stroke([(3.225, 3.075), (14.575, 3.075), (14.575, 9.85), (3.225, 9.85)], [2.55, 3.05, 3.9, 3.4], True, pen=p),
             stroke([(6.5, 10.925), (2.25, 10.925), (2.25, bot), (18.7, bot)], [0, 2.8, 3.05, 0],
                    pen=(LSV * 0.95, LSH * 0.95)),
