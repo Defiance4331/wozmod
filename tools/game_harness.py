@@ -350,8 +350,9 @@ def test_command(memory: int, block: int, op: int, arg: int = 0, data: bytes = b
         raise RuntimeError(f"the game refused test op {op}: " + {
             1: "use window 1 or 2", 2: "unknown op, rebuild the runtime with this harness",
             3: "not in a battle, or the battle is already ending",
-            4: "a script is playing or the event queue is full; retry",
-            5: "no such queued script in this stage; run scripts",
+            4: "a script or scene is playing, or the event queue is full; retry",
+            5: "no such sub-scene in this stage's event scene, or the game refused it" if op == 8 else
+               "no such queued script in this stage; run scripts",
             6: "review texture or rectangle is unavailable; check the test-only review.bin",
         }.get(result, f"result {result}"))
 
@@ -482,7 +483,7 @@ def perform(root: Path, request: dict) -> dict:
     if action == "scripts":
         with open(f"/proc/{game_pid()}/mem", "rb", buffering=0) as memory:
             return stage_scripts(memory.fileno())
-    if action in ("screen", "wait", "say", "notice", "win", "lose", "script", "unlock", "review"):
+    if action in ("screen", "wait", "say", "notice", "win", "lose", "script", "scene", "unlock", "review"):
         with open(f"/proc/{game_pid()}/mem", "r+b", buffering=0) as memory:
             block = test_block(memory.fileno())
             if action == "screen":
@@ -491,12 +492,13 @@ def perform(root: Path, request: dict) -> dict:
                 name, rect = review_request(request["texture"], request["rect"])
                 test_command(memory.fileno(), block, 7, name, struct.pack("<4I", *rect))
                 return {"review": request["texture"], "rect": rect, "reference": "top", "vector": "bottom"}
-            if action == "script":
+            if action in ("script", "scene"):
                 number = request["number"]
                 if not isinstance(number, int) or not 0 <= number <= 0xFF:
-                    raise ValueError("script takes a number from 0 to 255")
-                test_command(memory.fileno(), block, 4, number, busy=10)  # waits out a script already playing
-                return {"queued": number}
+                    raise ValueError(f"{action} takes a number from 0 to 255")
+                # waits out a script or scene already playing; a scene is the stage's own sub-scene (0: its opening)
+                test_command(memory.fileno(), block, 4 if action == "script" else 8, number, busy=10)
+                return {"queued": number} if action == "script" else {"scene": number}
             if action == "unlock":
                 test_command(memory.fileno(), block, 5)
                 return {"officers": "level 99, four weapons each"}
@@ -1815,7 +1817,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="action", required=True)
     for action in ("run", "status", "key", "click", "pad", "plug", "capture", "record", "video", "peek", "poke",
-                   "find", "screen", "wait", "say", "notice", "win", "lose", "scripts", "script", "unlock",
+                   "find", "screen", "wait", "say", "notice", "win", "lose", "scripts", "script", "scene", "unlock",
                    "reload", "review", "tour", "route", "check", "stop", "_audio", "_serve"):
         command = commands.add_parser(action)
         command.add_argument("--root", required=True, type=Path)
@@ -1872,6 +1874,8 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("text", help="English or stock Japanese; the runtime translates and wraps it")
         if action == "script":
             command.add_argument("number", type=int, help="script index from scripts")
+        if action == "scene":
+            command.add_argument("number", type=int, help="sub-scene of the current stage's event scene (0: its opening)")
         if action == "review":
             command.add_argument("texture", help="key.member, or off; needs the test-only review.bin")
             command.add_argument("--rect", type=int, nargs=4, default=[0, 0, 512, 32], metavar=("X", "Y", "W", "H"))
@@ -1966,7 +1970,7 @@ def main(argv: list[str] | None = None) -> int:
                 timeout += 10  # the screenshot follows the match
         if args.action in ("say", "notice"):
             request["text"] = args.text
-        if args.action == "script":
+        if args.action in ("script", "scene"):
             request["number"] = args.number
         if args.action == "reload":
             request["table"] = str(args.table.resolve(strict=True))

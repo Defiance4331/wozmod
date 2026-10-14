@@ -312,7 +312,7 @@ def test_test_mailbox_screen_wait_and_say(tmp_path, monkeypatch):
             if command != done:
                 if op == 2:
                     received.append((arg, image[block + 48:block + 48 + harness.TEST_INPUT].rstrip(b"\0")))
-                if op in (3, 4, 5, 6):
+                if op in (3, 4, 5, 6, 8):
                     received.append((op, arg))
                     busy = op == 4 and received.count((4, arg)) == 1  # a script is playing at first
                     struct.pack_into("<I", image, block + 44, 3 if (op, arg) == (3, 8) else 4 if busy else 0)
@@ -343,8 +343,10 @@ def test_test_mailbox_screen_wait_and_say(tmp_path, monkeypatch):
         with pytest.raises(RuntimeError, match="not in a battle"):
             harness.perform(tmp_path, {"action": "lose"})
         assert harness.perform(tmp_path, {"action": "script", "number": 12}) == {"queued": 12}
+        assert harness.perform(tmp_path, {"action": "scene", "number": 1}) == {"scene": 1}  # op 8, never a script
         harness.perform(tmp_path, {"action": "unlock"})
-        assert received == [(1, b"\x84\x40da"), (2, "\u6575".encode("cp932")), (3, 7), (3, 8), (4, 12), (4, 12), (5, 0)]
+        assert received == [(1, b"\x84\x40da"), (2, "\u6575".encode("cp932")), (3, 7), (3, 8), (4, 12), (4, 12), (8, 1),
+                            (5, 0)]
     finally:
         stop.set()
         thread.join()
