@@ -2302,6 +2302,7 @@ static void pad_read(const u8 *pad)
 #define PAD_INIT ((void(__attribute__((thiscall)) *)(void *, const char *, u32, u32, u32, float))0x5E7940)
 #define PAD_NUMBER ((void(__attribute__((thiscall)) *)(void *, u32))0x5E8420)
 #define GAME_WINDOW (*(const volatile u32 *)0x140C718)
+typedef long(__stdcall *com1)(void *);
 typedef long(__stdcall *com2)(void *, u32);
 typedef long(__stdcall *com3)(void *, u32, u32);
 typedef long(__stdcall *com4)(void *, u32, u32, u32);
@@ -2483,9 +2484,11 @@ static volatile u32 *const deferred_count[4] = {
 #define HUD_TARGETS (*(volatile u16 *)(0xC2FCF8 + 0x1C902))
 /* Battle HUD state the HUD steps once per draw (0x573CF0's step block), so the extra frame would step it again:
  * the full-Musou pulse (gauge +0xA), the life trail and team-switch slide (0x5792C0), the KO bump and hundreds
- * flash (0x574AA0), the target officer's gauge timer and drain (0x574F40), the HUD pop timers (0x573AC0) and an
- * overlay counter (0x58EB20). Put back after the extra frame, they step once per tick. */
-#define HUD_STEPS X(0xC52588, 0x3C) X(0xC4D1E8, 0x10) X(0xC54618, 0x20) X(0xC549F8, 0x0C) X(0xC5D478, 4)
+ * flash (0x574AA0), the target officer's gauge timer and drain (0x574F40), the HUD pop timers (0x573AC0), an
+ * overlay counter (0x58EB20) and the overhead markers' lifetimes (0x5783ED). Put back after the extra frame, they
+ * step once per tick. */
+#define HUD_STEPS X(0xC52588, 0x3C) X(0xC4D1E8, 0x10) X(0xC54618, 0x20) X(0xC549F8, 0x0C) X(0xC5D478, 4) \
+    X(0xC4C614, 10)
 #define X(at, n) {at, n},
 static const struct { u32 at, bytes; } hud_steps[] = {HUD_STEPS};
 #undef X
@@ -2541,6 +2544,17 @@ static u32 fx_queued;
 static u32 fx_kept[0x400][2];
 static float cam_prev[8], cam_cur[8];
 static int have_prev;
+/* Farther than this in one tick is a cut or a teleport, not motion: drawn at the tick, not halfway. */
+#define PALETTE_STEP 200.0f
+
+static int near3(const float *a, const float *b)
+{
+    u32 k;
+    for (k = 0; k < 3; k++)
+        if (a[k] - b[k] > PALETTE_STEP || b[k] - a[k] > PALETTE_STEP)
+            return 0;
+    return 1;
+}
 
 
 
@@ -2629,7 +2643,7 @@ static u32 hfr_draw(void)
     for (i = 0; i < 8; i++)
         cam_cur[i] = cam[i];
     hfr_busy = 1;
-    if (have_prev && *(const u8 *)(CAMERA0 + 0x230) & 1) {
+    if (have_prev && *(const u8 *)(CAMERA0 + 0x230) & 1 && near3(cam_prev, cam_cur) && near3(cam_prev + 4, cam_cur + 4)) {
         for (i = 0; i < 7; i++)
             if (i != 3)
                 cam[i] = (cam_prev[i] + cam_cur[i]) * 0.5f;
@@ -2716,7 +2730,6 @@ static float lerped[256 * 4];
 
 
 
-#define PALETTE_STEP 200.0f
 static float palette_gap(const float *a, const float *b, u32 count, float least)
 {
     float gap = 0, g;
@@ -2744,11 +2757,9 @@ static u32 pair(u32 n, u32 reg, const float *data, u32 count)
 static void halfway(float *point, const float *prev, const float *now)
 {
     u32 k;
-    for (k = 0; k < 3; k++)
-        if (prev[k] - now[k] > PALETTE_STEP || now[k] - prev[k] > PALETTE_STEP)
-            return;
-    for (k = 0; k < 3; k++)
-        point[k] += (prev[k] - now[k]) * 0.5f;
+    if (near3(prev, now))
+        for (k = 0; k < 3; k++)
+            point[k] += (prev[k] - now[k]) * 0.5f;
 }
 
 
@@ -2781,7 +2792,7 @@ static void marker_point(float *point)
 static long __stdcall vs_const(void *device, u32 reg, const float *data, u32 count)
 {
     u32 n = upload_index, m = UPLOADS, i;
-    if (hfr_busy && count <= 256 && extra && count % 3 == 0)
+    if (hfr_busy && count <= 256 && extra && have_prev && count % 3 == 0)
         m = pair(n, reg, data, count);
     trace(1, reg, count, extra, (u32)__builtin_return_address(0), m, 0, data, count * 16);
     if (!hfr_busy || count > 256)
@@ -2992,9 +3003,73 @@ static void trace_hooks(void *device)
 }
 #endif
 
+#ifdef ENRT_LOG
+static void state_note(const char *kind, u32 index, u32 value)
+{
+    char label[16], *p = label;
+    while (*kind)
+        *p++ = *kind++;
+    *put_hex(p, index, 3) = 0;
+    note(label, value);
+}
+
+/* Test aid: every device state a draw depends on, nonzero values only: render, sampler and texture-stage
+ * states, shaders, FVF, declaration, stream 0, textures, transforms and shader constants (float bits). */
+static u32 dump_after;
+
+static void state_dump(void *device, const char *when)
+{
+    static const u32 transforms[] = {2, 3, 16, 17, 18, 19, 20, 21, 22, 23, 256};
+    u32 i, j, value, info[4];
+    u32 f[256 * 4];  /* float bits */
+    void *object;
+    note(when, 1);
+    for (i = 0; i < 256; i++)
+        if (value = 0, COM(device, 0xE8, 3)(device, i, (u32)&value) >= 0)
+            state_note("rs ", i, value);
+    for (i = 0; i < 16; i++)
+        for (j = 1; j < 14; j++)
+            if (value = 0, COM(device, 0x110, 4)(device, i, j, (u32)&value) >= 0)
+                state_note("ss ", i << 8 | j, value);
+    for (i = 0; i < 8; i++)
+        for (j = 1; j < 33; j++)
+            if (value = 0, COM(device, 0x108, 4)(device, i, j, (u32)&value) >= 0)
+                state_note("ts ", i << 8 | j, value);
+    if (object = 0, COM(device, 0x174, 2)(device, (u32)&object) >= 0 && object)
+        note("vs", (u32)object), COM(object, 8, 1)(object);
+    if (object = 0, COM(device, 0x1B0, 2)(device, (u32)&object) >= 0 && object)
+        note("ps", (u32)object), COM(object, 8, 1)(object);
+    if (object = 0, COM(device, 0x160, 2)(device, (u32)&object) >= 0 && object)
+        note("decl", (u32)object), COM(object, 8, 1)(object);
+    if (value = 0, COM(device, 0x168, 2)(device, (u32)&value) >= 0)
+        note("fvf", value);
+    if (object = 0, info[0] = info[1] = 0, COM(device, 0x194, 5)(device, 0, (u32)&object, (u32)&info[0], (u32)&info[1]) >= 0
+        && object)
+        note("stream0", (u32)object), note("stream0 stride", info[1]), COM(object, 8, 1)(object);
+    for (i = 0; i < 8; i++)
+        if (object = 0, COM(device, 0x100, 3)(device, i, (u32)&object) >= 0 && object)
+            state_note("tex ", i, (u32)object), COM(object, 8, 1)(object);
+    for (i = 0; i < sizeof transforms / sizeof *transforms; i++)
+        if (COM(device, 0xB4, 3)(device, transforms[i], (u32)f) >= 0)
+            for (j = 0; j < 16; j++)
+                state_note("tm ", transforms[i] << 4 | j, f[j]);
+    if (COM(device, 0x17C, 4)(device, 0, (u32)f, 256) >= 0)
+        for (i = 0; i < 256 * 4; i++)
+            state_note("vc ", i, f[i]);
+    if (COM(device, 0x1B8, 4)(device, 0, (u32)f, 32) >= 0)
+        for (i = 0; i < 32 * 4; i++)
+            state_note("pc ", i, f[i]);
+    note("dump end", 1);
+}
+#endif
+
 static long __stdcall present(void *device, const void *from, const void *to, void *window, const void *dirty)
 {
     static LARGE_INTEGER last, now, rate;
+#ifdef ENRT_LOG
+    if (dump_after && !--dump_after)
+        state_dump(device, "after reset: states");
+#endif
     QueryPerformanceCounter(&now);
     if (!rate.QuadPart)
         QueryPerformanceFrequency(&rate);
@@ -3020,7 +3095,15 @@ static reset_fn real_reset;
 
 static long __stdcall reset(void *device, void *params)
 {
-    long result = real_reset(device, params);
+    long result;
+#ifdef ENRT_LOG
+    state_dump(device, "reset: states before");
+#endif
+    result = real_reset(device, params);
+#ifdef ENRT_LOG
+    note("reset: result", (u32)result);
+    dump_after = 120;
+#endif
     if (result >= 0)
         COM(device, 0x170, 2)(device, 0), COM(device, 0x1AC, 2)(device, 0);  /* SetVertexShader, SetPixelShader */
     return result;
