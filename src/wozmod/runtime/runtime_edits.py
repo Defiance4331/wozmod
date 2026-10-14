@@ -735,3 +735,11 @@ def settings_rows(rows: int, distance: bool = False) -> list:
         (0x56B8AB, bytes.fromhex("83c601 83c414 81e603000080 7905 4e 83cefc 46"),
          bytes.fromhex("83c414 46 3b7510 7c02 33f6") + b"\x90" * 8),
     ]
+
+
+# The game sizes its sound pool once at boot (_aligned_malloc at 0x5C9E43, the pool's allocator at 0x5CA4D8), and
+# every loaded sound-effect bank stays in it (0x66DCC0). 0x6300000 holds the stock ADPCM banks; the English banks
+# are 16-bit PCM, up to 0x6AF8A30 bytes more if all were loaded, and a full pool crashes the game at battle start.
+STOCK_SOUND_POOL = 0x6300000
+SOUND_POOL = 0xCE00000
+VOICE_EDITS = [(va, b"\x68" + p32(STOCK_SOUND_POOL), b"\x68" + p32(SOUND_POOL)) for va in (0x5C9E43, 0x5CA4D8)]

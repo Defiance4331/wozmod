@@ -197,7 +197,8 @@ def test_build_options_do_not_drop_preview_edits_or_runtime_defines(
     assert asked == [(1, options.get("render_distance", False)), (2, options.get("render_distance", False))]
     preview_edits = [(va, b"\x74\x04", b"\x90\x90")
                      for va in (0x57296B, 0x572991, 0x5729B4, 0x5729DA, 0x572A01)] if options.get("preview") else []
-    assert calls == [(stock, {0: font + code + preview_edits, 1: rows[1], 2: rows[2]},
+    # Bug: an install with the English voice banks keeps the stock sound pool, which they overflow.
+    assert calls == [(stock, {0: font + code + preview_edits, 1: rows[1], 2: rows[2] + build.VOICE_EDITS},
                       [("hooks", expected_defines)], b"widths", hashlib.sha256(stock).hexdigest())]
 
 
@@ -279,6 +280,23 @@ def test_every_edit_and_hook_sits_on_the_supported_stock_exe(tmp_path: Path, mon
     for options in ({}, {"log": True, "preview": True, "test": True, "render_distance": True}):
         build.build_dll(exe, tmp_path / "d3d9.dll", **options)
     assert len(compiled) == 2
+
+
+def test_scene_command_calls_the_scene_starter_the_games_own_scene_command_calls() -> None:
+    """Bug: PLAY_SCENE names a shifted address, so the test-build `scene` command jumps into the middle of a function
+    and crashes the game instead of playing the scene."""
+    exe = Path(os.environ.get("WOZMOD_GAME") or "", "OROCHI_Z.exe")
+    if not exe.is_file():
+        pytest.skip("set WOZMOD_GAME to the stock game folder")
+    stock = exe.read_bytes()
+    layout = runtime.pe_layout(stock)
+    source = (Path(__file__).resolve().parents[1] / "runtime/english_runtime.c").read_text()
+    play_scene = int(re.search(r"#define PLAY_SCENE \(\(.*\)\)(0x[0-9A-Fa-f]+)", source)[1], 16)
+    start, end = 0x4F3020, 0x4F30C1  # the category-39 handler's helper, up to where it marks scripts waiting
+    code = stock[runtime.file_offset(layout, start):runtime.file_offset(layout, end)]
+    targets = {start + at + 5 + struct.unpack_from("<i", code, at + 1)[0]
+               for at in range(len(code) - 4) if code[at] == 0xE8}
+    assert play_scene in targets
 
 
 def test_xbox_prompt_writes_land_on_the_stock_icon_width_and_advance_bytes() -> None:

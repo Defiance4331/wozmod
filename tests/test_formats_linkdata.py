@@ -240,6 +240,85 @@ def test_ps2_extent_past_archive_cannot_return_truncated_donor_bytes(tmp_path: P
         linkdata.ps2_members(path, [0])
 
 
+def test_sector_exact_sizes_take_one_sector_and_do_not_shift_later_entries() -> None:
+    # Bug: a size that is an exact multiple of 2048 (or 1 byte) rounds to the wrong sector count, so the
+    # entry or member after it reads from the wrong offset.
+    records = ((2048, 0, 0), (1, 0, 0), (2047, 0, 0), (7, 10240, 0))
+    index = b"".join(struct.pack("<III", *row) for row in records) + struct.pack("<5I", 2048, 1, 2047, 2049, 0)
+    parsed = linkdata.parse_index(index, 16384)
+
+    assert [(e.offset, e.allocated_bytes, e.record.encode(),
+             [(m.relative_offset, m.stored_bytes, m.allocated_bytes) for m in e.members])
+            for e in parsed.entries] == [
+        (0, 2048, struct.pack("<III", *records[0]), [(0, 2048, 2048)]),
+        (2048, 2048, struct.pack("<III", *records[1]), [(0, 1, 2048)]),
+        (4096, 2048, struct.pack("<III", *records[2]), [(0, 2047, 2048)]),
+        (6144, 10240, struct.pack("<III", *records[3]),
+         [(0, 2048, 2048), (2048, 1, 2048), (4096, 2047, 2048), (6144, 2049, 4096)]),
+    ]
+
+
+def test_wo1_compressed_entry_is_decoded_with_the_wo1_signature(tmp_path: Path) -> None:
+    # Bug: a compressed donor entry comes back as raw LZP2 bytes, or is checked against the MoZ signature.
+    packed = struct.pack("<4s4sII", b"LZP2", linkdata.WO1_LZP2_SIGNATURE, 3, 16) + b"\x03abc\0" + bytes(11)
+    index = struct.pack(">4sIII8I", b"SM4L", 2, 2, 0, 0, 1, 3, 0, 1, 1, len(packed), 0)
+    lnk, idx = tmp_path / "donor.lnk", tmp_path / "donor.idx"
+    lnk.write_bytes(b"raw" + bytes(2045) + packed + bytes(2048 - len(packed)))
+    idx.write_bytes(index)
+
+    assert linkdata.wo1_entries(lnk, idx, [1, 0]) == {1: b"abc", 0: b"raw"}
+
+
+@pytest.mark.parametrize("kind", range(4))
+def test_wo2_member_with_two_control_words_and_two_long_matches_decodes_every_byte(kind: int) -> None:
+    # Bug: the second control word, a match's length bits (above bit 10 + kind, in the token's high byte) or
+    # its offset is read wrongly, or a member that ends on the last control bit is called truncated.
+    literals = bytes(range(126))
+    bits = 10 + kind
+    first = ((1 << 60) - 1) << 4 | 0b0111            # 60 literals, match A, 3 literals
+    second = (1 << 64) - 1 - (1 << 62)               # 1 literal, match B, 62 literals
+    match_a = 11 | (5 - 3) << bits                   # out[10:15] (ring slot n + 1 holds out[n])
+    match_b = 67 | (6 - 3) << bits                   # out[66:69], overlapping into itself
+    packed = (struct.pack("<4I", kind, 137, 32, 36) + first.to_bytes(8, "little") + second.to_bytes(8, "little")
+              + struct.pack("<2H", match_a, match_b) + literals)
+    expected = (literals[:60] + literals[10:15] + literals[60:64] + literals[61:64] * 2 + literals[64:])
+
+    assert linkdata.unpack_member(packed) == expected
+
+
+def test_wo2_members_past_the_first_read_their_own_table_row(tmp_path: Path) -> None:
+    # Bug: a wrong table stride, or no stride, returns another member's bytes.
+    iso = tmp_path / "donor.iso"
+    with iso.open("wb") as stream:
+        stream.seek(501815 * 2048)
+        table = bytearray(2969 * 8)
+        for member, row in ((0, (10, 4)), (1, (11, 3)), (2968, (12, 4))):
+            struct.pack_into("<II", table, member * 8, *row)
+        stream.write(struct.pack("<4I", 0x33B59, 2969, 2048, 0) + table)
+        for block, data in ((10, b"zero"), (11, b"one"), (12, b"last")):
+            stream.seek((501815 + block) * 2048)
+            stream.write(data)
+
+    assert linkdata.wo2_members(iso, [2968, 1]) == {2968: b"last", 1: b"one"}
+
+
+def test_ps2_table_longer_than_a_sector_cannot_be_read_as_a_member(tmp_path: Path) -> None:
+    # Bug: a member pointing inside a member table that runs past sector 0 returns the table's own bytes, or
+    # the member one past the last is read from beyond the table.
+    path = tmp_path / "archive.fns"
+    blob = bytearray(4099)
+    struct.pack_into("<4I", blob, 0, 0x33B59, 300, 2048, 0)
+    struct.pack_into("<4I", blob, 16, 2, 3, 1, 3)    # member 0 at sector 2, member 1 at sector 1 (the table)
+    blob[4096:4099] = b"ok!"
+    path.write_bytes(blob)
+
+    assert linkdata.ps2_members(path, [0]) == {0: b"ok!"}
+    with pytest.raises(linkdata.ArchiveError, match="extent is invalid: 1"):
+        linkdata.ps2_members(path, [1])
+    with pytest.raises(linkdata.ArchiveError, match="out of range: 300"):
+        linkdata.ps2_members(path, [300])
+
+
 @pytest.mark.skipif(os.environ.get("WOZMOD_FORMATS_ORACLE") != "1", reason="opt-in real archive oracle")
 def test_real_linkdata_high_ordinal_rows_are_not_cut_off_by_a_small_table_limit() -> None:
     game_root, old_root = os.environ.get("WOZMOD_GAME"), os.environ.get("WOZMOD_OLD_REPO")

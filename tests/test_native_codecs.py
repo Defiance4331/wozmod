@@ -61,6 +61,15 @@ def test_native_lzp2_encoder_gives_the_python_stream_on_every_input() -> None:
     assert wrong == []
 
 
+def test_python_lzp2_stream_decodes_back_to_every_input() -> None:
+    # Bug: an encoder slip the native port shares (both agree, both wrong) drops or repeats bytes at a window,
+    # literal or repeat limit; agreement between the two cannot see it.
+    wrong = [name for name, data in LZP2_INPUTS
+             if linkdata._decode_stream(linkdata._encode_stream(data), len(data))[0] != data]
+
+    assert wrong == []
+
+
 def test_native_lzp2_decoder_gives_the_python_output_and_the_same_errors() -> None:
     wrong = []
     for name, data in LZP2_INPUTS:

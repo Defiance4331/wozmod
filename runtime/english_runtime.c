@@ -344,6 +344,14 @@ static u32 texture(u32 handle)
 #define GIVE_WEAPON ((void (*)(u32, u32, const u32 *))0x475980)
 #define MAX_EXP 220000
 
+/* The scene starter the category-39 stage-script handler calls (via 0x4F3020): unit, position, sub-scene. */
+#define PLAY_SCENE ((void (*)(const void *, const void *, u32))0x4F4230)
+#define STAGE (*(volatile u32 *)0x801AA0)
+#define BATTLE_STEP (*(volatile u8 *)0x89ACF4)
+#define SCENE_ENTRY(slot) (((const u32 *const volatile *)0x89A06C)[slot])
+#define PLAYER ((const u8 *)0x7CDED0)
+#define SCENE_BUSY 0x8038000  /* requested, fading out, playing, fading back */
+
 
 struct test_text {
     u32 hook, caller, x, y, width;
@@ -503,6 +511,29 @@ static void test_frame(void)
     case 7:
         b->result = test_review_set(b->arg, (const u32 *)b->input);
         break;
+    case 8: {
+        /* Play sub-scene arg of the current stage's event scene, as a category-39 command would (that path cannot
+           ask for sub-scene 0, the battle-start opening). Only the current stage's scene is loaded. */
+        u32 slot = STAGE >= 0x44 ? STAGE - 4 : STAGE;
+        const u32 *entry;
+        b->result = 3;
+        if (!STAGE_DATA || BATTLE_FLAGS & 0x2000000)
+            break;
+        b->result = 4;
+        if (BATTLE_FLAGS & SCENE_BUSY || RUNNING[0] & 0x10 || BATTLE_STEP != 1)
+            break;
+        b->result = 5;
+        entry = slot < 0x8D ? SCENE_ENTRY(slot) : 0;
+        if (!entry || b->arg >= entry[0])  /* the game would quietly play sub-scene 0 instead */
+            break;
+        PLAY_SCENE(*(void *const *)(PLAYER + 8), PLAYER + (*(const u32 *)(PLAYER + 0x80) & 0x20000 ? 0x30 : 0x28),
+                   b->arg);
+        if (BATTLE_FLAGS & 0x8000000) {  /* refused when scenes are skipped, in modes 3 and 4, or the cast is absent */
+            RUNNING[0] |= 0x10;  /* stage scripts wait for the scene, as after a category-39 command */
+            b->result = 0;
+        }
+        break;
+    }
     default:
         b->result = 2;
     }

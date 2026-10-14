@@ -40,26 +40,23 @@ print(json.dumps(out,sort_keys=True))
     unrelated = tmp_path / "unrelated"
     unrelated.mkdir()
     results = {}
-    for variant in ("direct", "relocated"):
-        project = tmp_path / variant
-        package = project / "src/wozmod"
-        package.mkdir(parents=True)
-        (package / "__init__.py").write_text("")
-        shutil.copytree(REPO / "src/wozmod/fonts", package / "fonts")
-        (package / "runtime").mkdir()
-        (package / "runtime/__init__.py").write_text("")
-        shutil.copyfile(REPO / "src/wozmod/runtime/latin_font.py", package / "runtime/latin_font.py")
-        if variant == "direct":
-            for face in FACES:
-                shutil.copyfile(REPO / f"data/art/faces/{face}.py", package / f"fonts/{face}.py")
-        else:
-            shutil.copytree(REPO / "data/art/faces", project / "data/art/faces")
+    # The repository itself, and a copy elsewhere holding only the font modules and data/art/faces.
+    relocated = tmp_path / "relocated"
+    package = relocated / "src/wozmod"
+    shutil.copytree(REPO / "src/wozmod/fonts", package / "fonts")
+    (package / "__init__.py").write_text("")
+    shutil.copyfile(REPO / "src/wozmod/resources.py", package / "resources.py")
+    (package / "runtime").mkdir()
+    (package / "runtime/__init__.py").write_text("")
+    shutil.copyfile(REPO / "src/wozmod/runtime/latin_font.py", package / "runtime/latin_font.py")
+    shutil.copytree(REPO / "data/art/faces", relocated / "data/art/faces")
+    for variant, project in (("repository", REPO), ("relocated", relocated)):
         environment = dict(os.environ, PYTHONPATH=str(project / "src"), PYTHONDONTWRITEBYTECODE="1")
         run = subprocess.run([python, "-c", code], cwd=unrelated, env=environment,
                              capture_output=True, text=True)
         assert run.returncode == 0, run.stdout + run.stderr
         results[variant] = json.loads(run.stdout.splitlines()[-1])
     failures = {name: {variant: results[variant].get(name) for variant in results}
-                for name in results["direct"] | results["relocated"]
-                if results["direct"].get(name) != results["relocated"].get(name)}
+                for name in results["repository"] | results["relocated"]
+                if results["repository"].get(name) != results["relocated"].get(name)}
     assert failures == {}

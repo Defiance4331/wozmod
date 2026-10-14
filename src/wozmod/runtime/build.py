@@ -14,7 +14,7 @@ from .english_runtime import (
     hook_sites,
 )
 from .latin_font import WIDTHS
-from .runtime_edits import CODE_EDITS, FONT_ROUTE, settings_rows
+from .runtime_edits import CODE_EDITS, FONT_ROUTE, VOICE_EDITS, settings_rows
 
 
 def build_dll(
@@ -36,7 +36,7 @@ def build_dll(
     edits = {
         ENGLISH: FONT_ROUTE + CODE_EDITS + unlocks * preview,
         ONE_ROW: settings_rows(1, render_distance),
-        TWO_ROWS: settings_rows(2, render_distance),
+        TWO_ROWS: settings_rows(2, render_distance) + VOICE_EDITS,  # installs with the English voice banks
     }
     defines = (
         ("ENRT_LOG",) * log

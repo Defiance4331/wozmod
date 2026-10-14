@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import os
+import shutil
+import struct
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -121,3 +124,28 @@ def test_wave4_does_not_restore_live_text_growth_or_change_other_baseline_bytes(
     old = {va: (va, stock, patched) for va, stock, patched in baseline["CODE_EDITS"]}
     restored = [edit for edit in runtime_edits.MOZ_LAYOUT if edit[0] != 0x55B624]
     assert restored == [old[edit[0]] for edit in restored]
+
+
+@pytest.mark.skipif(os.environ.get("WOZMOD_AUDIO") != "1" or not shutil.which("ffmpeg")
+                    or not os.environ.get("WOZMOD_DONORS") or not os.environ.get("WOZMOD_GAME"),
+                    reason="set WOZMOD_AUDIO=1, WOZMOD_DONORS and WOZMOD_GAME, with ffmpeg")
+def test_sound_pool_holds_every_english_effect_bank_on_top_of_the_stock_ones() -> None:
+    # Bug: the English effect banks grow (more clips, another format) past the pool the voice installs size at boot;
+    # the pool fills at battle start and the game crashes. Each bank's header and data are pool blocks with a 16-byte
+    # header, rounded to 16 (a stock 8,140,732-byte bank takes 8,140,752).
+    from wozmod.formats.audio import SE_BANKS, english_se_bank, moz_se_banks
+    from wozmod.formats.linkdata import moz_entries
+
+    game, donors = Path(os.environ["WOZMOD_GAME"]), Path(os.environ["WOZMOD_DONORS"])
+    seidx, se = moz_entries(game / "LINKDATA1.BIN", game / "LINKDATA1.IDX", [4056, 4057]).values()
+    bank, _ = english_se_bank(seidx, se, (donors / "wo1/link_sebank.hdx").read_bytes(), donors / "wo1/link_sebank.bdx",
+                              (donors / "wo2-x360/link_sebank.hdx").read_bytes(), donors / "wo2-x360/link_sebank.bdx")
+    block = lambda size: (size + 16 + 15) // 16 * 16 if size else 0
+    growth = 0
+    for b, (header, data) in enumerate(moz_se_banks(seidx, se)):
+        _, header_size, _, data_size = struct.unpack_from("<4I", bank, 4 + 16 * b)
+        if data_size:
+            growth += max(0, block(header_size) + block(data_size) - block(len(header)) - block(len(data)))
+
+    assert SE_BANKS == len(moz_se_banks(seidx, se))
+    assert runtime_edits.SOUND_POOL >= runtime_edits.STOCK_SOUND_POOL + growth, hex(growth)
