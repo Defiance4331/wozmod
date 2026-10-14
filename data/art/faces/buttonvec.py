@@ -192,7 +192,7 @@ def obox(p, w=None, pen=None, over=(OVER_T, OVER_B)):
 
 def bez(P, u):
     b = [(1 - u) ** 3, 3 * u * (1 - u) ** 2, 3 * u * u * (1 - u), u ** 3]
-    return sum(k * p[0] for k, p in zip(b, P)), sum(k * p[1] for k, p in zip(b, P))
+    return sum(k * p[0] for k, p in zip(b, P, strict=True)), sum(k * p[1] for k, p in zip(b, P, strict=True))
 
 
 def sub(P, u0, u1):

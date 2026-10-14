@@ -989,11 +989,11 @@ def render(text, scale=1.0, cap=V.DESIGN_CAP, style="501.3", hscale=1.0,
 
 
             placed = [(ch, target * cap / V.DESIGN_CAP)
-                      for (ch, _), target in zip(placed, places)]
+                      for (ch, _), target in zip(placed, places, strict=True)]
             advance = placed[-1][1] + g[placed[-1][0]][1][2] + V.BEARINGS[placed[-1][0]][1]
         else:
             placed = [(ch, x + target * cap / V.DESIGN_CAP - nx)
-                      for (ch, x), (_, nx), target in zip(placed, natural, places)]
+                      for (ch, x), (_, nx), target in zip(placed, natural, places, strict=True)]
     elif variant is not None:
 
         pen, variant_layout = 0.0, []
@@ -1005,7 +1005,7 @@ def render(text, scale=1.0, cap=V.DESIGN_CAP, style="501.3", hscale=1.0,
             variant_layout.append(pen + ls - x0)
             pen += ls + x1 - x0 + rs
         placed = [(ch, target + x - nx)
-                  for (ch, x), (_, nx), target in zip(placed, natural, variant_layout)]
+                  for (ch, x), (_, nx), target in zip(placed, natural, variant_layout, strict=True)]
         advance = pen
     s = scale
     hscale *= variant['width'] if variant is not None else STYLE_WIDTH.get(style, 1.0)
@@ -1014,7 +1014,7 @@ def render(text, scale=1.0, cap=V.DESIGN_CAP, style="501.3", hscale=1.0,
 
         if len(letter_places) != len(placed):
             raise ValueError("One letter place is required per non-space glyph")
-        placed = [(ch, x / hscale) for (ch, _), x in zip(placed, letter_places)]
+        placed = [(ch, x / hscale) for (ch, _), x in zip(placed, letter_places, strict=True)]
     st = variant['effects'] if variant is not None else STYLES[style]
     outline = st['outline'] if variant is not None else OUTLINE
     sigma = st['sigma'] if variant is not None else GLOW_SIGMA

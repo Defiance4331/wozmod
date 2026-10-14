@@ -62,7 +62,7 @@ def _inside(contours, x, y) -> bool:
     """Nonzero winding of the point among all contours."""
     wind = 0
     for pts in contours:
-        for (ax, ay), (bx, by) in zip(pts, pts[1:] + pts[:1]):
+        for (ax, ay), (bx, by) in zip(pts, pts[1:] + pts[:1], strict=True):
             if ay <= y < by and (bx - ax) * (y - ay) - (x - ax) * (by - ay) > 0:
                 wind += 1
             elif by <= y < ay and (bx - ax) * (y - ay) - (x - ax) * (by - ay) < 0:

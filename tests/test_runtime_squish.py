@@ -133,7 +133,7 @@ def test_quad_condensing_does_not_shift_packed_stride_or_corrupt_uv_y_depth(fit_
     for indices, offsets, condensed, four in cases:
         original = [0x12340000 + index * 101 for index in range(36)]
         expected = original.copy()
-        for index, offset, fitted in zip(indices, offsets, condensed):
+        for index, offset, fitted in zip(indices, offsets, condensed, strict=True):
             upper = (index + 1) << 16
             original[index] = upper | (anchor + offset * 16)
             expected[index] = upper | int(anchor + fitted * 16 + 0.5)

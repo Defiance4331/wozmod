@@ -156,7 +156,7 @@ def test_a_dxt_edit_leaves_every_block_it_did_not_touch_byte_exact() -> None:
     out = texture.encode_rgba(bytes(rgba))
 
     blocks = lambda data: [data[i:i + 16] for i in range(0, 256, 16)]
-    assert [i for i, (a, b) in enumerate(zip(blocks(payload), blocks(out))) if a != b] == [5]
+    assert [i for i, (a, b) in enumerate(zip(blocks(payload), blocks(out), strict=True)) if a != b] == [5]
     assert _g1t_dxt5(16, 16, out).decode_rgba()[(4 * 16 + 4) * 4:(4 * 16 + 8) * 4] == bytes((255, 255, 255, 255)) * 4
 
 
@@ -185,7 +185,7 @@ def test_dxt5_endpoint_selection_does_not_flatten_glow_or_band_opaque_pixels() -
     g1t = parse_g1t(_g1t((8, 2, 2, bytes(16))))
     for pixels in (glow_block, shadow_block):
         decoded = g1t.with_texture_rgba(0, b"".join(map(bytes, pixels))).textures[0].decode_rgba()
-        shown = [round(pixel[3] / 255 * max(abs(a - b) for a, b in zip(pixel[:3], decoded[4*i:4*i+3])))
+        shown = [round(pixel[3] / 255 * max(abs(a - b) for a, b in zip(pixel[:3], decoded[4*i:4*i+3], strict=True)))
                  for i, pixel in enumerate(pixels)]
         assert max(shown) <= 20, shown
 

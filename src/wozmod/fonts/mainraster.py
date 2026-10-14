@@ -81,7 +81,7 @@ def layout(text):
     if not letters:
         return [], V.SPACE * len(text)
     ls, last = V.BEARINGS[letters[0]][0], letters[-1]
-    out = [(ch, ls + x - g[ch][1][0]) for ch, x in zip(letters, ink)]
+    out = [(ch, ls + x - g[ch][1][0]) for ch, x in zip(letters, ink, strict=True)]
     return out, ls + ink[-1] + (g[last][1][2] - g[last][1][0]) + V.BEARINGS[last][1]
 
 

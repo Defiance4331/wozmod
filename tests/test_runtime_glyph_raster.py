@@ -72,7 +72,7 @@ def area_coverage(poly, w, h, n=64):
     """Each pixel's covered fraction by n x n point sampling (an oracle independent of the area maths)."""
     def inside(px, py):
         wind = 0
-        for (ax, ay), (bx, by) in zip(poly, poly[1:] + poly[:1]):
+        for (ax, ay), (bx, by) in zip(poly, poly[1:] + poly[:1], strict=True):
             cross = (bx - ax) * (py - ay) - (px - ax) * (by - ay)
             if ay <= py < by and cross > 0:
                 wind += 1

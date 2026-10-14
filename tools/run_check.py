@@ -6,6 +6,7 @@
 
 SPEC defaults to data/checks/layout.toml. Running this launches the game under the machine-wide lock:
 get the user's permission for the current task first (AGENTS.md).
+It also writes evidence/contact-sheet.html: each capture beside its rows, for review.
 Exit 1 on any FAIL row, a run that did not end by our stop, or a game that never started.
 """
 
@@ -21,6 +22,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import contact_sheet
 import game_harness as harness
 import prepare_run
 import screen_checks
@@ -129,6 +131,8 @@ def run_check(args: argparse.Namespace, stage=prepare_run.prepare, start=launch)
     print(f"exit: {reason}" + (f" (game exit status {record['game_returncode']})" if record and "game_returncode" in record else ""))
     if (root / "evidence").is_dir():
         harness.write_json(root / "evidence/run-check.json", {"phases": phases, "reason": reason, "starts": attempt + 1})
+    if (root / "evidence/check-report.json").is_file():
+        print(f"sheet: {contact_sheet.write(root / 'evidence')}")
     return 0 if up and result == 0 and reason == "stopped" else 1
 
 

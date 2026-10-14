@@ -192,7 +192,7 @@ def shape(s, pts):
         if need > have:
             k[i] = min(k[i], have / need)
             k[j] = min(k[j], have / need)
-    l = _layer(s.contour(xy, [ri * ki for ri, ki in zip(r, k)], True))
+    l = _layer(s.contour(xy, [ri * ki for ri, ki in zip(r, k, strict=True)], True))
     l.correctDirection()
     return l
 
@@ -608,7 +608,7 @@ def tune(l, ds, ch="?"):
         m = math.hypot(*d)
         return (d[0] / m, d[1] / m) if m > 1e-9 else None
 
-    for (pts, ix), K in zip(nodes(l), ks):
+    for (pts, ix), K in zip(nodes(l), ks, strict=True):
         n = len(pts)
         amp = ds[k0:k0 + K]
         k0 += K

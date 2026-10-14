@@ -75,7 +75,7 @@ def event_caption_slots(
     indices = sorted(index for index in stock if index != 81)
     if len(indices) != len(donor):
         return []
-    return list(zip(indices, range(len(donor))))
+    return list(zip(indices, range(len(donor)), strict=True))
 
 
 def paired_psp_rows(stock_dir: Path, fns_path: Path) -> list[PspPair]:
@@ -111,18 +111,18 @@ def paired_psp_rows(stock_dir: Path, fns_path: Path) -> list[PspPair]:
         blocks = mesc_blocks(decoded_member(members[member]))
         if len(blocks) != 1 or len(briefings[row]) != len(blocks[0]):
             raise ValueError(f"PSP briefing {row} counts differ")
-        for slot, (stock, donor) in enumerate(zip(briefings[row], blocks[0])):
+        for slot, (stock, donor) in enumerate(zip(briefings[row], blocks[0], strict=True)):
             add(stock, donor, member, "mesc", [0, slot], "Z Dream briefings",
                 ["linkdata1", BRIEFINGS[0], "mesc", row, slot])
 
     stock_quotes, donor_quotes = quote_tables(text_entries[QUOTES[0]]), quote_tables(members[27])
     if len(stock_quotes) != 109 or len(donor_quotes) != 109:
         raise ValueError("PSP quote table counts differ from the officer layout")
-    for table, (ours, theirs) in enumerate(zip(stock_quotes, donor_quotes)):
+    for table, (ours, theirs) in enumerate(zip(stock_quotes, donor_quotes, strict=True)):
         if len(ours) != len(theirs):
             raise ValueError(f"PSP quote table {table} slot counts differ")
         group = "New officers' quotes" if table - 2 in (94, 95) else "Other quotes"
-        for slot, (stock, donor) in enumerate(zip(ours, theirs)):
+        for slot, (stock, donor) in enumerate(zip(ours, theirs, strict=True)):
             add(quote_text(stock), psp_quote_text(donor), 27, "quotes", [table, slot], group,
                 ["linkdata1", QUOTES[0], "quotes", table, slot])
 
@@ -138,7 +138,7 @@ def paired_psp_rows(stock_dir: Path, fns_path: Path) -> list[PspPair]:
     for ordinal, member in PSP_MOVIE_MEMBERS.items():
         stock, donor = caption_cues(scenes[ordinal]), caption_cues(members[member])
         if len(stock) == len(donor):
-            for cue, (ours, theirs) in enumerate(zip(stock, donor)):
+            for cue, (ours, theirs) in enumerate(zip(stock, donor, strict=True)):
                 add(ours[2], theirs[2], member, "captions", [[cue]], "Movie captions",
                     ["linkdata2", ordinal, "captions", cue])
     return rows

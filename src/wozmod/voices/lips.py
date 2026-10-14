@@ -57,7 +57,7 @@ def retimed(block: bytes, length: int) -> bytes:
                 new[i] += 1
         while sum(new) > length and max(new) > 1:
             new[new.index(max(new))] -= 1
-        for k, n in zip(keys, new):
+        for k, n in zip(keys, new, strict=True):
             out[k] = min(n, 255)  # shortcut: a key stretched past 255 frames is cut short; split it if one ever is
         at += 3 * count
     return bytes(out)

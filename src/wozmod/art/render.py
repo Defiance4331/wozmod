@@ -212,7 +212,7 @@ def _render_native(requests: dict[str, dict], folder: Path) -> dict[str, tuple]:
     if len(manifest) != len(ordered):
         raise ValueError("native lettering render dropped a requested layer")
     layers = {}
-    for index, (record, (identity, request)) in enumerate(zip(manifest, ordered)):
+    for index, (record, (identity, request)) in enumerate(zip(manifest, ordered, strict=True)):
         if record["index"] != index or record["request"] != request:
             raise ValueError("native lettering render changed a requested layer")
         with Image.open(output / record["file"]) as image:

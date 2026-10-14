@@ -7,6 +7,7 @@ from __future__ import annotations
 import re
 import struct
 from dataclasses import dataclass
+from itertools import pairwise
 
 
 DONOR_LETTERS = {0xB2: "ï", 0xD3: "Ō", 0xD4: "ō", 0xD5: "Ū", 0xD6: "ū"}
@@ -66,10 +67,10 @@ def _table(data: bytes, spoken: bool, order: str = "<") -> Table:
     offsets = struct.unpack_from(f"{order}{count}I", data, 4)
     if (offsets[0] if count else len(data)) != header:
         raise ScriptError(f"{kind} strings do not follow their offset vector")
-    if any(b <= a for a, b in zip(offsets, offsets[1:])) or (count and offsets[-1] >= len(data)):
+    if any(b <= a for a, b in pairwise(offsets)) or (count and offsets[-1] >= len(data)):
         raise ScriptError(f"{kind} string offsets are out of bounds")
     records = []
-    for ordinal, (start, end) in enumerate(zip(offsets, (*offsets[1:], len(data)))):
+    for ordinal, (start, end) in enumerate(pairwise((*offsets, len(data)))):
         span = data[start:end]
         value = span.split(b"\0", 1)[0]
         if len(value) < 2 or not value[:2].isdigit():
@@ -93,7 +94,7 @@ def parse_script(data: bytes, order: str = "<") -> Script:
     count, *offsets = struct.unpack_from(f"{order}5I", data)
     if count != 4 or offsets[0] != SECTIONS.size:
         raise ScriptError("script does not start with four sections")
-    if any(b <= a for a, b in zip(offsets, offsets[1:])) or offsets[-1] >= len(data) or any(o % 4 for o in offsets):
+    if any(b <= a for a, b in pairwise(offsets)) or offsets[-1] >= len(data) or any(o % 4 for o in offsets):
         raise ScriptError("script section offsets are invalid")
     return Script(_table(data[offsets[2]:offsets[3]], False, order), _table(data[offsets[3]:], True, order))
 
@@ -124,7 +125,7 @@ def caption_cues(data: bytes) -> list[tuple[int, int, bytes]]:
     """A MovieTelop schedule's (start, end, text) cues: u32 count, count (start, end), the texts."""
     count = struct.unpack_from("<I", data)[0]
     times = struct.iter_unpack("<II", data[4:4 + 8 * count])
-    return [(*t, text) for t, text in zip(times, data[4 + 8 * count:].split(b"\0"))]
+    return [(*t, text) for t, text in zip(times, data[4 + 8 * count:].split(b"\0", count)[:count], strict=True)]
 
 
 def _strings(data: bytes, order: str = "<") -> list[bytes]:

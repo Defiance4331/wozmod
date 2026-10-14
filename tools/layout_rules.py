@@ -171,7 +171,7 @@ def siblings(frames: list[dict], box: str, el: str) -> list[dict]:
         return []
     med = [statistics.median(s[i] for s in seen) for i in range(2, 6)]
     return [{"frame": n, "el": ke, "offsets": offs, "median": med} for n, ke, *offs in seen
-            if any(abs(o - m) > TOL for o, m in zip(offs, med))]
+            if any(abs(o - m) > TOL for o, m in zip(offs, med, strict=True))]
 
 
 def main(argv: list[str] | None = None) -> int:

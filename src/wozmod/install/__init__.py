@@ -230,7 +230,7 @@ def check_input(name: str, path: Path | str) -> str | None:
             return "Not a folder. Pick the folder that contains the game's .exe."
         with ThreadPoolExecutor(len(STOCK_FILES)) as pool:  # hashlib lets go of the GIL: hash the big files side by side
             results = list(pool.map(lambda item: _pinned(path / item[0], item[1]), STOCK_FILES.items()))
-        for stock, wrong in zip(STOCK_FILES, results):
+        for stock, wrong in zip(STOCK_FILES, results, strict=True):
             if wrong:
                 return (f"{stock} is missing. Pick the folder that contains the game's .exe (the Japanese PC release)."
                         if wrong == "missing" else
@@ -517,7 +517,7 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
     progress.begin("discs")
     offset, unread = 0, None
     try:
-        for (flag, donor, folder, files, label), size in zip(plan, sizes):
+        for (flag, donor, folder, files, label), size in zip(plan, sizes, strict=True):
             _extract(flag, inputs[flag], donor, donors / folder, files, label,
                      offset / sum(sizes), (offset + size) / sum(sizes))
             offset += size

@@ -6,6 +6,7 @@ __pycache__/
 build/
 dist/
 .pytest_cache/
+.hypothesis/
 
 # Local work: stock and donor extracts, builds, test copies of the game
 work/

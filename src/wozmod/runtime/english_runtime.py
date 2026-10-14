@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from itertools import pairwise
 import json
 import os
 import shutil
@@ -177,7 +178,7 @@ def check_spans(exe: bytes, edits: dict[int, list[tuple[int, bytes, bytes]]], ho
         (spans[ENGLISH] if english else always).append((va, va + len(prologue)))
     for group in (ONE_ROW, TWO_ROWS):  # the rows install in both modes, beside the English edits
         ordered = sorted(spans[ENGLISH] + spans[group] + always)
-        overlaps = [hex(b[0]) for a, b in zip(ordered, ordered[1:]) if b[0] < a[1]]
+        overlaps = [hex(b[0]) for a, b in pairwise(ordered) if b[0] < a[1]]
         _require(not overlaps, f"spans overlap at {', '.join(overlaps)}")
 
 

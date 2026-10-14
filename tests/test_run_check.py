@@ -229,3 +229,25 @@ def test_settings_land_where_the_runtime_reads_them(tools):
     ini.read_string(tools.prepare_run.settings_ini(["display.fps=120", "language.voice=japanese", "camera.fov=70"]))
     assert {(s, k): v for s in ini.sections() for k, v in ini[s].items()} == {
         ("display", "fps"): "120", ("language", "voice"): "japanese", ("camera", "fov"): "70"}
+
+
+def test_contact_sheet_shows_each_screens_capture_beside_its_own_rows(tmp_path, monkeypatch):
+    # Bug: rows grouped under the wrong screen, or a capture shown for a screen that was never captured,
+    # makes a FAIL look like it belongs to a screen that passed.
+    monkeypatch.syspath_prepend(str(TOOLS))
+    import contact_sheet
+    from PIL import Image
+
+    Image.new("RGB", (8, 4), "red").save(tmp_path / "a.png")
+    report = {"spec": "layout.toml", "rows": [
+        {"screen": "a", "assertion": "line_count", "ok": True, "numbers": {}, "capture": None},
+        {"screen": "b", "assertion": "fits", "ok": False, "numbers": {"over": 3}, "capture": None},
+        {"screen": "a", "assertion": "ink", "ok": True, "numbers": {}, "capture": str(tmp_path / "a.png")},
+    ]}
+    (tmp_path / "check-report.json").write_text(json.dumps(report))
+    page = contact_sheet.write(tmp_path).read_text()
+
+    a, b = page.split("<section>")[1:]
+    assert "<h2>a</h2><img" in a and a.count("<li class=PASS>") == 2 and "FAIL" not in a
+    assert "<h2>b</h2><p class=none>" in b and "<li class=FAIL><b>FAIL</b> fits {&quot;over&quot;: 3}" in b
+    assert "2 screens, 3 rows, 1 failed" in page

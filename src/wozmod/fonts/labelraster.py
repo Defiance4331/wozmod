@@ -39,7 +39,7 @@ def layout(text):
     if lefts is not None:
         chars = text.replace(" ", "")
         ls = V.BEARINGS[chars[0]][0]
-        placed = [(ch, ls + x - g[ch][1][0]) for ch, x in zip(chars, lefts)]
+        placed = [(ch, ls + x - g[ch][1][0]) for ch, x in zip(chars, lefts, strict=True)]
         last = chars[-1]
         advance = ls + lefts[-1] + g[last][1][2] - g[last][1][0] + V.BEARINGS[last][1]
         return placed, advance

@@ -64,7 +64,7 @@ def layout(face, text):
             pen += g[ch][2][1] - g[ch][2][0]
             prev = ch
     ls = V.BEARINGS[letters[0]][0]
-    out = [(ch, ls + x - g[ch][2][0]) for ch, x in zip(letters, ink)]
+    out = [(ch, ls + x - g[ch][2][0]) for ch, x in zip(letters, ink, strict=True)]
     last = letters[-1]
     return out, ls + ink[-1] + (g[last][2][1] - g[last][2][0]) + V.BEARINGS[last][1]
 

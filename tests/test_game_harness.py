@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+from itertools import pairwise
 import json
 import os
 import threading
@@ -525,7 +526,7 @@ def test_route_library_reaches_every_screen_and_back_to_the_menu():
                 assert start != "boot" and (target != "menu" or start in dead_ends), (start, target)
                 continue
             nodes = [start] + [edge[1] for edge in path]
-            assert all(a[1] == b[0] for a, b in zip(path, path[1:])) and (not path or path[0][0] == start)
+            assert all(a[1] == b[0] for a, b in pairwise(path)) and (not path or path[0][0] == start)
             assert nodes[-1].startswith("menu@") if target == "menu" else nodes[-1] == target
         if start != "boot":
             harness.route_plan("boot", start)

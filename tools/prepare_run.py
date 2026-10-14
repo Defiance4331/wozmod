@@ -60,7 +60,7 @@ def cached_sha256s(paths: list[Path], cache_file: Path = HASH_CACHE) -> list[str
     missing = [(key, stamp) for key, stamp in keys if (cache.get(key) or {}).get("stamp") != stamp]
     if missing:
         with ThreadPoolExecutor() as pool:
-            for (key, stamp), digest in zip(missing, pool.map(lambda m: sha256(Path(m[0])), missing)):
+            for (key, stamp), digest in zip(missing, pool.map(lambda m: sha256(Path(m[0])), missing), strict=True):
                 cache[key] = {"stamp": stamp, "sha256": digest}
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         temporary = cache_file.with_suffix(".next")
@@ -91,7 +91,7 @@ def installed_files(install: Path, cache_file: Path = HASH_CACHE) -> dict[str, s
         raise ValueError(f"{install} has no installer record {MANIFEST}; stage a folder `wozmod install` wrote") from exc
     names = sorted(p.relative_to(install).as_posix() for p in [install / "d3d9.dll", *(install / "wozmod").rglob("*")]
                    if p.is_file())
-    found = dict(zip(names, cached_sha256s([install / f for f in names], cache_file)))
+    found = dict(zip(names, cached_sha256s([install / f for f in names], cache_file), strict=True))
     found.pop(MANIFEST)
     wrong = sorted(f for f in set(found) | set(listed)
                    if f not in EXTRAS and found.get(f) != listed.get(f))
@@ -155,7 +155,7 @@ def prepare(name: str, install: Path, dll: Path | None, save: str, cache_file: P
     if ini:  # the game rewrites it, so game.sha256 leaves it out
         (game / "wozmod/settings.ini").write_text(ini, newline="")
     files |= dict(zip(["d3d9.dll", MANIFEST, *replaced], cached_sha256s([dll, install / MANIFEST, *replaced.values()],
-                                                                       cache_file)))
+                                                                       cache_file), strict=True))
     # The prefix and the Steam runtime are the template seen through an overlay (game_harness.py run): the run's
     # prefix/ and steamrt/ hold only what the run writes, here the game link and the save.
     for part in OVERLAID:
@@ -169,7 +169,7 @@ def prepare(name: str, install: Path, dll: Path | None, save: str, cache_file: P
     target = root / SAVE
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(data)
-    stock_sha256 = dict(zip(STOCK_HASHED, cached_sha256s([stock / f for f in STOCK_HASHED], cache_file)))
+    stock_sha256 = dict(zip(STOCK_HASHED, cached_sha256s([stock / f for f in STOCK_HASHED], cache_file), strict=True))
     (root / "fixtures.json").write_text(json.dumps(
         {"save": {"name": save, "sha256": meta["save_sha256"]}, "dll": str(dll), "install": str(install),
          "version": json.loads((install / MANIFEST).read_text()).get("version"),

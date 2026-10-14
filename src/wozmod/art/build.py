@@ -224,7 +224,7 @@ def unlettered(images: list[Image.Image], saturation: int, grow: int) -> Image.I
     holes = set()
     for y in range(out.height):
         for x in range(out.width):
-            known = [p[x, y] for p, m in zip(pixels, masks) if not m[x, y]]
+            known = [p[x, y] for p, m in zip(pixels, masks, strict=True) if not m[x, y]]
             if known:
                 px[x, y] = min(known, key=lambda c: (c[3] > 16, max(c[:3]) - min(c[:3])))
             else:
@@ -366,7 +366,7 @@ def lettering_layer(image: Image.Image, art: Image.Image, box, threshold: int = 
             candidates.append(comp)
     boxes = [(min(x for x, _ in c), min(y for _, y in c), max(x for x, _ in c), max(y for _, y in c)) for c in candidates]
     fill = set()
-    for comp, (a0, b0, a1, b1) in zip(candidates, boxes):
+    for comp, (a0, b0, a1, b1) in zip(candidates, boxes, strict=True):
         mean = [sum(pa[p][k] for p in comp) / len(comp) for k in range(3)]
         neutral = min(mean) >= 248 and max(mean) - min(mean) <= 10
         counter = any(c0 < a0 and d0 < b0 and a1 < c1 and b1 < d1 for c0, d0, c1, d1 in boxes)
@@ -381,7 +381,7 @@ def lettering_layer(image: Image.Image, art: Image.Image, box, threshold: int = 
     for y in range(y0, y1):
         for x in range(x0, x1):
             p = pa[x, y]
-            differs = max(abs(u - v) for u, v in zip(p[:3], pb[x, y][:3])) > threshold
+            differs = max(abs(u - v) for u, v in zip(p[:3], pb[x, y][:3], strict=True)) > threshold
             if (x, y) in fill or (near2[x, y] and dark(p)) or (near3[x, y] and differs and not white(p)):
                 po[x, y] = p[:3] + (255,)
     return out.crop(box)
@@ -564,7 +564,7 @@ class Face:
     def __init__(self, rows: list[tuple[Image.Image, str, object, int]], ink: float = 0, optical: bool = False):
 
         self.optical, self.is_fill, self.kern = optical, rows[0][2], {}
-        rows = [(row, text, list(zip(text.replace(" ", ""), glyph_fills(row, text, is_fill, least, counts))))
+        rows = [(row, text, list(zip(text.replace(" ", ""), glyph_fills(row, text, is_fill, least, counts), strict=True)))
                 for row, text, is_fill, least, counts in rows]
         span = lambda fill: max(x for x, _ in fill) - min(x for x, _ in fill) + 1
         widths: dict[str, list[int]] = {}
@@ -680,11 +680,11 @@ class Face:
             previous, spaces = char, 0
         glyphs = [self.glyphs[char] for char, _, _ in placed]
         glyphs = [(mark(image), gx, gy) if on and mark else (image, gx, gy)
-                  for (image, gx, gy), (_, _, on) in zip(glyphs, placed)]
+                  for (image, gx, gy), (_, _, on) in zip(glyphs, placed, strict=True)]
         top = max(36, *(-y for _, _, y in glyphs))
         canvas = Image.new("RGBA", (round(x) + 16 + max(64, *(i.width + gx for i, gx, _ in glyphs)),
                                     top + max(12, *(i.height + y for i, _, y in glyphs))))
-        for (char, x, _), (image, gx, gy) in zip(placed, glyphs):
+        for (char, x, _), (image, gx, gy) in zip(placed, glyphs, strict=True):
             layer = Image.new("RGBA", canvas.size)
             layer.paste(image, (round(x) + gx + 8, top + gy))
             canvas = lighter(canvas, layer)
@@ -719,7 +719,7 @@ class Face:
         top = max(36, *(-y for _, _, y in glyphs))
         canvas = Image.new("RGBA", (placed[-1][1] + 32 + max(64, *(i.width + gx for i, gx, _ in glyphs)),
                                     top + max(12, *(i.height + y for i, _, y in glyphs))))
-        for (_, x), (image, gx, gy) in zip(placed, glyphs):
+        for (_, x), (image, gx, gy) in zip(placed, glyphs, strict=True):
             layer = Image.new("RGBA", canvas.size)
             layer.paste(Image.merge("RGBA", (*[image.convert("L")] * 3, image.getchannel("A"))), (x + gx + 16, top + gy))
             canvas = lighter(canvas, layer)
@@ -880,7 +880,7 @@ def composed(stock: Image.Image, rows: list[list[dict]], donors: dict, align: st
     return canvas
 
 def tinted(image: Image.Image, factors: list[float]) -> Image.Image:
-    return Image.merge("RGBA", [c.point(lambda v, f=f: round(v * f)) for c, f in zip(image.split(), [*factors, 1])])
+    return Image.merge("RGBA", [c.point(lambda v, f=f: round(v * f)) for c, f in zip(image.split(), [*factors, 1], strict=True)])
 
 def hue_shifted(image: Image.Image, degrees: float) -> Image.Image:
 
@@ -899,7 +899,7 @@ def recoloured(image: Image.Image, edit: dict) -> Image.Image:
         for y in range(image.height):
             at = min(max(0, (y - top) / max(1, bottom - 1 - top)), 1) * (len(stops) - 1)
             k = min(int(at), len(stops) - 2)
-            ramp.putpixel((0, y), tuple(round(a + (b - a) * (at - k)) for a, b in zip(stops[k], stops[k + 1])))
+            ramp.putpixel((0, y), tuple(round(a + (b - a) * (at - k)) for a, b in zip(stops[k], stops[k + 1], strict=True)))
         shaded = ImageChops.multiply(ramp.resize(image.size), image.convert("L").convert("RGB")).convert("RGBA")
         shaded.putalpha(image.getchannel("A"))
         image = shaded
@@ -1057,7 +1057,7 @@ def draw_native_menu_label(image: Image.Image, label: Image.Image, metrics: dict
     box = label.getbbox()
     if box is None:
         raise ValueError("native menu label has no visible pixels")
-    bounds = tuple(value + offset for value, offset in zip(box, (x, y, x, y)))
+    bounds = tuple(value + offset for value, offset in zip(box, (x, y, x, y), strict=True))
     window = sampled_window or (0, 0, image.width, image.height)
     if (bounds[0] < max(0, window[0]) or bounds[1] < max(0, window[1])
             or bounds[2] > min(image.width, window[2])
@@ -1097,7 +1097,7 @@ def native_menu_layout(edit: dict, donors: dict) -> dict | None:
         return None
     return {"style": style, "role": role, "text": text, "left": left, "baseline": baseline,
             "x": x, "y": y, "sampled_window": window,
-            "alpha_bbox": [value + offset for value, offset in zip(label.getbbox(), (x, y, x, y))],
+            "alpha_bbox": [value + offset for value, offset in zip(label.getbbox(), (x, y, x, y), strict=True)],
             "metrics": metrics, "label": label}
 
 def native_menu_widths(mapping: dict, donors: dict) -> dict:
@@ -1107,7 +1107,7 @@ def native_menu_widths(mapping: dict, donors: dict) -> dict:
     def record(entry, item, row, style, text, left, baseline, window, role=None):
         label, metrics = native_menu_label(donors, style, text, role)
         x, y = round(left - metrics["ink"][0]), baseline - metrics["baseline"]
-        box = [value + offset for value, offset in zip(label.getbbox(), (x, y, x, y))]
+        box = [value + offset for value, offset in zip(label.getbbox(), (x, y, x, y), strict=True)]
         required_right = max(window[2], box[2])
         required_bottom = max(window[3], box[3]) if window[3] is not None else None
         rows.append({"entry": entry, "item": item, "row": row, "text": text,
@@ -1897,7 +1897,7 @@ def hires_texts(edit: dict, mapping: dict, donors: dict) -> list[str | None]:
             entry, item, index = piece["donor"]
             bands = ink_rows(rgba(donors[entry][item].textures[index]))
             y0, y1 = piece["box"][1], piece["box"][3]
-            out.append(next(t for (top, bottom), t in zip(bands, texts[tuple(piece["donor"])]) if y0 <= top and bottom <= y1))
+            out.append(next(t for (top, bottom), t in zip(bands, texts[tuple(piece["donor"])], strict=True) if y0 <= top and bottom <= y1))
 
     if edit.get("style") == "results":
         out = [(reference(f"{edit['entry']}.{edit['item']}", row) or {}).get("pc_text") or text
@@ -1991,14 +1991,14 @@ def vector_art(edit: dict, served: Image.Image, texts: list, scale: int, window=
     render_entry, render_item = edit.get("render_reference", (edit["entry"], edit["item"]))
     header = edit.get("face") == "header"
     official_left = next((row_geometry(served.crop((0, top, served.width, bottom)), header_cover)[0]
-                          for (top, bottom), row in zip(edit.get("bands", []), edit.get("rows", []))
+                          for (top, bottom), row in zip(edit.get("bands", []), edit.get("rows", []), strict=True)
                           if "donor" in row[0] and "box" not in row[0]), None) if header else None
     with tempfile.TemporaryDirectory() as tmp:
         help_labels = {}
         help_right = None
         if edit.get("style") == "help":
             geometries, widths = [], []
-            for k, ((top, bottom), text) in enumerate(zip(edit.get("bands") or [(0, served.height)], texts)):
+            for k, ((top, bottom), text) in enumerate(zip(edit.get("bands") or [(0, served.height)], texts, strict=True)):
                 geometry = row_geometry(served.crop((0, top, served.width, bottom)), alpha_cover)
                 if not text or geometry is None:
                     continue
@@ -2028,7 +2028,7 @@ def vector_art(edit: dict, served: Image.Image, texts: list, scale: int, window=
                 fill = row_geometry(label, value_cover(edit["look"]))
                 metrics["fill"] = fill[:2]
             centres = value_centres({t: (m["fill"][1] - m["fill"][0]) / scale for t, (_, m) in value_labels.items()})
-        for k, ((top, bottom), text) in enumerate(zip(edit.get("bands") or [(0, served.height)], texts)):
+        for k, ((top, bottom), text) in enumerate(zip(edit.get("bands") or [(0, served.height)], texts, strict=True)):
             band_1x = served.crop((0, top, served.width, bottom))
             if text is None:  
                 art.paste(band_1x.resize((band_1x.width * scale, band_1x.height * scale), Image.Resampling.NEAREST),
@@ -2155,7 +2155,7 @@ def main_art(served: Image.Image, scale: int, style: str, squeeze: bool = False)
     official_geometry = geometry.copy()
     geometry[-1] = geometry[-2]  
     with tempfile.TemporaryDirectory() as tmp:
-        for k, ((top, bottom), text, (left, right, baseline)) in enumerate(zip(bands, MAIN_ROWS, geometry)):
+        for k, ((top, bottom), text, (left, right, baseline)) in enumerate(zip(bands, MAIN_ROWS, geometry, strict=True)):
             out = Path(tmp) / f"{k}.png"
             label, metrics = header_label(text, scale, out, MAIN_RASTER,
                                           "--style", style, "--room", str(MAIN_STREAK_END - left))
@@ -2487,7 +2487,7 @@ def _hires_bin(entries: Path, source: Path | None, vector: tuple | None, squeeze
     packed = [entry for entry in encoded if (entries / f"{entry}.bin").read_bytes()[:4] == b"LZP2"]
     if jobs > 1 and len(packed) > 1 and not native.module:  # the Python encoder is slow: one entry per process
         with worker_pool(min(jobs, len(packed))) as pool:
-            results = dict(zip(packed, pool.map(packed_lzp2, [encoded[entry] for entry in packed])))
+            results = dict(zip(packed, pool.map(packed_lzp2, [encoded[entry] for entry in packed]), strict=True))
     else:
         packing = {entry: later(packed_lzp2, encoded[entry]) for entry in packed}
         results = {entry: done.result() for entry, done in packing.items()}

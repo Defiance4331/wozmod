@@ -41,8 +41,8 @@ def dialogue_voice_maps(
     for block in (WO2_EVENT_VOICES, WO2_SELECT_VOICES, *WO2_NARRATION_VOICES):
         wo2 |= block_voice_map(block)
     wo1 |= slot_voice_map([
-        (ours, [a if b and quote_text(a) == quote_text(b) else b"" for a, b in zip(w1, w2)])
-        for (ours, w1), (_, w2) in zip(wo1_quote_tables, wo2_quote_tables)
+        (ours, [a if b and quote_text(a) == quote_text(b) else b"" for a, b in zip(w1, w2, strict=False)])
+        for (ours, w1), (_, w2) in zip(wo1_quote_tables, wo2_quote_tables, strict=False)
     ], WO1_RECORD_BASE)
     slots = [([r.value for r in moz[o].dialog.records],
               [r.value for r in wo2_scripts[m].dialog.records])

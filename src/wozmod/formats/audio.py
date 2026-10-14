@@ -434,7 +434,7 @@ def slot_voice_map(tables: list[tuple[list[bytes], list[bytes]]], record_base: i
     """Map matching table slots with unambiguous suffixes."""
     found: dict[int, set[int]] = {}
     for ours, theirs in tables:
-        for a, b in zip(ours, theirs):
+        for a, b in zip(ours, theirs, strict=False):
             if (s := _suffix(a)) and (t := _suffix(b)):
                 found.setdefault(WO2_SUFFIX_BASE + s - 1, set()).add(t - 1 + record_base)
     return {moz_id: clips.pop() for moz_id, clips in found.items() if len(clips) == 1}
@@ -510,7 +510,7 @@ def wo2_voice_clips(mapping: dict[int, int], index: bytes, bank: Path, jobs: int
                   "-q:a", str(quality), "-fflags", "+bitexact", "-flags:a", "+bitexact", "-f", "ogg"]
         oggs = _ffmpeg_each([(["-threads", "1", "-f", "wav"], riffs[i], vorbis) for i in moz_ids], jobs,
                             "converting voice clips", span)
-        return dict(zip(moz_ids, map(kovs_record, oggs)))
+        return dict(zip(moz_ids, map(kovs_record, oggs), strict=True))
 
     clips = encode(list(riffs), WO2_VORBIS_QUALITY, (0.1, 0.85))
     # The game reads a clip whole into a SLOT_BYTES buffer: a clip that does not fit is encoded again, one step lower.
@@ -575,7 +575,7 @@ def moz_se_banks(seidx: bytes, se: bytes) -> list[tuple[bytes, bytes]]:
     if count != 2 * SE_BANKS or len(seidx) < 8 + 8 * count:
         raise VoiceBankError("not the MOZ seidx.bin")
     spans = [se[offset:offset + size] for offset, size in struct.iter_unpack(">II", seidx[8:8 + 8 * count])]
-    return list(zip(spans[::2], spans[1::2]))
+    return list(zip(spans[::2], spans[1::2], strict=True))
 
 
 def se_entries(header: bytes) -> list[int]:
@@ -645,7 +645,7 @@ def se_bank(header: bytes, clips: list[tuple[int, bytes]]) -> tuple[bytes, bytes
     if len(clips) != len(entries) or any(len(pcm) != 2 * n for n, pcm in clips):
         raise VoiceBankError("English SE clips do not fit the bank's entries")
     out, data = bytearray(header), bytearray()
-    for at, (samples, pcm) in zip(entries, clips):
+    for at, (samples, pcm) in zip(entries, clips, strict=True):
         struct.pack_into("<HHH", out, at + 6, *SE_FORMAT_PCM)
         struct.pack_into("<III", out, at + 16, samples, len(data), len(pcm))
         data += pcm

@@ -1,6 +1,7 @@
 """Menu stroke rendering support."""
 import math
 from bisect import bisect_right
+from itertools import pairwise
 
 import fontforge
 import numpy as np
@@ -286,7 +287,7 @@ def pinched_stroke(skeleton, pts, radii, closed, pen, joins, depth, length, box=
 
         breaks={0.0,1.0}
         for side, side_centers in centers.items():
-            for center, (stations, _) in zip(side_centers, windows[side]):
+            for center, (stations, _) in zip(side_centers, windows[side], strict=True):
                 for shift in (-total,0,total) if closed else (0,):
                     for station in stations:
                         s = center + shift + station
@@ -316,7 +317,7 @@ def pinched_stroke(skeleton, pts, radii, closed, pen, joins, depth, length, box=
                         v+dsupport-dn*depth*profile-n*depth*slope*speed)
             curves=[]
             bs=sorted(breaks)
-            for lo,hi in zip(bs,bs[1:]):curves.extend(_approximate(edge,lo,hi,stats))
+            for lo,hi in pairwise(bs):curves.extend(_approximate(edge,lo,hi,stats))
             edges[side].append(curves)
     layer=fontforge.layer()
     if closed:

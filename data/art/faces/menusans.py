@@ -3,6 +3,7 @@ import importlib.util
 import math
 from dataclasses import dataclass
 from functools import lru_cache
+from itertools import pairwise
 from pathlib import Path
 
 import fontforge
@@ -728,7 +729,7 @@ def _draw_round(ch, s, v):
         stem_top = (top + (stems[1] - left) / 2 if ch == "m" else
                     2.1 if ch == "h" else 6.2)
         return [s.vline(left, stem_top, BASE),
-                *[_round_arch(s, a, b, top, BASE) for a, b in zip(stems, stems[1:])]]
+                *[_round_arch(s, a, b, top, BASE) for a, b in pairwise(stems)]]
     if ch == "u":
         left, right = 2.75, 12.75
         bottom = BASE - sh * s.axes.pen[1] / (2 * s.axes.x_height)

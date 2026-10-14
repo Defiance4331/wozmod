@@ -52,7 +52,9 @@ translation row, and an edit over the wrong stock bytes. Synthetic bytes in
 what synthetic bytes cannot show, and skip when they are absent. Slow tests run only behind a `WOZMOD_<NAME>=1` skipif.
 Input paths come from `[tests]` in `work/harness.toml` (see `tests/conftest.py`).
 `tools/verify.sh` also runs the slow ones; run it before handing back a change to
-the runtime, the art or the install. The hooks in `tools/githooks/` lint each
+the runtime, the art or the install. Hand back a change players see with the
+`evidence/contact-sheet.html` that `tools/run_check.py` writes: each capture beside
+its PASS/FAIL rows. The hooks in `tools/githooks/` lint each
 commit and test each push on the pushed commits alone, in `.worktrees/pre-push`
 (`git config core.hooksPath tools/githooks` on a new clone).
 

@@ -27,7 +27,7 @@ CAPTIONS = range(146, 171)
 CAPTION_MEMBER = 2793
 
 
-DREAM_SCRIPTS = tuple(zip(range(40, 68), range(2836, 2864)))
+DREAM_SCRIPTS = tuple(zip(range(40, 68), range(2836, 2864), strict=True))
 
 
 MIN_SHARED_VOICES = 0.9
@@ -138,7 +138,7 @@ def record_pairs(moz: Script, donor: Script) -> list[tuple[bytes, str]]:
     pairs = []
     if len(moz.notices.records) >= len(donor.notices.records):
         pairs += [(m.text_bytes, d.text_bytes)
-                  for m, d in zip(moz.notices.records, donor.notices.records)]
+                  for m, d in zip(moz.notices.records, donor.notices.records, strict=False)]
     by_voice: dict[bytes, list[bytes]] = {}
     for record in donor.dialog.records:
         by_voice.setdefault(record.dialog_suffix, []).append(record.text_bytes)
@@ -153,7 +153,7 @@ def prefix_pairs(moz: Script, donor: Script) -> list[tuple[bytes, str]]:
     """Pair both tables by ordinal over the donor table length."""
     return _decoded((m.text_bytes, d.text_bytes)
                     for table in ("notices", "dialog")
-                    for m, d in zip(getattr(moz, table).records, getattr(donor, table).records))
+                    for m, d in zip(getattr(moz, table).records, getattr(donor, table).records, strict=False))
 
 
 def _decoded(pairs) -> list[tuple[bytes, str]]:
@@ -164,8 +164,8 @@ def _decoded(pairs) -> list[tuple[bytes, str]]:
 
 def narration_pairs(moz: bytes, donor: bytes) -> list[tuple[bytes, str]]:
     """Pair narration positions inside equal-length blocks."""
-    return _decoded(pair for a, b in zip(mesc_blocks(moz), mesc_blocks(donor))
-                    if len(a) == len(b) for pair in zip(a, b))
+    return _decoded(pair for a, b in zip(mesc_blocks(moz), mesc_blocks(donor), strict=False)
+                    if len(a) == len(b) for pair in zip(a, b, strict=True))
 
 
 def event_pairs(moz: bytes, donor: bytes, order: str = "<") -> list[tuple[bytes, str]]:
@@ -190,7 +190,7 @@ def paired_quote_tables(moz: bytes, donor: bytes, order: str = "<", insert: tupl
     ours, theirs = quote_tables(moz), quote_tables(donor, order)
     at, count = insert
     theirs[2 + at:2 + at] = [[]] * count
-    return list(zip(ours, theirs))
+    return list(zip(ours, theirs, strict=False))
 
 
 def quote_pairs(moz: bytes, donor: bytes, officers: bool = True, order: str = "<",
@@ -198,7 +198,7 @@ def quote_pairs(moz: bytes, donor: bytes, officers: bool = True, order: str = "<
     """Pair notice formats by ordinal and optionally officer quotes by slot."""
     tables = paired_quote_tables(moz, donor, order, insert)
     tables = tables if officers else tables[:2]
-    return _decoded((quote_text(m), quote_text(d)) for a, b in tables for m, d in zip(a, b) if m and d)
+    return _decoded((quote_text(m), quote_text(d)) for a, b in tables for m, d in zip(a, b, strict=False) if m and d)
 
 
 def official_pairs(stock: Path, wo1: Path, wo2_donor: Wo2Donor) -> dict[bytes, tuple[str, str]]:
@@ -244,7 +244,7 @@ def official_pairs(stock: Path, wo1: Path, wo2_donor: Wo2Donor) -> dict[bytes, t
                                                                                                   
                                                                                                         
     tables = paired_quote_tables(narration[quotes_entry], donor["wo2", wo2_quotes], wo2_donor.order)[2:]
-    for m, d in ((m, d) for ours, theirs in tables for m, d in zip(ours, theirs)):
+    for m, d in ((m, d) for ours, theirs in tables for m, d in zip(ours, theirs, strict=False)):
         for japanese, english in _decoded([(quote_text(m), quote_text(d))]):
             if m[2:] != japanese and english != official[japanese][0]:
                 official[m[2:]] = (english, wo2_donor.source)

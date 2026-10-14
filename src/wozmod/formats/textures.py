@@ -5,6 +5,7 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass, field
 from functools import lru_cache
+from itertools import pairwise
 from typing import Iterator
 
 from wozmod import native
@@ -291,7 +292,7 @@ def parse_g1t(data: bytes) -> G1tFile:
     starts = tuple(table_offset + offset for offset in offsets)
     if starts and starts[0] < table_end:
         raise TextureCodecError("G1T first texture overlaps its offset table")
-    if any(left >= right for left, right in zip(starts, starts[1:])):
+    if any(left >= right for left, right in pairwise(starts)):
         raise TextureCodecError("G1T texture offsets are not strictly increasing")
 
     textures: list[G1tTexture] = []
@@ -562,7 +563,7 @@ def _blocks(rgba: bytes, width: int, height: int) -> Iterator[bytes]:
 
 def _pixels(block: bytes) -> tuple[tuple[int, int, int, int], ...]:
     channels = iter(block)
-    return tuple(zip(channels, channels, channels, channels))
+    return tuple(zip(channels, channels, channels, channels, strict=True))
 
 
 def _color_endpoints(
@@ -621,9 +622,9 @@ def _palette_rgb(color0: int, color1: int, transparent: bool) -> tuple[tuple[int
     """The palette colours a block with these endpoints shows (three colours before the transparent one)."""
     first, second = _rgb565_to_rgba(color0)[:3], _rgb565_to_rgba(color1)[:3]
     if transparent:
-        return first, second, tuple((a + b) // 2 for a, b in zip(first, second))
-    return (first, second, tuple((2 * a + b) // 3 for a, b in zip(first, second)),
-            tuple((a + 2 * b) // 3 for a, b in zip(first, second)))
+        return first, second, tuple((a + b) // 2 for a, b in zip(first, second, strict=True))
+    return (first, second, tuple((2 * a + b) // 3 for a, b in zip(first, second, strict=True)),
+            tuple((a + 2 * b) // 3 for a, b in zip(first, second, strict=True)))
 
 
 def _rounded_quotient(numerator: int, denominator: int) -> int:
@@ -824,7 +825,7 @@ def x360_g1t(data: bytes) -> G1tFile:
     starts = [table + o for o in offsets] + [size]
     out = bytearray(G1T_HEADER.pack(G1T_MAGIC, identity, 0, table, count, 0, field_24, field_28))
     out += data[len(out):table] + struct.pack(f"<{count}I", *offsets) + data[table + 4 * count:starts[0]]
-    for start, end in zip(starts, starts[1:]):
+    for start, end in pairwise(starts):
         header = bytearray(data[start:start + 8])
         for k in (0, 2, 6):
             header[k] = (header[k] >> 4) | (header[k] & 15) << 4

@@ -101,7 +101,7 @@ def shape(s, pts):
         if need > have:
             k[i] = min(k[i], have / need)
             k[j] = min(k[j], have / need)
-    l = _layer(s.contour(xy, [ri * ki for ri, ki in zip(r, k)], True))
+    l = _layer(s.contour(xy, [ri * ki for ri, ki in zip(r, k, strict=True)], True))
     l.correctDirection()
     return l
 

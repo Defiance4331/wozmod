@@ -124,7 +124,7 @@ def test_cp932_objective_aliases_do_not_drop_or_reorder_ibm_keys() -> None:
     index = table_index([row])
     keys = [b"1\xed\x40%s [10]", b"\xed\x40%s [10]", b"1\xfa\x5c%s [10]", b"\xfa\x5c%s [10]"]
     assert list(index.items()) == [(key, (row["en"].encode()[offset:], row))
-                                   for key, offset in zip(keys, (0, 1, 0, 1))]
+                                   for key, offset in zip(keys, (0, 1, 0, 1), strict=True)]
 
 
 def test_objective_alias_does_not_consume_a_literal_percent_argument() -> None:

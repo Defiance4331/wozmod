@@ -193,7 +193,7 @@ def test_se_replacement_keeps_each_clip_offset_and_preserves_non_audio_fields() 
 
     assert data == b"_DBW0000" + struct.pack("<I", 1548) + bytes((1,)) * 512 + bytes((2,)) * 1024
     assert struct.unpack_from("<I", header, 16)[0] == 1536
-    for offset, old, (samples, ima) in zip(se_entries(header), original, clips):
+    for offset, old, (samples, ima) in zip(se_entries(header), original, clips, strict=True):
         entry = header[offset:offset + 40]
         count, start, size = struct.unpack_from("<III", entry, 16)
         assert (count, data[12 + start:12 + start + size], entry[:16] + entry[28:]) == (samples, ima, old[:6] + struct.pack('<HHH', 0x4800, 2, 1) + old[12:16] + old[28:])
@@ -303,7 +303,7 @@ def test_real_donor_indices_do_not_drop_rows_in_large_record_tables() -> None:
     sys.modules[old.__name__] = old
     try:
         exec(compile(source, "audio-baseline", "exec"), old.__dict__)
-        for name, path in zip(("wo1_voice_records", "wo2_voice_records", "wo1_se_entries", "wo2_se_entries"), paths):
+        for name, path in zip(("wo1_voice_records", "wo2_voice_records", "wo1_se_entries", "wo2_se_entries"), paths, strict=True):
             assert globals()[name](path.read_bytes()) == getattr(old, name)(path.read_bytes())
         bank = Path(os.environ["WOZMOD_GAME"]) / "data/Sound/Voice/Voice.bin"
         if not bank.is_file():

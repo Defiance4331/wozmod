@@ -366,7 +366,7 @@ def stage_scripts(memory: int) -> dict:
         raise RuntimeError("not in a battle")
     (stage,), (base, count), (events,) = u32s(STAGE), u32s(SCRIPT_TABLE, 2), u32s(SCRIPT_EVENTS)
     scripts = []
-    for i, (offset, at) in enumerate(zip(u32s(base + 12, count), u32s(events, count))):
+    for i, (offset, at) in enumerate(zip(u32s(base + 12, count), u32s(events, count), strict=True)):
         flags, kind, setup, immediate, _, n = os.pread(memory, 6, base + offset)
         # event: opcode, operands; 0x26 spoken dialog (speaker, record), 0x25 battle notice (record, ...)
         rows = list(struct.iter_unpack("<8H", os.pread(memory, 16 * n, at)))
@@ -403,9 +403,9 @@ def screen(memory: int, block: int) -> dict:
         found = named if name else unnamed  # unnamed: plain boxes such as a cursor or a plate drawn without a texture
         key = (f"{name >> 16}.{name & 0xFFFF}" if name else None, x, y, width, height, f"{caller:#x}")
         found[key] = found.get(key, 0) + 1
-    textures = [dict(zip(("texture", "x", "y", "width", "height", "caller"), key), count=count)
+    textures = [dict(zip(("texture", "x", "y", "width", "height", "caller"), key, strict=True), count=count)
                 for key, count in named.items()]
-    boxes = [dict(zip(("x", "y", "width", "height", "caller"), key[1:]), count=count) for key, count in unnamed.items()]
+    boxes = [dict(zip(("x", "y", "width", "height", "caller"), key[1:], strict=True), count=count) for key, count in unnamed.items()]
     return {"frame": frame, "frames_run": now, "texts": drawn, "textures": textures,
             "unnamed_quads": sum(unnamed.values()), "boxes": boxes,
             "dropped": {"texts": max(0, texts - TEST_TEXTS), "quads": max(0, quads - TEST_QUADS)},
@@ -1054,9 +1054,9 @@ def tour_checks(seen: dict) -> dict:
              for t in texts]
     return {
         "cjk": sorted({t["text"] for t in texts + seen["windows"] if CJK.search(t["text"])}),
-        "overflow": [t["text"] for t, (x, _, right, _) in zip(texts, boxes) if x < 0 or right > SCREEN_WIDTH],
-        "overlap": [[a["text"], b["text"]] for i, (a, p) in enumerate(zip(texts, boxes))
-                    for b, q in zip(texts[i + 1:], boxes[i + 1:])
+        "overflow": [t["text"] for t, (x, _, right, _) in zip(texts, boxes, strict=True) if x < 0 or right > SCREEN_WIDTH],
+        "overlap": [[a["text"], b["text"]] for i, (a, p) in enumerate(zip(texts, boxes, strict=True))
+                    for b, q in zip(texts[i + 1:], boxes[i + 1:], strict=True)
                     if a["text"] != b["text"] and p[0] < q[2] and q[0] < p[2] and p[1] < q[3] and q[1] < p[3]],
     }
 
