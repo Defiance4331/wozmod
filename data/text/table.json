@@ -3403,63 +3403,107 @@
     },
     {
       "key": "9cbfa9424c600d053f925ecbb689a7085d6b1cc33decc2617fdd542ba4c27ff3",
-      "source": "authored",
-      "en": "Samurai Warriors 2: Xtreme Legends\nCharacter Model 3"
+      "source": "edited",
+      "ref": [
+        "x360",
+        "pe",
+        46668
+      ],
+      "edits": [
+        [
+          50,
+          51,
+          "3"
+        ]
+      ]
     },
     {
       "key": "b2fad48d05fa23cf6ddb4e5d7e9a276fd3dd0b7a236403d0d4b24e895001bb65",
-      "source": "authored",
-      "en": "Samurai Warriors 2: Xtreme Legends\nCharacter Model 4"
+      "source": "edited",
+      "ref": [
+        "x360",
+        "pe",
+        46668
+      ],
+      "edits": [
+        [
+          50,
+          51,
+          "4"
+        ]
+      ]
     },
     {
       "key": "4d467696c45db2e126a83b2e7d65c3f1e6c2aeb0179c9b6ce7d8e11b16a2219b",
-      "source": "authored",
-      "en": "Warriors Orochi 2\nCharacter Model 3"
+      "source": "edited",
+      "ref": [
+        "x360",
+        "pe",
+        46396
+      ],
+      "edits": [
+        [
+          34,
+          35,
+          "3"
+        ]
+      ]
     },
     {
       "key": "04aa33034f5d72f5ca45d8af8e68cf563874e9c267f8468e0aa5e57ca81524f6",
-      "source": "authored",
-      "en": "Warriors Orochi 2\nCharacter Model 4"
+      "source": "edited",
+      "ref": [
+        "x360",
+        "pe",
+        46396
+      ],
+      "edits": [
+        [
+          34,
+          35,
+          "4"
+        ]
+      ]
     },
     {
       "key": "2fcdc18f008d70089a8e3d4834c1dc251c92349ad0223b5365bb8f63117d10b6",
       "source": "authored",
-      "en": "Warriors Orochi Z\nCharacter Design 1"
+      "en": "Warriors Orochi Z Character Design 1"
     },
     {
       "key": "c8de6be491bdbdf507cf3b5f3133f121b13ba3faa86aaf55e3ceb07362cbefb9",
       "source": "authored",
-      "en": "Warriors Orochi Z\nCharacter Model 1"
+      "en": "Warriors Orochi Z Character Model 1"
     },
     {
       "key": "44f2ea6473b4506fefb18afc3e2390ebf1ec7d03106d96b1ee6f82f243855e10",
       "source": "authored",
-      "en": "Warriors Orochi Z\nCharacter Model 2"
+      "en": "Warriors Orochi Z Character Model 2"
     },
     {
       "key": "6f68b594692b33bdb1cd92356cd2f2832370d9dc5987f19d795582576d5f6b8b",
       "source": "authored",
-      "en": "Warriors Orochi Z\nCharacter Design 2"
+      "en": "Warriors Orochi Z Character Design 2"
     },
     {
       "key": "af12542a787dc437cd66c78d612b7e26c74e5f53d059bb703e68046fc7c9840f",
       "source": "authored",
-      "en": "Warriors Orochi Z\nMovie 1"
+      "en": "Warriors Orochi Z Movie 1"
     },
     {
       "key": "b5a27200e12ffdba03e61c4ef9d43e84cae9ca02bb4ab40b9bafa949aab67b47",
       "source": "authored",
-      "en": "Warriors Orochi Z\nMovie 2"
+      "en": "Warriors Orochi Z Movie 2"
     },
     {
       "key": "74f6423904878311cb156febab4981ea008bea12c545d7a6f983dbbff192ab83",
       "source": "authored",
-      "en": "Warriors Orochi Z\nCharacter Model 3"
+      "en": "Warriors Orochi Z Character Model 3"
     },
     {
       "key": "e1d8b02bbcd1e2102aa5ee5df309d0f9bdaea099d63905ffdf46d51087770c4c",
       "source": "authored",
-      "en": "Warriors Orochi Z\nCharacter Model 4"
+      "en": "Warriors Orochi Z Character Model 4"
     },
     {
       "key": "d00ed112a00788d7ddacfb733ee3b6475d21d8df31ac36b33699519caa24f0ee",
@@ -22094,18 +22138,11 @@
     },
     {
       "key": "b4ae5286e7ca90b54ce3a611df8cc65c8baab039c4d300fa3ac1d73b5820ce41",
-      "source": "edited",
+      "source": "wo1-pc",
       "ref": [
         "wo1",
         "exe",
         1981772
-      ],
-      "edits": [
-        [
-          17,
-          18,
-          "4"
-        ]
       ]
     },
     {
@@ -22114,71 +22151,43 @@
       "ref": [
         "wo1",
         "exe",
-        1981700
+        1981736
       ]
     },
     {
       "key": "5a9256163046ea3384db98318f6b1bcce7dfdb839a04b121cc9a91d7bc57ff60",
-      "source": "edited",
+      "source": "wo1-pc",
       "ref": [
         "wo1",
         "exe",
         1981700
-      ],
-      "edits": [
-        [
-          17,
-          18,
-          "2"
-        ]
       ]
     },
     {
       "key": "ba88438295ff7de2052620c48cccea5656aa925c0d0cc5c3c308e1a3e525c442",
-      "source": "edited",
+      "source": "wo1-pc",
       "ref": [
         "wo1",
         "exe",
         1981664
-      ],
-      "edits": [
-        [
-          17,
-          18,
-          "4"
-        ]
       ]
     },
     {
       "key": "1003e1ff42256a395f55e0b8336374ad241bdd58744bc79cb6157eaf2129b8a1",
-      "source": "edited",
+      "source": "wo1-pc",
       "ref": [
         "wo1",
         "exe",
         1981584
-      ],
-      "edits": [
-        [
-          17,
-          18,
-          "4"
-        ]
       ]
     },
     {
       "key": "ce77bc2c02f2f3f14c0796252256692820ee618922922cdedc6ef9f4a6dede4e",
-      "source": "edited",
+      "source": "wo1-pc",
       "ref": [
         "wo1",
         "exe",
         1981624
-      ],
-      "edits": [
-        [
-          17,
-          18,
-          "4"
-        ]
       ]
     },
     {
@@ -22380,13 +22389,13 @@
       "ref": [
         "wo1",
         "exe",
-        1981736
+        1981584
       ],
       "edits": [
         [
-          34,
-          34,
-          " 3"
+          35,
+          36,
+          "3"
         ]
       ]
     },
@@ -22396,13 +22405,13 @@
       "ref": [
         "wo1",
         "exe",
-        1981736
+        1981584
       ],
       "edits": [
         [
-          34,
-          34,
-          " 4"
+          35,
+          36,
+          "4"
         ]
       ]
     },

@@ -40,3 +40,41 @@ def test_the_real_table_builds_from_the_shipped_rows(tmp_path):
     built = build_table(Path(os.environ["WOZMOD_GAME"]), DonorResolver(Path(os.environ["WOZMOD_DONORS"])), TABLE,
                         tmp_path / "table.bin")
     assert built["rows"] == len(json.loads(TABLE.read_text())["rows"])
+
+
+# Western number minus Japanese number. The first Dynasty Warriors was a fighting game, so the Japanese
+# musou series counts one behind it; Samurai Warriors kept Japan's numbers.
+SERIES_OFFSET = {"Dynasty Warriors": 1, "Samurai Warriors": 0}
+
+
+@pytest.mark.skipif(not (os.environ.get("WOZMOD_DONORS") and os.environ.get("WOZMOD_GAME")),
+                    reason="set WOZMOD_DONORS and WOZMOD_GAME")
+def test_series_titles_use_the_western_number():
+    # Catches a title that carries the Japanese series number into English, such as an edit that renumbers
+    # the official title down by one or a pointer paired to the title with the same digit.
+    import hashlib
+    import unicodedata
+
+    from wozmod.text.psp_exe import EXE_STRING
+    from wozmod.text.resolver import DonorResolver
+
+    resolver = DonorResolver(Path(os.environ["WOZMOD_DONORS"]))
+    # The gallery titles are program strings; scanning only the program keeps this test fast.
+    stock = {}
+    for match in EXE_STRING.finditer((Path(os.environ["WOZMOD_GAME"]) / "OROCHI_Z.exe").read_bytes()):
+        try:
+            text = match.group().decode("cp932")
+        except UnicodeDecodeError:
+            continue
+        stock[hashlib.sha256(text.encode("cp932")).hexdigest()] = text
+    wrong, checked = [], 0
+    for row in json.loads(TABLE.read_text())["rows"]:
+        title = re.match(rf"({'|'.join(SERIES_OFFSET)})(?: (\d))?\b", resolver.resolve_row(row))
+        if title is None:
+            continue
+        # The stock title's number ends its first word; a title with none is the first game.
+        japanese = unicodedata.digit(stock[row["key"]].split()[0][-1], 1)
+        checked += 1
+        if int(title[2] or 1) != japanese + SERIES_OFFSET[title[1]]:
+            wrong.append((row["key"], title[0]))
+    assert checked and wrong == []
