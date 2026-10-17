@@ -33,12 +33,12 @@ STOP_WAIT = 60  # seconds for the supervisor to end after stop
 RETRIES = 2  # fresh runs after one that ended before the game started
 
 
-def launch(root: Path, pad: bool = False) -> subprocess.Popen:
+def launch(root: Path, pad: bool = False, size: str | None = None) -> subprocess.Popen:
     """The supervisor, in a game slot, in its own process group so it can be ended whole; ``pad``: routes press a
-    virtual pad instead of the keyboard."""
+    virtual pad instead of the keyboard; ``size``: render at WxH instead of 1080p upscaled."""
     command = [sys.executable, str(Path(harness.__file__).resolve()), "run", "--root", str(root), "--slot",
                "--target", harness.TARGET, "--game", str(root / "game"), "--authorize-launch", "--timeout", "1800",
-               *(["--pad", "--route-input", "pad"] if pad else [])]
+               *(["--pad", "--route-input", "pad"] if pad else []), *(["--size", size] if size else [])]
     with (root / "run.log").open("w") as log:
         return subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
 
@@ -100,10 +100,11 @@ def run_check(args: argparse.Namespace, stage=prepare_run.prepare, start=launch)
     began, result, record = time.monotonic(), 1, None
     for attempt in range(RETRIES + 1):
         t = time.monotonic()
+        size = getattr(args, "size", None)
         root = stage(run_name(args.name, attempt), args.install.resolve(strict=True), args.dll, args.save,
-                     settings=args.setting, replace=args.file)
+                     settings=args.setting + ([f"display.size={size}"] if size else []), replace=args.file)
         phases["stage"] += time.monotonic() - t
-        t, proc = time.monotonic(), start(root, getattr(args, "pad", False))
+        t, proc = time.monotonic(), start(root, getattr(args, "pad", False), *([size] if size else []))
         try:
             up = wait_up(root, proc)
             phases["boot"] += time.monotonic() - t
@@ -148,6 +149,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="a mod setting saved before the run, such as display.fps=120")
     parser.add_argument("--pad", action="store_true", help="routes press a pad, so captures show the pad's prompts")
     parser.add_argument("--only", metavar="SCREEN,...", help="run only these screens of the spec")
+    parser.add_argument("--size", metavar="WxH", help="render the game at this listed display size (saved as the "
+                        "player's choice) instead of 1080p upscaled")
     parser.add_argument("--name", default="check", help="label in the run directory name")
     args = parser.parse_args(argv)
     try:

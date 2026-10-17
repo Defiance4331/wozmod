@@ -34,7 +34,12 @@ MANIFEST = "wozmod/install.json"  # the installer's record of every file it wrot
 # the mod's own settings, as its Settings menu writes them to wozmod/settings.ini: section.key -> allowed values
 SETTINGS = {"language.text": ("english", "japanese"), "language.voice": ("english", "japanese"),
             "camera.fov": None, "camera.moving_fix": ("on", "off"), "display.fps": ("60", "120"),
-            "display.distance": ("on", "off")}
+            "display.distance": ("on", "off"),
+            "display.mode": ("fullscreen", "windowed", "borderless"),
+            # the runtime's display size list, read from its one source
+            "display.size": tuple(f"{w}x{h}" for w, h in re.findall(
+                r"\{(\d+), (\d+)\}", (REPO / "runtime/display_fit.h").read_text().split("display_sizes[][2] = {")[1]
+                .split("};")[0]))}
 OVERLAID = ("prefix", "steamrt")  # template parts a run sees through an overlay instead of a copy
 EXTRAS = {"wozmod/review.bin"}  # test-only files a run may hold beyond the record: the `review` reference
 

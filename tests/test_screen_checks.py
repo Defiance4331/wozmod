@@ -345,3 +345,14 @@ def test_a_summary_is_checked_at_its_letter_cell_not_by_how_many_lines_it_fills(
     smaller = screen([text(980, 408, width[21], "\n".join(lines))])
     assert sc.text_cell(stock, None, cell=24).ok
     assert not sc.text_cell(smaller, None, cell=24).ok
+
+
+@pytest.mark.parametrize("size, area", [((3440, 1440), (440, 0, 2560, 1440)), ((1920, 1200), (0, 60, 1920, 1080)),
+                                        ((3840, 2160), (0, 0, 3840, 2160))])
+def test_checks_measure_the_centred_16_9_area_of_a_wider_or_taller_capture(size, area):
+    """Bug: an ultrawide or 16:10 capture is measured from its corner, so every rect lands one bar off."""
+    x, y, w, h = area
+    img = Image.new("RGB", size, (0, 0, 0))
+    ImageDraw.Draw(img).rectangle((x, y, x + w - 1, y + h - 1), fill=(90, 90, 90))
+    cropped = sc.layout_area(img)
+    assert cropped.size == (w, h) and cropped.getextrema() == ((90, 90),) * 3

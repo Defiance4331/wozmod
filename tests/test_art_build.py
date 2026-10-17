@@ -462,7 +462,9 @@ def test_cli_rejects_invalid_selection_before_opening_inputs(monkeypatch, capsys
     assert list(tmp_path.iterdir()) == []
 
 
-def test_officer_banner_does_not_use_wo1_recipe_or_first_x360_member():
+def test_officer_banner_recipe_serves_each_banner_its_own_whole_x360_member():
+    """Goes red if the count stops stepping the wo2 member (every banner shows the first) or the member is copied
+    into the stock texture instead of replacing it (the 8x4 X360 art squeezed into the 4x4 stock one)."""
     def texture(width, height, colour):
         pixels = bytes((colour[2], colour[1], colour[0], colour[3])) * (width * height)
         dimensions = (width.bit_length() - 1) | ((height.bit_length() - 1) << 4)
@@ -472,15 +474,13 @@ def test_officer_banner_does_not_use_wo1_recipe_or_first_x360_member():
     stock = texture(4, 4, (1, 2, 3, 255))
     package = (stock + bytes(2048 - len(stock))) * 2
     green = (5, 180, 7, 255)
-    donors = {496: {0: build.parse_g1t(stock)}, ("wo2", 3): {
-        0: build.parse_g1t(texture(8, 4, (190, 10, 15, 255))),
-        1: build.parse_g1t(texture(8, 4, green)),
-    }}
+    red = (190, 10, 15, 255)
+    donors = {("wo2", 3): {0: build.parse_g1t(texture(8, 4, red)), 1: build.parse_g1t(texture(8, 4, green))}}
+    recipe = {"entry": 4063, "item": 0, "texture": 0, "wo2": [3, 0, 0], "count": 2}
     edited = build.parse_texture_package(build.edited_entry(
-        package, [{"entry": 4063, "item": 1, "texture": 0, "donor": [496, 0, 0]}], donors))
-    served = edited.items[1].g1t.textures[0]
-    assert (served.width, served.height, served.decode_rgba()) == (8, 4, bytes(green) * 32)
-    assert edited.items[0].source == stock
+        package, [step for _, step in build.expanded(recipe)], donors))
+    served = [(t.width, t.height, t.decode_rgba()) for t in (item.g1t.textures[0] for item in edited.items)]
+    assert served == [(8, 4, bytes(red) * 32), (8, 4, bytes(green) * 32)]
 
 
 def test_draw_rows_does_not_drop_pieces_after_the_first_value():
@@ -646,3 +646,10 @@ def test_faces_built_by_workers_come_back_in_the_order_of_the_recipe(monkeypatch
     mapping = {"faces": {"list": {}, "header": {}, "tabs": {}}}
     assert list(build.faces(mapping, {}, 4).values()) == ["STAGE", "TITLE", "LIST", "HEADER", "TABS"]
     assert list(build.faces(mapping, {}, 1)) == ["stage", "title", "list", "header", "tabs"]
+
+
+def test_wo1_sheet_names_x360_donor_entries_by_their_wo1_pc_sheet() -> None:
+    """Bug: an off-by-one at the seam (WO1 PC 492-502 are X360 0-10, PC 503 on are X360 12 on) passes the faces the
+    wrong official sheet name, so a fitted variant keyed by it (NORMAL@506.9) silently drops."""
+    assert [build.wo1_sheet(e) for e in (0, 1, 9, 10, 12, 15, 375)] == [492, 493, 501, 502, 503, 506, 866]
+    assert build.wo1_sheet(501) == 501  # a WO1 PC entry not moved yet keeps its own number

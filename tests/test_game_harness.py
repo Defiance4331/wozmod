@@ -118,6 +118,26 @@ def test_launch_boundaries_and_isolation(tmp_path, monkeypatch):
         harness.run(root, args)
 
 
+def test_size_renders_and_outputs_unscaled(tmp_path, monkeypatch):
+    """Bug: --size is dropped (the run renders 1080p) or still upscales with FSR, so an ultrawide capture is wrong."""
+    monkeypatch.setattr(harness, "REPO", tmp_path)
+    root = tmp_path / "work/runtime-tests/wide"
+    game = root / "game"
+    game.mkdir(parents=True)
+    (root / "launch.sh").write_text("exit 0\n")
+    calls = []
+    monkeypatch.setattr(harness.subprocess, "Popen", lambda command, **kwargs: calls.append(command)
+                        or SimpleNamespace(wait=lambda: 0, poll=lambda: 0, returncode=0))
+    assert harness.main(["run", "--root", str(root), "--game", str(game), "--authorize-launch",
+                         "--target", harness.TARGET, "--size", "3440x1440"]) == 0
+    command = calls[0]
+    for flag, value in (("-W", "3440"), ("-H", "1440"), ("-w", "3440"), ("-h", "1440")):
+        assert command[command.index(flag) + 1] == value
+    assert "-F" not in command
+    session = json.loads((root / "evidence/session.json").read_text())
+    assert session["render_size"] == session["output_size"] == [3440, 1440] and not session["fsr"]
+
+
 def test_xenia_launch_keeps_native_frame_and_save_inside_its_storage(tmp_path, monkeypatch):
     """Bug: the reference emulator inherits MOZ scaling/save edits or accepts another run store."""
     monkeypatch.setattr(harness, "REPO", tmp_path)

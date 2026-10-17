@@ -28,7 +28,7 @@ from wozmod.runtime.english_runtime import write_manifest
 from . import lettering
 from .hires import HIRES_OVERLAY, HIRES_RIGHT_GROW, hires_blob
 from wozmod.runtime.latin_font import CELL, LATIN_GLYPH
-from wozmod.donors import WO1, X360, extract_donor, verify_file
+from wozmod.donors import WO1, WO1_X360, X360, extract_donor, verify_file
 from wozmod.formats.textures import (
     G1T_HEADER, G1T_TEXTURE_HEADER, PIXEL_FORMAT_BGRA8, G1tFile, parse_g1t, parse_texture_package,
 )
@@ -54,13 +54,19 @@ TIME_LABEL_LAYOUT = {
     (4085, 9): ("time-x360", 8.0, 24.0),
 }
 
-X360_OFFICER_BANNERS = {item: item for item in range(92)}
+def expanded(edit: dict):
+    """Each (entry, recipe) a texture recipe stands for: its count steps the item and its donor or wo2 source alike."""
+    for entry, first in [(edit["entry"], edit.get("item")), *edit.get("also", [])]:
+        for k in range(edit.get("count", 1)):
+            step = dict(edit, entry=entry, item=first + k) if first is not None else dict(edit, entry=entry)
+            for key in ("donor", "wo2"):
+                if k and key in edit:
+                    step[key] = [edit[key][0], edit[key][1] + k, edit[key][2]]
+            yield entry, step
 
 def native_officer_source(edit: dict) -> tuple[int, int, int] | None:
-
-    if edit.get("entry") != 4063 or edit.get("item") not in X360_OFFICER_BANNERS:
-        return None
-    return 3, X360_OFFICER_BANNERS[edit["item"]], 0
+    """The WO2 X360 member an officer banner is served whole from, if its recipe names one."""
+    return tuple(edit["wo2"]) if edit.get("entry") == 4063 and "wo2" in edit else None
 
 def officer_name_role(edit: dict, row: int = 0) -> str | None:
 
@@ -125,7 +131,7 @@ def menu_render_options(entry: int, item: int, row: int, piece: dict, style: str
 
     from wozmod.fonts.menu_styles import help_treatment
 
-    menu_style = "dark.camp-light" if piece.get("donor", [])[:2] == [493, 17] else MENU_STYLE[style]
+    menu_style = "dark.camp-light" if piece.get("donor", [])[:2] == [1, 17] else MENU_STYLE[style]
     record = reference(f"{entry}.{item}", row) or {}
     role = record.get("role_variant")
     if menu_style == "dark.help":
@@ -134,7 +140,7 @@ def menu_render_options(entry: int, item: int, row: int, piece: dict, style: str
     elif menu_style == "dark.camp" and (entry, item) in CAMP_WO1_ROWS and REVIEW_VARIANTS["camp"] == "wo1":
         role = "wo1"
     elif not role and menu_style in {"dark.pause", "dark.camp"}:
-        role = "blue" if piece.get("donor", [])[:2] in [[493, 18], [493, 19]] else "purple"
+        role = "blue" if piece.get("donor", [])[:2] in [[1, 18], [1, 19]] else "purple"
     time_key = (entry, item) if destination is None else destination
     if time_key in TIME_LABEL_LAYOUT:
         role = TIME_LABEL_LAYOUT[time_key][0]
@@ -152,6 +158,24 @@ def donor_g1ts(data: bytes) -> dict[int, G1tFile]:
         if member[:4] == b"GT1G":
             items[item] = parse_g1t(member)
     return items
+
+# Donor art entries below WO1_PC_ENTRIES are WO1 X360 archive entries; from it on, WO1 PC entries whose X360
+# counterpart differs or is missing, kept until that art moves.
+WO1_PC_ENTRIES = 492
+
+def wo1_sheet(entry: int) -> int:
+    """The WO1 PC entry of a donor entry: the faces name the official sheets by it (X360 entry 11 has none)."""
+    return entry if entry >= WO1_PC_ENTRIES else entry + 492 if entry <= 10 else entry + 491
+
+def wo1_donors(args, entries: set[int]) -> dict:
+    """The WO1 donor art entries, X360 ones read from --wo1-x360-donor and WO1 PC ones from --wo1-donor."""
+    donors = {}
+    for stem, read, wanted in ((args.wo1_x360_donor, x360_members, [e for e in entries if e < WO1_PC_ENTRIES]),
+                               (args.wo1_donor, donor_g1ts, [e for e in entries if e >= WO1_PC_ENTRIES])):
+        if wanted:
+            donors |= {k: read(v) for k, v in wo1_entries(stem.with_suffix(".lnk"), stem.with_suffix(".idx"),
+                                                          sorted(wanted)).items()}
+    return donors
 
 def wo2_g1ts(data: bytes) -> dict[int, G1tFile]:
 
@@ -390,20 +414,11 @@ TWO_STROKE = "ijŌōū"
 BASELINE = 29  
 
 BANNER_LINES = {1: ("banner_large", [96]), 2: ("banner_small", [73, 103])}
-BANNER_LEFT, BANNER_RIGHT, BANNER_LEFTMOST = 183, 331, 158
 BANNER_SINGLE_CENTRE = 254  
 BANNER_SAMPLE_WIDTH = 340  
 
 CARD_CENTRE, CARD_DROP = 98, 64
 DREAM_NAME_BASELINES = {1: (159,), 2: (143, 175)}
-
-def banner_line_left(line_count: int, row: int, alpha_width: int) -> int:
-
-    if line_count == 1:
-        return BANNER_SINGLE_CENTRE - alpha_width // 2
-    if line_count == 2 and row == 1:
-        return BANNER_RIGHT - alpha_width
-    return max(BANNER_LEFTMOST, min(BANNER_LEFT, BANNER_RIGHT - alpha_width))
 
 def ink_rows(atlas: Image.Image) -> list[tuple[int, int]]:
 
@@ -978,7 +993,7 @@ def prepare_menu_labels(mapping: dict, output_dir: Path | None = None) -> dict:
     add("rounded.base", native_menu_text(4079, 80))
     for edit in mapping.get("textures", []):
         spec = edit.get("banner") or edit.get("card")
-        if spec and "lines" in spec and native_officer_source(edit) is None:
+        if spec and "lines" in spec:
             style = "banner.large" if len(spec["lines"]) == 1 else "banner.small"
             for row, text in enumerate(spec["lines"]):
                 add(style, text, officer_name_role(edit, row))
@@ -1137,36 +1152,31 @@ def native_menu_widths(mapping: dict, donors: dict) -> dict:
             record(4069, item, row["row"], "sound.sound", row["text"],
                    *row["at"], window)
     for edit in mapping.get("textures", []):
-        for entry, first in [(edit["entry"], edit.get("item")), *edit.get("also", [])]:
-            for k in range(edit.get("count", 1)):
-                step = dict(edit, entry=entry, item=first + k) if first is not None else dict(edit, entry=entry)
-                if k and "donor" in edit:
-                    donor = edit["donor"]
-                    step["donor"] = [donor[0], donor[1] + k, donor[2]]
-                layout = native_menu_layout(step, donors)
-                if layout:
-                    record(entry, step["item"], 0, layout["style"], layout["text"],
-                           layout["left"], layout["baseline"], layout["sampled_window"], layout["role"])
-                spec = step.get("banner") or step.get("card")
-                if not spec or "lines" not in spec or native_officer_source(step) is not None:
-                    continue
-                name, baselines = BANNER_LINES[len(spec["lines"])]
-                if "card" in step:
-                    baselines = DREAM_NAME_BASELINES[len(spec["lines"])]
-                style = name.replace("_", ".")
-                for row, (text, baseline) in enumerate(zip(spec["lines"], baselines, strict=True)):
-                    role = officer_name_role(step, row)
-                    label, metrics = native_menu_label(donors, style, text, role)
-                    box = label.getbbox()
-                    width = box[2] - box[0]
-                    if "banner" in step:
-                        x = banner_line_left(len(spec["lines"]), row, width)
-                        window = [0, 0, BANNER_SAMPLE_WIDTH, 112]
-                    else:
-                        x = CARD_CENTRE - width // 2
-                        window = [0, 0, 2 * CARD_CENTRE, 196]
-                    record(entry, step["item"], row, style, text,
-                           x - box[0] + metrics["ink"][0], baseline, window, role)
+        for entry, step in expanded(edit):
+            layout = native_menu_layout(step, donors)
+            if layout:
+                record(entry, step["item"], 0, layout["style"], layout["text"],
+                       layout["left"], layout["baseline"], layout["sampled_window"], layout["role"])
+            spec = step.get("banner") or step.get("card")
+            if not spec or "lines" not in spec:
+                continue
+            name, baselines = BANNER_LINES[len(spec["lines"])]
+            if "card" in step:
+                baselines = DREAM_NAME_BASELINES[len(spec["lines"])]
+            style = name.replace("_", ".")
+            for row, (text, baseline) in enumerate(zip(spec["lines"], baselines, strict=True)):
+                role = officer_name_role(step, row)
+                label, metrics = native_menu_label(donors, style, text, role)
+                box = label.getbbox()
+                width = box[2] - box[0]
+                if "banner" in step:
+                    x = BANNER_SINGLE_CENTRE - width // 2
+                    window = [0, 0, BANNER_SAMPLE_WIDTH, 112]
+                else:
+                    x = CARD_CENTRE - width // 2
+                    window = [0, 0, 2 * CARD_CENTRE, 196]
+                record(entry, step["item"], row, style, text,
+                       x - box[0] + metrics["ink"][0], baseline, window, role)
     return {"schema": "moz-native-menu-widths-v1", "rows": rows,
             "widenings": [row for row in rows if row["widening_needed"] or row["height_growth_needed"]],
             "clippings": [row for row in rows if row["left_clipping_needed"] or row["top_clipping_needed"]],
@@ -1245,14 +1255,13 @@ def payload(target, edit: dict, donors: dict, package) -> bytes:
         layer = Image.new("RGBA", donor.size)
         layer.paste(donor, (0, 0), mask.filter(ImageFilter.MaxFilter(3)))
         image.alpha_composite(layer)
-        name, baselines = BANNER_LINES[len(spec["lines"])]
+        name, baselines = BANNER_LINES[1]  # an authored banner has one name line
         for row, (text, baseline) in enumerate(zip(spec["lines"], baselines, strict=True)):
             line, metrics = squished_native_label(donors, name.replace("_", "."), text,
-                                                  entry=edit["entry"], item=edit["item"], row=row,
-                                                  room=172 if len(spec["lines"]) == 1 else 173)
+                                                  entry=edit["entry"], item=edit["item"], row=row, room=172)
             top = metrics["baseline"]
             x0, y0, x1, _ = line.getbbox()
-            x = banner_line_left(len(spec["lines"]), row, x1 - x0)
+            x = BANNER_SINGLE_CENTRE - (x1 - x0) // 2
             if x < 0:
                 raise ValueError(f"native banner line {text!r} starts outside its texture")
             if x + x1 - x0 > image.width:
@@ -1325,6 +1334,9 @@ def payload(target, edit: dict, donors: dict, package) -> bytes:
                 continue
             if "face" in spec:
                 piece, top = donors["faces"][spec["face"]].render(spec["text"], mark)
+            elif "look" in spec:  # the value face at 1x
+                with tempfile.TemporaryDirectory() as tmp:
+                    piece = header_label(spec["text"], 1, Path(tmp) / "label.png", VALUE_RASTER, "--look", spec["look"])[0]
             else:
                 piece = source_image(spec, donors, stock).crop(spec.get("box"))
             if "key" in spec:
@@ -1550,7 +1562,7 @@ MAIN = {(4085, 5): "lit", (4085, 6): "dim", (4085, 7): "lit2", (4085, 8): "dim2"
 MAIN_RASTER = "wozmod.fonts.mainraster"
 MAIN_PITCH, MAIN_STREAK_END, MAIN_EDGE_FADE = 84, 506, 8
 
-HEADER_TEXTS = {(503, 0, 0): ["NEW CHARACTER", "RESULTS", "ABILITY ACQUIRED", "WEAPON ACQUIRED", "ITEM ACQUIRED",
+HEADER_TEXTS = {(12, 0, 0): ["NEW CHARACTER", "RESULTS", "ABILITY ACQUIRED", "WEAPON ACQUIRED", "ITEM ACQUIRED",
                               "NEW SCENARIO"]}
 
 PAGE_LABEL = {(4079, 43), (4085, 16)}
@@ -1567,11 +1579,9 @@ VALUE = {(4069, 14): "value_dim", (4069, 15): "value_lit", (4077, 20): "choice_d
 VALUE_LEVELS = {"value_dim": (156, 49), "value_lit": (253, 49), "choice_dim": (201, 48), "choice_lit": (251, 53),
                 "confirm_dim": (205, 82), "confirm_lit": (254, 82)}
 VALUE_RASTER = "wozmod.fonts.valueraster"
-VALUE_TEXTS = {(501, 13, 0): ["donor:e8a01133b1351e5f", "donor:38cca6bea010af8a", "donor:5fbdda1b8c72e849", "MEDIUM", "donor:b43e72eed0488d78", "CUSTOMIZE", "donor:6fb8716050c19257", "donor:db2cb3fe28e2c54f", "donor:4855c40d66d7acde", "donor:a9fb8458da311aee",
-                              "MEDIUM", "donor:47cee1712a4efbf3"],
-               (506, 9, 0): ["donor:27e88b861fa91ee1", "donor:db2cb3fe28e2c54f", "donor:0e24076baf990d55", "donor:dc1a2f9d7bd77176"], (507, 20, 0): ["donor:f9171164593756e5", "donor:23794d91c53ae875"]}
-VALUE_TEXTS |= {(508, 36, 0): ["donor:e8a01133b1351e5f", "donor:38cca6bea010af8a"], (508, 37, 0): ["donor:e8a01133b1351e5f", "donor:38cca6bea010af8a"], (501, 14, 0): VALUE_TEXTS[(501, 13, 0)], (506, 10, 0): VALUE_TEXTS[(506, 9, 0)],
-                (507, 21, 0): VALUE_TEXTS[(507, 20, 0)]}
+VALUE_TEXTS = {(15, 9, 0): ["donor:27e88b861fa91ee1", "donor:db2cb3fe28e2c54f", "donor:0e24076baf990d55", "donor:dc1a2f9d7bd77176"], (16, 20, 0): ["donor:f9171164593756e5", "donor:23794d91c53ae875"]}
+VALUE_TEXTS |= {(17, 36, 0): ["donor:e8a01133b1351e5f", "donor:38cca6bea010af8a"], (17, 37, 0): ["donor:e8a01133b1351e5f", "donor:38cca6bea010af8a"], (15, 10, 0): VALUE_TEXTS[(15, 9, 0)],
+                (16, 21, 0): VALUE_TEXTS[(16, 20, 0)]}
 
 DARK = {**{(4080, i): "pause" for i in range(6, 34)}, **{(4060, i): "help" for i in range(2, 14)},
         (4069, 0): "help", (4069, 1): "help", (4074, 10): "help", (4069, 19): "controls"}
@@ -1596,19 +1606,19 @@ HELP_QUAD_WIDTH = {(4060, i): width for i, width in
                    [(2, 548), (3, 544), (4, 392), (5, 400), (6, 476),
                     (7, 420), (8, 448), (9, 528), (10, 560), (11, 632), (13, 648)]}
 HELP_QUAD_WIDTH[(4074, 10)] = 420
-DARK_TEXTS = {(508, 15, 0): ["donor:de1c575feaa275ad"], (508, 17, 0): ["donor:ec2261055bc0aec6"],  
-              (493, 2, 0): ["Please select officer to whom you wish to allot growth points."],
-              (493, 5, 0): ["Please select amount of growth points."],
-              (493, 7, 0): ["Please select fusion effects."],
+DARK_TEXTS = {(17, 15, 0): ["donor:de1c575feaa275ad"], (17, 17, 0): ["donor:ec2261055bc0aec6"],  
+              (1, 2, 0): ["Please select officer to whom you wish to allot growth points."],
+              (1, 5, 0): ["Please select amount of growth points."],
+              (1, 7, 0): ["Please select fusion effects."],
               (501, 1, 0): ["Please select the action whose effect you wish to change."],
               (501, 2, 0): ["Please push the key or button which you wish to use."],
-              (503, 10, 0): ["donor:514cae1e06b80c80", "donor:5a3f61cf0be5899d"]}
+              (12, 10, 0): ["donor:514cae1e06b80c80", "donor:5a3f61cf0be5899d"]}
 DARK_TEXTS |= {(508, 48 + k, 0): [t] for k, t in enumerate(["donor:3580469d06f361ee", "KEYBOARD", "GAMEPAD"])}
-DARK_TEXTS |= {(e, i, 0): [t] for e, i, t in [(503, 1, "donor:ced5103bf1a4663a"), (503, 2, "donor:7ead20bebf6532b9"),
-                (503, 3, "donor:5888675d99b95617"), (503, 5, "donor:00f2459ce855c53a"), (506, 12, "donor:5888675d99b95617"), (506, 13, "donor:ced5103bf1a4663a"),
-                (513, 8, "donor:5888675d99b95617"), (513, 9, "donor:25df06def4b63ddc"), (493, 14, "donor:e8144b1fafeed56b"), (493, 15, "donor:c57fcb9193a69cf6"),
-                (493, 16, "FUSION WEAPON"), (493, 17, "donor:f404d4ef53431418"), (493, 18, "donor:b2d86f84fddddde2"), (493, 19, "donor:2dc5bc3ce114b123")]}
-DARK_TEXTS |= {(507, 82 + k, 0): [t] for k, t in enumerate(
+DARK_TEXTS |= {(e, i, 0): [t] for e, i, t in [(12, 1, "donor:ced5103bf1a4663a"), (12, 2, "donor:7ead20bebf6532b9"),
+                (12, 3, "donor:5888675d99b95617"), (12, 5, "donor:00f2459ce855c53a"), (15, 12, "donor:5888675d99b95617"), (15, 13, "donor:ced5103bf1a4663a"),
+                (22, 8, "donor:5888675d99b95617"), (22, 9, "donor:25df06def4b63ddc"), (1, 14, "donor:e8144b1fafeed56b"), (1, 15, "donor:c57fcb9193a69cf6"),
+                (1, 16, "FUSION WEAPON"), (1, 17, "donor:f404d4ef53431418"), (1, 18, "donor:b2d86f84fddddde2"), (1, 19, "donor:2dc5bc3ce114b123")]}
+DARK_TEXTS |= {(16, 82 + k, 0): [t] for k, t in enumerate(
                ["donor:dfb0f521ab244b54", "donor:2a1a6355ed7e30b0", "donor:ea0151c4cf78b351", "donor:f3577cb543db90ce", "donor:8c4587b0d81f3f73", "donor:795b048ba2164e50", "donor:171418c643055da9", "donor:aa42ff595bdb92d6", "donor:e7d91391c1519825", "donor:5de74a81b192304c", "donor:dea894b8304550ba", "donor:49796694dc677011", "donor:f68b032edc223044", "donor:110049cc8ca88c81"])}
 BUTTON_RASTER = "wozmod.fonts.buttonraster"
 BUTTON_CAP = 25.0  
@@ -1620,7 +1630,7 @@ VECTOR_WINDOW = {(4069, 2): (101, 411), (4060, 14): (0, 288), (4064, 5): (100, 4
                  (4081, 18): (0, 400), (4082, 31): (0, 372), (4077, 168): (0, 600), (4061, 12): (0, 600),
                  (4061, 14): (0, 600), (4061, 16): (0, 600), (4099, 17): (0, 532), (4074, 0): (0, 504)}
 
-TRACK = {493: 1.070, 508: 1.894, 501: 0.0}
+TRACK = {1: 1.070, 17: 1.894, 9: 0.0, 493: 1.070, 508: 1.894, 501: 0.0}  # WO1 X360 entries, then WO1 PC ones not moved yet
 TRACK_AUTHORED = 0.338  
 CONDENSED, CONDENSED_MIN = 0.75, 4.0
 
@@ -1628,10 +1638,16 @@ CONDENSED, CONDENSED_MIN = 0.75, 4.0
 # them, tinted, where the stock code draws no row). Labels first, then the values; every text is centred in the
 # 310 px quad the stock labels use.
 OPTION_ROWS = ["TEXT LANGUAGE", "VOICE LANGUAGE", "FIELD OF VIEW", "FRAME RATE", "MOVING CAMERA FIX", "ENGLISH",
-               "JAPANESE", "60 FPS", "120 FPS", "donor:e8a01133b1351e5f", "donor:38cca6bea010af8a", *(f"< {v}% >" for v in range(100, 151, 5))]
+               "JAPANESE", "60 FPS", "120 FPS", "FULLSCREEN", "WINDOWED", "BORDERLESS",
+               *(f"< {v}% >" for v in range(100, 151, 5))]
 OPTION_LABELS = 5
 OPTION_W, OPTION_BAND, OPTION_ROOM = 310, 42, 300
 OPTION_BASELINES = (34, 31)  # labels, and values 3 px higher as the stock values sit against the stock labels
+# Every value's slot is its row's pitch less this one margin, so a word squeezed to its slot stops short of the next.
+VALUE_MARGIN = 20
+# The display modes step by the runtime's DISPLAY_MODE_PITCH, wide enough for each word at its natural width.
+DISPLAY_MODE_PITCH = 195
+OPTION_NARROW = {text: DISPLAY_MODE_PITCH - VALUE_MARGIN for text in ("FULLSCREEN", "WINDOWED", "BORDERLESS")}
 
 PAUSE_BUTTON_ROWS = {
     (4080, 0, 0): ('donor:ae75b2880b5b5e40', 108.342679, 6.657321, 32, None, None),
@@ -1964,15 +1980,6 @@ def stock_split(band: Image.Image, gap: int) -> int:
         x += 1
     return x
 
-def value_centres(widths: dict[str, float]) -> dict[int, float]:
-
-    high, medium, low = (widths[t] for t in ("donor:b43e72eed0488d78", "MEDIUM", "donor:5fbdda1b8c72e849"))
-    full, normal = (widths[t] for t in ("donor:cb6839cad0217d04", "donor:db2cb3fe28e2c54f"))
-    mid = 100 + (full - normal) / 4
-    return {4: 100, 5: 100 + (high - low) / 4, 6: 100,
-            7: 100 + (low + widths["CUSTOMIZE"]) / 2 - (high + low + 2 * medium) / 4,
-            8: 100, 9: mid, 10: 100, 11: 100, 12: mid, 13: 100}
-
 def help_layout(entry: int, item: int, right: float, width: float) -> tuple[float, int]:
 
     quad = HELP_QUAD_WIDTH.get((entry, item))
@@ -2019,7 +2026,7 @@ def vector_art(edit: dict, served: Image.Image, texts: list, scale: int, window=
                     wider = Image.new("RGBA", ((served.width + minimum) * scale, art.height))
                     wider.info.update(art.info)
                     art = wider
-        value_labels, centres = {}, {}
+        value_labels = {}
         if (edit["entry"], edit["item"]) in {(4069, 14), (4069, 15)}:
             for text in set(texts):
                 value_labels[text] = header_label(text, scale, Path(tmp) / f"value-{text}.png", VALUE_RASTER,
@@ -2027,7 +2034,6 @@ def vector_art(edit: dict, served: Image.Image, texts: list, scale: int, window=
             for label, metrics in value_labels.values():
                 fill = row_geometry(label, value_cover(edit["look"]))
                 metrics["fill"] = fill[:2]
-            centres = value_centres({t: (m["fill"][1] - m["fill"][0]) / scale for t, (_, m) in value_labels.items()})
         for k, ((top, bottom), text) in enumerate(zip(edit.get("bands") or [(0, served.height)], texts, strict=True)):
             band_1x = served.crop((0, top, served.width, bottom))
             if text is None:  
@@ -2043,13 +2049,16 @@ def vector_art(edit: dict, served: Image.Image, texts: list, scale: int, window=
             look, style = edit.get("look"), edit.get("style")
             geometry = row_geometry(band_1x.crop((split, 0, band_1x.width, band_1x.height)),
                                     header_cover if header else value_cover(look) if look else alpha_cover if style else button_cover)
+            if "slots" in edit and geometry:  # a value keeps its width, squeezed only past its slot, centred in it
+                left, right = edit["slots"][k]
+                geometry = (left + VALUE_MARGIN / 2, right - VALUE_MARGIN / 2, geometry[2])
             if not text or not geometry:
                 continue
             geometry = (geometry[0] + split, geometry[1] + split, geometry[2])
             if (edit["entry"], edit["item"]) in TIME_LABEL_LAYOUT:
                 _, left, baseline = TIME_LABEL_LAYOUT[(edit["entry"], edit["item"])]
                 geometry = (left, left, baseline - top)
-            ref = ["--ref", "{}.{}".format(*piece["donor"])] if "donor" in piece else []
+            ref = ["--ref", "{}.{}".format(wo1_sheet(piece["donor"][0]), piece["donor"][1])] if "donor" in piece else []
             if look or style:  
                 if look:
                     label, metrics = value_labels[text] if text in value_labels else header_label(
@@ -2064,10 +2073,6 @@ def vector_art(edit: dict, served: Image.Image, texts: list, scale: int, window=
                 if "tint" in edit:
                     label = tinted(label, edit["tint"])
                 if look and (edit["entry"], edit["item"]) in {(4069, 14), (4069, 15)}:
-                    if k in centres:
-                        centre = centres[k]
-                        geometry = (centre, centre, geometry[2])
-
                     geometry = (geometry[0], geometry[1], 29)
                 if style == "attributes":
 
@@ -2174,7 +2179,8 @@ def option_rows_art(scale: int, squeeze: bool) -> Image.Image:
     art = Image.new("RGBA", (OPTION_W * scale, len(OPTION_ROWS) * OPTION_BAND * scale))
     with tempfile.TemporaryDirectory() as tmp:
         for k, text in enumerate(OPTION_ROWS):
-            geometry = ((OPTION_W - OPTION_ROOM) / 2, (OPTION_W + OPTION_ROOM) / 2, OPTION_BASELINES[k >= OPTION_LABELS])
+            room = OPTION_NARROW.get(text, OPTION_ROOM)
+            geometry = ((OPTION_W - room) / 2, (OPTION_W + room) / 2, OPTION_BASELINES[k >= OPTION_LABELS])
             label, metrics = button_label(text, scale, Path(tmp) / f"{k}.png", TRACK_AUTHORED)
             label, metrics = squeezed_label(label, metrics, geometry, scale, squeeze)
             x, y = row_offset(geometry, metrics, scale, "full")
@@ -2566,6 +2572,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wo1-donor", type=Path, default=os.environ.get("WOZMOD_WO1_DONOR"),
                         help="WO1 PC Europe linkdata_ens path without its .lnk/.idx suffix")
+    parser.add_argument("--wo1-x360-donor", type=Path, default=os.environ.get("WOZMOD_WO1_X360_DONOR"),
+                        help="WO1 Xbox 360 USA linkdata_ens path without its .lnk/.idx suffix")
     parser.add_argument("--latin-cells", type=Path, default=os.environ.get("WOZMOD_LATIN_CELLS"),
                         help="24-pixel vector Latin cells; generated when omitted")
     parser.add_argument("--wo2-donor", type=Path, default=os.environ.get("WOZMOD_X360_DONOR"),
@@ -2587,6 +2595,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="developer oracle only: keep full-width vector lettering")
     parser.add_argument("--game", type=Path, default=os.environ.get("WOZMOD_GAME"))
     parser.add_argument("--wo1-iso", type=Path, default=os.environ.get("WOZMOD_WO1_ISO"))
+    parser.add_argument("--wo1-x360-iso", type=Path, default=os.environ.get("WOZMOD_WO1_X360_ISO"))
     parser.add_argument("--wo2-iso", type=Path, default=os.environ.get("WOZMOD_X360_ISO"))
     parser.add_argument("--font-python", default=FONT_PYTHON)
     parser.add_argument("--cache-dir", type=Path)
@@ -2611,6 +2620,8 @@ def main(argv: list[str] | None = None) -> int:
     if working is not None and (not args.hires_only or args.hires == "vector"):
         try:
             args.wo1_donor = donor_stem(args.wo1_donor, args.wo1_iso, WO1, working / "donors/wo1")
+            args.wo1_x360_donor = donor_stem(args.wo1_x360_donor, args.wo1_x360_iso, WO1_X360,
+                                             working / "donors/wo1-x360")
             args.wo2_donor = donor_stem(args.wo2_donor, args.wo2_iso, X360, working / "donors/wo2-x360")
         except ValueError as error:
             parser.error(str(error))
@@ -2620,13 +2631,8 @@ def main(argv: list[str] | None = None) -> int:
     mapping = json.loads(MAPPING.read_text(encoding="utf-8"))
     edits: dict[int, list[dict]] = {}
     for edit in mapping["textures"]:  
-        for ordinal, first in [(edit["entry"], edit.get("item")), *edit.get("also", [])]:  
-            for k in range(edit.get("count", 1)):
-                step = dict(edit, entry=ordinal, item=first + k) if first is not None else dict(edit, entry=ordinal)
-                if k:
-                    entry, item, texture = edit["donor"]
-                    step["donor"] = [entry, item + k, texture]
-                edits.setdefault(ordinal, []).append(step)
+        for ordinal, step in expanded(edit):
+            edits.setdefault(ordinal, []).append(step)
     stages = mapping["stage_names"]
     for strips in stages["strips"]:
         edits.setdefault(strips["entry"], []).extend(
@@ -2647,9 +2653,7 @@ def main(argv: list[str] | None = None) -> int:
         if missing := set(args.entries) - edits.keys():
             parser.error(f"entries without edits: {sorted(missing)}")
         edits = {ordinal: edits[ordinal] for ordinal in args.entries}
-    wo1 = wo1_entries(args.wo1_donor.with_suffix(".lnk"), args.wo1_donor.with_suffix(".idx"), sorted(
-        {e["donor"][0] for e in flat if "donor" in e} | {stages["font"][0], titles["donor"]}))
-    donors = {k: donor_g1ts(v) for k, v in wo1.items()}
+    donors = wo1_donors(args, {e["donor"][0] for e in flat if "donor" in e} | {stages["font"][0], titles["donor"]})
     if lettering.ACTIVE is not None:
         donors["latin"] = lettering.get(dict(kind="latin"), None)[0]
     elif args.latin_cells is None:
@@ -2743,9 +2747,7 @@ def write_hires(args) -> None:
                 old.unlink()
         pieces = [p for e in mapping["textures"] if (e["entry"], e.get("item")) in {h[:2] for h in HIRES} | set(DARK)
                   for row in e.get("rows") or [e.get("draw", [])] for p in row]
-        wo1 = wo1_entries(args.wo1_donor.with_suffix(".lnk"), args.wo1_donor.with_suffix(".idx"),
-                          sorted({p["donor"][0] for p in pieces if "box" in p and "donor" in p} | {493, 507}))
-        donors = {k: donor_g1ts(v) for k, v in wo1.items()}
+        donors = wo1_donors(args, {p["donor"][0] for p in pieces if "box" in p and "donor" in p} | {1, 16})
         donors |= {("wo2", k): x360_members(v) for k, v in wo1_entries(
             args.wo2_donor.with_suffix(".lnk"), args.wo2_donor.with_suffix(".idx"),
             sorted(set(X360_PLATE_ENTRIES) | native_reference_entries(mapping))).items()}

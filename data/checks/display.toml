@@ -1,0 +1,58 @@
+# Display sizes and screen shapes: one screen of each kind (menu, settings, movie, battle HUD, pause, in-engine
+# event), run with `tools/run_check.py --size WxH data/checks/display.toml`. Menus and movies sit in the centred
+# 16:9 area with black bars; the battle's 3D fills the screen.
+
+[[screen]]
+name = "title"
+route = "title"
+
+  [[screen.assert]]
+  kind = "text_has_ink"
+  text = { caller = "0x1" }
+  allow_empty = true
+
+[[screen]]
+name = "game-settings"
+route = "game-settings"
+
+  [[screen.assert]]
+  kind = "no_cjk"
+
+  [[screen.assert]]
+  kind = "text_has_ink"
+  text = { caller = "0x55dfd8" }
+
+# Graphics: the size list's label and the display mode's plate.
+[[screen]]
+name = "options-graphics"
+route = "options-graphics"
+
+  [[screen.assert]]
+  kind = "text_has_ink"
+  text = { caller = "0x56cb92" }
+
+[[screen]]
+name = "gallery-movie-play"
+route = "gallery-movie-play"
+
+  [[screen.assert]]
+  kind = "text_has_ink"
+  text = { caller = "0x1" }
+  allow_empty = true
+
+[[screen]]
+name = "battle-windows"
+route = "battle"
+wait = { x = 164, timeout = 40 }
+
+  [[screen.assert]]
+  kind = "text_has_ink"
+  text = { caller = "0x54f8cf", x = 164 }
+
+[[screen]]
+name = "pause"
+route = "pause"
+
+  [[screen.assert]]
+  kind = "text_has_ink"
+  text = { caller = "0x538c65" }

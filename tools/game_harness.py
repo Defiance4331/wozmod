@@ -72,6 +72,13 @@ def bounded(value: str) -> float:
     return number
 
 
+def render_size_arg(value: str) -> tuple[int, int]:
+    match = re.fullmatch(r"(\d{3,4})x(\d{3,4})", value)
+    if not match or not (640 <= int(match[1]) <= 5120 and 480 <= int(match[2]) <= 2160):
+        raise argparse.ArgumentTypeError("use WxH, at most 5120x2160")
+    return int(match[1]), int(match[2])
+
+
 def local_path(root: Path, name: str) -> Path:
     path = root / name
     if path.resolve() != path or not path.is_relative_to(root):
@@ -574,8 +581,8 @@ def perform(root: Path, request: dict) -> dict:
         if not isinstance(size, list) or len(size) != 2 or any(type(value) is not int for value in size):
             raise ValueError("run has no valid render size for click input")
         width, height = size
-        if not 0 < width <= 1920 or not 0 < height <= 1080:
-            raise ValueError("click render size must fit 1920x1080")
+        if not 0 < width <= 5120 or not 0 < height <= 2160:
+            raise ValueError("click render size must fit 5120x2160")
         x, y = request["x"], request["y"]
         if type(x) is not int or type(y) is not int or not 0 <= x < width or not 0 <= y < height:
             raise ValueError(f"click coordinates must be integers inside {width}x{height}")
@@ -822,10 +829,12 @@ def run(root: Path, args: argparse.Namespace) -> int:
     # Run directories are single-use: never replay stale input after a restart.
     local_path(root, "control").mkdir(mode=0o700)
     local_path(root, "evidence").mkdir(mode=0o700)
-    render_size = (1280, 720) if args.target == XENIA else (1920, 1080)
+    size = getattr(args, "size", None)
+    render_size = (1280, 720) if args.target == XENIA else size or (1920, 1080)
     # Gamescope copies each output frame into the screen stream on its own thread; at 3840x2160 that halves the
     # game's frame rate, and the frame-locked game then runs slow against its real-time voices. --video outputs 1080p.
-    fsr = args.target != XENIA and not getattr(args, "video", False)
+    # Another --size renders and outputs at that size, unscaled.
+    fsr = args.target != XENIA and not getattr(args, "video", False) and not size
     output_size = (3840, 2160) if fsr else render_size
     identity = {"target": args.target, "game": str(game), "root": str(root),
                 "launch_sha256": hashlib.sha256(launcher.read_bytes()).hexdigest(),
@@ -1167,6 +1176,8 @@ ROUTE_SCREENS = {
     "options": {"texture": "4079.171"},
     "game-settings": {"texture": "4069.14", "without": "4079.149"},  # the controller page draws 4069.14 too
     "options-controller": {"texture": "4069.14", "with": "4079.149"},
+    "options-graphics": {"caller": "0x56cb92"},  # the resolution row's size label
+    "options-advanced": {"texture": "4069.14|4069.15", "quad_caller": "0x56bff8"},  # the preset row's plates
     "story-select": {"texture": "4082.0|4082.4"},  # two columns: 4082.0 with the cursor in the left one (Shu), 4082.4 in the right (Z)
     "story-camp": {"texture": "4060.39"},  # Shu; the camp menu plate, which its submenus do not draw
     "camp-officers": {"caller": "0x54335f"},
@@ -1375,6 +1386,11 @@ ROUTE_EDGES = [
     ("survival-members", "menu@survival", ["Escape"]),
     ("options", "options-controller", ["Down", "Return", "Return"]),  # also 0207-B
     ("options-controller", "options", [(["Escape"], None), (["Escape"], None), (["Up"], None)]),  # a sub list sits between; Up undoes the Down
+    ("options", "options-graphics", ["Down", "Down", "Down", "Return"]),
+    ("options-graphics", "options", [(["Escape"], None), (["Up", "Up", "Up"], None)]),
+    # from the first row; in a window (the harness) the cursor skips the greyed BRIGHTNESS row
+    ("options-graphics", "options-advanced", ["Down", "Down", "Down", "Return"]),
+    ("options-advanced", "options-graphics", [(["Escape"], None)]),
     # 0211-B2: the gallery pages
     ("gallery", "gallery-backgrounds", ["Return", "Return"]),
     ("gallery-backgrounds", "gallery", ["Escape", "Escape"]),
@@ -1834,6 +1850,8 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--unplugged", action="store_true", help="the pad starts unplugged; see plug")
             command.add_argument("--video", action="store_true",
                                  help="output 1080p without FSR, so the video command keeps the game at full speed")
+            command.add_argument("--size", type=render_size_arg, metavar="WxH",
+                                 help="render and output at this size without FSR (default: 1920x1080 upscaled)")
             command.add_argument("--route-input", choices=["keys", "pad"], default="keys",
                                  help="what routes press: the keyboard, or (with --pad) the pad, for the pad's prompts")
             command.add_argument("--slot", action="store_true",

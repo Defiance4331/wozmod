@@ -37,8 +37,8 @@ STOCK_FILES = {
     "data/Sound/Voice/Voice.bin": (971_871_792, "6d30494571b62dc1f56983c7c84c0f834c6203714ccec089a288e1a38d62f630"),
 }
 # Release assets built by us; a release updates both pins with the files it ships.
-LETTERING = (12_176_171, "3f2bad59e696a60c5521b1100eabe47325e13e06fa7c5be661084711d4c2da3b")
-DLL = (187_197, "9a4a4fab54c30ca746cf439a54d75111a20210a5459912393ab94de671003eba")
+LETTERING = (12_193_440, "e186d9af9b21bf89806eaadff349c71e81622679d5f1087a70f52f5c978be324")
+DLL = (201_191, "17b08dfd8663ab4582373476f52ac5e672a19237073783e88bc60dedb40604db")
 
 _MOD_PATH = re.compile(r"d3d9\.dll|wozmod(/[A-Za-z0-9_][A-Za-z0-9_.-]*)+")
 

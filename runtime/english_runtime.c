@@ -18,6 +18,7 @@
 #include <windows.h>
 #include "text_fit.h"
 #include "glyph_raster.h"
+#include "display_fit.h"
 
 typedef unsigned int u32;
 typedef unsigned short u16;
@@ -633,6 +634,7 @@ static u32 width24(const char *s)
 typedef void (*text_draw)(const char *, u32, u32, u32, u32);
 
 static float glyph_line_fit(const char *s, u32 width, float factor);
+static u32 display_scale(void);
 
 static void draw_fit_at(text_draw renderer, const char *s, u32 x, u32 y, u32 layer, u32 count, u32 width, u32 align, u32 run_width)
 {
@@ -692,7 +694,7 @@ static void glyph_fit(u32 id, const struct frame *f)
 #define GLYPH_KEY 0x5F00             /* our sheet's texture key */
 #define GLYPH_SHEET 1024
 #define GLYPH_SLOTS 2048
-#define GLYPH_MAX 96                 /* px a glyph may be wide or tall */
+#define GLYPH_MAX 160                /* px a glyph may be wide or tall (a 53-unit cell at 3840 wide) */
 #define GLYPH_PASSES 4               /* quads one glyph record may make (a shadow, then the face) */
 /* How soft text looks, chosen for a release: 0 sharp, 1 balanced, 2 soft (near the stock game's look). Every level
    keeps even stems, one baseline and even spacing. */
@@ -840,7 +842,7 @@ static float glyph_line_fit(const char *s, u32 width, float factor)
         return factor;
     for (;; p++) {
         if (!*p || *p == '\n') {
-            float f = gr_fit(advance, n, (float)width, SCREEN_W / 1280.0f, factor);
+            float f = gr_fit(advance, n, (float)width, SCREEN_W * display_scale() / 1280.0f, factor);
             best = f < best ? f : best, n = 0;
             if (!*p)
                 return best;
@@ -871,7 +873,10 @@ static void glyph_draw(u32 id, const struct frame *f)
     const u32 *glyph = 0;
     const struct glyph_slot *slot;
     struct glyph_pen *chain;
-    float sx = SCREEN_W / 1280.0f, sy = SCREEN_H / 720.0f, factor = (float)active_fit.factor, kx, ky;
+    /* Our glyphs are drawn at output px: the layout's px times the display's scale (2 on 2160-high screens). */
+    u32 ps = display_scale();
+    float sx = SCREEN_W * ps / 1280.0f, sy = SCREEN_H * ps / 720.0f, factor = (float)active_fit.factor, kx, ky;
+    double base[4], expect;
     int top, h, b, pen, x0, x1;
     if (!glyph_handle)
         return;
@@ -889,19 +894,24 @@ static void glyph_draw(u32 id, const struct frame *f)
         chain->valid = 0;
         return;
     }
-    for (i = 0; i < n; i++) {  /* a corner: UV word, then X and Y in the low halves of the next two words */
-        u32 xy = quad[12 + i * stride], yy = quad[13 + i * stride] & 0xffff, uv = quad[10 + i * stride];
-        xlo = (xy & 0xffff) < xlo ? xy & 0xffff : xlo, xhi = (xy & 0xffff) > xhi ? xy & 0xffff : xhi;
+    /* A corner: UV word, then X and Y in the low halves of the next two words. X past 2048 layout px carries into
+       its word's high half, as the game packs it: unwrapped near where the game put the glyph. */
+    expect = (double)(int)glyph[3] * SCREEN_W * 16 / 1280 + 32768;
+    for (i = 0; i < n; i++) {
+        u32 xy, yy = quad[13 + i * stride] & 0xffff, uv = quad[10 + i * stride];
+        double x = text_fit_unwrap(quad[12 + i * stride], expect);
+        base[i] = (double)quad[12 + i * stride] - x, xy = (u32)x;
+        xlo = xy < xlo ? xy : xlo, xhi = xy > xhi ? xy : xhi;
         ylo = yy < ylo ? yy : ylo, yhi = yy > yhi ? yy : yhi;
         ulo = (uv & 0xffff) < ulo ? uv & 0xffff : ulo, uhi = (uv & 0xffff) > uhi ? uv & 0xffff : uhi;
         vlo = (uv >> 16) < vlo ? uv >> 16 : vlo, vhi = (uv >> 16) > vhi ? uv >> 16 : vhi;
     }
-    if (xlo < 0x8000 || ylo < 0x8000) {  /* off the left or top edge, or carried past 2048 px: as the game drew it */
+    if (xlo < 0x8000 || ylo < 0x8000) {  /* off the left or top edge: as the game drew it */
         chain->valid = 0;
         return;
     }
     kx = glyph[5] * sx * factor / 1200.0f, ky = glyph[6] * sy / 1200.0f;
-    top = (int)(ylo - 0x8000) >> 4, h = (int)((yhi - 0x8000 + 15) >> 4) - top;
+    top = (int)((ylo - 0x8000) * ps) >> 4, h = (int)(((yhi - 0x8000) * ps + 15) >> 4) - top;
     b = gr_round((int)glyph[4] * sy + glyph_font.base * ky) - top;
     /* The next letter of the line: right after the last, or after a gap the game left for spaces, which keeps its
        own exact width so every word gap is the same. Anything else (a line, a pass or a draw of its own) starts
@@ -910,7 +920,7 @@ static void glyph_draw(u32 id, const struct frame *f)
         && glyph[3] >= chain->x + chain->adv && glyph[3] - chain->x - chain->adv <= 4 * glyph[5])
         pen = chain->pen + chain->step + round_even((glyph[3] - chain->x - chain->adv) * sx * factor);
     else
-        pen = gr_round((float)((int)xlo - 0x8000) / 16.0f);
+        pen = gr_round((float)((int)xlo - 0x8000) * ps / 16.0f);
     slot = glyph_has[number] ? glyph_get(number, kx, ky, b, h) : 0;  /* a space has no outline: it only steps */
     chain->x = glyph[3], chain->y = glyph[4], chain->w = glyph[5], chain->h = glyph[6];
     chain->adv = enrt_widths[glyph[2]] * glyph[5] / 24;
@@ -926,11 +936,12 @@ static void glyph_draw(u32 id, const struct frame *f)
        pixel between two texels (each edge half covered). */
     u0 = slot->u * 16, u1 = u0 + slot->w * 16;
     v0 = slot->v * 16, v1 = v0 + (u32)h * 16;
-    for (i = 0; i < n; i++) {
-        u32 xy = quad[12 + i * stride], yy = quad[13 + i * stride], uv = quad[10 + i * stride];
-        u32 x = (u32)(((xy & 0xffff) == xlo ? x0 : x1) * 16 + 0x8000);
-        u32 y = (u32)(((yy & 0xffff) == ylo ? top : top + h) * 16 + 0x8000);
-        quad[12 + i * stride] = (xy & 0xffff0000u) | (x & 0xffff);
+    for (i = 0; i < n; i++) {  /* back in layout px: output px / ps, whole sixteenths for ps 1 or 2 */
+        u32 yy = quad[13 + i * stride], uv = quad[10 + i * stride];
+        u32 xy = (u32)((double)quad[12 + i * stride] - base[i]);
+        u32 x = (u32)((xy == xlo ? x0 : x1) * 16 / (int)ps + 0x8000);
+        u32 y = (u32)(((yy & 0xffff) == ylo ? top : top + h) * 16 / (int)ps + 0x8000);
+        quad[12 + i * stride] = (u32)(base[i] + x);
         quad[13 + i * stride] = (yy & 0xffff0000u) | (y & 0xffff);
         quad[10 + i * stride] = ((uv >> 16) == vlo ? v0 : v1) << 16 | (((uv & 0xffff) == ulo ? u0 : u1) & 0xffff);
     }
@@ -1622,6 +1633,7 @@ static u32 read_loose(struct frame *f)
 #define GAME_SOUND ((void (*)(u32, u32, u32, u32, u32))0x512EB0)
 #define SETTINGS_CURSOR (*(const volatile u32 *)(*(const u32 *)0xC2FC90 + 0x4C))
 #define INPUT_BLOCKED (*(const volatile u32 *)0x120A1E0)
+#define GAME_SWITCHES (*(volatile u8 *)0x80151A)
 #define LABEL_CELL 24
 #define LABEL_CENTRE 101
 #define VALUE_CENTRE 417
@@ -1883,6 +1895,8 @@ static u32 hires_rows;
 static int hires_native;
 /* The row after the last stock one, entry 0: the sheet of the Game Settings rows wozmod adds (1-based, 0 = none). */
 static u32 option_sheet;
+/* The stock value sheets, 4069.14 dim and 4069.15 lit (1-based, 0 = none): bands 0 and 1 are ON and OFF. */
+static u32 value_sheet[2];
 
 static u32 hires_width(u32 entry, u32 item)
 {
@@ -1914,6 +1928,8 @@ static void hires_load(void)
         hires_root[hires_rows] = r->entry ? (const u32 *)roots[j][0] : 0;
         if (!r->entry)
             option_sheet = hires_rows + 1;
+        if (r->entry == 4069 && (r->item == 14 || r->item == 15))
+            value_sheet[r->item - 14] = hires_rows + 1;
         hires_handle[hires_rows] = TEXTURE_HANDLE(data + r->offset, 0x1F00, 0x3EE4 + i);
         hires_rows++;
     }
@@ -2462,12 +2478,30 @@ static const char *const moving_fix_label[2] = {"MOVING CAMERA FIX",
     "\x88\xda\x93\xae\x92\x86\x83\x4a\x83\x81\x83\x89\x95\xe2\x90\xb3"};
 
 
+/* The stock Game Settings switches read OFF, ON: Right turns one on, Left off, and an end does nothing. Bit 0 of
+   0x80151A set is on, bit 1 set is off, and 0x475B20 returns 0 for on. The stock toggle never sees the key. */
+static void switch_input(u32 row, u32 *repeat)
+{
+    u32 on = row == 0 ? GAME_SWITCHES & 1 : row == 1 ? !(GAME_SWITCHES & 2) : !((u32 (*)(void))0x475B20)();
+    if (!(*repeat & 0x0C))
+        return;
+    if (on != !!(*repeat & 0x08)) {
+        if (row < 2)
+            GAME_SWITCHES ^= 1 << row;
+        else
+            ((void (*)(u32))0x475B30)(on);
+        GAME_SOUND(1, 0, 0x2CDC, 0x2CDC, 0x1000);
+    }
+    *repeat &= ~0x0Cu;
+}
+
+
 static void moving_fix_input(u32 repeat)
 {
     WCHAR name[MAX_PATH];
-    if (!(repeat & 0x0C))
+    if (!(repeat & 0x0C) || moving_fix == !!(repeat & 0x08))  /* left is off, right on */
         return;
-    moving_fix = !moving_fix;
+    moving_fix = !!(repeat & 0x08);
     WritePrivateProfileStringW(L"camera", L"moving_fix", moving_fix ? L"on" : L"off", path(name, L"settings.ini"));
     GAME_SOUND(1, 0, 0x2CDC, 0x2CDC, 0x1000);
 }
@@ -2606,7 +2640,7 @@ static void trace_hooks(void *device);
 #endif
 static const char *const fps_label[2] = {"FRAME RATE", "\x83\x74\x83\x8c\x81\x5b\x83\x80\x83\x8c\x81\x5b\x83\x67"};
 static const char *const fps_value[2][2] = {{"60 FPS", "120 FPS"}, {"60FPS", "120FPS"}};
-static const char *const switch_value[2] = {"ON", "OFF"};
+static const char *const switch_value[2] = {"OFF", "ON"};
 
 static void limiter(u8 rate)
 {
@@ -2622,9 +2656,9 @@ static void limiter(u8 rate)
 static void fps_input(u32 repeat)
 {
     WCHAR name[MAX_PATH];
-    if (!fps_ok || !(repeat & 0x0C))
+    if (!fps_ok || !(repeat & 0x0C) || fps == (repeat & 0x08 ? 120u : 60u))  /* left is 60, right 120 */
         return;
-    fps = fps == 120 ? 60 : 120;
+    fps = repeat & 0x08 ? 120 : 60;
     WritePrivateProfileStringW(L"display", L"fps", fps == 120 ? L"120" : L"60", path(name, L"settings.ini"));
     GAME_SOUND(1, 0, 0x2CDC, 0x2CDC, 0x1000);
 }
@@ -3097,6 +3131,31 @@ static void state_dump(void *device, const char *when)
 }
 #endif
 
+/* Display state: see display_size() below. */
+static volatile int hud_side;  /* the edge (-1 left, 1 right) of the HUD element drawing now, else 0 */
+static void hud_flush(u32 *node);
+#ifdef ENRT_LOG
+static void survey_packet(const u32 *node);
+static void survey_builder(const struct frame *f);
+#endif
+
+#define FTOL 0x69CAB0
+#define MAIN_DISPLAY 0x7A4568
+#define DEFAULT_SIZE 6  /* 1920x1080 */
+static u32 size_at = DEFAULT_SIZE, out_w = 1920, out_h = 1080, scene_w = 1920, scene_h = 1080, display_ok;
+static u32 area_w = 1920, area_h = 1080;  /* the 16:9 area in output px: 2D, menus and video */
+/* Fullscreen, windowed or borderless: a window without a frame over the desktop, the output scaled to fit it.
+   The save keeps the stock windowed byte (0x80152E): 1 for both windowed modes. */
+#define WINDOWED_BYTE (*(volatile u8 *)0x80152E)
+#define DISPLAY_WINDOW (*(HWND *)(MAIN_DISPLAY + 0x160))
+#define BORDERLESS 2
+#define MODE_FROM_SAVE 3  /* settings.ini names no mode: the save's windowed byte decides, once it is loaded */
+/* The Graphics row lists the modes WINDOWED, BORDERLESS, FULLSCREEN left to right: each mode's slot, and back. */
+static const u8 mode_slot[3] = {2, 0, 1}, slot_mode[3] = {1, 2, 0};
+static u32 display_mode = MODE_FROM_SAVE, desk_w = 1920, desk_h = 1080;
+static u32 win_w = 1920, win_h = 1080;  /* the window's client size: the output's, the desktop's when borderless */
+static RECT present_to;                 /* borderless: where the output goes on the desktop, its shape kept */
+
 static long __stdcall present(void *device, const void *from, const void *to, void *window, const void *dirty)
 {
     static LARGE_INTEGER last, now, rate;
@@ -3117,6 +3176,8 @@ static long __stdcall present(void *device, const void *from, const void *to, vo
     last = now;
     hfr_stats.presents++;
     trace_present();
+    if (display_mode == BORDERLESS && !to)  /* the output scaled onto the desktop, its shape kept */
+        to = &present_to;
     return real_present(device, from, to, window, dirty);
 }
 
@@ -3136,6 +3197,7 @@ static long __stdcall reset(void *device, void *params)
     result = real_reset(device, params);
 #ifdef ENRT_LOG
     note("reset: result", (u32)result);
+    note("display: reset back buffer", ((u32 *)params)[0] << 16 | ((u32 *)params)[1]);
     dump_after = 120;
 #endif
     if (result >= 0)
@@ -3143,14 +3205,49 @@ static long __stdcall reset(void *device, void *params)
     return result;
 }
 
+#ifdef ENRT_LOG
+/* The sizes of the game's render targets and depth surfaces, and of its back buffer (w << 16 | h). */
+typedef long (__stdcall *create_fn)(void *, u32, u32, u32, u32, u32, u32, void **, void *);
+static create_fn real_create_texture, real_create_target, real_create_depth;
+
+static long __stdcall create_texture(void *d, u32 w, u32 h, u32 levels, u32 usage, u32 format, u32 pool, void **out,
+                                     void *share)
+{
+    if (usage & 3)
+        note(usage & 1 ? "display: render target texture" : "display: depth texture", w << 16 | h);
+    return real_create_texture(d, w, h, levels, usage, format, pool, out, share);
+}
+
+static long __stdcall create_target(void *d, u32 w, u32 h, u32 format, u32 ms, u32 q, u32 lock, void **out, void *share)
+{
+    note("display: render target", w << 16 | h);
+    return real_create_target(d, w, h, format, ms, q, lock, out, share);
+}
+
+static long __stdcall create_depth(void *d, u32 w, u32 h, u32 format, u32 ms, u32 q, u32 discard, void **out, void *share)
+{
+    note("display: depth surface", w << 16 | h);
+    return real_create_depth(d, w, h, format, ms, q, discard, out, share);
+}
+#endif
+
 static long __stdcall create_device(void *d3d, u32 adapter, u32 type, void *window, u32 flags, void *params, void **device)
 {
     long result = real_create_device(d3d, adapter, type, window, flags, params, device);
+#ifdef ENRT_LOG
+    note("display: device back buffer", ((u32 *)params)[0] << 16 | ((u32 *)params)[1]);
+    note("display: device windowed", ((u32 *)params)[8]);
+    if (result >= 0 && !real_create_texture)
+        hook_slot(*device, 23, (void *)create_texture, &real_create_texture),
+            hook_slot(*device, 28, (void *)create_target, &real_create_target),
+            hook_slot(*device, 29, (void *)create_depth, &real_create_depth);
+#endif
     if (result >= 0 && !real_reset)
         hook_slot(*device, 16, (void *)reset, &real_reset);
+    if (result >= 0 && !real_present)
+        hook_slot(*device, 17, (void *)present, &real_present);
     if (result >= 0 && fps_ok && !real_vs_const)
-        hook_slot(*device, 94, (void *)vs_const, &real_vs_const), hook_slot(*device, 17, (void *)present, &real_present),
-            trace_hooks(*device);
+        hook_slot(*device, 94, (void *)vs_const, &real_vs_const), trace_hooks(*device);
     return result;
 }
 
@@ -3374,13 +3471,6 @@ static u32 english_hook(u32 id, struct frame *f)
         FONT_CELL[0] = w, FONT_CELL[1] = h, FONT_MODE = mode, FONT_COLOUR = colour, FONT_ALPHA = alpha;
         break;
     }
-    case 27:
-        if (RESOLUTION_RAISED != 'E') {
-            RESOLUTION_RAISED = 'E';
-            if (RESOLUTION < MODE_1080P)
-                RESOLUTION = MODE_1080P;
-        }
-        break;
     case 14:
         *(char *)f->arg[0] = 0;
         f->eax = f->arg[0];
@@ -3509,32 +3599,47 @@ static u32 english_hook(u32 id, struct frame *f)
 
 /* The added Game Settings rows, drawn from the option sheet (build.OPTION_ROWS) the way the stock rows are: a 310x42
    quad per text, white art tinted by the quad colour. Bands: 0-4 labels (text, voice, field of view, frame rate,
-   moving camera fix), 5-10 values (English, Japanese, 60, 120, on, off), 11 on the field of view numbers from 100. */
+   moving camera fix), 5-8 values (English, Japanese, 60, 120), 9-11 the display modes (fullscreen, windowed,
+   borderless), 12 on the field of view numbers from 100. ON and OFF come from the stock value sheets instead. */
 #define OPTION_W 310
 #define OPTION_BAND 42
 #define OPTION_SCALE 2
 #define LABEL_LEFT (-54)
 #define BAND_ENGLISH 5
 #define BAND_60 7
-#define BAND_ON 9
-#define BAND_FOV 11
+#define BAND_DISPLAY 9
+/* The display modes, each centred in its slot as every value is: the first where the stock ON plate centres (as the
+   TEXTURE FILTER row's first value does), each next 195 on, so each word fits its slot (build.DISPLAY_MODE_PITCH less
+   build.VALUE_MARGIN) at its natural width. */
+#define DISPLAY_MODE_FIRST (STOCK_VALUE_W / 2)
+#define DISPLAY_MODE_PITCH 195
+#define BAND_FOV 12
 #define VALUE_NEXT_LANGUAGE 563
 #define VALUE_NEXT_FPS 557
 #define FOV_CENTRE (VALUE_CENTRE + 70)
-static const u32 cursor_tint = 0x80808080, idle_tint = 0x80404040, value_lit = 0x804E777F, value_dim = 0x804E4E4E;
+/* The stock ON quad, 140 units wide at the row's y, from the label quad's x - LABEL_LEFT; OFF the next 140. */
+#define STOCK_VALUE_X 347
+#define STOCK_VALUE_W 140
+static const u32 cursor_tint = 0x80808080, idle_tint = 0x80404040, value_lit = 0x804E777F, value_dim = 0x804E4E4E,
+                 untinted = 0x80808080;
 
-static void option_text(u32 band, int x, u32 y, u32 tint)
+static void sheet_text(u32 sheet, u32 band, u32 w, int x, u32 y, u32 tint)
 {
-    unsigned long long handle = hires_handle[option_sheet - 1];
+    unsigned long long handle = hires_handle[sheet - 1];
     u32 *quad;
     hires_native = 1;
     quad = ((u32 *(*)(u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32))0x5DDAB0)(
-        (u32)handle, (u32)(handle >> 32), x, y, 0, OPTION_W, OPTION_BAND, 0, band * OPTION_BAND * OPTION_SCALE,
-        OPTION_W * OPTION_SCALE, OPTION_BAND * OPTION_SCALE, 0x80, 1);
+        (u32)handle, (u32)(handle >> 32), x, y, 0, w, OPTION_BAND, 0, band * OPTION_BAND * OPTION_SCALE,
+        w * OPTION_SCALE, OPTION_BAND * OPTION_SCALE, 0x80, 1);
     hires_native = 0;
     quad[8] = tint, quad[9] = 0x3f800000;
     ((void (*)(u32 *, u32))0x5DCA30)(quad, 0);
     ((void (*)(u32))0x5DD700)(0);
+}
+
+static void option_text(u32 band, int x, u32 y, u32 tint)
+{
+    sheet_text(option_sheet, band, OPTION_W, x, y, tint);
 }
 
 static void option_row(u32 row, u32 x, u32 y)
@@ -3549,13 +3654,22 @@ static void option_row(u32 row, u32 x, u32 y)
     else if (row == rows + 1)
         label = 3, first = BAND_60, chosen = fps == 120, next = VALUE_NEXT_FPS;
     else
-        label = 4, first = BAND_ON, chosen = !moving_fix, next = VALUE_NEXT_FPS;
+        label = 4, chosen = !moving_fix;
     option_text(label, x + LABEL_LEFT, y, SETTINGS_CURSOR == 3 + row ? cursor_tint : idle_tint);
     if (row == rows)
         return option_text(BAND_FOV + (fov - FOV_MIN) / FOV_STEP, x + FOV_CENTRE - OPTION_W / 2, y, value_lit);
+    if (row == rows + 2) {  /* the stock OFF and ON, coloured lit or dim in their sheets, as the stock rows draw them */
+        if (value_sheet[0] && value_sheet[1]) {
+            sheet_text(value_sheet[chosen == 1], 1, STOCK_VALUE_W, x + STOCK_VALUE_X, y, untinted);
+            sheet_text(value_sheet[chosen == 0], 0, STOCK_VALUE_W, x + STOCK_VALUE_X + STOCK_VALUE_W, y, untinted);
+        }
+        return;
+    }
     option_text(first, x + VALUE_CENTRE - OPTION_W / 2, y, chosen == 0 ? value_lit : value_dim);
     option_text(first + 1, x + next - OPTION_W / 2, y, chosen == 1 ? value_lit : value_dim);
 }
+
+static int display_hook(u32 id, struct frame *f, u32 *replace);
 
 static int always(u32 id, struct frame *f, u32 *replace)
 {
@@ -3563,7 +3677,18 @@ static int always(u32 id, struct frame *f, u32 *replace)
     const u32 *voice, *se;
     const u8 *lip = 0;
     *replace = 0;
+    if (id >= 75 && id <= 104)
+        return display_hook(id, f, replace);
     switch (id) {
+    case 27:
+        if (display_mode != MODE_FROM_SAVE)  /* settings.ini's display mode over the save's */
+            WINDOWED_BYTE = display_mode != 0;
+        if (RESOLUTION_RAISED != 'E') {
+            RESOLUTION_RAISED = 'E';
+            if (RESOLUTION < MODE_1080P)
+                RESOLUTION = MODE_1080P;
+        }
+        return 1;
     case 68:
     case 69:
         glyph_fit(id, f);
@@ -3597,11 +3722,11 @@ static int always(u32 id, struct frame *f, u32 *replace)
         else if (f->ebp - 4 == rows)
             choice_row(fps_label[!english], fps_value[!english], fps == 120, f->edi, f->ebx, SETTINGS_CURSOR == 4 + rows);
         else if (f->ebp - 5 == rows)
-            choice_row(moving_fix_label[!english], switch_value, !moving_fix, f->edi, f->ebx,
+            choice_row(moving_fix_label[!english], switch_value, moving_fix, f->edi, f->ebx,
                        SETTINGS_CURSOR == 5 + rows);
 #ifdef ENRT_RENDER_DISTANCE
         else if (f->ebp - 6 == rows)
-            choice_row(distance_label[!english], switch_value, !distance, f->edi, f->ebx, SETTINGS_CURSOR == 6 + rows);
+            choice_row(distance_label[!english], switch_value, distance, f->edi, f->ebx, SETTINGS_CURSOR == 6 + rows);
 #endif
         else
             return 1;
@@ -3621,6 +3746,8 @@ static int always(u32 id, struct frame *f, u32 *replace)
         else if (*(const u32 *)(f->ebp + 0x1C) - 6 == rows && !INPUT_BLOCKED)
             distance_input(f->eax);
 #endif
+        else if (*(const u32 *)(f->ebp + 0x1C) < 3 && !INPUT_BLOCKED)
+            switch_input(*(const u32 *)(f->ebp + 0x1C), &f->eax);
         else
             language_input(*(const u32 *)(f->ebp + 0x1C) - 3, f->eax);
         return 1;
@@ -3769,7 +3896,19 @@ static int always(u32 id, struct frame *f, u32 *replace)
 #ifdef ENRT_TEST
         test_quad(id, f, 2);
 #endif
+        if (id == 21 && (f->ret == 0x56CC09 || f->ret == 0x56CC65) && option_sheet) {
+            /* Graphics: the stock ON and OFF plates give way to the three display modes, the current one lit */
+            int x = (int)f->arg[2] + DISPLAY_MODE_FIRST - OPTION_W / 2, i;
+            u32 y = f->arg[3], mode = display_mode == MODE_FROM_SAVE ? WINDOWED_BYTE != 0 : display_mode;
+            f->arg[2] = f->arg[3] = 5000;
+            for (i = 0; f->ret == 0x56CC09 && i < 3; i++)
+                option_text(BAND_DISPLAY + (u32)i, x + mode_slot[i] * DISPLAY_MODE_PITCH, y,
+                            (u32)i == mode ? value_lit : value_dim);
+        }
         hires_quad(id, f);
+#ifdef ENRT_LOG
+        survey_builder(f);
+#endif
         return 1;
 #ifdef ENRT_TEST
     case 73:
@@ -3921,6 +4060,490 @@ static void put32(u8 *p, u32 v)
     p[0] = (u8)v, p[1] = (u8)(v >> 8), p[2] = (u8)(v >> 16), p[3] = (u8)(v >> 24);
 }
 
+/* Display sizes and screen shapes. The game lays its 2D out in SCREEN_W x SCREEN_H: here a centred 16:9
+ * area (display_fit.h), half size past the packets' 16-bit y. The back buffer, the window, the viewport and the 3D
+ * camera take the output size, and the 2D converter (0x5CD5E0) maps layout px into the area just before it rounds.
+ * Two sizes, kept here only: the output (back buffer, window, present; bars, field of view and 2D follow it) and the
+ * 3D scene (equal to the output; a future spatial upscaler would draw the scene smaller). Each reader below names
+ * which it means.
+ * The size lives in settings.ini, an index into display_sizes; the save's own index byte (0x80152D) stays a stock
+ * index, so a save still works without the mod. */
+static struct display_fit fit = {1920, 1080, 1, 0, 0, 0};
+static float fit_scale = 1.0f, fit_x, fit_y;
+static char size_text[DISPLAY_SIZES][12];
+static const char *size_label[DISPLAY_SIZES];
+
+/* Output px per layout px: 2 where the layout is half size (2160-high screens), else 1. */
+static u32 display_scale(void)
+{
+    return fit.scale;
+}
+
+static void display_size(u32 i)
+{
+    size_at = i, out_w = display_sizes[i][0], out_h = display_sizes[i][1];
+    scene_w = out_w, scene_h = out_h;
+    win_w = display_mode == BORDERLESS ? desk_w : out_w, win_h = display_mode == BORDERLESS ? desk_h : out_h;
+    if ((unsigned long long)desk_w * out_h <= (unsigned long long)desk_h * out_w)
+        present_to.left = 0, present_to.right = (LONG)desk_w, present_to.top = (LONG)(desk_h - desk_w * out_h / out_w) / 2,
+            present_to.bottom = present_to.top + (LONG)(desk_w * out_h / out_w);
+    else
+        present_to.top = 0, present_to.bottom = (LONG)desk_h, present_to.left = (LONG)(desk_w - desk_h * out_w / out_h) / 2,
+            present_to.right = present_to.left + (LONG)(desk_h * out_w / out_h);
+    fit = display_fit(out_w, out_h);
+    area_w = fit.layout_w * fit.scale, area_h = fit.layout_h * fit.scale;
+    fit_scale = (float)fit.scale, fit_x = (float)fit.x, fit_y = (float)fit.y;
+}
+
+static void size_name(WCHAR *out, u32 i)
+{
+    u32 n = 0, v, d;
+    for (v = 0; v < 2; v++) {
+        for (d = 1000; d > display_sizes[i][v]; d /= 10)
+            ;
+        for (; d; d /= 10)
+            out[n++] = (WCHAR)('0' + display_sizes[i][v] / d % 10);
+        out[n++] = v ? 0 : 'x';
+    }
+}
+
+/* settings.ini's size, else the desktop's when listed, else 1920x1080. */
+static void display_load(void)
+{
+    WCHAR name[MAX_PATH], value[16], want[16];
+    u32 i, n;
+    int at;
+    desk_w = (u32)GetSystemMetrics(SM_CXSCREEN), desk_h = (u32)GetSystemMetrics(SM_CYSCREEN);
+    at = display_size_index(desk_w, desk_h);
+    GetPrivateProfileStringW(L"display", L"mode", L"", value, 16, path(name, L"settings.ini"));
+    display_mode = !lstrcmpiW(value, L"windowed") ? 1 : !lstrcmpiW(value, L"borderless") ? BORDERLESS
+        : !lstrcmpiW(value, L"fullscreen") ? 0 : MODE_FROM_SAVE;
+    if (display_mode != MODE_FROM_SAVE)
+        WINDOWED_BYTE = display_mode != 0;
+    GetPrivateProfileStringW(L"display", L"size", L"", value, 16, name);
+    for (i = 0; i < DISPLAY_SIZES; i++) {
+        size_name(want, i);
+        if (!lstrcmpW(value, want))
+            at = (int)i;
+        for (n = 0; (size_text[i][n] = (char)want[n]); n++)
+            ;
+        size_label[i] = size_text[i];
+    }
+    display_size(at < 0 ? DEFAULT_SIZE : (u32)at);
+}
+
+static void display_save(void)
+{
+    static const WCHAR *const mode_name[3] = {L"fullscreen", L"windowed", L"borderless"};
+    WCHAR name[MAX_PATH], value[16];
+    size_name(value, size_at);
+    WritePrivateProfileStringW(L"display", L"size", value, path(name, L"settings.ini"));
+    if (display_mode != MODE_FROM_SAVE)
+        WritePrivateProfileStringW(L"display", L"mode", mode_name[display_mode], name);
+}
+
+/* The game's window calls (its imports): borderless keeps the window frameless over the whole desktop. */
+#define POPUP_STYLE 0x90080000u  /* WS_POPUP | WS_VISIBLE | WS_SYSMENU, the stock full-screen style: Alt+F4 closes */
+static LONG (WINAPI *real_set_long)(HWND, int, LONG);
+static BOOL (WINAPI *real_set_pos)(HWND, HWND, int, int, int, int, UINT);
+static HWND (WINAPI *real_create_window)(DWORD, LPCSTR, LPCSTR, DWORD, int, int, int, int, HWND, HMENU, HINSTANCE, LPVOID);
+
+static LONG WINAPI set_long(HWND window, int index, LONG value)
+{
+    if (display_mode == BORDERLESS && index == GWL_STYLE)
+        value = (LONG)POPUP_STYLE;
+    return real_set_long(window, index, value);
+}
+
+static BOOL WINAPI set_pos(HWND window, HWND after, int x, int y, int w, int h, UINT flags)
+{
+    if (display_mode == BORDERLESS)
+        x = y = 0, w = (int)desk_w, h = (int)desk_h, flags &= ~(UINT)(SWP_NOMOVE | SWP_NOSIZE);
+    return real_set_pos(window, after, x, y, w, h, flags);
+}
+
+static BOOL (WINAPI *real_set_placement)(HWND, const WINDOWPLACEMENT *);
+
+static BOOL WINAPI set_placement(HWND window, const WINDOWPLACEMENT *at)
+{
+    WINDOWPLACEMENT full;
+    if (display_mode != BORDERLESS)
+        return real_set_placement(window, at);
+    full = *at;
+    full.rcNormalPosition.left = full.rcNormalPosition.top = 0;
+    full.rcNormalPosition.right = (LONG)desk_w, full.rcNormalPosition.bottom = (LONG)desk_h;
+    return real_set_placement(window, &full);
+}
+
+static HWND WINAPI create_window(DWORD ex, LPCSTR cls, LPCSTR title, DWORD style, int x, int y, int w, int h,
+                                 HWND parent, HMENU menu, HINSTANCE instance, LPVOID param)
+{
+    if (display_mode == BORDERLESS)
+        style = POPUP_STYLE, x = y = 0, w = (int)desk_w, h = (int)desk_h;
+    return real_create_window(ex, cls, title, style, x, y, w, h, parent, menu, instance, param);
+}
+
+/* Windowed <-> borderless keeps the windowed byte, so the game changes nothing itself: restyle the window here. */
+static void display_restyle(u32 was)
+{
+    HWND window = DISPLAY_WINDOW;
+    if (!window || !was || !display_mode || was == display_mode)
+        return;
+    real_set_long(window, GWL_STYLE, display_mode == BORDERLESS ? (LONG)POPUP_STYLE
+                  : *(LONG *)(MAIN_DISPLAY + 0x190));  /* the game's saved windowed style */
+    if (display_mode == BORDERLESS)
+        real_set_pos(window, 0, 0, 0, (int)desk_w, (int)desk_h, SWP_NOZORDER | SWP_FRAMECHANGED);
+    else  /* the game's own fit: client size and centring */
+        ((void (__thiscall *)(void *))0x5CA090)((void *)MAIN_DISPLAY);
+}
+
+/* The calls that store SCREEN_W/H (their return addresses) get the layout size; every other caller (back buffer,
+   window, present) the output's. */
+static int layout_store(u32 ret)
+{
+    return ret == 0x5CB464 || ret == 0x5CB46C || ret == 0x5CB64C || ret == 0x5CB8D2 || ret == 0x5CB8DA;
+}
+
+static int display_hook(u32 id, struct frame *f, u32 *replace)
+{
+    float *v;
+    switch (id) {
+    case 75:  /* resolution index */
+        f->eax = size_at, *replace = 1;
+        return 1;
+    case 76:  /* set it; the stock first-run default (index 2 from 0x47C975) is not ours */
+        if (f->ret != 0x47C97A && f->arg[0] < DISPLAY_SIZES && f->arg[0] != size_at)
+            display_size(f->arg[0]), display_save();
+        *replace = 1;
+        return 1;
+    case 77:
+    case 78:
+        f->eax = display_sizes[f->arg[0] < DISPLAY_SIZES ? f->arg[0] : DISPLAY_SIZES - 1][id - 77], *replace = 1;
+        return 1;
+    case 80:
+        f->eax = layout_store(f->ret) ? fit.layout_w : out_w, *replace = 1;
+        return 1;
+    case 81:
+        f->eax = layout_store(f->ret) ? fit.layout_h : out_h, *replace = 1;
+        return 1;
+    case 102: {  /* a projection (out, fov, aspect, near, far, flags, scale): on a screen narrower than 16:9 the
+                    camera keeps 16:9's horizontal view and sees more above and below */
+        float *aspect = (float *)&f->arg[2], *scale = (float *)&f->arg[6], screen = (float)out_w / (float)out_h;
+        if (screen < 16.0f / 9 && *aspect > screen * 0.999f && *aspect < screen * 1.001f)
+            *scale *= 16.0f / 9 / screen;
+        return 1;
+    }
+    case 103:  /* a packet queued (eax = its node): tagged with the edge HUD element drawing, if any */
+        ((u32 *)f->eax)[3] = (u32)hud_side;
+#ifdef ENRT_LOG
+        survey_packet((const u32 *)f->eax);
+#endif
+        return 1;
+    case 104:  /* the flush at a node (ecx) */
+        hud_flush((u32 *)f->ecx);
+        return 1;
+    case 101:  /* the real height (stock: from the save's index byte, not the index getter) */
+        f->eax = out_h, *replace = 1;
+        return 1;
+    case 88:  /* full-screen row: the display mode */
+        f->eax = display_mode == MODE_FROM_SAVE ? WINDOWED_BYTE != 0 : display_mode, *replace = 1;
+        return 1;
+    case 89:
+        if (f->ret != 0x47C981 && f->arg[0] < 3 && f->arg[0] != display_mode) {
+            u32 was = display_mode == MODE_FROM_SAVE ? WINDOWED_BYTE != 0 : display_mode;
+            display_mode = f->arg[0], WINDOWED_BYTE = display_mode != 0;
+            display_size(size_at), display_save(), display_restyle(was);
+        }
+        *replace = 1;
+        return 1;
+    case 90: {  /* the row steps one slot toward its pressed side (arg 0: 0 left, 1 right) and stops at the ends */
+        u32 slot = mode_slot[display_mode == MODE_FROM_SAVE ? WINDOWED_BYTE != 0 : display_mode];
+        *replace = 1;
+        if (f->arg[0] ? slot == 2 : slot == 0)
+            return 1;
+        GAME_SOUND(1, 0, 0x2CDC, 0x2CDC, 0x1000);
+        ((void (*)(u32))0x56D270)(slot_mode[f->arg[0] ? slot + 1 : slot - 1]);  /* set, reset, ask to keep */
+        return 1;
+    }
+    case 91:  /* the screen buffers 0x5C8130 makes (eax x ecx from SCREEN_H/W): the 3D scene's */
+    case 92:
+        if (f->esi == MAIN_DISPLAY)
+            f->eax = scene_h, f->ecx = scene_w;
+        return 1;
+    case 93:  /* the height handed to 0x5CEB00, which letterboxes a shorter scene (the stock 16:10 bars): the scene's */
+    case 98:
+        if (f->esi == MAIN_DISPLAY)
+            *(id == 93 ? &f->eax : &f->edx) = scene_h;
+        return 1;
+    case 94:  /* a 2D clip (x0, x1, y0, y1 in layout px): the whole layout means the whole output, else mapped */
+        display_clip(&fit, out_w, out_h, f->arg);
+        return 1;
+    case 95:  /* a quad in raw px (x0, y0, x1, y1): the movies', an overlay's and an image blit's (0x5E92xx) are in
+                 layout px; the stock letterbox's (0x5CEC80) and the effect passes' are not */
+        if (f->ret == 0x5CF3A4 || f->ret == 0x5CF4F3 || f->ret == 0x5D3F87 || f->ret == 0x5E9399) {
+            int *r = (int *)f->arg[0];
+            r[0] = r[0] * (int)fit.scale + fit.x, r[2] = r[2] * (int)fit.scale + fit.x;
+            r[1] = r[1] * (int)fit.scale + fit.y, r[3] = r[3] * (int)fit.scale + fit.y;
+        }
+        return 1;
+    case 96:  /* can the display take w x h: full screen asks the adapter (stock); a window only has to fit the
+                 desktop, and borderless scales any size onto it */
+        if (*(const u32 *)(f->ecx + 0x194)) {
+            f->eax = display_mode == BORDERLESS || (f->arg[0] <= desk_w && f->arg[1] <= desk_h), *replace = 1;
+        }
+        return 1;
+    case 97:  /* the window was made at the output's size, from the same calls that stored SCREEN: the layout's */
+        SCREEN_W = fit.layout_w, SCREEN_H = fit.layout_h;
+        return 1;
+    case 82:  /* the back buffer's width was read from SCREEN_W, stored as the output's just before: now the layout's */
+        SCREEN_W = fit.layout_w, SCREEN_H = fit.layout_h;
+        return 1;
+    case 83:  /* the screen's viewport and scissor, shared by the 3D scene and the 2D: the whole output */
+    case 84:
+        if (f->edi == MAIN_DISPLAY)
+            f->eax = out_w, f->ecx = out_h;
+        return 1;
+    case 85:  /* a camera's aspect, from its 1280 x 720 (or 1280 x 360 split) screen: the output's, a wider view */
+    case 86:
+        v = (float *)(f->esi + 0x1F8);
+        if (v[0] == 1280.0f && (v[1] == 720.0f || v[1] == 360.0f))
+            *(float *)(f->esp + (id == 85 ? 0x54 : 0x20)) *= (float)out_w * 9 / ((float)out_h * 16);
+        return 1;
+    case 87:  /* a marker's point, 2048-centred in 1280 x 720 units over the real screen: into the layout's units */
+        v = (float *)f->esi;
+        v[0] = 2048.0f + (v[0] - 2048.0f) * out_w / area_w, v[1] = 2048.0f + (v[1] - 2048.0f) * out_h / area_h;
+        return 1;
+    }
+    return 0;
+}
+
+/* Battle HUD elements against a screen edge move outward on screens wider than 16:9. Each element's draw call (in
+   the HUD root 0x573CF0, the minimap's in the battle draw 0x4B0D60) is routed through a stub that sets hud_side
+   while it runs; the queue sink (0x5DC120) tags each packet node with it, and the frame's flush (0x5DD530) emits
+   a shifted copy in place of each tagged packet, so a packet the game keeps between frames never moves twice. */
+static const u32 hud_calls[][3] = {  /* call (or tail jump) site, its target, side */
+    {0x573DEE, 0x57BD00, -1}, {0x573E12, 0x57BD00, -1}, {0x573E49, 0x57BD00, -1},  /* portraits and gauges */
+    {0x573E4E, 0x5760D0, -1}, {0x573E44, 0x574510, -1},                           /* ally bars, combo */
+    {0x573DDF, 0x573F20, 1}, {0x573E38, 0x573F20, 1}, {0x573E5A, 0x595FA0, 1},     /* K.O. count, army gauge */
+    {0x573DF3, 0x5734C0, 1}, {0x573E62, 0x5734C0, 1}, {0x573E17, 0x573580, 1},     /* timer */
+    {0x4B0DB1, 0x5677A0, 1}, {0x4B0DCA, 0x5677A0, 1}, {0x4B0E1B, 0x5677A0, 1},     /* minimap */
+};
+#define HUD_CALLS (sizeof hud_calls / sizeof *hud_calls)
+#define HUD_STUB 48
+static u32 hud_return;
+
+/* pop [hud_return]; mov [hud_side], side; call target; mov [hud_side], 0; push [hud_return]; ret. The callees
+   take arguments in registers and on the stack, so the stub touches neither; they do not nest. */
+static void hud_stub(u8 *t, u32 target, int side)
+{
+    t[0] = 0x8f, t[1] = 0x05, put32(t + 2, (u32)&hud_return);
+    t[6] = 0xc7, t[7] = 0x05, put32(t + 8, (u32)&hud_side), put32(t + 12, (u32)side);
+    t[16] = 0xe8, put32(t + 17, target - (u32)(t + 21));
+    t[21] = 0xc7, t[22] = 0x05, put32(t + 23, (u32)&hud_side), put32(t + 27, 0);
+    t[31] = 0xff, t[32] = 0x35, put32(t + 33, (u32)&hud_return);
+    t[37] = 0xc3;
+}
+
+static int hud_install(void)
+{
+    u8 *stubs, *code;
+    u32 i;
+    for (i = 0; i < HUD_CALLS; i++)
+        if ((*(const u8 *)hud_calls[i][0] & 0xfe) != 0xe8
+            || hud_calls[i][0] + 5 + *(const u32 *)(hud_calls[i][0] + 1) != hud_calls[i][1])
+            return note("refused: edge HUD, the code differs from stock at", hud_calls[i][0]), 0;
+    if (!(stubs = VirtualAlloc(0, HUD_STUB * HUD_CALLS, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE)))
+        return note("refused: edge HUD, no memory for its stubs", 0), 0;
+    for (i = 0, code = stubs; i < HUD_CALLS; i++, code += HUD_STUB) {
+        u8 rel[4];
+        hud_stub(code, hud_calls[i][1], (int)hud_calls[i][2]);
+        put32(rel, (u32)code - (hud_calls[i][0] + 5));
+        write_at(hud_calls[i][0] + 1, rel, 4);
+    }
+    return 1;
+}
+
+/* The flush meets a node (ecx): a tagged packet is copied into this frame's arena (0x5DC070) and the copy moved. */
+static void hud_flush(u32 *node)
+{
+    u32 side = node[3], ptr = node[1], *from, *copy;
+    node[3] = 0;
+    if (!side || !fit.hud)
+        return;
+    from = (u32 *)(ptr & 1 ? ptr & ~0xFu : ptr);
+    if (!(copy = ((u32 *(*)(u32))0x5DC070)(node[2] * 16)))
+        return;
+    memcpy(copy, from, node[2] * 16);
+    display_packet_shift(copy, node[2], (int)side * fit.hud * 16);
+    node[1] = (u32)copy | (ptr & 1);
+}
+
+#ifdef ENRT_LOG
+/* Sharpness survey: each distinct sprite a frame queues, once: wall time (Unix ms), texture (entry.item, or the
+   hi-res row, or the raw TEX0), layout rect and the texels it spans. Output px per texel = w * fit.scale / tw. */
+static void survey_packet(const u32 *node)
+{
+    static u32 seen[8192], epoch;
+    if (GetTickCount() / 2000 != epoch)  /* every 2 s a piece still drawn is logged again, near each capture */
+        epoch = GetTickCount() / 2000, memset(seen, 0, sizeof seen);
+    const u32 *p = (const u32 *)(node[1] & 1 ? node[1] & ~0xFu : node[1]), *end = p + node[2] * 4, *q;
+    u32 tex = 0, tex_hi = 0, u[2] = {0, 0}, v[2] = {0, 0}, x[2] = {0, 0}, y[2] = {0, 0}, n = 0, j, l;
+    float st[2][2] = {{0, 0}, {0, 0}};
+    while (p + 4 <= end) {
+        u32 lo = p[0], hi = p[1], nloop = lo & 0x7FFF, flg = hi >> 26 & 3, nreg = hi >> 28 ? hi >> 28 : 16;
+        unsigned long long regs = (unsigned long long)p[3] << 32 | p[2];
+        q = p + 4;
+        if (flg != 1) {
+            p = q + (flg == 0 ? 4 * nloop * nreg : flg == 2 ? 4 * nloop : 0);
+            if (flg == 3)
+                break;
+            continue;
+        }
+        for (l = 0; l < nloop; l++)
+            for (j = 0; j < nreg && q + 2 <= end; j++, q += 2) {
+                u32 r = (u32)(regs >> 4 * j) & 0xF;
+                if (r == 6 || r == 7)  /* TEX0_1, TEX0_2 */
+                    tex = q[0], tex_hi = q[1];
+                else if (r == 2)  /* ST: float s, t over the texture's TW x TH (log2 in TEX0 bits 26-33) */
+                    st[n & 1][0] = *(const float *)&q[0], st[n & 1][1] = *(const float *)&q[1],
+                    u[n & 1] = (u32)(st[n & 1][0] * (float)(16u << (tex >> 26 & 15))),
+                    v[n & 1] = (u32)(st[n & 1][1] * (float)(16u << ((tex >> 30 | tex_hi << 2) & 15)));
+                else if (r == 3)
+                    u[n & 1] = q[0] & 0x3FFF, v[n & 1] = q[0] >> 16 & 0x3FFF;
+                else if (r == 5 || r == 0xD) {
+                    x[n & 1] = q[0], y[n & 1] = q[1] & 0xFFFF;
+                    if (++n % 2 == 0 && tex) {
+                        u32 w = (x[1] > x[0] ? x[1] - x[0] : x[0] - x[1]) >> 4, h = (y[1] > y[0] ? y[1] - y[0] : y[0] - y[1]) >> 4;
+                        u32 tw = (u[1] > u[0] ? u[1] - u[0] : u[0] - u[1]) >> 4, th = (v[1] > v[0] ? v[1] - v[0] : v[0] - v[1]) >> 4;
+                        u32 name = texture(tex), k, key = name * 2654435761u ^ w * 40503u ^ h * 9973u ^ tw * 131u ^ th, at;
+                        char line[96], *o = line;
+                        FILETIME ft;
+                        for (k = 0; k < hires_rows && (u32)hires_handle[k] != tex; k++)
+                            ;
+                        if (k < hires_rows)
+                            name = 0x80000000u | hires_row[k].entry << 8 | hires_row[k].item;
+                        for (at = key & 8191, k = 0; seen[at] && seen[at] != key && k < 64; k++)
+                            at = (at + 1) & 8191;
+                        if (seen[at] || !w || !tw)  /* seen, or a full table: drop rather than stall the game */
+                            continue;
+                        seen[at] = key ? key : 1;
+                        GetSystemTimeAsFileTime(&ft);
+                        o = put_hex(o, (u32)((((unsigned long long)ft.dwHighDateTime << 32 | ft.dwLowDateTime) / 10000
+                                              - 11644473600000ull) & 0xFFFFFFFFu), 8);
+                        for (k = 0; k < 7; k++) {
+                            u32 val = k == 0 ? (name == tex ? tex : name) : k == 1 ? (x[0] < x[1] ? x[0] : x[1]) >> 4
+                                      : k == 2 ? (y[0] < y[1] ? y[0] : y[1]) >> 4 : k == 3 ? w : k == 4 ? h : k == 5 ? tw : th;
+                            *o++ = ' ', o = put_hex(o, val, 8);
+                        }
+                        *o = 0;
+                        note(line, name == tex);
+                    }
+                }
+            }
+        p = q;
+    }
+}
+#endif
+
+#ifdef ENRT_LOG
+/* The same survey for sprites the builders 0x5DDAB0/0x5DE620 make (after any hi-res swap): x, y, w, h in 1280-wide
+   units and the texels (uw, vh) they span; logged with the value 2. */
+static void survey_builder(const struct frame *f)
+{
+    static u32 seen[4096], epoch;
+    if (GetTickCount() / 2000 != epoch)  /* every 2 s a piece still drawn is logged again, near each capture */
+        epoch = GetTickCount() / 2000, memset(seen, 0, sizeof seen);
+    u32 handle = f->arg[0], name = texture(handle), k, at, key;
+    char line[96], *o = line;
+    FILETIME ft;
+    for (k = 0; k < hires_rows && (u32)hires_handle[k] != handle; k++)
+        ;
+    if (k < hires_rows)
+        name = 0x80000000u | hires_row[k].entry << 8 | hires_row[k].item;
+    key = name * 2654435761u ^ f->arg[5] * 40503u ^ f->arg[6] * 9973u ^ f->arg[9] * 131u ^ f->arg[10];
+    for (at = key & 4095, k = 0; seen[at] && seen[at] != key && k < 64; k++)
+        at = (at + 1) & 4095;
+    if (seen[at] || !f->arg[9] || !f->arg[10] || (int)f->arg[2] >= 5000)
+        return;
+    seen[at] = key ? key : 1;
+    GetSystemTimeAsFileTime(&ft);
+    o = put_hex(o, (u32)((((unsigned long long)ft.dwHighDateTime << 32 | ft.dwLowDateTime) / 10000 - 11644473600000ull)
+                         & 0xFFFFFFFFu), 8);
+    for (k = 0; k < 7; k++)
+        *o++ = ' ', o = put_hex(o, k == 0 ? name : f->arg[k == 1 ? 2 : k == 2 ? 3 : k == 3 ? 5 : k == 4 ? 6 : k == 5 ? 9 : 10], 8);
+    *o = 0;
+    note(line, 2);
+}
+#endif
+
+/* Stock bytes of every display edit, checked before any is written. */
+static const u32 to_window[][2] = {  /* an absolute SCREEN_W/H load that means the window's client size */
+    {0x5CBE03, 0x7A4574}, {0x5CBE13, 0x7A4578}, {0x5CB40B, 0x7A4574}, {0x5CB419, 0x7A4578},  /* resize, desktop fit */
+};
+static const u32 to_scene[][2] = {  /* one that means the 3D scene: the two-player split viewports, */
+    {0x508CB6, 0x7A4574}, {0x508CD8, 0x7A4578}, {0x50F996, 0x7A4578}, {0x50F9A8, 0x7A4574},
+    {0x50FA40, 0x7A4578}, {0x50FA64, 0x7A4574}, {0x50FA82, 0x7A4578},
+    {0x56D474, 0x7A4578}, {0x56D47A, 0x7A4574}, {0x5B5D98, 0x7A4578}, {0x5B5D9E, 0x7A4574},  /* screen buffers, */
+    {0x5CF671, 0x7A4578}, {0x5CF678, 0x7A4574},  /* the post effect's, */
+    {0x5C57A3, 0x7A4574}, {0x5C57BD, 0x7A4578},  /* the post-process buffer sizes (full, half, quarter) */
+};
+static const u32 ftol_x[] = {0x5CD69D, 0x5CD802, 0x5CDA5E, 0x5CDC95, 0x5CDFC7, 0x5CE1F3, 0x5CE37C, 0x5CE57E};
+static const u32 ftol_y[] = {0x5CD6B0, 0x5CD6F3, 0x5CD815, 0x5CD857, 0x5CDA6D, 0x5CDCA8, 0x5CDD16, 0x5CDD84,
+                             0x5CDDEA, 0x5CDFD6, 0x5CE202, 0x5CE38B, 0x5CE597, 0x5CE61E};
+
+static int display_install(u8 *thunks)
+{
+    u8 last = DISPLAY_SIZES - 1, count = DISPLAY_SIZES;
+    u32 i, window[2] = {(u32)&win_w, (u32)&win_h}, scene[2] = {(u32)&scene_w, (u32)&scene_h}, labels = (u32)size_label;
+    u8 call[5] = {0xe8};
+    for (i = 0; i < sizeof to_window / sizeof *to_window; i++)
+        if (!stock_at(to_window[i][0], (const u8 *)&to_window[i][1], 4))
+            return note("refused: display sizes, the code differs from stock at", to_window[i][0]), 0;
+    for (i = 0; i < sizeof to_scene / sizeof *to_scene; i++)
+        if (!stock_at(to_scene[i][0], (const u8 *)&to_scene[i][1], 4))
+            return note("refused: display sizes, the code differs from stock at", to_scene[i][0]), 0;
+    for (i = 0; i < 22; i++) {
+        u32 at = i < 8 ? ftol_x[i] : ftol_y[i - 8];
+        put32(call + 1, FTOL - (at + 5));
+        if (!stock_at(at, call, 5))
+            return note("refused: display sizes, the code differs from stock at", at), 0;
+    }
+    if (!stock_at(0x56D19D, (const u8 *)"\x83\xfb\x0b", 3) || !stock_at(0x56D1CA, (const u8 *)"\x83\xfb\x0b", 3)
+        || !stock_at(0x5CB432, (const u8 *)"\xbf\x0a\x00\x00\x00", 5) || !stock_at(0x56C803, (const u8 *)"\x2c\xde\x6f\x00", 4)
+        || !stock_at(0x56CB70, (const u8 *)"\x2c\xde\x6f\x00", 4))
+        return note("refused: display sizes, the code differs from stock near", 0x56D19D), 0;
+    /* ftol with the layout-to-back-buffer map first: fmul [fit_scale], fadd [fit_x or fit_y], jmp ftol */
+    for (i = 0; i < 2; i++) {
+        u8 *t = thunks + 32 * i;  /* 17 bytes each */
+        t[0] = 0xd8, t[1] = 0x0d, put32(t + 2, (u32)&fit_scale);
+        t[6] = 0xd8, t[7] = 0x05, put32(t + 8, i ? (u32)&fit_y : (u32)&fit_x);
+        t[12] = 0xe9, put32(t + 13, FTOL - (u32)(t + 17));
+    }
+    for (i = 0; i < 22; i++) {
+        u32 at = i < 8 ? ftol_x[i] : ftol_y[i - 8];
+        put32(call + 1, (u32)(thunks + (i < 8 ? 0 : 32)) - (at + 5));
+        write_at(at, call, 5);
+    }
+    for (i = 0; i < sizeof to_window / sizeof *to_window; i++)
+        write_at(to_window[i][0], (const u8 *)&window[to_window[i][1] == 0x7A4578], 4);
+    real_set_long = *(void **)0x6CC25C, real_set_pos = *(void **)0x6CC278, real_create_window = *(void **)0x6CC248;
+    real_set_placement = *(void **)0x6CC28C;
+    {
+        u32 imports[4] = {(u32)set_long, (u32)set_pos, (u32)create_window, (u32)set_placement};
+        write_at(0x6CC25C, (const u8 *)&imports[0], 4), write_at(0x6CC278, (const u8 *)&imports[1], 4),
+            write_at(0x6CC248, (const u8 *)&imports[2], 4), write_at(0x6CC28C, (const u8 *)&imports[3], 4);
+    }
+    for (i = 0; i < sizeof to_scene / sizeof *to_scene; i++)
+        write_at(to_scene[i][0], (const u8 *)&scene[to_scene[i][1] == 0x7A4578], 4);
+    write_at(0x5CB433, &last, 1);  /* the windowed fit search starts at the last size */
+    write_at(0x56D19F, &count, 1), write_at(0x56D1CC, &count, 1);  /* the Options step stops past the last size */
+    write_at(0x56C803, (const u8 *)&labels, 4), write_at(0x56CB70, (const u8 *)&labels, 4);
+    hud_install();
+    display_ok = 1;
+    display_size(size_at);
+    return 1;
+}
+
 
 
 static u8 *hook_stub(u8 *p, const struct site *s)
@@ -3961,7 +4584,7 @@ static int patch(void)
             return note("refused: the code differs from stock at", enrt_hooks[i].va), 0;
     if (english && *(const u32 *)WIDTH_POINTER)
         return note("refused: the width pointer is set at", WIDTH_POINTER), 0;
-    if (!(stubs = VirtualAlloc(0, 48 * HOOK_COUNT, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE)))
+    if (!(stubs = VirtualAlloc(0, 48 * HOOK_COUNT + 64, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE)))
         return note("refused: no memory for the hook stubs", 0), 0;
     for (e = enrt_edits; *e != 0xFF; e += 7 + 2 * EDIT_LEN(e))
         if (wanted(*e) && !write_at(EDIT_VA(e), e + 7 + EDIT_LEN(e), EDIT_LEN(e)))
@@ -3978,6 +4601,7 @@ static int patch(void)
             return note("failed: could not write", s->va), 0;
         count++;
     }
+    display_install(stubs + 48 * HOOK_COUNT);
     if (english && !write_at(WIDTH_POINTER, (const u8 *)&widths, 4))
         return note("failed: could not write", WIDTH_POINTER), 0;
     FlushInstructionCache(GetCurrentProcess(), 0, 0);
@@ -4010,6 +4634,7 @@ static void install(HINSTANCE self)
     GetPrivateProfileStringW(L"display", L"distance", L"on", value, 16, name);
     distance = !!lstrcmpiW(value, L"off");
 #endif
+    display_load();
     english = !text_saved;
     rows = GetFileAttributesW(path(name, VOICE_BANK)) == INVALID_FILE_ATTRIBUTES ? 1 : 2;
     if (!stock_exe()) {

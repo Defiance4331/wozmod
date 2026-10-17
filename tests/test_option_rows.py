@@ -25,7 +25,7 @@ def test_option_sheet_bands_follow_the_order_the_runtime_draws_them() -> None:
     assert rows[:5] == ["TEXT LANGUAGE", "VOICE LANGUAGE", "FIELD OF VIEW", "FRAME RATE", "MOVING CAMERA FIX"]
     assert rows.index("ENGLISH") == c_define("BAND_ENGLISH") and rows[c_define("BAND_ENGLISH") + 1] == "JAPANESE"
     assert rows.index("60 FPS") == c_define("BAND_60") and rows[c_define("BAND_60") + 1] == "120 FPS"
-    assert rows.index("donor:e8a01133b1351e5f") == c_define("BAND_ON") and rows[c_define("BAND_ON") + 1] == "donor:38cca6bea010af8a"
+    assert rows[c_define("BAND_DISPLAY"):c_define("BAND_DISPLAY") + 3] == ["FULLSCREEN", "WINDOWED", "BORDERLESS"]
     assert rows[c_define("BAND_FOV"):] == [f"< {v}% >" for v in range(
         c_define("FOV_MIN"), c_define("FOV_MAX") + 1, c_define("FOV_STEP"))]
     assert (c_define("OPTION_W"), c_define("OPTION_BAND"), c_define("OPTION_SCALE")) == (
@@ -70,6 +70,7 @@ def test_option_sheet_puts_each_text_in_its_own_band_centred_and_inside_its_room
 def test_hires_bank_carries_the_option_sheet_as_an_entry_zero_row(monkeypatch, tmp_path) -> None:
     """Bug: no entry-0 row, so the runtime finds no option sheet and silently draws the rows in the game font."""
     served = Image.new("RGBA", (64, 64))
+    rows_h = len(build.OPTION_ROWS) * build.OPTION_BAND  # 23 bands: 1932 px at 2x, one 2048-high column
     pixels = served.tobytes("raw", "BGRA")
     size = G1T_HEADER.size + 4 + G1T_TEXTURE_HEADER.size + len(pixels)
     entry = (G1T_HEADER.pack(b"GT1G", b"0000", size, G1T_HEADER.size, 1, 0, 0, 0)
@@ -84,11 +85,18 @@ def test_hires_bank_carries_the_option_sheet_as_an_entry_zero_row(monkeypatch, t
     monkeypatch.setattr(build, "vector_art", lambda *a, **k: Image.new("RGBA", (128, 128)))
     monkeypatch.setattr(build, "hires_texts", lambda *a: ["x"])
     monkeypatch.setattr(build, "option_rows_art",
-                        lambda scale, squeeze: Image.new("RGBA", (build.OPTION_W * 2, 924 * 2)))
+                        lambda scale, squeeze: Image.new("RGBA", (build.OPTION_W * 2, rows_h * 2)))
     (entries / "4069.bin").write_bytes(b"package")
     mapping = {"faces": {}, "textures": [{"entry": 4069, "item": 2, "rows": [[{"text": "x"}]]}]}
     blob = build.hires_bin(entries, None, (mapping, {}))
     rows = [struct.unpack_from("<9I", blob, 4 + 36 * k) for k in range(struct.unpack_from("<I", blob)[0])]
-    assert [row[:7] for row in rows] == [(4069, 2, 2, 64, 64, 64, 0), (0, 0, 2, 310, 924, 42, 0)]
+    assert [row[:7] for row in rows] == [(4069, 2, 2, 64, 64, 64, 0), (0, 0, 2, 310, rows_h, 42, 0)]
     sheet = parse_g1t(blob[rows[1][7]:rows[1][7] + rows[1][8]]).textures[0]
     assert (sheet.width, sheet.height) == (1024, 2048)
+
+
+def test_display_mode_plates_step_by_their_lettering_room() -> None:
+    """Bug: the runtime's display-mode pitch changes but the lettering room still follows the old one, so the words
+    are squeezed for nothing or overrun the margin between them."""
+    room = c_define("DISPLAY_MODE_PITCH") - build.VALUE_MARGIN
+    assert {build.OPTION_NARROW[t] for t in ("FULLSCREEN", "WINDOWED", "BORDERLESS")} == {room}

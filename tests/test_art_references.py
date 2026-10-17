@@ -132,3 +132,18 @@ def test_missing_counterpart_cannot_try_to_read_a_donor_archive(tmp_path):
     reader = references.DonorReader(tmp_path)
     with pytest.raises(ValueError, match="no official counterpart"):
         reader.image({"kind": "no-official-counterpart"})
+
+
+def test_donor_reader_reads_wo1_x360_references_from_their_own_disc(tmp_path):
+    """Bug: a wo1-x360 reference read from the WO1 PC folder, or with the PC member parser, returns the wrong
+    image or none."""
+    donor_folder(tmp_path)
+    folder = tmp_path / "wo1-x360"
+    folder.mkdir()
+    texture = xbox_texture()
+    (folder / "linkdata_ens.lnk").write_bytes(texture + bytes(2048 - len(texture)))
+    (folder / "linkdata_ens.idx").write_bytes(
+        struct.pack(">4s3I4I", b"SM4L", 1, 1, 0, 0, 1, len(texture), 0))
+    want = references.x360_members(texture)[0].textures[0]
+    image = references.DonorReader(tmp_path).image({"donor": "wo1-x360", "ens": [0, 0, 0]})
+    assert (image.size, image.tobytes()) == ((want.width, want.height), bytes(want.decode_rgba()))

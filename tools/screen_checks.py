@@ -1,7 +1,8 @@
 """Layout assertions over one runtime `screen` JSON and its capture PNG.
 
 Pure functions: no game, no harness. Text and quads are in 1280x720 layout
-pixels; the capture is `scale = width / 1280` times larger (1.5 at 1920x1080).
+pixels; the capture's centred 16:9 area (`layout_area`) is `scale = width / 1280`
+times larger (1.5 at 1920x1080, 2560 px wide in a 3440x1440 capture).
 A text entry has no height, so its rect is one glyph row (`TEXT_H`) plus
 `LINE_PITCH` per extra line, measured on the real captures. Its `width` is the
 width before the runtime squishes it into a lane, so the rect-based checks take
@@ -119,6 +120,15 @@ def _empty(what: str, allow_empty: bool) -> Check:
 
 def _scale(img: Image.Image) -> float:
     return img.width / LAYOUT_W
+
+
+def layout_area(img: Image.Image) -> Image.Image:
+    """The capture's centred 16:9 area, where the runtime puts the layout on a wider or taller screen (bars or edge
+    HUD outside it); a 16:9 capture comes back whole."""
+    w, h = img.size
+    aw, ah = (h * 16 // 9, h) if w * 9 >= h * 16 else (w, w * 9 // 16)
+    x, y = (w - aw) // 2, (h - ah) // 2
+    return img if (aw, ah) == (w, h) else img.crop((x, y, x + aw, y + ah))
 
 
 def _cap(rect, s: float, img: Image.Image) -> tuple[int, int, int, int]:
@@ -580,7 +590,7 @@ def run_spec(screens: list[dict], driver, seen: dict | None = None) -> list[Row]
         except Exception as e:  # a failed route must not hide the other screens
             rows.append(Row(name, "reach", False, {"error": f"{type(e).__name__}: {e}"}, None))
             continue
-        img = Image.open(png).convert("RGB") if png else None
+        img = layout_area(Image.open(png).convert("RGB")) if png else None
         if seen is not None:
             seen[name] = (data, img)
         for a in sc.get("assert", []):

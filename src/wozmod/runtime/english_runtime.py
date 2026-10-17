@@ -46,7 +46,6 @@ HOOKS = [
     (0x47D060, "8b442404 8b0485f0e46d00", 19, 0),  # message table entry
     (0x549FB0, "56 8b742408", 20, None),        # glyph count
     (0x54F7A5, "0fb705b8b8c200", 26, None),     # battle dialog, after its plates are queued (mid-function)
-    (0x5ABE26, "83c40c 6828000200", 27, None),  # save.dat loaded into the game state (mid-function)
     (0x54FC5A, "8bfe 8d9685000000", 33, None),  # banner x, rest 913 (mid-function)
     (0x54FCD0, "8bfe 8d5646", 34, None),        # banner x, rest 986 (mid-function)
     (0x54FD40, "8bfe 8d5650", 35, None),        # banner x, rest 1077 (mid-function)
@@ -60,6 +59,7 @@ HOOKS = [
 # Installed in both text modes.
 ALWAYS_HOOKS = [
     (0x5C9FD0, "83ec1c 53 55", 24, None),       # message pump: table reload, test mailbox
+    (0x5ABE26, "83c40c 6828000200", 27, None),  # save.dat loaded into the game state (mid-function)
     (0x56B586, "6bf62a 83c420", 28, None),      # Game Settings row, its plate drawn (mid-function)
     (0x56B7C9, "83c408 393de0a12001", 29, None),  # Game Settings input read (mid-function)
     (0x5D1A30, "6aff 68c4ba6b00", 30, 0x14),    # archive read (thiscall): loose entries
@@ -98,6 +98,34 @@ ALWAYS_HOOKS = [
     (0x5DDAB0, "8b0d08a24001", 21, None),       # draw quad: hi-res sheets
                                                 #   back past the beams (ENRT_LOG/ENRT_TEST: every quad logged)
     (0x5DE620, "8b442408 8b4c2404", 22, None),  # draw quad, second builder, the same
+    # Display sizes and screen shapes: the size list in place of the stock index.
+    (0x475CE0, "0fb6052d158000", 75, 0),       # resolution index
+    (0x475CF0, "8a442404 a22d158000", 76, 0),  # set the resolution index (cdecl)
+    (0x474470, "8b442404 83f80a", 77, 0),      # an index's width (cdecl)
+    (0x474530, "8b442404 83f80a", 78, 0),      # an index's height (cdecl)
+    (0x475D00, "0fb6052d158000", 80, 0),       # the width: SCREEN_W's stores get the layout's
+    (0x475D20, "0fb6052d158000", 81, 0),       # the 16:9 height: SCREEN_H's stores get the layout's
+    (0x475D40, "0fb6052d158000", 101, 0),      # the real height (full-screen back buffer)
+    (0x5CB663, "3bc3 0f9ec1", 82, None),       # present parameters, the width read from SCREEN_W (mid-function)
+    (0x5CAFAD, "89542420 d98694010000", 83, None),  # the screen's viewport, eax x ecx (mid-function)
+    (0x5CB01B, "8d54240c 894c2418", 84, None),      # the screen's scissor, eax x ecx (mid-function)
+    (0x4F9985, "d9442454 d95c2410", 85, None),      # camera aspect at [esp+0x54] (mid-function)
+    (0x47DE35, "d9442420 d95c2410", 86, None),      # camera aspect at [esp+0x20] (mid-function)
+    (0x576D17, "d906 b801000000", 87, None),        # a marker's projected point at [esi] (mid-function)
+    (0x475D60, "0fb6052e158000", 88, 0),       # the display mode (stock: the windowed byte)
+    (0x475D70, "8a442404 a22e158000", 89, 0),  # set the display mode (cdecl)
+    (0x56D34C, "56 e80e8af0ff", 90, 0),        # Graphics display-mode row stepped (cdecl: 0 left, 1 right), past its availability check; always replaced
+    (0x5CA219, "8b1540d64001", 91, None),      # device made: the screen buffers' size in eax x ecx (mid-function)
+    (0x5CAA7A, "83c408 50 51", 92, None),      # mode set: the same (mid-function)
+    (0x5CA238, "50 57 b9181ccd00", 93, None),  # device made: a buffer's height in eax (mid-function)
+    (0x5CAAA7, "52 57 b9181ccd00", 98, None),  # mode set: the same height in edx (mid-function)
+    (0x6231B0, "d9442408 dc0d60e26c00", 102, None),  # projection matrix (cdecl: out, fov, aspect, near, far, flags, scale)
+    (0x5DC183, "8908 8902 894104", 103, None),  # 2D packet queued, its node in eax (mid-function)
+    (0x5DD552, "8b7108 8b5104", 104, None),     # frame flush at a node in ecx (mid-function)
+    (0x5CCFE0, "83ec10 8b442414", 94, None),   # 2D clip from the packets (stdcall: x0, x1, y0, y1 in layout px)
+    (0x60A5C0, "83ec40 8b442444", 95, None),   # a quad in raw px (thiscall: corners, uvs, colour): movies map too
+    (0x5CAAD0, "83ec10 55 8b6c241c", 96, 8),   # can the display take a size (thiscall: w, h)
+    (0x5CBFE4, "89442414 8d442428", 97, None),  # window made: SCREEN stored with the window's size (mid-function)
 ]
 # ENRT_LOG and ENRT_TEST builds only.
 LOG_HOOKS = []
@@ -218,7 +246,7 @@ def compile_dll(output: Path, header: str, defines: tuple[str, ...] = ()) -> Non
              "-o", "d3d9.dll", "english_runtime.c"]
     with tempfile.TemporaryDirectory() as tmp:
         shutil.copyfile(C_SOURCE, Path(tmp, "english_runtime.c"))
-        for name in ("text_fit.h", "glyph_raster.h"):
+        for name in ("text_fit.h", "glyph_raster.h", "display_fit.h"):
             shutil.copyfile(C_SOURCE.with_name(name), Path(tmp, name))
         Path(tmp, "enrt_data.h").write_text(header, encoding="utf-8")
         if shutil.which("i686-w64-mingw32-gcc"):

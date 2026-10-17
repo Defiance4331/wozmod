@@ -8,7 +8,7 @@ from PIL import Image
 
 from wozmod import resources
 
-from wozmod.donors import WO1, X360
+from wozmod.donors import WO1, WO1_X360, X360
 from wozmod.formats.linkdata import LZP2_SIGNATURE, WO1_LZP2_SIGNATURE, parse_lzp2, parse_wo1_index
 from wozmod.formats.textures import (
     TextureCodecError, parse_g1t, parse_texture_package, x360_g1t,
@@ -110,9 +110,9 @@ class DonorReader:
         key = donor, entry
         if key in self._members:
             return self._members[key]
-        if donor not in ("wo1", "x360"):
+        if donor not in ("wo1", "wo1-x360", "x360"):
             raise ValueError(f"unsupported native reference donor: {donor}")
-        folder = self.root / (WO1.name if donor == "wo1" else X360.name)
+        folder = self.root / {"wo1": WO1, "wo1-x360": WO1_X360, "x360": X360}[donor].name
         archive = folder / "linkdata_ens.lnk"
         if donor not in self._indices:
             self._indices[donor] = parse_wo1_index(
@@ -122,9 +122,9 @@ class DonorReader:
             stream.seek(record.offset_sectors * 2048)
             data = stream.read(record.stored_bytes)
         if data[:4] == b"LZP2":
-            signature = WO1_LZP2_SIGNATURE if donor == "wo1" else LZP2_SIGNATURE
+            signature = LZP2_SIGNATURE if donor == "x360" else WO1_LZP2_SIGNATURE
             data = parse_lzp2(data, signature).decoded
-        members = x360_members(data) if donor == "x360" else wo1_members(data)
+        members = wo1_members(data) if donor == "wo1" else x360_members(data)
         self._members[key] = members
         return members
 

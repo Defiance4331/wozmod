@@ -41,6 +41,20 @@ def widths(*sites: int, stock: int, wide: int) -> list:
     """Return checked push-immediate width edits."""
     return [(va, b"\x68" + struct.pack("<I", stock), b"\x68" + struct.pack("<I", wide)) for va in sites]
 
+def scale_ends(site: int, stock: str, test: str, cave: int, top: int, leave: int | None = None) -> list:
+    """An Options scale's step does nothing at its ends instead of wrapping: Left (``test`` nonzero: stored +1) at
+    the lowest, stored 2; Right at the highest, stored ``top``. At ``site`` the step tests its direction (``test``,
+    the head of ``stock``) with the stored value in eax; the step leaves through ``leave``, else pop esi; ret."""
+    head, rest = bytes.fromhex(test), bytes.fromhex(stock)[len(bytes.fromhex(test)):]
+    resume = len(head) + 14
+    stop = resume + len(head) + len(rest) + 5
+    code = (head + b"\x75\x07" + bytes([0x83, 0xF8, top, 0x74, stop - len(head) - 7, 0xEB, 0x05,
+                                         0x83, 0xF8, 0x02, 0x74, stop - resume]) + head + rest
+            + rel32(b"\xe9", cave + stop - 5, site + len(head) + len(rest)))
+    code += b"\x5e\xc3" if leave is None else rel32(b"\xe9", cave + stop, leave)
+    return [(site, head + rest, rel32(b"\xe9", site, cave) + b"\x90" * (len(head) + len(rest) - 5)),
+            (cave, b"\xcc" * len(code), code)]
+
 CODE_EDITS = [
     (0x5695C5, bytes.fromhex("8b0783f802"), bytes.fromhex("e98b000000")),
 
@@ -372,19 +386,55 @@ CODE_EDITS = [
     *widths(0x57067E, 0x570688, 0x5706C3, 0x5706CD, stock=140, wide=200),
     (0x5705E7, bytes.fromhex("81c7e3000000"), bytes.fromhex("81c70b010000")),
     (0x5706D5, bytes.fromhex("81c78c000000"), bytes.fromhex("81c7c8000000")),
-    *detour(0x570608, bytes.fromhex("896c241c c744242001000000"), CAVE + 0x4A0, 0x570614,
-            bytes.fromhex("c744241c0e000000 c74424200f000000")),
+    *detour(0x570608, bytes.fromhex("896c241c c744242001000000"), CAVE + 0x4A0, 0x570614,  # its ON/OFF row: OFF left,
+            bytes.fromhex("c744241c0f000000 c74424200e000000")),  # ON right (bands 15 and 14) ...
+    (0x570614, bytes.fromhex("7454"), bytes.fromhex("7554")),  # ... so the left plate is lit while the bit is clear
 
+    # The Options scales read low to high (stock: best first, stored 0, Right +1, wrapping). Each scale row's plates run from
+    # its right end leftward, the preset keeping CUSTOMIZE last, and its input tests swap the Left (0x04) and Right
+    # (0x08) bits so Right steps toward the best.
     *widths(0x56CDAB, 0x56CDB5, stock=140, wide=200),
-    (0x56CD60, bytes.fromhex("8daffe000000"), bytes.fromhex("8dafe0000000")),
+    (0x56CD60, bytes.fromhex("8daffe000000"), bytes.fromhex("8daf") + p32(0xE0 + 2 * 0x8C)),  # texture filter
+    (0x56CDE3, bytes.fromhex("81c58c000000"), bytes.fromhex("81ed8c000000")),
+    *((va, bytes.fromhex(stock), bytes.fromhex(swapped)) for va, stock, swapped in (
+        (0x56DD2B, "f6c304", "f6c308"), (0x56DD34, "f6c308", "f6c304"),  # texture filter
+        (0x56E128, "f6c304", "f6c308"), (0x56E138, "f6c308", "f6c304"),  # preset
+        (0x56E152, "f6c304", "f6c308"), (0x56E163, "f6c308", "f6c304"),  # particle count
+        (0x56E17D, "f6c304", "f6c308"), (0x56E18B, "f6c308", "f6c304"),  # draw distance
+        (0x56E1E0, "f6c304", "f6c308"), (0x56E1E9, "f6c308", "f6c304"))),  # the last HIGH MEDIUM LOW row
+    # ... and stop at their ends (stored 0 is the highest, 3 CUSTOMIZE right of it on the preset)
+    *scale_ends(0x56CF12, "837c240800", "837c240800", CAVE + 0x8C0, 0),  # texture filter
+    *scale_ends(0x56D8A2, "837c240800", "837c240800", CAVE + 0x900, 3),  # preset
+    *scale_ends(0x56C6B2, "837c240800", "837c240800", CAVE + 0x940, 0),  # characters
+    *scale_ends(0x56C772, "837c240800", "837c240800", CAVE + 0x980, 0),  # fog distance
+    *scale_ends(0x56D7FF, "837d0800 b903000000", "837d0800", CAVE + 0x9C0, 0, leave=0x56D838),  # shaders
+    # ON/OFF rows read OFF, ON (stock: ON left). Each drawer swaps its two plates' bands and lit sheets, and each step
+    # sets ON on Right and OFF on Left, doing nothing (no sound) when the row is there already. The Game Settings
+    # switches step in english_runtime.c (hook 29); MOVING CAMERA FIX draws and steps there too.
+    *((va, bytes.fromhex(stock), bytes.fromhex(swapped)) for va, stock, swapped in (
+        (0x56C038, "bb0e000000", "bb0f000000"), (0x56C03D, "c74424140f000000", "c74424140e000000"),  # Advanced:
+        (0x56C060, "c74424140e000000", "c74424140f000000"), (0x56C068, "bb0f000000", "bb0e000000"),  # lit sheets
+        (0x56C08F, "6a00", "6a2a"), (0x56C0E6, "6a2a", "6a00"),  # bands: OFF first, ON second
+        (0x56B6D0, "6a00", "6a2a"), (0x56B713, "6a2a", "6a00"), (0x56B6DF, "57", "55"), (0x56B727, "55", "57"),  # Game
+        # Settings. The Advanced steps (arg 0 Left, 1 Right; stored 0 is ON): the new value is the arg flipped
+        (0x56CFB3, "8d5801 81e301000080 7905 4b 83cbfe 43",  # DYNAMIC SHADOWS
+         "8b5c240c 83f301 3bd8 7503 5e 5b c3 9090"),
+        (0x56D502, "8d7001 81e601000080 7905 4e 83cefe 46",  # BLOOM
+         "8b742408 83f601 3bf0 7502 5e c3 909090"))),
+    *detour(0x571032, bytes.fromhex("a80c 0f8459010000"), CAVE + 0xA00, 0x57103A,  # Controller: bit 0x04 set is ON
+            bytes.fromhex("a80c 0f84") + struct.pack("<i", 0x571193 - (CAVE + 0xA00 + 8))
+            + bytes.fromhex("8b96e8000000 8bca c1e104 8a8c1108158000 c0e902 c0e803 32c1 a801 0f84")
+            + struct.pack("<i", 0x571193 - (CAVE + 0xA00 + 42))),  # Right while ON, or Left while OFF: nothing
 
     *widths(0x56BFD5, 0x56BFDF, stock=140, wide=220),
     *widths(0x56C185, 0x56C18F, 0x56C21D, 0x56C227, 0x56C2BB, 0x56C2C5,
             stock=140, wide=200),
-    *((va, bytes.fromhex("81c318010000"), bytes.fromhex("81c3fa000000"))
+    *((va, bytes.fromhex("81c318010000"), bytes.fromhex("81c3") + p32(0xFA + 2 * 0x8C))
       for va in (0x56C12A, 0x56C1DA, 0x56C26E)),
-    (0x56BF86, bytes.fromhex("81c318010000"), bytes.fromhex("81c3f0000000")),
-    (0x56C00D, bytes.fromhex("81c38c000000"), bytes.fromhex("81c396000000")),
+    *((va, bytes.fromhex("81c38c000000"), bytes.fromhex("81eb8c000000")) for va in (0x56C1BD, 0x56C255, 0x56C2F3)),
+    (0x56BF86, bytes.fromhex("81c318010000"), bytes.fromhex("81c3") + p32(0xF0 + 2 * 0x96)),
+    *detour(0x56C00D, bytes.fromhex("81c38c000000"), CAVE + 0x880, 0x56C013,  # the preset's step, 150 leftward;
+            bytes.fromhex("81eb96000000 83ff03 7506 81c3") + p32(4 * 0x96)),  # CUSTOMIZE back to slot 3
 
     *widths(0x585098, 0x5850A2, stock=420, wide=504),
 
