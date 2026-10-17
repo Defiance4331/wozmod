@@ -380,7 +380,7 @@ MOZ_VOICE_IDS = 22_665
 SLOT_BYTES = 0x4EF84
 WO1_STAGES = range(0x48, 0x84)
 WO1_SUFFIX_BASE = 0xC48
-WO1_RECORD_BASE = 1473
+WO1_RECORD_BASE = 1473  # WO1 X360 0x82188998 plays record 0x5C1 + (@NNNN - 1)
 WO2_STAGES = range(0x28)
 WO2_SUFFIX_BASE = 0x3078
 WO2_CLIP_BASE = 1644
@@ -550,8 +550,8 @@ SE_BANK_MAP = {**{b: b - 1 for b in range(9, 104)}, **{b: b + 91 for b in range(
 
 
 _SE_GENERIC = (0, 0, 2, 2, 4, 4, 2, 7, 7, 9, 10)
-# MOZ bank: (WO1 X360 bank, its entry for each MOZ entry). WO1 PC banks 8-86 keep their number on X360 and
-# PC 87-101 are X360 166-180; every entry used pairs by index (checked by audio).
+# MOZ bank: (WO1 X360 bank, its entry for each MOZ entry). WO1 X360 plays bank officer id + 8 for the player
+# (0x82188E4C) and unit id + 0x57 for the others (0x821875CC); every entry used pairs by index (checked by audio).
 SE_WO1 = {
     **{moz: (moz - 1, tuple(range(13))) for moz in range(9, 88) if moz != 86},
     103: (8, tuple(range(13))),

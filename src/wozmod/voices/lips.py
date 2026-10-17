@@ -89,7 +89,7 @@ def donor_lips(events, order: str, base: int, limit: int) -> dict[int, list[byte
 
 
 X360_LINES = (1398, 0xF1)  # 0x8219F8D8 plays clip 0x576 + line index, no voice from 0xF1
-WO1_LINES = (957, 0x1FF)  # 0x4AD290 plays record 0x3BD + line index, no voice from 0x1FF
+WO1_LINES = (957, 0x1FF)  # WO1 X360 0x821888F0 plays record 0x3BD + line index, no voice from 0x1FF
 
 
 def x360_fits(block: bytes, clip: int) -> bool:

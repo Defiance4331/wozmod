@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 import struct
 
 import pytest
@@ -218,8 +220,8 @@ def test_squeeze_does_not_shrink_fitting_rows_or_default_build(monkeypatch, tmp_
 def test_serif_renderer_does_not_alias_distinct_donor_references(monkeypatch, tmp_path):
     original_temp = build.tempfile.TemporaryDirectory
     monkeypatch.setattr(build.tempfile, "TemporaryDirectory", lambda: original_temp(dir=tmp_path))
-    references = {"493.13": (220, 180, 40, 255), "508.34": (221, 180, 40, 255),
-                  "506.9": (201, 100, 40, 255), "506.10": (251, 100, 40, 255)}
+    references = {"1.13": (220, 180, 40, 255), "17.34": (221, 180, 40, 255),
+                  "15.9": (201, 100, 40, 255), "15.10": (251, 100, 40, 255)}
 
     def render(text, scale, out, raster=build.HEADER_RASTER, *options):
         ref = options[options.index("--ref") + 1] if "--ref" in options else ""
@@ -227,10 +229,10 @@ def test_serif_renderer_does_not_alias_distinct_donor_references(monkeypatch, tm
         return label, {"ink": [0, 0, 40, 40], "baseline": 32}
 
     monkeypatch.setattr(build, "header_label", render)
-    for entry, item, ref, face in [(4060, 33, "493.13", {"face": "header"}),
-                                   (4080, 38, "508.34", {"face": "header"}),
-                                   (4077, 20, "506.9", {"look": "choice_dim"}),
-                                   (4077, 22, "506.10", {"look": "choice_lit"})]:
+    for entry, item, ref, face in [(4060, 33, "1.13", {"face": "header"}),
+                                   (4080, 38, "17.34", {"face": "header"}),
+                                   (4077, 20, "15.9", {"look": "choice_dim"}),
+                                   (4077, 22, "15.10", {"look": "choice_lit"})]:
         served = Image.new("RGBA", (128, 56))
         served.paste(references[ref], (10, 8, 50, 32))
         donor = [*map(int, ref.split(".")), 0]
@@ -668,8 +670,20 @@ def test_faces_built_by_workers_come_back_in_the_order_of_the_recipe(monkeypatch
     assert list(build.faces(mapping, {}, 1)) == ["stage", "title", "list", "header", "tabs"]
 
 
-def test_wo1_sheet_names_x360_donor_entries_by_their_wo1_pc_sheet() -> None:
-    """Bug: an off-by-one at the seam (WO1 PC 492-502 are X360 0-10, PC 503 on are X360 12 on) passes the faces the
-    wrong official sheet name, so a fitted variant keyed by it (NORMAL@506.9) silently drops."""
-    assert [build.wo1_sheet(e) for e in (0, 1, 9, 10, 12, 15, 375)] == [492, 493, 501, 502, 503, 506, 866]
-    assert build.wo1_sheet(501) == 501  # a WO1 PC entry not moved yet keeps its own number
+def test_every_official_sheet_a_face_names_is_a_donor_the_recipes_pass() -> None:
+    """Bug: a face key naming a sheet by another number than its recipe's donor (such as the WO1 PC number of a WO1
+    X360 entry) never meets the --ref the build passes, so its fitted variant (NORMAL@15.9) silently drops."""
+    def donors(node):
+        if isinstance(node, dict):
+            if isinstance(node.get("donor"), list):
+                yield "{}.{}".format(*node["donor"][:2])
+            node = list(node.values())
+        if isinstance(node, list):
+            for child in node:
+                yield from donors(child)
+
+    passed = {sheet for edit in json.loads(build.MAPPING.read_text())["textures"]
+              for _, step in build.expanded(edit) for sheet in donors(step)}
+    faces = "".join((build.REPO / "data/art/faces" / f"{face}.py").read_text() for face in ("headervec", "valuevec"))
+    named = set(re.findall(r"'[^'@]+@(\d+\.\d+)'", faces))
+    assert named and named <= passed, named - passed

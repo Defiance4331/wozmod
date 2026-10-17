@@ -164,10 +164,6 @@ def donor_g1ts(data: bytes) -> dict[int, G1tFile]:
 # counterpart differs or is missing, kept until that art moves.
 WO1_PC_ENTRIES = 492
 
-def wo1_sheet(entry: int) -> int:
-    """The WO1 PC entry of a donor entry: the faces name the official sheets by it (X360 entry 11 has none)."""
-    return entry if entry >= WO1_PC_ENTRIES else entry + 492 if entry <= 10 else entry + 491
-
 def wo1_donors(args, entries: set[int]) -> dict:
     """The WO1 donor art entries, X360 ones read from --wo1-x360-donor and WO1 PC ones from --wo1-donor."""
     donors = {}
@@ -2065,7 +2061,7 @@ def vector_art(edit: dict, served: Image.Image, texts: list, scale: int, window=
             if (edit["entry"], edit["item"]) in TIME_LABEL_LAYOUT:
                 _, left, baseline = TIME_LABEL_LAYOUT[(edit["entry"], edit["item"])]
                 geometry = (left, left, baseline - top)
-            ref = ["--ref", "{}.{}".format(wo1_sheet(piece["donor"][0]), piece["donor"][1])] if "donor" in piece else []
+            ref = ["--ref", "{}.{}".format(*piece["donor"][:2])] if "donor" in piece else []
             if look or style:  
                 if look:
                     label, metrics = value_labels[text] if text in value_labels else header_label(

@@ -11,6 +11,7 @@ import pytest
 
 from wozmod.formats.scripts import Line, Table
 from wozmod.text.script_alignment import (
+    NARRATION,
     QUOTE_INSERT,
     WO1_QUOTE_INSERT,
     Script,
@@ -137,6 +138,24 @@ def test_narration_pairing_drops_unequal_blocks_and_blank_stock_slots():
     stock = _mesc(b"S1", b"\x81\x40", b"S3") + _mesc(b"S4", b"S5")
     donor = _mesc(b"Fixture A", b"Fixture blank", b"Fixture C") + _mesc(b"Fixture mismatch")
     assert narration_pairs(stock, donor) == [(b"S1", "Fixture A"), (b"S3", "Fixture C")]
+
+
+@pytest.mark.skipif(not (os.environ.get("WOZMOD_DONORS") and os.environ.get("WOZMOD_GAME")),
+                    reason="set WOZMOD_DONORS and WOZMOD_GAME")
+def test_each_narration_donor_entry_has_the_stock_pages_block_for_block():
+    # Catches a narration entry off by one (WO1 X360 still pages are ENS 6, which 0x8226F09C loads; ENS 7 has no
+    # pages), which pairs no page at all.
+    from wozmod.formats.linkdata import moz_entries, wo1_entries
+    from wozmod.formats.scripts import mesc_blocks
+
+    donors, game = Path(os.environ["WOZMOD_DONORS"]), Path(os.environ["WOZMOD_GAME"])
+    stock = moz_entries(game / "LINKDATA1.BIN", game / "LINKDATA1.IDX", [n for n, _, _ in NARRATION])
+    wo1 = wo1_entries(donors / "wo1-x360/linkdata_ens.lnk", donors / "wo1-x360/linkdata_ens.idx",
+                      [e for _, s, e in NARRATION if s == "wo1"])
+    wo2 = wo2_x360(donors / "wo2-x360/linkdata_ens").members([e for _, s, e in NARRATION if s == "wo2"])
+    unequal = [n for n, s, e in NARRATION if [len(b) for b in mesc_blocks(stock[n])]
+               != [len(b) for b in mesc_blocks((wo1 if s == "wo1" else wo2)[e])]]
+    assert unequal == []
 
 
 def test_event_pairing_joins_ids_instead_of_order_with_both_donor_word_orders():

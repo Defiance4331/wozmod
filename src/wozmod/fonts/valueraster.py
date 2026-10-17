@@ -151,7 +151,7 @@ if __name__ == "__main__":
     parser.add_argument("--look", default="value_dim", choices=sorted(LOOKS))
     parser.add_argument("--scale", type=float, default=1.0, help="device px per official 1x texel")
     parser.add_argument("--hscale", type=float, default=1.0, help="horizontal condensing, for A/B only")
-    parser.add_argument("--ref", help="official sheet, e.g. 506.9 or 506.10")
+    parser.add_argument("--ref", help="official sheet, e.g. 15.9 or 15.10")
     args = parser.parse_args()
     label = render(args.text, args.scale, args.hscale, args.look, args.ref)
     args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -15,7 +15,9 @@ from wozmod.formats.scripts import (
     event_lines, mesc_blocks, parse_script, quote_tables, quote_text,
 )
 
-WO1_SCRIPTS = range(88, 148)  # WO1 X360 ENS ordinals, as are the other "wo1" entries below
+# WO1 X360 ENS ordinals, as are the other "wo1" entries below. Its loader 0x822A28C0 reads ENS k as archive id 0xA53 + k;
+# 0x8219D948 loads the stage script ENS 88 + stage id.
+WO1_SCRIPTS = range(88, 148)
 
 
 WO2_SCRIPTS = range(2796, 2864)
@@ -33,12 +35,14 @@ DREAM_SCRIPTS = tuple(zip(range(40, 68), range(2836, 2864), strict=True))
 MIN_SHARED_VOICES = 0.9
 
 
-NARRATION = ((4071, "wo2", 60), (4073, "wo1", 7), (4103, "wo2", 59), (4105, "wo1", 18))
+# WO1 X360 loads its still pages ENS 6 (0x8226F09C) and camp talk ENS 18 (0x822912DC).
+NARRATION = ((4071, "wo2", 60), (4073, "wo1", 6), (4103, "wo2", 59), (4105, "wo1", 18))
 
 
 BRIEFINGS = (4190, range(101, 129))
 
 
+# A WO1 event slot s loads the entry 0x82293F60 gives it, and MOZ slot s + 68 (0x49A9B0) loads the stock one.
 EVENTS = ((range(177, 239), "wo2", 2692), (range(245, 283), "wo1", -96),
           (range(283, 384), "wo1", -18), (range(401, 402), "wo1", -35))
 
@@ -47,7 +51,7 @@ QUOTES = (4084, 21, 45)
 
 
 # Stock officer tables a donor lacks, as (first stock officer, count). The quote table index is the officer's
-# id in all three games (MOZ 0x4F6317, WO2 X360 0x821BE828, WO1 PC 0x49CF33). X360 lacks MOZ officers 94 and 95;
+# id in all three games (MOZ 0x4F6317, WO2 X360 0x821BE828, WO1 X360 0x821A2208). X360 lacks MOZ officers 94 and 95;
 # WO1 has officers 0-78 then its generic officers, which are MOZ 96-104, so it lacks MOZ 79-95.
 QUOTE_INSERT = (94, 2)
 WO1_QUOTE_INSERT = (79, 17)

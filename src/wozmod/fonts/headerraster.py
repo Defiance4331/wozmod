@@ -130,7 +130,7 @@ if __name__ == "__main__":
     parser.add_argument("output", type=Path)
     parser.add_argument("--scale", type=float, default=1.0, help="device px per official 1x texel")
     parser.add_argument("--hscale", type=float, default=1.0, help="horizontal condensing, for A/B only")
-    parser.add_argument("--ref", help="official sheet, e.g. 493.13 or 508.34")
+    parser.add_argument("--ref", help="official sheet, e.g. 1.13 or 17.34")
     args = parser.parse_args()
     label = render(args.text, args.scale, args.hscale, args.ref)
     args.output.parent.mkdir(parents=True, exist_ok=True)
