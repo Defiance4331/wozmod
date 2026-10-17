@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import struct
 from pathlib import Path
 
@@ -203,7 +202,7 @@ def test_hashed_builder_does_not_drop_a_pointer_row_or_shift_name_overrides(synt
     substring = _token("substring")
     executable.write_bytes(old_exe + b"prefix" + substring + b"suffix\0")
     authored = {"key": hashlib.sha256(_token("message")).hexdigest(), "source": "authored", "en": "Authored message"}
-    pointer = {"key": hashlib.sha256(_token("name")).hexdigest(), "source": "wo1-pc", "ref": ["synthetic", 1]}
+    pointer = {"key": hashlib.sha256(_token("name")).hexdigest(), "source": "wo1-x360", "ref": ["synthetic", 1]}
     view = {"key": hashlib.sha256(substring).hexdigest(), "source": "authored", "en": "Authored substring", "key_ref": ["exe", len(old_exe) + 6, len(substring)]}
     data = tmp_path / "data"
     data.mkdir()
@@ -262,34 +261,3 @@ def test_stock_substring_reference_cannot_use_a_shifted_offset_or_length(tmp_pat
         with pytest.raises(TableBuildError, match=key):
             resolve_stock_ref(tmp_path, reference, key)
 
-
-@pytest.mark.skipif(os.environ.get("WOZMOD_TEXT_ORACLE") != "1", reason="set WOZMOD_TEXT_ORACLE=1")
-def test_real_donor_table_does_not_change_a_migration_output_byte(tmp_path: Path) -> None:
-    from wozmod.text.inputs import extract_text_program
-    from wozmod.text.resolver import DonorResolver
-
-    stock_name, old_name = os.environ.get("WOZMOD_GAME"), os.environ.get("WOZMOD_OLD_REPO")
-    if not stock_name or not old_name:
-        pytest.skip("set WOZMOD_GAME and WOZMOD_OLD_REPO")
-    stock, old = Path(stock_name), Path(old_name)
-    donor_root = Path(os.environ.get("WOZMOD_DONORS", str(old / "work" / "donors")))
-    oracle_name = os.environ.get("WOZMOD_TEXT_ORACLE_TABLE") or os.environ.get("WOZMOD_TEXT_ORACLE_BIN")
-    oracle = Path(oracle_name) if oracle_name else old / "work" / "moz-english" / "table.bin"
-    if not (stock / "OROCHI_Z.exe").is_file() or not donor_root.is_dir() or not oracle.is_file():
-        pytest.skip("stock, donor or migration oracle input absent")
-    program_name = os.environ.get("WOZMOD_WO1_PROGRAM")
-    program = Path(program_name) if program_name else donor_root / "wo1" / "OROCHI.exe"
-    if not program.is_file():
-        image_name = os.environ.get("WOZMOD_WO1_ISO")
-        if not image_name or not Path(image_name).is_file():
-            pytest.skip("supply WOZMOD_WO1_PROGRAM or WOZMOD_WO1_ISO")
-        program = extract_text_program(Path(image_name), tmp_path / "donors")
-    import subprocess
-    repo = Path(__file__).resolve().parents[1]
-    data = tmp_path / "migration-table.json"
-    data.write_bytes(subprocess.run(
-        ["git", "show", "4474d02:data/text/table.json"], cwd=repo, capture_output=True, check=True,
-    ).stdout)
-    output = tmp_path / "table.bin"
-    build_table(stock, DonorResolver(donor_root, wo1_program=program), data, output)
-    assert output.read_bytes() == oracle.read_bytes()

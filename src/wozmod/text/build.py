@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 NAME_TABLE = 0x6F6368
 NAME_PARTS = 890
-SOURCES = frozenset({"wo1-pc", "wo2-x360", "wo2-ps2", "wo2-psp", "edited", "authored"})
+SOURCES = frozenset({"wo1-x360", "wo2-x360", "wo2-ps2", "wo2-psp", "edited", "authored"})
 FORMAT_SPEC = re.compile(rb"%[-+#0-9.]*[a-zA-Z]")
 ENGLISH_FORMAT_SPEC = re.compile(rb"%%|%s|%d|%02d")
 PRINTF_FORM = re.compile(rb"%[-+ #0-9.*]*(?:I64|ll|[hl])?[a-zA-Z]?")

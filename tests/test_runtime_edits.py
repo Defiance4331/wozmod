@@ -138,7 +138,7 @@ def test_sound_pool_holds_every_english_effect_bank_on_top_of_the_stock_ones() -
 
     game, donors = Path(os.environ["WOZMOD_GAME"]), Path(os.environ["WOZMOD_DONORS"])
     seidx, se = moz_entries(game / "LINKDATA1.BIN", game / "LINKDATA1.IDX", [4056, 4057]).values()
-    bank, _ = english_se_bank(seidx, se, (donors / "wo1/link_sebank.hdx").read_bytes(), donors / "wo1/link_sebank.bdx",
+    bank, _ = english_se_bank(seidx, se, (donors / "wo1-x360/link_sebank.hdx").read_bytes(), donors / "wo1-x360/link_sebank.bdx",
                               (donors / "wo2-x360/link_sebank.hdx").read_bytes(), donors / "wo2-x360/link_sebank.bdx")
     block = lambda size: (size + 16 + 15) // 16 * 16 if size else 0
     growth = 0

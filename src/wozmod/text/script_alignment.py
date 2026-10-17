@@ -15,7 +15,7 @@ from wozmod.formats.scripts import (
     event_lines, mesc_blocks, parse_script, quote_tables, quote_text,
 )
 
-WO1_SCRIPTS = range(579, 639)
+WO1_SCRIPTS = range(88, 148)  # WO1 X360 ENS ordinals, as are the other "wo1" entries below
 
 
 WO2_SCRIPTS = range(2796, 2864)
@@ -33,21 +33,21 @@ DREAM_SCRIPTS = tuple(zip(range(40, 68), range(2836, 2864), strict=True))
 MIN_SHARED_VOICES = 0.9
 
 
-NARRATION = ((4071, "wo2", 60), (4073, "wo1", 498), (4103, "wo2", 59), (4105, "wo1", 509))
+NARRATION = ((4071, "wo2", 60), (4073, "wo1", 7), (4103, "wo2", 59), (4105, "wo1", 18))
 
 
 BRIEFINGS = (4190, range(101, 129))
 
 
-EVENTS = ((range(177, 239), "wo2", 2692), (range(245, 283), "wo1", 395),
-          (range(283, 384), "wo1", 473), (range(401, 402), "wo1", 456))
+EVENTS = ((range(177, 239), "wo2", 2692), (range(245, 283), "wo1", -96),
+          (range(283, 384), "wo1", -18), (range(401, 402), "wo1", -35))
 
 
-QUOTES = (4084, 512, 45)
+QUOTES = (4084, 21, 45)
 
 
 # Stock officer tables a donor lacks, as (first stock officer, count). The quote table index is the officer's
-# id in all three games (MOZ 0x4F6317, X360 0x821BE828, WO1 0x49CF33). X360 lacks MOZ officers 94 and 95;
+# id in all three games (MOZ 0x4F6317, WO2 X360 0x821BE828, WO1 PC 0x49CF33). X360 lacks MOZ officers 94 and 95;
 # WO1 has officers 0-78 then its generic officers, which are MOZ 96-104, so it lacks MOZ 79-95.
 QUOTE_INSERT = (94, 2)
 WO1_QUOTE_INSERT = (79, 17)
@@ -79,8 +79,8 @@ def moz_scripts(bin_path: Path, idx_path: Path) -> dict[int, Script]:
 
 
 def wo1_scripts(lnk_path: Path, idx_path: Path) -> dict[int, Script]:
-    """Read the WO1 PC Europe stage scripts."""
-    return {o: parse_script(d)
+    """Read the WO1 X360 USA stage scripts."""
+    return {o: parse_script(d, ">")
             for o, d in wo1_entries(lnk_path, idx_path, WO1_SCRIPTS).items()}
 
 
@@ -223,12 +223,13 @@ def official_pairs(stock: Path, wo1: Path, wo2_donor: Wo2Donor) -> dict[bytes, t
                             [*(n for n, _, _ in NARRATION), briefing_entry, quotes_entry])
     found += [(narration_pairs(narration[n], donor[s, d]), s) for n, s, d in NARRATION]
                                                                                              
-    found += [(quote_pairs(narration[quotes_entry], donor["wo1", wo1_quotes], officers=False, insert=WO1_QUOTE_INSERT), "wo1"),
+    found += [(quote_pairs(narration[quotes_entry], donor["wo1", wo1_quotes], officers=False, order=">",
+                           insert=WO1_QUOTE_INSERT), "wo1"),
               (quote_pairs(narration[quotes_entry], donor["wo2", wo2_quotes], order=wo2_donor.order), "wo2")]
     found.append((narration_pairs(narration[briefing_entry], b"".join(
         decoded_member(donor["wo2", m]) for m in briefing_members)), "wo2"))
     scenes = moz_entries(stock / "LINKDATA2.BIN", stock / "LINKDATA2.IDX", [o for o, _, _ in events])
-    found += [(event_pairs(scenes[o], donor[s, d], wo2_donor.order if s == "wo2" else "<"), s) for o, s, d in events]
+    found += [(event_pairs(scenes[o], donor[s, d], wo2_donor.order if s == "wo2" else ">"), s) for o, s, d in events]
     movies = moz_entries(stock / "LINKDATA2.BIN", stock / "LINKDATA2.IDX", CAPTIONS)
     captions = wo2_donor.members([o + CAPTION_MEMBER for o in CAPTIONS])
     found += [(_decoded(caption_pairs(movies[o], captions[o + CAPTION_MEMBER])), "wo2") for o in CAPTIONS]
@@ -238,7 +239,7 @@ def official_pairs(stock: Path, wo1: Path, wo2_donor: Wo2Donor) -> dict[bytes, t
             vote = votes.setdefault(japanese, {}).setdefault(english, [0, set()])
             vote[0] += 1
             vote[1].add(source)
-    official = {japanese: (english, "wo1-pc" if "wo1" in sources else wo2_donor.source)
+    official = {japanese: (english, "wo1-x360" if "wo1" in sources else wo2_donor.source)
                 for japanese, counts in votes.items()
                 for english, (_, sources) in [max(counts.items(), key=lambda item: item[1][0])]}
                                                                                                   

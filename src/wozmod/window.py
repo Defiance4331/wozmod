@@ -15,7 +15,7 @@ from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 from wozmod import resources
 from wozmod import __version__
-from wozmod.install import FILES, PROGRAMS, InstallError, check_input, install, install_state, resolve_program, uninstall
+from wozmod.install import FILES, PROGRAMS, TOOLS, InstallError, check_input, install, install_state, resolve_program, uninstall
 from wozmod.progress import DONE, Cancelled, Progress, duration, minutes_left
 from wozmod.remembered import load_settings, save_settings
 
@@ -29,16 +29,19 @@ ROWS = (
     ("game", "Musou Orochi Z folder", "folder",
      "The folder that contains the game's .exe (the Japanese PC release)."),
     ("wo1", "Warriors Orochi (PC, Europe)", "image", "The .iso file made from this disc."),
+    ("wo1-x360", "Warriors Orochi (Xbox 360, US)", "image", "The .iso file made from this disc."),
     ("x360", "Warriors Orochi 2 (Xbox 360, US)", "image", "The .iso file made from this disc."),
     ("psp", "Warriors Orochi 2 (PSP, US)", "image", "The .iso file made from this disc."),
     ("x360-tool", "Xbox 360 decryption program", "file",
-     "A decryption program you already have for default.xex, the Xbox 360 game's encrypted file."),
+     "A decryption program you already have for default.xex, the encrypted file on both Xbox 360 discs."),
     ("psp-tool", "PSP decryption program", "file", "A decryption program you already have for EBOOT.BIN, the PSP game's encrypted file."),
 )
 # Hidden until "Advanced" is opened. A good one replaces its program row.
 ADVANCED = (
-    ("x360-file", "Already decrypted Xbox 360 program file", "file",
-     "The decrypted program inside default.xex (about 18 MB). Use it instead of the program above."),
+    ("x360-file", "Already decrypted Warriors Orochi 2 Xbox 360 program file", "file",
+     "The decrypted program inside its default.xex (about 18 MB). Use it instead of the program above."),
+    ("wo1-x360-file", "Already decrypted Warriors Orochi Xbox 360 program file", "file",
+     "The decrypted program inside its default.xex (about 17 MB). Use it instead of the program above."),
     ("psp-file", "Already decrypted PSP EBOOT", "file",
      "The decrypted PSP_GAME/SYSDIR/EBOOT.BIN. Use it instead of the program above."),
 )
@@ -51,14 +54,16 @@ GOOD, BAD, QUIET, ACCENT = "#1a7f37", "#b42318", "#595959", "#0b5cad"
 def check_row(name: str, values: dict[str, str]) -> tuple[str | None, str]:
     """(plain reason or None, tick text) for one row, from the installer's own checks."""
     try:
-        if name in PROGRAMS:  # the disc image's copy, else the decrypted file, else run the program
-            source, found = resolve_program(name, values)
-            if isinstance(found, bytes):
-                return None, NOT_NEEDED["disc" if source == PROGRAMS[name][0] else "file"] if source != name else (
-                    "OK. It made the file wozmod needs.")
-            if source != name or not values[name]:  # a bad decrypted file is shown on its own row
-                return None, ""
-            return found, ""
+        if name in TOOLS:  # per disc: the disc image's copy, else the decrypted file, else run the program
+            found = [resolve_program(disc, values) for disc in TOOLS[name]]
+            for source, result in found:
+                if isinstance(result, str):
+                    if source != name or not values[name]:  # a bad decrypted file is shown on its own row
+                        return None, ""
+                    return result, ""
+            if any(source == name for source, _ in found):
+                return None, "OK. It made the files wozmod needs." if len(found) > 1 else "OK. It made the file wozmod needs."
+            return None, NOT_NEEDED["disc" if all(source in PROGRAMS for source, _ in found) else "file"]
         return check_input(name, values[name]), "OK"
     except Exception as error:  # a check must never leave a row on "Checking..."
         return f"Could not check this ({error}).", ""
@@ -201,7 +206,7 @@ class SetupWindow:
         self.entries[name] = entry
         for event in ("<Configure>", "<FocusOut>"):  # show the end of a long path, the file name
             entry.bind(event, lambda _, e=entry: self.show_end(e), add=True)
-        if name in PROGRAMS:  # a typed path runs only when finished, never on a half-typed name
+        if name in TOOLS:  # a typed path runs only when finished, never on a half-typed name
             for event in ("<Return>", "<FocusOut>"):
                 entry.bind(event, lambda _, n=name: self.check_program(n), add=True)
         browse = ttk.Button(frame, text="Browse...", command=lambda: self.browse(name, kind))
@@ -261,7 +266,7 @@ class SetupWindow:
         if chosen:
             self.vars[name].set(chosen)
             self.show_end(self.entries[name])
-            if name in PROGRAMS:
+            if name in TOOLS:
                 self.check_program(name)
 
     def inputs(self) -> dict[str, str]:
@@ -270,14 +275,14 @@ class SetupWindow:
     def changed(self, name: str, run: bool = False) -> None:
         self.root.after_idle(self.show_end, self.entries[name])  # after a load or a pick, show the file name
         save_settings(self.inputs())
-        if name in PROGRAMS and not run:  # typing a program path: wait for Enter, focus-out or Browse
+        if name in TOOLS and not run:  # typing a program path: wait for Enter, focus-out or Browse
             self.ticket[name] += 1
             self.good[name] = False
             self.status[name].configure(text="Press Enter to check" if self.vars[name].get().strip() else "",
                                         foreground=QUIET)
             self.refresh_buttons()
             return
-        for other in [name, *(tool for tool, (image, _) in PROGRAMS.items() if name in (image, FILES[tool]))]:
+        for other in dict.fromkeys([name, *(tool for disc, (_, tool, file) in PROGRAMS.items() if name in (disc, file))]):
             self.check_later(other)  # a disc image changes what its program makes
 
     def check_program(self, name: str) -> None:
@@ -290,7 +295,7 @@ class SetupWindow:
         ticket, values = self.ticket[name], self.inputs()
         self.good[name] = False
         self.refresh_buttons()
-        if not values[name] and name not in PROGRAMS:  # an empty program row may still be covered by the image or a file
+        if not values[name] and name not in TOOLS:  # an empty program row may still be covered by the image or a file
             self.show(name, ticket, None, "")
             return
         self.status[name].configure(text="Checking...", foreground=QUIET)
@@ -406,7 +411,7 @@ class SetupWindow:
         try:
             if action == "install":
                 inputs = {name: Path(values[name]) if values[name] else None
-                          for name in ("wo1", "x360", "psp", *PROGRAMS, *FILES.values())}
+                          for name in ("wo1", *PROGRAMS, *TOOLS, *FILES.values())}
                 inputs["lettering"] = resources.root() / "lettering.zip"
                 inputs["dll"] = resources.root() / "d3d9.dll"
                 install(Path(values["game"]), inputs, force=True, log=log, progress=progress)

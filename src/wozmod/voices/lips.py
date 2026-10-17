@@ -17,7 +17,8 @@ def lip_blocks(data: bytes, order: str = "<") -> dict[int, list[bytes]]:
     """Each event line's lip blocks by line index, in file order, as little-endian blocks.
 
     A line record is FFFFFFFF, u16 index, u16 size, text, and its block follows at record + 4 + size:
-    tag, u32 length in frames, three u16 key counts, rest values at +0x1C, then 3-byte keys from +0x20.
+    tag, u32 length in frames, three u16 key counts, a u16 at +0x16, a u32 at +0x18, rest values at +0x1C,
+    then 3-byte keys from +0x20.
     """
     found: dict[int, list[bytes]] = {}
     at = -1
@@ -28,9 +29,9 @@ def lip_blocks(data: bytes, order: str = "<") -> dict[int, list[bytes]]:
         if at % 16 or record is None:
             continue
         index = struct.unpack_from(f"{order}H", data, record + 4)[0]
-        length, *counts = struct.unpack_from(f"{order}I3H", data, at + 12)
+        length, *counts, word, dword = struct.unpack_from(f"{order}I4HI", data, at + 12)
         block = bytearray(data[at:at + 0x20 + 3 * sum(counts)])
-        struct.pack_into("<12sI3H", block, 0, TAG, length, *counts)
+        struct.pack_into("<12sI4HI", block, 0, TAG, length, *counts, word, dword)
         found.setdefault(index, []).append(bytes(block))
     return found
 

@@ -37,9 +37,11 @@ copies.
 - Stock and donor files are read-only inputs. Extract and build only under
   `work/`.
 - Donor priority, per item: menu art, dialogue voices and cinematics use
-  X360, then WO1 PC. Fonts, attack shouts and text use WO1 PC, then X360,
-  then PSP. Our authored work fills the gaps. The layout reference (font size,
-  boxes) is X360 only. Music stays stock.
+  WO2 X360, then WO1 X360. Fonts, attack shouts and text use WO1 X360, then
+  WO2 X360, then WO2 PSP. Our authored work fills the gaps, including PC-only
+  text such as keyboard and graphics settings. The layout reference (font
+  size, boxes) is WO2 X360 only. Music stays stock, except the mix inside
+  donor movies.
 - Launch the game only with the user's permission for the current task, in a
   disposable copy under `work/`. Touch a live installation only when the user
   names its path and the operation.

@@ -19,7 +19,7 @@ def _voice_map(moz: dict[int, Script], donors: dict[int, Script], stages: range,
 
 
 def wo1_voice_map(moz: dict[int, Script], wo1: dict[int, Script]) -> dict[int, int]:
-    """Map WO1 story suffixes to WO1 PC records."""
+    """Map WO1 story suffixes to WO1 X360 records."""
     return _voice_map(moz, wo1, WO1_STAGES, WO1_SUFFIX_BASE, WO1_RECORD_BASE)
 
 

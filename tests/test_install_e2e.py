@@ -1,7 +1,7 @@
 """Full install and uninstall into a copy of the stock game from the real disc images (about 5 minutes).
 
-Run with WOZMOD_INSTALL_E2E=1 and the inputs below; give pytest a --basetemp on the
-game's filesystem so the copy can be a reflink. WOZMOD_INSTALL_BUDGET (seconds, default
+Run with WOZMOD_INSTALL_E2E=1 and the inputs below. The game copy goes in a temporary folder under work/, not
+pytest's tmp_path: /tmp is often RAM, where a 7 GB copy cannot be a reflink. WOZMOD_INSTALL_BUDGET (seconds, default
 300) is the time the install may take with the default WOZMOD_JOBS.
 """
 
@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -20,7 +21,7 @@ import pytest
 
 from wozmod.__main__ import main
 
-INPUTS = {"wo1": "WOZMOD_WO1_ISO", "x360": "WOZMOD_X360_ISO", "psp": "WOZMOD_PSP_ISO",
+INPUTS = {"wo1": "WOZMOD_WO1_ISO", "wo1-x360": "WOZMOD_WO1_X360_ISO", "x360": "WOZMOD_X360_ISO", "psp": "WOZMOD_PSP_ISO",
           "x360-tool": "WOZMOD_X360_TOOL", "psp-tool": "WOZMOD_PSP_TOOL",
           "lettering": "WOZMOD_LETTERING", "dll": "WOZMOD_DLL"}
 
@@ -32,9 +33,15 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture(scope="module")
-def installed(tmp_path_factory):
+def installed():
     """One install into a copy of the stock game: (game copy, install command, seconds, log lines)."""
-    game = tmp_path_factory.mktemp("e2e") / "game"
+    work = Path(__file__).resolve().parents[1] / "work"
+    work.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="install-e2e-", dir=work) as folder:
+        yield _install(Path(folder) / "game")
+
+
+def _install(game: Path):
     subprocess.run(["cp", "-a", "--reflink=auto", os.environ["WOZMOD_GAME"], str(game)], check=True)
     command = ["install", "--game", str(game)]
     for flag, variable in INPUTS.items():

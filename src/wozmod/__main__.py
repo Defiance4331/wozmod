@@ -6,23 +6,25 @@ import sys
 from pathlib import Path
 
 from wozmod import __version__, remembered, resources
-from wozmod.install import (FILES, LABELS, PROGRAMS, resolve_program, InstallError, check_input, decrypt_with_tool, existing_install, install,
+from wozmod.install import (FILES, LABELS, PROGRAMS, TOOLS, resolve_program, InstallError, check_input, decrypt_with_tool, existing_install, install,
                             install_state, uninstall)
 from wozmod.interactive import ask_choice, ask_path, ask_yes, interactive
 from wozmod.progress import Cancelled, Progress, TerminalView, duration
 
 INPUTS = (
     ("wo1", "Warriors Orochi PC (Europe) disc image"),
+    ("wo1-x360", "Warriors Orochi Xbox 360 (USA) disc image"),
     ("x360", "Warriors Orochi 2 Xbox 360 (USA) disc image"),
     ("psp", "Warriors Orochi 2 PSP (USA) disc image"),
-    ("x360-tool", "a decryption program you already have, for the Xbox 360 default.xex"),
+    ("x360-tool", "a decryption program you already have, for the default.xex on both Xbox 360 discs"),
     ("psp-tool", "a decryption program you already have, for the PSP EBOOT.BIN"),
-    ("x360-file", "advanced: in place of --x360-tool, the Xbox 360 program file already decrypted"),
+    ("x360-file", "advanced: in place of --x360-tool, the Warriors Orochi 2 Xbox 360 program file already decrypted"),
+    ("wo1-x360-file", "advanced: in place of --x360-tool, the Warriors Orochi Xbox 360 program file already decrypted"),
     ("psp-file", "advanced: in place of --psp-tool, the PSP EBOOT.BIN already decrypted"),
     ("lettering", None),  # for development: the release lettering bundle
     ("dll", None),  # for development: the release d3d9.dll
 )
-ASKED = ("game", "wo1", "x360", "psp", *PROGRAMS)  # the inputs the terminal asks for when they are missing
+ASKED = ("game", "wo1", *PROGRAMS, *TOOLS)  # the inputs the terminal asks for when they are missing
 SHIPPED = {"lettering": "lettering.zip", "dll": "d3d9.dll"}  # inside the packaged program's resource folder
 
 
@@ -30,27 +32,34 @@ def attribute(name: str) -> str:
     return name.replace("-", "_")
 
 
-def tool_problem(name: str, tool: Path, image: Path) -> str | None:
-    """None when the program, run on the file from the disc image, gives the file wozmod needs."""
-    found = decrypt_with_tool(name, tool, image)
-    return found if isinstance(found, str) else None
+def tool_problem(name: str, tool: Path, args: argparse.Namespace) -> str | None:
+    """None when the program, run on the file from each disc image that needs it, gives the file wozmod needs."""
+    for disc in TOOLS[name]:
+        if not covered(disc, args):
+            found = decrypt_with_tool(disc, tool, getattr(args, attribute(disc)))
+            if isinstance(found, str):
+                return found
+    return None
+
+
+def covered(disc: str, args: argparse.Namespace) -> bool:
+    """True when a disc needs no decryption program: a decrypted file was given, or the disc image holds the file."""
+    values = {disc: getattr(args, attribute(disc)), FILES[disc]: getattr(args, attribute(FILES[disc]))}
+    return values[FILES[disc]] is not None or resolve_program(disc, values)[0] == disc
 
 
 def not_needed(name: str, args: argparse.Namespace) -> bool:
-    """True when a program input is covered: a decrypted file was given, or the disc image holds the file."""
-    disc = PROGRAMS[name][0]
-    values = {disc: getattr(args, attribute(disc)), FILES[name]: getattr(args, attribute(FILES[name]))}
-    return values[FILES[name]] is not None or resolve_program(name, values)[0] == disc
+    """True when a program input is covered on every disc it serves."""
+    return all(covered(disc, args) for disc in TOOLS[name])
 
 
 def ask_missing(args: argparse.Namespace) -> None:
     """Ask for each missing input, offering what the setup window remembered, and check the answer at once."""
     saved = remembered.load_settings()
     for name in ASKED:
-        if getattr(args, attribute(name)) is None and not (name in PROGRAMS and not_needed(name, args)):
-            if name in PROGRAMS:
-                image = getattr(args, attribute(PROGRAMS[name][0]))
-                check, label = (lambda p, n=name, i=image: tool_problem(n, p, i)), f"{LABELS[name]} you already have"
+        if getattr(args, attribute(name)) is None and not (name in TOOLS and not_needed(name, args)):
+            if name in TOOLS:
+                check, label = (lambda p, n=name: tool_problem(n, p, args)), f"{LABELS[name]} you already have"
             else:
                 check, label = (lambda p, n=name: check_input(n, p)), LABELS[name]
             setattr(args, attribute(name), ask_path(label, saved.get(name), check))
@@ -63,8 +72,8 @@ def remember(args: argparse.Namespace) -> None:
 
 
 def run_install(args: argparse.Namespace) -> int:
-    absent = [f"--{name} or --{FILES[name]}" if name in FILES else f"--{name}" for name in ASKED
-              if getattr(args, attribute(name)) is None and not (name in FILES and not_needed(name, args))]
+    absent = [f"--{name} or " + " and ".join(f"--{FILES[disc]}" for disc in TOOLS[name]) if name in TOOLS else f"--{name}"
+              for name in ASKED if getattr(args, attribute(name)) is None and not (name in TOOLS and not_needed(name, args))]
     if any(getattr(args, name) is None for name in SHIPPED):
         print("wozmod: --lettering and --dll are needed outside the release program.", file=sys.stderr)
         return 2

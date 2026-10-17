@@ -60,7 +60,7 @@ def _write_ens(folder: Path, records: list[bytes]) -> None:
 
 @pytest.fixture
 def donors(tmp_path: Path) -> DonorResolver:
-    for folder, tag, order in (("wo1", b"PC", "<"), ("wo2-x360", b"Xbox", ">")):
+    for folder, tag, order in (("wo1-x360", b"WO1", ">"), ("wo2-x360", b"WO2", ">")):
         quote_parts = [
             _strings(b"33" + tag + b" format zero", b"11" + tag + b" format one", order=order),
             _strings(b"32" + tag + b" quote notice", order=order),
@@ -86,7 +86,7 @@ def donors(tmp_path: Path) -> DonorResolver:
 
 def test_ens_pointer_does_not_switch_entry_view_slot_or_word_order(donors):
     cases = []
-    for donor, tag in (("wo1", "PC"), ("x360", "Xbox")):
+    for donor, tag in (("wo1-x360", "WO1"), ("x360", "WO2")):
         cases.extend([
             ([donor, "ens", 0, "notices", 1], tag + " notice one"),
             ([donor, "ens", 0, "dialog", 1], tag + " dialog one"),
@@ -110,7 +110,7 @@ def test_ens_pointer_does_not_switch_entry_view_slot_or_word_order(donors):
 
 def test_edited_row_spans_keep_original_coordinates_after_a_length_change(donors):
     row = {
-        "source": "edited", "ref": ["wo1", "ens", 5, "cstr", 6],
+        "source": "edited", "ref": ["wo1-x360", "ens", 5, "cstr", 6],
         "edits": [[7, 12, "Z"], [18, 23, "OMEGA!"]],
     }
 
@@ -119,7 +119,7 @@ def test_edited_row_spans_keep_original_coordinates_after_a_length_change(donors
 
 def test_overlapping_edit_spans_cannot_duplicate_donor_characters(donors):
     row = {
-        "source": "edited", "ref": ["wo1", "ens", 5, "cstr", 6],
+        "source": "edited", "ref": ["wo1-x360", "ens", 5, "cstr", 6],
         "edits": [[7, 12, "Z"], [11, 16, "Y"]],
     }
 
@@ -128,25 +128,25 @@ def test_overlapping_edit_spans_cannot_duplicate_donor_characters(donors):
 
 
 def test_official_rows_cannot_embed_english_and_bypass_the_donor_pointer(donors):
-    for source in ("wo1-pc", "wo2-x360", "wo2-psp", "edited"):
-        row = {"source": source, "ref": ["wo1", "ens", 5, "cstr", 6], "en": "Authored replacement"}
+    for source in ("wo1-x360", "wo2-x360", "wo2-psp", "edited"):
+        row = {"source": source, "ref": ["wo1-x360", "ens", 5, "cstr", 6], "en": "Authored replacement"}
         with pytest.raises(ValueError, match="Only authored"):
             donors.resolve_row(row)
 
 
 def test_negative_ens_indices_cannot_silently_select_the_last_donor_record(donors):
     refs = [
-        ["wo1", "ens", -1, "cstr", 0],
-        ["wo1", "ens", 0, "notices", -1],
-        ["wo1", "ens", 0, "dialog", -1],
-        ["wo1", "ens", 1, "mesc", -1, 0],
-        ["wo1", "ens", 1, "mesc", 0, -1],
-        ["wo1", "ens", 2, "quotes", -1, 0],
-        ["wo1", "ens", 2, "quotes", 2, -1],
-        ["wo1", "ens", 3, "event", -1],
-        ["wo1", "ens", 4, "captions", [-1]],
-        ["wo1", "ens", 5, "cstr", -1],
-        ["wo1", "ens", 5, "slice", 6, -1],
+        ["wo1-x360", "ens", -1, "cstr", 0],
+        ["wo1-x360", "ens", 0, "notices", -1],
+        ["wo1-x360", "ens", 0, "dialog", -1],
+        ["wo1-x360", "ens", 1, "mesc", -1, 0],
+        ["wo1-x360", "ens", 1, "mesc", 0, -1],
+        ["wo1-x360", "ens", 2, "quotes", -1, 0],
+        ["wo1-x360", "ens", 2, "quotes", 2, -1],
+        ["wo1-x360", "ens", 3, "event", -1],
+        ["wo1-x360", "ens", 4, "captions", [-1]],
+        ["wo1-x360", "ens", 5, "cstr", -1],
+        ["wo1-x360", "ens", 5, "slice", 6, -1],
     ]
     accepted = []
     for ref in refs:
@@ -164,7 +164,7 @@ def test_negative_ens_indices_cannot_silently_select_the_last_donor_record(donor
 
 def test_pointer_to_non_english_donor_bytes_cannot_ship_an_unresolved_row(donors):
     with pytest.raises(ValueError, match="donor English"):
-        donors.resolve(["wo1", "ens", 6, "cstr", 6])
+        donors.resolve(["wo1-x360", "ens", 6, "cstr", 6])
 
 
 def test_official_prompt_controls_keep_original_spans_and_numeric_glyphs(donors):
@@ -180,7 +180,7 @@ def test_prompt_controls_cannot_insert_literal_text_or_an_unmapped_shape(donors)
     accepted = []
     for code in (31, 65, 0xE017):
         row = {
-            "source": "wo1-pc", "ref": ["wo1", "ens", 5, "cstr", 6],
+            "source": "wo1-x360", "ref": ["wo1-x360", "ens", 5, "cstr", 6],
             "controls": [[7, 12, [code]]],
         }
         try:

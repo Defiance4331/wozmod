@@ -50,6 +50,15 @@ def test_verify_program_rejects_wrong_size_even_when_hash_matches(tmp_path: Path
         verify_program(source, smaller)
 
 
+def test_a_program_given_by_a_relative_path_still_runs(tmp_path, monkeypatch):
+    # Bug: the program runs in a temporary folder, so a path typed relative to where the player is
+    # (`--x360-tool ./xex2ool`) names nothing there and every install fails.
+    fake(tmp_path / "tools/xex2ool", "xex2ool")
+    monkeypatch.chdir(tmp_path)
+    program, transcript = run_tool(Path("tools/xex2ool"), _identity("x360"), ENCRYPTED)
+    assert program == PAYLOAD, transcript
+
+
 @pytest.mark.parametrize("shape, platform, zeros", [("psp", "psp", 0), ("xex2ool", "x360", 0), ("xextool", "x360", 32_768)])
 def test_each_known_program_is_recognised_whatever_its_file_is_called(tmp_path, shape, platform, zeros):
     # Bug: a profile has the wrong argument order or output place (the program fails with its usage text),

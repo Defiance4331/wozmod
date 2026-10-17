@@ -2,10 +2,11 @@
 
 Pointers are positional arrays, with zero-based indices:
   [donor, "ens", entry, view, *indices]
-  ["wo1", "exe", byte_offset], ["x360", "pe", byte_offset],
+  ["x360", "pe", byte_offset], ["wo1-x360", "pe", byte_offset],
   or ["psp", "prx", string_slot]
   ["psp", "fns", member, view, *indices]
-Donors are wo1, x360 and psp. ENS names linkdata_ens.lnk/.idx.
+Donors are wo1-x360, x360 and psp. ENS names linkdata_ens.lnk/.idx.
+A pe offset addresses the decrypted Xbox 360 program (default.pe).
 Views: notices/dialog (slot), mesc (block, slot), quotes (table, slot),
 event (line id), captions (list of cue slots, whitespace joined), cstr
 (byte offset), slice (byte offset, byte length). Offsets address decoded
@@ -26,7 +27,7 @@ from wozmod.formats.scripts import (
     caption_cues, donor_text, event_lines, mesc_blocks, parse_script,
     quote_tables, quote_text,
 )
-from wozmod.donors.programs import X360_PROGRAM, verify_program
+from wozmod.donors.programs import WO1_X360_PROGRAM, X360_PROGRAM, verify_program
 from wozmod.donors import PSP, verify_file
 
 
@@ -50,9 +51,8 @@ def program_text(raw: bytes) -> str:
 
 
 class DonorResolver:
-    def __init__(self, root: Path, *, wo1_program: Path | None = None):
+    def __init__(self, root: Path):
         self.root = Path(root)
-        self.wo1_program = Path(wo1_program) if wo1_program is not None else self.root / "wo1/OROCHI.exe"
 
     @cache
     def entry(self, donor: str, ordinal: int) -> bytes:
@@ -61,7 +61,7 @@ class DonorResolver:
                 raise ValueError("Invalid FNS member")
             data = ps2_members(self.psp_archive(), [ordinal])[ordinal]
             return data if ordinal == 27 else decoded_member(data)
-        folder = {"wo1": "wo1", "x360": "wo2-x360"}.get(donor)
+        folder = {"wo1-x360": "wo1-x360", "x360": "wo2-x360"}.get(donor)
         if folder is None or not isinstance(ordinal, int) or ordinal < 0:
             raise ValueError("Invalid ENS donor or entry")
         base = self.root / folder / "linkdata_ens"
@@ -74,17 +74,13 @@ class DonorResolver:
 
     @cache
     def program(self, donor: str) -> bytes:
-        if donor == "wo1":
-            from hashlib import sha256
-            data = self.wo1_program.read_bytes()
-            if len(data) != 4310048 or sha256(data).hexdigest() != "387c45a2631ba0ee72830fb9ddb90dc813fa19c7764eb932d5f65e234fe28b2b":
-                raise ValueError("Invalid WO1 disc program")
-            return data
-        if donor != "x360":
+        folder, identity = {"x360": ("wo2-x360", X360_PROGRAM), "wo1-x360": ("wo1-x360", WO1_X360_PROGRAM)}.get(
+            donor, (None, None))
+        if folder is None:
             raise ValueError("Invalid PE donor")
-        path = self.root / "wo2-x360/default.pe"
-        verify_program(path, X360_PROGRAM)
-        return path.read_bytes()[:X360_PROGRAM.size]
+        path = self.root / folder / "default.pe"
+        verify_program(path, identity)
+        return path.read_bytes()[:identity.size]
 
     @cache
     def psp_pool(self) -> list[str | None]:
@@ -94,7 +90,7 @@ class DonorResolver:
     @cache
     def view(self, donor: str, ordinal: int, kind: str):
         data = self.entry(donor, ordinal)
-        order = ">" if donor == "x360" else "<"
+        order = "<" if donor == "psp" else ">"
         if kind in ("notices", "dialog"):
             return getattr(parse_script(data, order), kind).records
         if kind == "mesc":
@@ -115,13 +111,13 @@ class DonorResolver:
             raise ValueError("Invalid donor index")
         if file == "prx" and donor == "psp" and len(parts) == 1:
             text = self.psp_pool()[parts[0]]
-        elif (file, donor) in (("pe", "x360"), ("exe", "wo1")) and len(parts) == 1:
+        elif (file, donor) in (("pe", "x360"), ("pe", "wo1-x360")) and len(parts) == 1:
             data = self.program(donor)
             at = parts[0]
             if at >= len(data):
                 raise ValueError("PE pointer outside program")
             text = program_text(data[at:data.index(b"\0", at)])
-        elif ((file == "ens" and donor in ("wo1", "x360"))
+        elif ((file == "ens" and donor in ("wo1-x360", "x360"))
               or (file == "fns" and donor == "psp")) and len(parts) >= 2:
             ordinal, kind, *indices = parts
             data = self.entry(donor, ordinal)
@@ -173,7 +169,7 @@ class DonorResolver:
         if bool(edits) != (row.get("source") == "edited"):
             raise ValueError("Only edited rows hold edit recipes")
         if "controls" in row:
-            if edits or row.get("source") not in ("wo1-pc", "wo2-x360"):
+            if edits or row.get("source") not in ("wo1-x360", "wo2-x360"):
                 raise ValueError("Invalid prompt controls")
             edits = []
             for start, stop, codes in row["controls"]:

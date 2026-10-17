@@ -101,6 +101,46 @@ X360 = Donor(
 )
 
 
+WO1_X360 = Donor(
+    'wo1-x360', 'xdvdfs', (
+        DonorFile('default.xex', 'default.xex', 5058560,
+                  '2b57b71c803487ad6f8a3a04f3c1ffefdd0b727a4c4c8498d224b0a8ad9cf9ae'),
+        DonorFile('link_sebank.bdx', 'data/LINK_SEBANK.BDX', 228831232,
+                  'af8561491cd096e00002701a531219e27e9e2fd8bfba73ddf4e6cf3c5899ba6f'),
+        DonorFile('link_sebank.hdx', 'data/LINK_SEBANK.HDX', 1331200,
+                  '7d4c238f8d37a807ac14918b630d1cf4a30bd14f63fe2da4d057f886c7a9f0d8'),
+        DonorFile('link_vodat.bdx', 'data/LINK_VODAT.BDX', 407810048,
+                  'ada38843540315156d8b363705dbf508ba80c7a6730b10430f86404170c2e8d2'),
+        DonorFile('linkdata_ans.idx', 'data/LINKDATA_ANS.IDX', 184868,
+                  '37e30fafb49b5b9964f59c721b82d36654ed65092e1c9232723a4e5abd5929c5'),
+        DonorFile('linkdata_ens.idx', 'data/LINKDATA_ENS.IDX', 6048,
+                  '6df832e16b6d8208b6701718767d4d6255dff9fe393fdafaf6584bf3fd449451'),
+        DonorFile('linkdata_ens.lnk', 'data/LINKDATA_ENS.LNK', 484016128,
+                  '1f6cc306c4912c536c1cfb3a070ec5c32dd594373a58d720e225bb4beba105bf'),
+        DonorFile('movie/mev01.wmv', 'data/movie/mev01.wmv', 72429463,
+                  'b9605b0bcb544018e9c28715c29ed2ee170d1efcf963832e632b6c8cdfe76671'),
+        DonorFile('movie/mev02.wmv', 'data/movie/mev02.wmv', 44195468,
+                  '687bbd649211d369f7bd2c89bc9b830dfa4ff7ecbdbe877c32381b54009beede'),
+        DonorFile('movie/mev03.wmv', 'data/movie/mev03.wmv', 59248131,
+                  'a9b0ac2bbd4be53dc7cb9fbaad162a6f475a1959010f68d1295653df08dcff4a'),
+        DonorFile('movie/mev04.wmv', 'data/movie/mev04.wmv', 40616968,
+                  '4e4c11a38e01c1fc319490e287e2b74fc187d3430f4efa51596ecd80eb2c89c5'),
+        DonorFile('movie/mev05.wmv', 'data/movie/mev05.wmv', 51434531,
+                  '5047170e76c84a6fd8011ebfe79d036c71336aa79c873b252908103e9accdee7'),
+        DonorFile('movie/mev06.wmv', 'data/movie/mev06.wmv', 73841093,
+                  '32f474299bc4dad28b921ec3c69796be7a7813a7f94ae1551a3169fa82c5e716'),
+        DonorFile('movie/mev11.wmv', 'data/movie/mev11.wmv', 2090660,
+                  'de4563512027e03ba8307d8a2fafff51f2e3cd5dedc0ee266084a9ffaa6e8955'),
+        DonorFile('movie/mev12.wmv', 'data/movie/mev12.wmv', 1942925,
+                  'b8ac6e2bae7ea7a435a83800499f580c7d3cf7393ff97c77bc983552314e054d'),
+        DonorFile('movie/mev13.wmv', 'data/movie/mev13.wmv', 1910095,
+                  '7505b0caf31b3e84e320a6083df62831758440e03bebd441d0ee95ca8d9b0696'),
+        DonorFile('movie/mev14.wmv', 'data/movie/mev14.wmv', 1959340,
+                  '37fe6745b46e198f3405585c6ee32df9bc26080039f3d59816470b0041e00848'),
+    ),
+)
+
+
 PSP = Donor(
     'wo2-psp', 'iso9660', (
         DonorFile('PSP_GAME/PARAM.SFO', 'PSP_GAME/PARAM.SFO', 472,
@@ -125,7 +165,7 @@ PSP = Donor(
 )
 
 
-DONORS = {donor.name: donor for donor in (WO1, X360, PSP)}
+DONORS = {donor.name: donor for donor in (WO1, WO1_X360, X360, PSP)}
 
 PSP_ENCRYPTED_FILE = DonorFile(
     "PSP_GAME/SYSDIR/EBOOT.BIN", "PSP_GAME/SYSDIR/EBOOT.BIN", 3198240,

@@ -39,13 +39,13 @@ class VoiceBuildResult:
 def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | None = None) -> VoiceBuildResult:
     """Write voice/Voice.bin, voice/Lips.bin and voice/SE.bin below the supplied mod folder; jobs caps the ffmpeg processes."""
     stock, donors, output_dir = Path(stock), Path(donors), Path(output_dir)
-    wo1, wo2 = donors / "wo1", donors / "wo2-x360"
+    wo1, wo2 = donors / "wo1-x360", donors / "wo2-x360"
     moz = moz_scripts(stock / "LINKDATA2.BIN", stock / "LINKDATA2.IDX")
     wo2_donor = wo2_x360(wo2 / "linkdata_ens")
     quotes_entry, wo1_quotes, wo2_quotes = QUOTES
     quotes = moz_entries(stock / "LINKDATA1.BIN", stock / "LINKDATA1.IDX", [quotes_entry])[quotes_entry]
     wo1_tables = paired_quote_tables(quotes, wo1_entries(
-        wo1 / "linkdata_ens.lnk", wo1 / "linkdata_ens.idx", [wo1_quotes])[wo1_quotes], insert=WO1_QUOTE_INSERT)
+        wo1 / "linkdata_ens.lnk", wo1 / "linkdata_ens.idx", [wo1_quotes])[wo1_quotes], ">", insert=WO1_QUOTE_INSERT)
     wo2_tables = paired_quote_tables(quotes, wo2_donor.members([wo2_quotes])[wo2_quotes], wo2_donor.order)
     one, two = dialogue_voice_maps(
         moz, wo1_scripts(wo1 / "linkdata_ens.lnk", wo1 / "linkdata_ens.idx"),
@@ -58,7 +58,7 @@ def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | N
         two, (wo2 / "linkdata_ans.idx").read_bytes(), wo2 / "link_vodat.bdx",
         voiceidx, stock / "data/Sound/Voice/Voice.bin", jobs,
     )
-    dialogue_tiers = {tier: sum(s == tier for s in sources.values()) for tier in ("wo1-pc", "wo2-x360")}
+    dialogue_tiers = {tier: sum(s == tier for s in sources.values()) for tier in ("wo1-x360", "wo2-x360")}
     destination = output_dir / "voice"
     destination.mkdir(parents=True, exist_ok=True)
     voice_path = destination / "Voice.bin"
@@ -71,7 +71,7 @@ def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | N
     lips, lip_tiers = english_lips(clips, sources, stock_lips(
         [(WO2_EVENT_VOICES[0] if source == "wo2" else WO1_EVENT_VOICES[0], stock_events[o])
          for ordinals, source, _ in EVENTS for o in ordinals]), {
-        "wo1-pc": (one, donor_lips(wo1_events.values(), "<", *WO1_LINES), wo1_fits),
+        "wo1-x360": (one, donor_lips(wo1_events.values(), ">", *WO1_LINES), wo1_fits),
         "wo2-x360": (two, donor_lips(wo2_events.values(), wo2_donor.order, *X360_LINES), x360_fits),
     })
     (destination / "Lips.bin").write_bytes(lip_bank(lips))

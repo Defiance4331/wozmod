@@ -44,6 +44,14 @@ X360_ENCRYPTED_PROGRAM = ProgramIdentity(
     "Encrypted X360 program", 5_451_776,
     "5a99bd246d56e3a2362a65f1a617ebd427cc84b1c6468eb4f187496f7758f506", "x360",
 )
+WO1_X360_PROGRAM = ProgramIdentity(
+    "WO1 X360 program", 16_973_824,
+    "2038dbf356c3d33c6756337d00b6f48c63aa1f1129f323a6dd455b62c935ce77", "x360",
+)
+WO1_X360_ENCRYPTED_PROGRAM = ProgramIdentity(
+    "Encrypted WO1 X360 program", 5_058_560,
+    "2b57b71c803487ad6f8a3a04f3c1ffefdd0b727a4c4c8498d224b0a8ad9cf9ae", "x360",
+)
 PSP_ENCRYPTED_PROGRAM = ProgramIdentity(
     "Encrypted PSP program", 3_198_240,
     "e7c3714e77f13a83beb0cd0586fc2340efc2214122b1d184fc72bd40c9c39d11", "psp",
@@ -99,7 +107,7 @@ def run_tool(
     directly (no shell, arguments as a list) in a temporary folder; its output is accepted only if it matches
     the pin. Nothing is decrypted here.
     """
-    tool = Path(tool)
+    tool = Path(tool).absolute()  # it runs in a temporary folder, where a relative path names nothing
     profiles = sorted((p for p in PROFILES if p[1] == identity.platform), key=lambda p: p[0] not in tool.name.lower())
     transcript: list[str] = []
     with tempfile.TemporaryDirectory(prefix="wozmod-tool-") as folder:

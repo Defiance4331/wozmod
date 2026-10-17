@@ -55,7 +55,7 @@ def _ens(folder, values, count):
 
 def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_under_mod_voice(tmp_path):
     stock, donors, output = tmp_path / "stock", tmp_path / "donors", tmp_path / "mod"
-    one, two = donors / "wo1", donors / "wo2-x360"
+    one, two = donors / "wo1-x360", donors / "wo2-x360"
     for folder in (stock, one, two, stock / "data/Sound/Voice"):
         folder.mkdir(parents=True, exist_ok=True)
     record = build_synthetic_kovs_record(96, sample_count=500)
@@ -66,23 +66,19 @@ def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_unde
     _stock_archive(stock, "LINKDATA1", {4056: seidx, 4057: se_header, 4058: voiceidx, 4084: _quotes("<")}, 4085)
     events = {o: b"no lip blocks" for o in range(177, 402)}
     _stock_archive(stock, "LINKDATA2", {**{o: _script("<") for o in range(40, 68)}, **events}, 402)
-    _ens(one, {512: _quotes("<"), **{o: _script("<") for o in range(579, 639)},
-               **{o: events[177] for o in range(640, 858)}}, 858)
+    _ens(one, {21: _quotes(">"), **{o: _script(">") for o in range(88, 148)},
+               **{o: events[177] for o in range(149, 367)}}, 367)
     _ens(two, {17: _quotes(">"), **{o: _script(">") for o in range(103, 171)},
                **{o: events[177] for o in range(176, 238)}}, 238)
-    (one / "linkdata_ans.idx").write_bytes(struct.pack("<4sIII", b"SM4L", 1468, 1, 0) + struct.pack("<4I", 0, 1, 96, 0) * 1468)
-    (one / "link_vodat.bdx").write_bytes(record + bytes(2048 - len(record)))
     placeholder = b"Fixture"
-    (two / "linkdata_ans.idx").write_bytes(struct.pack(">II", 1644, 0) + b"".join(
-        struct.pack(">5I", i, i, 1, len(placeholder), 48000) for i in range(1644)))
-    (two / "link_vodat.bdx").write_bytes((placeholder + bytes(2048 - len(placeholder))) * 1644)
-    wo1_hdx = struct.pack("<HHII", 2, 1, 2, 12) + struct.pack("<IHH8xIII12x", 0, 48000, 0, 1, 0, 2)
-    (one / "link_sebank.hdx").write_bytes(wo1_hdx + bytes(2048 - len(wo1_hdx)))
-    (one / "link_sebank.bdx").write_bytes(bytes(2))
-    wo2_hdx = b"SDsdVers" + bytes(8) + b"SDsdSmpl" + struct.pack("<II", 0, 1)
-    wo2_hdx += struct.pack("<18I", 0, *([0] * 12), 48000, 0, 0, 0, 2)
-    (two / "link_sebank.hdx").write_bytes((wo2_hdx + bytes(2048 - len(wo2_hdx))) * 217)
-    (two / "link_sebank.bdx").write_bytes(bytes(434))
+    hdx = b"SDsdVers" + bytes(8) + b"SDsdSmpl" + struct.pack("<II", 0, 1)
+    hdx += struct.pack("<18I", 0, *([0] * 12), 48000, 0, 0, 0, 2)
+    for folder, records, banks in ((one, 1473, 181), (two, 1644, 217)):  # every voice record a placeholder
+        (folder / "linkdata_ans.idx").write_bytes(struct.pack(">II", records, 0) + b"".join(
+            struct.pack(">5I", i, i, 1, len(placeholder), 48000) for i in range(records)))
+        (folder / "link_vodat.bdx").write_bytes((placeholder + bytes(2048 - len(placeholder))) * records)
+        (folder / "link_sebank.hdx").write_bytes((hdx + bytes(2048 - len(hdx))) * banks)
+        (folder / "link_sebank.bdx").write_bytes(bytes(2 * banks))
     before = {p: hashlib.sha256(p.read_bytes()).digest() for p in tmp_path.rglob("*") if p.is_file()}
 
     result = build_voice_banks(stock, donors, output)
@@ -95,6 +91,6 @@ def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_unde
     assert (result.voice, result.se) == (output / "voice/Voice.bin", output / "voice/SE.bin")
     assert (result.dialogue_tiers, result.attack_tiers, result.japanese_fallback, result.english_se_banks,
             result.lip_tiers) == (
-        {"wo1-pc": 0, "wo2-x360": 0}, {"wo1-pc": 0, "wo2-x360": 0}, 22665, 0, {"donor": 0, "stretched": 0},
+        {"wo1-x360": 0, "wo2-x360": 0}, {"wo1-x360": 0, "wo2-x360": 0}, 22665, 0, {"donor": 0, "stretched": 0},
     )
     assert all(hashlib.sha256(p.read_bytes()).digest() == digest for p, digest in before.items())

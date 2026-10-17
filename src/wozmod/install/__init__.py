@@ -38,7 +38,7 @@ STOCK_FILES = {
 }
 # Release assets built by us; a release updates both pins with the files it ships.
 LETTERING = (12_176_171, "3f2bad59e696a60c5521b1100eabe47325e13e06fa7c5be661084711d4c2da3b")
-DLL = (187_197, "0f1f22f9c88c492c1131c02865cb39fe9f8ad5db538bb819c10432edc6014856")
+DLL = (187_197, "9a4a4fab54c30ca746cf439a54d75111a20210a5459912393ab94de671003eba")
 
 _MOD_PATH = re.compile(r"d3d9\.dll|wozmod(/[A-Za-z0-9_][A-Za-z0-9_.-]*)+")
 
@@ -112,47 +112,54 @@ def _pinned(path: Path, pin: tuple[int, str]) -> str | None:
 LABELS = {
     "game": "Game folder",
     "wo1": "Warriors Orochi disc image",
-    "x360": "Xbox 360 disc image",
+    "wo1-x360": "Warriors Orochi Xbox 360 disc image",
+    "x360": "Warriors Orochi 2 Xbox 360 disc image",
     "psp": "PSP disc image",
     "x360-tool": "Xbox 360 decryption program",
     "psp-tool": "PSP decryption program",
-    "x360-file": "Already decrypted Xbox 360 program file",
+    "x360-file": "Already decrypted Warriors Orochi 2 Xbox 360 program file",
+    "wo1-x360-file": "Already decrypted Warriors Orochi Xbox 360 program file",
     "psp-file": "Already decrypted PSP EBOOT",
     "lettering": "lettering.zip",
     "dll": "d3d9.dll",
 }
 DISCS = {  # input name: (donor, the disc to give)
     "wo1": ("wo1", "the Warriors Orochi (Europe) PC disc image"),
+    "wo1-x360": ("wo1-x360", "the Warriors Orochi (USA) Xbox 360 disc image"),
     "x360": ("wo2-x360", "the Warriors Orochi 2 (USA) Xbox 360 disc image"),
     "psp": ("wo2-psp", "the Warriors Orochi 2 (USA) PSP disc image"),
 }
-# input name: (its disc image input, the file inside the image). Each is a decryption program the player has.
+# disc image input: (the encrypted file inside the image, the decryption program input the player has for it,
+# the alternative input: that file already decrypted, checked against the pin and never run). One program serves
+# both Xbox 360 discs.
 PROGRAMS = {
-    "x360-tool": ("x360", "default.xex"),
-    "psp-tool": ("psp", "PSP_GAME/SYSDIR/EBOOT.BIN"),
+    "wo1-x360": ("default.xex", "x360-tool", "wo1-x360-file"),
+    "x360": ("default.xex", "x360-tool", "x360-file"),
+    "psp": ("PSP_GAME/SYSDIR/EBOOT.BIN", "psp-tool", "psp-file"),
 }
-# program input -> its alternative: a file that is already decrypted (checked against the pin, never run)
-FILES = {"x360-tool": "x360-file", "psp-tool": "psp-file"}
-FILE_PROGRAMS = {file: tool for tool, file in FILES.items()}
+TOOLS = {tool: tuple(disc for disc, (_, each, _) in PROGRAMS.items() if each == tool) for _, tool, _ in PROGRAMS.values()}
+FILES = {disc: file for disc, (_, _, file) in PROGRAMS.items()}
+FILE_PROGRAMS = {file: disc for disc, file in FILES.items()}
 NEITHER = "Pick a decryption program, or a decrypted file under Advanced."
 WRONG_FILE = "This is not the decrypted file wozmod needs. Pick the file your decryption program made."
 _TOOL_RUNS: dict[tuple, tuple[bytes | None, str]] = {}  # one run per program and image, whoever asks (window, check, build)
 _TOOL_LOCK = threading.Lock()
 
 
-def _pins(name: str):
-    """(decrypted, encrypted) identities of the program file a tool input stands for, read at call time."""
+def _pins(disc: str):
+    """(decrypted, encrypted) identities of the program file on a disc image input, read at call time."""
     from wozmod import donors
 
-    return {"x360-tool": (donors.X360_PROGRAM, donors.X360_ENCRYPTED_PROGRAM),
-            "psp-tool": (donors.PSP_PROGRAM, donors.PSP_ENCRYPTED_PROGRAM)}[name]
+    return {"x360": (donors.X360_PROGRAM, donors.X360_ENCRYPTED_PROGRAM),
+            "wo1-x360": (donors.WO1_X360_PROGRAM, donors.WO1_X360_ENCRYPTED_PROGRAM),
+            "psp": (donors.PSP_PROGRAM, donors.PSP_ENCRYPTED_PROGRAM)}[disc]
 
 
-def _trimmed(name: str, path: Path | str) -> bytes | None:
+def _trimmed(disc: str, path: Path | str) -> bytes | None:
     """The pinned decrypted program when this file is it (extra trailing bytes allowed); else None. Nothing runs."""
     from wozmod.donors.programs import MAX_EXTRA_BYTES, trim_program
 
-    identity = _pins(name)[0]
+    identity = _pins(disc)[0]
     try:
         with Path(path).open("rb") as stream:
             return trim_program(stream.read(identity.size + MAX_EXTRA_BYTES + 1), identity)
@@ -160,39 +167,38 @@ def _trimmed(name: str, path: Path | str) -> bytes | None:
         return None
 
 
-def program_in_image(name: str, image: Path | str) -> bytes | None:
+def program_in_image(disc: str, image: Path | str) -> bytes | None:
     """The decrypted program the disc image already holds, or None."""
     from wozmod.donors import read_disc_member, trim_program
 
-    disc, member = PROGRAMS[name]
     try:
-        data = read_disc_member(Path(image), DISCS[disc][0], member)
+        data = read_disc_member(Path(image), DISCS[disc][0], PROGRAMS[disc][0])
     except (OSError, ValueError):
         return None
-    return None if data is None else trim_program(data, _pins(name)[0])
+    return None if data is None else trim_program(data, _pins(disc)[0])
 
 
-def resolve_program(name: str, inputs: dict, log=None) -> tuple[str, bytes | str]:
-    """(the input the outcome belongs to, the pinned program or the plain problem).
+def resolve_program(disc: str, inputs: dict, log=None) -> tuple[str, bytes | str]:
+    """(the input the outcome belongs to, the pinned program of this disc image or the plain problem).
 
     Order: a decrypted copy in the disc image, then the decrypted file, then the decryption program.
     The first two are only read; only the last runs anything.
     """
-    disc, _ = PROGRAMS[name]
-    image, file = inputs.get(disc), inputs.get(FILES[name])
-    if image and not check_input(disc, image) and (held := program_in_image(name, image)) is not None:
+    _, tool, file_input = PROGRAMS[disc]
+    image, file = inputs.get(disc), inputs.get(file_input)
+    if image and not check_input(disc, image) and (held := program_in_image(disc, image)) is not None:
         return disc, held
     if file:
-        return FILES[name], (found if (found := _trimmed(name, file)) is not None else WRONG_FILE)
-    return name, decrypt_with_tool(name, inputs.get(name), image, log)
+        return file_input, (found if (found := _trimmed(disc, file)) is not None else WRONG_FILE)
+    return tool, decrypt_with_tool(disc, inputs.get(tool), image, log)
 
 
-def decrypt_with_tool(name: str, tool: Path | str | None, image: Path | str | None, log=None) -> bytes | str:
+def decrypt_with_tool(disc: str, tool: Path | str | None, image: Path | str | None, log=None) -> bytes | str:
     """The pinned program, made by running the player's decryption program on the encrypted file from the disc
     image; or the plain reason it cannot be made. The result is kept, so the window and the install run it once."""
     from wozmod.donors import NOT_PRODUCED, read_disc_member, run_tool, trim_program
 
-    disc, member = PROGRAMS[name]
+    member = PROGRAMS[disc][0]
     if not tool:
         return NEITHER
     if not image or check_input(disc, image):
@@ -204,10 +210,10 @@ def decrypt_with_tool(name: str, tool: Path | str | None, image: Path | str | No
         data = read_disc_member(image, DISCS[disc][0], member)
     except (OSError, ValueError):
         return "The disc image cannot be read."
-    decrypted, encrypted = _pins(name)
+    decrypted, encrypted = _pins(disc)
     if data is None or data != trim_program(data, encrypted):
         return f"{member.rsplit('/', 1)[-1]} on the disc image is not the supported file."
-    key = (name, tool, image, tool.stat().st_mtime_ns, image.stat().st_mtime_ns)
+    key = (disc, tool, image, tool.stat().st_mtime_ns, image.stat().st_mtime_ns)
     with _TOOL_LOCK:  # the input check (on its own thread) and the build ask at once: run the program once
         if key not in _TOOL_RUNS:
             if len(_TOOL_RUNS) >= 4:
@@ -259,12 +265,12 @@ def check_input(name: str, path: Path | str) -> str | None:
 def check_inputs(game: Path, inputs: dict[str, Path | None], log=None) -> None:
     """Raise one InstallError naming every missing or wrong input."""
     problems = {"game": check_input("game", game)}
-    for name in ("wo1", "x360", "psp", "lettering", "dll"):
+    for name in (*DISCS, "lettering", "dll"):
         problems[name] = check_input(name, inputs[name])
-    for name, (disc, *_) in PROGRAMS.items():
-        source, found = resolve_program(name, inputs, log)
-        if isinstance(found, str) and not (source == name and inputs.get(name) and problems[disc]):
-            problems[source] = found  # a wrong disc image is reported once, on the image
+    for disc, (_, tool, _) in PROGRAMS.items():
+        source, found = resolve_program(disc, inputs, log)
+        if isinstance(found, str) and not (source == tool and inputs.get(tool) and problems[disc]):
+            problems.setdefault(source, found)  # a wrong disc image is reported once, on the image
     lines = [f"{LABELS[name]}: {problem}" for name, problem in problems.items() if problem]
     if resources.ffmpeg() is None:
         lines.append("ffmpeg was not found on PATH; the voice build needs it")
@@ -395,9 +401,10 @@ def _extract(flag: str, image: Path, donor, destination: Path, files, label: str
 
 
 def _place_programs(inputs: dict[str, Path | None], donors: Path) -> None:
-    """Put the two decrypted program files, made by the player's programs, where the text build reads them."""
-    for name, target in (("x360-tool", "wo2-x360/default.pe"), ("psp-tool", "wo2-psp/eboot.prx")):
-        source, found = resolve_program(name, inputs)
+    """Put the decrypted program files, made by the player's programs, where the text build reads them."""
+    for disc, target in (("x360", "wo2-x360/default.pe"), ("wo1-x360", "wo1-x360/default.pe"),
+                         ("psp", "wo2-psp/eboot.prx")):
+        source, found = resolve_program(disc, inputs)
         if isinstance(found, str):
             raise InstallError(f"{LABELS[source]}: {found}")
         (donors / target).write_bytes(found)
@@ -501,16 +508,15 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
     The input checks run while the discs are read; `checked()` waits for them and raises when an input is wrong.
     """
     from wozmod.art.compose import compose
-    from wozmod.donors import PSP, WO1, X360
-    from wozmod.text.inputs import WO1_TEXT_PROGRAM
+    from wozmod.donors import PSP, WO1, WO1_X360, X360
     from wozmod.voices import VOICE_DONOR_FILES
 
     donors, out = staging / "donors", staging / "out"
     psp_files = ["PSP_GAME/USRDIR/LINKDATA_NA.FNS"]
     plan = [  # (input, donor, folder, files, what the progress view says, bytes to read)
-        ("wo1", WO1, "wo1", VOICE_DONOR_FILES, "reading the Warriors Orochi disc"),
-        ("wo1", WO1_TEXT_PROGRAM, "wo1", None, "reading the Warriors Orochi disc"),
-        ("x360", X360, "wo2-x360", VOICE_DONOR_FILES, "reading the Xbox 360 disc"),
+        ("wo1", WO1, "wo1", ("linkdata_ens.idx", "linkdata_ens.lnk"), "reading the Warriors Orochi disc"),
+        ("wo1-x360", WO1_X360, "wo1-x360", VOICE_DONOR_FILES, "reading the Warriors Orochi Xbox 360 disc"),
+        ("x360", X360, "wo2-x360", VOICE_DONOR_FILES, "reading the Warriors Orochi 2 Xbox 360 disc"),
         ("psp", PSP, "wo2-psp", psp_files, "reading the PSP disc"),
     ]
     sizes = [sum(m.size for m in donor.files if files is None or m.path in files) for _, donor, _, files, _ in plan]
@@ -545,7 +551,8 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
         futures = {
             pool.submit(_text_table, game, donors, out / "wozmod/table.bin"): "text",
             pool.submit(_voice_banks, game, donors, out / "wozmod", jobs): "voices",
-            pool.submit(compose, game, {"wo1": donors / "wo1/linkdata_ens", "x360": donors / "wo2-x360/linkdata_ens"},
+            pool.submit(compose, game, {"wo1": donors / "wo1/linkdata_ens", "wo1-x360": donors / "wo1-x360/linkdata_ens",
+                                        "x360": donors / "wo2-x360/linkdata_ens"},
                         inputs["lettering"], staging / "art", True, jobs): "art",
         }
         for key, text in (("text", "building the text table"), ("voices", "reading the voice banks"),

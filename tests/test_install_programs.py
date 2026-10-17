@@ -35,7 +35,8 @@ def _xbox_image(tmp_path: Path, name: bytes, content: bytes) -> Path:
 def pins(monkeypatch):
     """Pin the synthetic programs in place of the real ones, and forget earlier runs."""
     installer._TOOL_RUNS.clear()
-    for attribute, content in (("X360_PROGRAM", DECRYPTED), ("X360_ENCRYPTED_PROGRAM", ENCRYPTED)):
+    for attribute, content in (("X360_PROGRAM", DECRYPTED), ("X360_ENCRYPTED_PROGRAM", ENCRYPTED),
+                               ("WO1_X360_PROGRAM", DECRYPTED), ("WO1_X360_ENCRYPTED_PROGRAM", ENCRYPTED)):
         monkeypatch.setattr(donors, attribute, ProgramIdentity(
             attribute, len(content), hashlib.sha256(content).hexdigest(), "x360"))
     monkeypatch.setattr(installer, "check_input", lambda name, path: None)  # the disc image check is not under test
@@ -51,19 +52,21 @@ def _runs(tool: Path) -> int:
 
 
 def test_the_programs_output_is_what_the_text_build_reads_and_the_program_runs_once(tmp_path):
-    # Bug: the file lands under the wrong name, the program runs again for the check, the window and the
-    # build (minutes lost on each), or its padding is installed with it.
+    # Bug: the file lands under the wrong name, one Xbox 360 disc's program is never made, the program runs
+    # again for the check, the window and the build (minutes lost on each), or its padding is installed with it.
     image = _xbox_image(tmp_path, b"default.xex", ENCRYPTED)
     tool = fake(tmp_path / "xextool", "xextool", zeros=32_768, body=COUNT)
-    (tmp_path / "donors/wo2-x360").mkdir(parents=True)
-    (tmp_path / "donors/wo2-psp").mkdir(parents=True)
+    for folder in ("wo2-x360", "wo1-x360", "wo2-psp"):
+        (tmp_path / "donors" / folder).mkdir(parents=True)
 
-    assert decrypt_with_tool("x360-tool", tool, image) == DECRYPTED  # the window's check
-    assert decrypt_with_tool("x360-tool", tool, image) == DECRYPTED  # the install's check
+    assert decrypt_with_tool("x360", tool, image) == DECRYPTED  # the window's check
+    assert decrypt_with_tool("x360", tool, image) == DECRYPTED  # the install's check
     with pytest.raises(InstallError):  # no PSP program given: nothing is placed
-        installer._place_programs({"x360-tool": tool, "x360": image, "psp-tool": None, "psp": None}, tmp_path / "donors")
+        installer._place_programs({"x360-tool": tool, "x360": image, "wo1-x360": image, "psp-tool": None, "psp": None},
+                                  tmp_path / "donors")
     assert (tmp_path / "donors/wo2-x360/default.pe").read_bytes() == DECRYPTED
-    assert _runs(tool) == 1
+    assert (tmp_path / "donors/wo1-x360/default.pe").read_bytes() == DECRYPTED
+    assert _runs(tool) == 2  # once for each Xbox 360 disc
 
 
 @pytest.mark.parametrize("name, content, expected", [
@@ -74,7 +77,7 @@ def test_the_programs_output_is_what_the_text_build_reads_and_the_program_runs_o
 def test_only_the_pinned_encrypted_file_from_the_image_is_given_to_the_program(tmp_path, name, content, expected):
     # Bug: the program is run on a same-size or already decrypted file, or on the wrong member.
     tool = fake(tmp_path / "tool", "xex2ool")
-    found = decrypt_with_tool("x360-tool", tool, _xbox_image(tmp_path, name, content))
+    found = decrypt_with_tool("x360", tool, _xbox_image(tmp_path, name, content))
     assert found == DECRYPTED if expected is None else found == expected
 
 
@@ -88,7 +91,7 @@ def test_wrong_output_gets_the_plain_message_and_the_install_stops_before_buildi
     # the build runs while the checks finish: it must not go on past them
     monkeypatch.setattr(installer, "_build", lambda *args: (args[-1](), pytest.fail("the build must not go on past the checks"))[1])
     monkeypatch.setattr(installer.resources, "ffmpeg", lambda: "ffmpeg")
-    inputs = {"wo1": tmp_path, "x360": image, "psp": tmp_path, "x360-tool": tool, "psp-tool": tmp_path,
+    inputs = {"wo1": tmp_path, "wo1-x360": image, "x360": image, "psp": tmp_path, "x360-tool": tool, "psp-tool": tmp_path,
               "lettering": tmp_path, "dll": tmp_path}
     monkeypatch.setattr(installer, "check_input", lambda name, path: None if name != "psp" else "Not the PSP disc.")
     with pytest.raises(InstallError) as caught:
@@ -102,7 +105,7 @@ def test_the_install_refuses_to_start_without_both_programs(tmp_path, monkeypatc
     game.mkdir()
     monkeypatch.setattr(installer, "_build", lambda *args: (args[-1](), pytest.fail("the build must not go on past the checks"))[1])
     monkeypatch.setattr(installer.resources, "ffmpeg", lambda: "ffmpeg")
-    inputs = {"wo1": tmp_path, "x360": tmp_path, "psp": tmp_path, "x360-tool": None, "psp-tool": None,
+    inputs = {"wo1": tmp_path, "wo1-x360": tmp_path, "x360": tmp_path, "psp": tmp_path, "x360-tool": None, "psp-tool": None,
               "lettering": tmp_path, "dll": tmp_path}
     with pytest.raises(InstallError) as caught:
         installer.install(game, inputs, log=lambda _: None)
@@ -118,14 +121,17 @@ def test_the_tail_limit_after_the_program_is_exactly_64_kib(extra, accepted):
     assert donors.trim_program(b"E" + DECRYPTED[1:] + bytes(10), identity) is None
 
 
-@pytest.mark.skipif(not (os.environ.get("WOZMOD_X360_ISO") and os.environ.get("WOZMOD_X360_TOOL")),
-                    reason="set WOZMOD_X360_ISO and WOZMOD_X360_TOOL")
-def test_a_real_program_makes_the_pinned_xbox_360_file(monkeypatch):
-    # Bug: a profile that works on the fakes has the wrong arguments for the real program.
+@pytest.mark.parametrize("disc, image, pin", [("x360", "WOZMOD_X360_ISO", "X360_PROGRAM"),
+                                              ("wo1-x360", "WOZMOD_WO1_X360_ISO", "WO1_X360_PROGRAM")])
+def test_a_real_program_makes_the_pinned_xbox_360_file(monkeypatch, disc, image, pin):
+    # Bug: a profile that works on the fakes has the wrong arguments for the real program, or a disc's pin
+    # is not what the real program makes from it (every install of that disc would fail).
+    if not (os.environ.get(image) and os.environ.get("WOZMOD_X360_TOOL")):
+        pytest.skip(f"set {image} and WOZMOD_X360_TOOL")
     monkeypatch.undo()
     installer._TOOL_RUNS.clear()
-    found = decrypt_with_tool("x360-tool", os.environ["WOZMOD_X360_TOOL"], os.environ["WOZMOD_X360_ISO"])
-    assert isinstance(found, bytes) and len(found) == donors.X360_PROGRAM.size
+    found = decrypt_with_tool(disc, os.environ["WOZMOD_X360_TOOL"], os.environ[image])
+    assert isinstance(found, bytes) and len(found) == getattr(donors, pin).size
 
 
 def test_the_check_and_the_build_asking_at_once_run_the_program_once(tmp_path):
@@ -137,7 +143,7 @@ def test_the_check_and_the_build_asking_at_once_run_the_program_once(tmp_path):
     tool = fake(tmp_path / "tool", "xex2ool", body=f"import time; open({str(runs)!r}, 'a').write('x'); time.sleep(0.3)")
     image = _xbox_image(tmp_path, b"default.xex", ENCRYPTED)
     with ThreadPoolExecutor(2) as pool:
-        found = list(pool.map(lambda _: decrypt_with_tool("x360-tool", tool, image), range(2)))
+        found = list(pool.map(lambda _: decrypt_with_tool("x360", tool, image), range(2)))
     assert found == [DECRYPTED, DECRYPTED]
     assert runs.read_text() == "x"
 
@@ -159,7 +165,7 @@ def test_a_decrypted_file_is_accepted_with_its_tail_and_never_run(tmp_path):
     script.write_bytes(DECRYPTED + bytes(32_768))
     script.chmod(0o755)
     marker = _marker_tool(tmp_path)
-    source, found = installer.resolve_program("x360-tool", {"x360-file": script, "x360-tool": marker, "x360": None})
+    source, found = installer.resolve_program("x360", {"x360-file": script, "x360-tool": marker, "x360": None})
     assert (source, found) == ("x360-file", DECRYPTED)
     assert _runs(marker) == 0
 
@@ -169,27 +175,29 @@ def test_a_wrong_file_is_refused_with_the_plain_message_and_the_install_stops_be
     # Bug: any file of about the right size passes, or a bad file falls through to the program.
     bad = tmp_path / "bad"
     bad.write_bytes(content)
-    assert installer.resolve_program("x360-tool", {"x360-file": bad}) == ("x360-file", installer.WRONG_FILE)
+    assert installer.resolve_program("x360", {"x360-file": bad}) == ("x360-file", installer.WRONG_FILE)
     game = tmp_path / "game"
     game.mkdir()
     monkeypatch.setattr(installer, "_build", lambda *args: (args[-1](), pytest.fail("the build must not go on past the checks"))[1])
     monkeypatch.setattr(installer.resources, "ffmpeg", lambda: "ffmpeg")
     marker = _marker_tool(tmp_path)
     inputs = {"wo1": tmp_path, "x360": _xbox_image(tmp_path, b"default.xex", ENCRYPTED), "psp": tmp_path,
-              "x360-file": bad, "x360-tool": marker, "psp-tool": None, "lettering": tmp_path, "dll": tmp_path}
+              "wo1-x360": tmp_path, "wo1-x360-file": _decrypted_file(tmp_path), "x360-file": bad, "x360-tool": marker,
+              "psp-tool": None, "lettering": tmp_path, "dll": tmp_path}
     with pytest.raises(InstallError) as caught:
         installer.install(game, inputs, log=lambda _: None)
-    assert "Already decrypted Xbox 360 program file: This is not the decrypted file wozmod needs." in str(caught.value)
+    assert "Already decrypted Warriors Orochi 2 Xbox 360 program file: This is not the decrypted file wozmod needs." in str(caught.value)
     assert _runs(marker) == 0
 
 
 def test_the_decrypted_file_wins_over_a_program_and_is_what_the_text_build_reads(tmp_path):
     # Bug: both are given and the program still runs (minutes lost, or a failing program blocks a good file).
-    (tmp_path / "donors/wo2-x360").mkdir(parents=True)
-    (tmp_path / "donors/wo2-psp").mkdir(parents=True)
+    for folder in ("wo2-x360", "wo1-x360", "wo2-psp"):
+        (tmp_path / "donors" / folder).mkdir(parents=True)
     marker = _marker_tool(tmp_path)
     image = _xbox_image(tmp_path, b"default.xex", ENCRYPTED)
-    inputs = {"x360": image, "x360-tool": marker, "x360-file": _decrypted_file(tmp_path)}
+    inputs = {"x360": image, "x360-tool": marker, "x360-file": _decrypted_file(tmp_path),
+              "wo1-x360-file": _decrypted_file(tmp_path)}
     with pytest.raises(InstallError):  # no PSP program: stops after the Xbox 360 one is placed
         installer._place_programs(inputs, tmp_path / "donors")
     assert (tmp_path / "donors/wo2-x360/default.pe").read_bytes() == DECRYPTED
@@ -203,12 +211,12 @@ def test_the_disc_images_decrypted_copy_wins_over_a_file_and_a_program_and_the_e
     other = tmp_path / "other"
     other.write_bytes(b"not it")
     held = _xbox_image(tmp_path, b"default.xex", DECRYPTED + bytes(100))
-    assert installer.resolve_program("x360-tool", {"x360": held, "x360-tool": marker, "x360-file": other}) == ("x360", DECRYPTED)
-    assert installer.resolve_program("x360-tool", {"x360": held}) == ("x360", DECRYPTED)  # no program needed
+    assert installer.resolve_program("x360", {"x360": held, "x360-tool": marker, "x360-file": other}) == ("x360", DECRYPTED)
+    assert installer.resolve_program("x360", {"x360": held}) == ("x360", DECRYPTED)  # no program needed
     assert _runs(marker) == 0
     encrypted_only = tmp_path / "enc"
     encrypted_only.mkdir()
-    source, found = installer.resolve_program("x360-tool", {"x360": _xbox_image(encrypted_only, b"default.xex", ENCRYPTED)})
+    source, found = installer.resolve_program("x360", {"x360": _xbox_image(encrypted_only, b"default.xex", ENCRYPTED)})
     assert (source, found) == ("x360-tool", "Pick a decryption program, or a decrypted file under Advanced.")
 
 

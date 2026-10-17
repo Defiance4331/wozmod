@@ -398,14 +398,6 @@ WO1_NARRATION_VOICES = ((96, 80, 209), (306, 289, 40), (592, 329, 628))
 WO2_NARRATION_VOICES = ((346, 92, 234), (1220, 326, 1072))
 
 
-def wo1_voice_records(index: bytes) -> list[tuple[int, int]]:
-    """Read byte offsets and logical sizes from an SM4L voice index."""
-    magic, count = struct.unpack_from("<4sI", index)
-    if magic != b"SM4L" or len(index) < 16 + 16 * count:
-        raise VoiceBankError("not a WO1 SM4L voice index")
-    return [(start * 2048, size) for start, _, size, _ in struct.iter_unpack("<IIII", index[16:16 + 16 * count])]
-
-
 def wo2_voice_records(index: bytes) -> list[tuple[int, int]]:
     """Read byte offsets and logical sizes from an X360 voice index."""
     count = struct.unpack_from(">I", index)[0]
@@ -438,17 +430,6 @@ def slot_voice_map(tables: list[tuple[list[bytes], list[bytes]]], record_base: i
             if (s := _suffix(a)) and (t := _suffix(b)):
                 found.setdefault(WO2_SUFFIX_BASE + s - 1, set()).add(t - 1 + record_base)
     return {moz_id: clips.pop() for moz_id, clips in found.items() if len(clips) == 1}
-
-
-def wo1_voice_clips(mapping: dict[int, int], index: bytes, bank: Path, stock_index: bytes,
-                    stock_bank: Path) -> dict[int, bytes]:
-    """Read donor KOVS records whose sample counts differ from stock."""
-    records = wo1_voice_records(index)
-    samples = lambda record: parse_kovs_record(record, verify_checksums=False)[2].sample_count
-    with bank.open("rb") as stream, stock_bank.open("rb") as stock:
-        clips = {moz_id: _read_at(stream, *records[record]) for moz_id, record in mapping.items()}
-        return {moz_id: clip for moz_id, clip in clips.items() if samples(clip) != samples(
-            _read_at(stock, *struct.unpack_from(">II", stock_index, 8 + 8 * moz_id)))}
 
 
 def kovs_record(ogg: bytes) -> bytes:
@@ -497,14 +478,20 @@ def _ffmpeg_each(jobs: list[tuple[list[str], bytes, list[str]]], workers: int | 
         return [out for part in pool.map(batch, range(0, len(jobs), FFMPEG_BATCH)) for out in part]
 
 
-def wo2_voice_clips(mapping: dict[int, int], index: bytes, bank: Path, jobs: int | None = None) -> dict[int, bytes]:
-    """Convert donor RIFF clips, excluding repeated placeholders."""
+def x360_voice_clips(banks: list[tuple[str, dict[int, int], bytes, Path]],
+                     jobs: int | None = None) -> tuple[dict[int, bytes], dict[int, str]]:
+    """Convert donor RIFF clips from (source, mapping, index, bank) Xbox 360 banks, an earlier bank first,
+    excluding repeated placeholders; with each clip's source."""
     from collections import Counter
-    records = wo2_voice_records(index)
-    with bank.open("rb") as stream:
-        riffs = {moz_id: _read_at(stream, *records[clip]) for moz_id, clip in mapping.items()}
-        copies = Counter(hashlib.sha256(_read_at(stream, *record)).digest() for record in records)
-    riffs = {moz_id: riff for moz_id, riff in riffs.items() if copies[hashlib.sha256(riff).digest()] <= 2}
+    riffs, sources = {}, {}
+    for source, mapping, index, bank in banks:
+        records = wo2_voice_records(index)
+        with bank.open("rb") as stream:
+            copies = Counter(hashlib.sha256(_read_at(stream, *record)).digest() for record in records)
+            for moz_id, clip in mapping.items():
+                riff = _read_at(stream, *records[clip])
+                if moz_id not in riffs and copies[hashlib.sha256(riff).digest()] <= 2:
+                    riffs[moz_id], sources[moz_id] = riff, source
     def encode(moz_ids: list[int], quality: int, span: tuple[float, float]) -> dict[int, bytes]:
         vorbis = ["-ac", "1", "-ar", "48000", "-c:a", "libvorbis", "-threads", "1",
                   "-q:a", str(quality), "-fflags", "+bitexact", "-flags:a", "+bitexact", "-f", "ogg"]
@@ -518,18 +505,23 @@ def wo2_voice_clips(mapping: dict[int, int], index: bytes, bank: Path, jobs: int
         if not (long := [i for i, clip in clips.items() if len(clip) > SLOT_BYTES]):
             break
         clips |= encode(long, quality, (0.85, 0.85))  # progress stays put
-    return clips
+    return clips, sources
 
 
 def english_voice_clips(wo1_mapping: dict[int, int], wo1_index: bytes, wo1_bank: Path,
                         wo2_mapping: dict[int, int], wo2_index: bytes, wo2_bank: Path,
                         stock_index: bytes, stock_bank: Path,
                         jobs: int | None = None) -> tuple[dict[int, bytes], dict[int, str]]:
-    """Select usable X360 clips before WO1 fallbacks, with each clip's source; jobs is the ffmpeg process count."""
-    wo2 = wo2_voice_clips(wo2_mapping, wo2_index, wo2_bank, jobs)
-    wo1 = wo1_voice_clips({i: record for i, record in wo1_mapping.items() if i not in wo2},
-                          wo1_index, wo1_bank, stock_index, stock_bank)
-    return wo1 | wo2, {**dict.fromkeys(wo1, "wo1-pc"), **dict.fromkeys(wo2, "wo2-x360")}
+    """Select usable WO2 X360 clips before WO1 X360 fallbacks, with each clip's source; jobs is the ffmpeg process
+    count. A WO1 clip as long as the stock clip is the stock take, not an English one, and is left out."""
+    clips, sources = x360_voice_clips([("wo2-x360", wo2_mapping, wo2_index, wo2_bank),
+                                       ("wo1-x360", wo1_mapping, wo1_index, wo1_bank)], jobs)
+    samples = lambda record: parse_kovs_record(record, verify_checksums=False)[2].sample_count  # noqa: E731
+    with stock_bank.open("rb") as stock:
+        stock_takes = {moz_id for moz_id, source in sources.items() if source == "wo1-x360" and samples(clips[moz_id])
+                       == samples(_read_at(stock, *struct.unpack_from(">II", stock_index, 8 + 8 * moz_id)))}
+    return ({i: clip for i, clip in clips.items() if i not in stock_takes},
+            {i: source for i, source in sources.items() if i not in stock_takes})
 
 
 def _read_at(stream: BinaryIO, offset: int, size: int) -> bytes:
@@ -558,14 +550,16 @@ SE_BANK_MAP = {**{b: b - 1 for b in range(9, 104)}, **{b: b + 91 for b in range(
 
 
 _SE_GENERIC = (0, 0, 2, 2, 4, 4, 2, 7, 7, 9, 10)
+# MOZ bank: (WO1 X360 bank, its entry for each MOZ entry). WO1 PC banks 8-86 keep their number on X360 and
+# PC 87-101 are X360 166-180; every entry used pairs by index (checked by audio).
 SE_WO1 = {
     **{moz: (moz - 1, tuple(range(13))) for moz in range(9, 88) if moz != 86},
     103: (8, tuple(range(13))),
-    105: (87, (1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)),
-    **{moz: (moz - 18, tuple(range(11))) for moz in range(106, 114)},
-    119: (99, _SE_GENERIC), 120: (100, _SE_GENERIC),
-    **{moz: (wo1, _SE_GENERIC + (None,) * 9 + (20, 21, 22, 23)) for moz, wo1 in ((116, 96), (118, 98), (121, 101))},
-    117: (97, _SE_GENERIC + (None,) * 9 + (20, 20, 22, 23)),
+    105: (166, (1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)),
+    **{moz: (moz + 61, tuple(range(11))) for moz in range(106, 114)},
+    119: (178, _SE_GENERIC), 120: (179, _SE_GENERIC),
+    **{moz: (wo1, _SE_GENERIC + (None,) * 9 + (20, 21, 22, 23)) for moz, wo1 in ((116, 175), (118, 177), (121, 180))},
+    117: (176, _SE_GENERIC + (None,) * 9 + (20, 20, 22, 23)),
 }
 
 
@@ -598,21 +592,6 @@ def wo2_se_entries(hdx: bytes) -> list[list[tuple[int, int, int]]]:
     return banks
 
 
-def wo1_se_entries(hdx: bytes) -> list[list[tuple[int, int, int]]]:
-    """Read PC sound-bank BDX offsets, sizes and rates."""
-    banks, base = [], 0
-    for start in range(0, len(hdx), 2048):
-        count, size = struct.unpack_from("<HI", hdx, start + 2)
-        offsets = struct.unpack_from(f"<{count}I", hdx, start + 8)
-        if not count or offsets[0] != 8 + 4 * count:
-            continue
-        banks.append([(base + struct.unpack_from("<I", hdx, start + o + 20)[0],
-                       struct.unpack_from("<I", hdx, start + o + 24)[0],
-                       struct.unpack_from("<H", hdx, start + o + 4)[0]) for o in offsets])
-        base += -(-size // 2048) * 2048
-    return banks
-
-
 def _xma2_riff(packets: bytes, rate: int) -> bytes:
     """Wrap mono XMA2 packets in a RIFF container."""
     fmt = struct.pack("<HHIIHHH", 0x166, 1, rate, rate * 2, 2048, 16, 34)
@@ -621,21 +600,15 @@ def _xma2_riff(packets: bytes, rate: int) -> bytes:
     return b"RIFF" + struct.pack("<I", 4 + len(body)) + b"WAVE" + body
 
 
-def _pcm16(clips: list[tuple[bytes, bool, int, int]], jobs: int | None) -> list[tuple[int, bytes]]:
-    """Convert (clip, is WO1, donor rate, rate) donor clips to 16-bit mono PCM at the entry's rate.
-
-    WO1 clips already are PCM and are used as they are; X360 clips are decoded once."""
-    todo = [k for k, (_, wo1, donor_rate, rate) in enumerate(clips) if not wo1 or donor_rate != rate]
-    converted = iter(_ffmpeg_each([
-        (["-f", "s16le", "-ar", str(clips[k][2]), "-ac", "1"] if clips[k][1] else ["-f", "wav"],
-         clips[k][0] if clips[k][1] else _xma2_riff(clips[k][0], clips[k][2]),
-         ["-ac", "1", "-ar", str(clips[k][3]), "-f", "s16le"]) for k in todo], jobs, "converting sound effects", (0.85, 1.0)))
-    pcms = {k: next(converted) for k in todo}
-    return [(len(pcm := pcms.get(k, clip)) // 2, pcm) for k, (clip, _, _, _) in enumerate(clips)]
+def _pcm16(clips: list[tuple[bytes, int, int]], jobs: int | None) -> list[tuple[int, bytes]]:
+    """Decode (XMA2 packets, donor rate, rate) donor clips once, to 16-bit mono PCM at the entry's rate."""
+    pcms = _ffmpeg_each([(["-f", "wav"], _xma2_riff(clip, donor_rate), ["-ac", "1", "-ar", str(rate), "-f", "s16le"])
+                         for clip, donor_rate, rate in clips], jobs, "converting sound effects", (0.85, 1.0))
+    return [(len(pcm) // 2, pcm) for pcm in pcms]
 
 
 # Entry bytes 6 to 11: format, block bytes, samples per block. Stock banks use 0x8800 (IMA ADPCM, 512-byte
-# blocks of 1,017 samples); the game also plays 0x4800, 16-bit PCM, which is what the donor effects are.
+# blocks of 1,017 samples); the game also plays 0x4800, 16-bit PCM, which is what the donor effects become.
 SE_FORMAT_PCM = (0x4800, 2, 1)
 
 
@@ -656,11 +629,11 @@ def se_bank(header: bytes, clips: list[tuple[int, bytes]]) -> tuple[bytes, bytes
 def english_se_bank(seidx: bytes, se: bytes, wo1_hdx: bytes, wo1_bdx: Path, wo2_hdx: bytes,
                     wo2_bdx: Path, jobs: int | None = None) -> tuple[bytes, dict[str, int]]:
     """Assemble sound banks from paired donor entries; jobs is the ffmpeg process count (default: CPU count)."""
-    stock, wo1, wo2 = moz_se_banks(seidx, se), wo1_se_entries(wo1_hdx), wo2_se_entries(wo2_hdx)
+    stock, wo1, wo2 = moz_se_banks(seidx, se), wo2_se_entries(wo1_hdx), wo2_se_entries(wo2_hdx)
     for donor, bdx in ((wo1, wo1_bdx), (wo2, wo2_bdx)):
         if max(o + n for bank in donor for o, n, _ in bank) > bdx.stat().st_size:
             raise VoiceBankError(f"{bdx.name} is shorter than its HDX describes")
-    work, tiers = {}, {"wo1-pc": 0, "wo2-x360": 0}
+    work, tiers = {}, {"wo1-x360": 0, "wo2-x360": 0}
     with wo1_bdx.open("rb") as one, wo2_bdx.open("rb") as two:
         for moz, w in SE_BANK_MAP.items():
             header = stock[moz][0]
@@ -673,8 +646,8 @@ def english_se_bank(seidx: bytes, se: bytes, wo1_hdx: bytes, wo1_bdx: Path, wo2_
                 j = pairs[k] if k < len(pairs) else None
                 offset, size, donor_rate = wo2[w][k] if j is None else wo1[wo1_bank][j]
                 clip = _read_at(two if j is None else one, offset, size)
-                work[moz].append((clip, j is not None, donor_rate, rate))
-                tiers["wo2-x360" if j is None else "wo1-pc"] += 1
+                work[moz].append((clip, donor_rate, rate))
+                tiers["wo2-x360" if j is None else "wo1-x360"] += 1
     converted = iter(_pcm16([job for entries in work.values() for job in entries], jobs))
     banks = {moz: se_bank(stock[moz][0], [next(converted) for _ in entries]) for moz, entries in work.items()}
     table, body = bytearray(_aligned_size(4 + 16 * SE_BANKS)), bytearray()

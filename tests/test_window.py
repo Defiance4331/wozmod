@@ -25,7 +25,7 @@ def test_the_window_and_the_command_give_the_same_verdict_on_each_input(tmp_path
     monkeypatch.setattr(installer.resources, "ffmpeg", lambda: "ffmpeg")
     wrong = tmp_path / "wrong"
     wrong.write_bytes(b"xyz")
-    values = {"game": str(tmp_path), "wo1": str(wrong), "x360": str(tmp_path / "none"), "psp": str(wrong),
+    values = {"game": str(tmp_path), "wo1": str(wrong), "wo1-x360": str(wrong), "x360": str(tmp_path / "none"), "psp": str(wrong),
               "lettering": str(wrong), "dll": str(wrong)}
     with pytest.raises(InstallError) as caught:
         installer.check_inputs(tmp_path, {name: Path(path) for name, path in values.items()})
@@ -195,7 +195,7 @@ def test_a_typed_program_path_runs_only_when_finished(shown, monkeypatch):
     win, root = shown
     ran = []
     monkeypatch.setattr(window, "check_row", lambda name, values: (ran.append(values[name]), (None, "OK"))[1])
-    name = next(iter(installer.PROGRAMS))
+    name = next(iter(installer.TOOLS))
     for path in ("/usr/bin/p", "/usr/bin/py"):
         win.vars[name].set(path)
     for _ in range(40):
@@ -208,7 +208,7 @@ def test_a_typed_program_path_runs_only_when_finished(shown, monkeypatch):
 
 @pytest.fixture
 def program_pins(monkeypatch):
-    """Pin synthetic Xbox 360 programs, and let every row except the Xbox 360 program and its file pass."""
+    """Pin synthetic Xbox 360 programs, and let every row except the Xbox 360 program and its files pass."""
     import hashlib
 
     import wozmod.donors as donors
@@ -216,12 +216,13 @@ def program_pins(monkeypatch):
     from wozmod.donors import ProgramIdentity
 
     installer._TOOL_RUNS.clear()
-    for attribute, content in (("X360_PROGRAM", DECRYPTED), ("X360_ENCRYPTED_PROGRAM", ENCRYPTED)):
+    for attribute, content in (("X360_PROGRAM", DECRYPTED), ("X360_ENCRYPTED_PROGRAM", ENCRYPTED),
+                               ("WO1_X360_PROGRAM", DECRYPTED), ("WO1_X360_ENCRYPTED_PROGRAM", ENCRYPTED)):
         monkeypatch.setattr(donors, attribute, ProgramIdentity(
             attribute, len(content), hashlib.sha256(content).hexdigest(), "x360"))
     real = window.check_row
     monkeypatch.setattr(window, "check_row", lambda name, values: real(name, values) if name in (
-        "x360-tool", "x360-file") else (None, "OK"))
+        "x360-tool", "x360-file", "wo1-x360-file") else (None, "OK"))
     monkeypatch.setattr(installer, "check_input", lambda name, path: None)  # the disc image check is not under test
     return DECRYPTED, ENCRYPTED, _xbox_image
 
@@ -253,7 +254,9 @@ def test_a_good_advanced_file_makes_its_program_row_not_required_and_a_bad_one_d
     wrong.write_bytes(b"x")
     for name in ("game", "wo1", "psp", "psp-tool"):
         win.vars[name].set(str(tmp_path))
-    win.vars["x360"].set(str(xbox_image(tmp_path, b"default.xex", encrypted)))
+    for name in ("x360", "wo1-x360"):
+        win.vars[name].set(str(xbox_image(tmp_path, b"default.xex", encrypted)))
+    win.vars["wo1-x360-file"].set(str(good))  # the program row stays required until both discs are covered
     win.vars["x360-file"].set(str(wrong))
     _wait(root, lambda: win.status["x360-file"].cget("text") == installer.WRONG_FILE)
     win.check_program("psp-tool")
@@ -268,7 +271,8 @@ def test_a_decrypted_copy_in_the_disc_image_says_so_in_the_program_row(shown, pr
     # Bug: the image's copy is found at install but the window still demands a program.
     plain, _, xbox_image = program_pins
     win, root = shown
-    win.vars["x360"].set(str(xbox_image(tmp_path, b"default.xex", plain)))
+    for name in ("x360", "wo1-x360"):
+        win.vars[name].set(str(xbox_image(tmp_path, b"default.xex", plain)))
     _wait(root, lambda: win.status["x360-tool"].cget("text") == "Not needed: your disc image already has the decrypted file")
     assert win.good["x360-tool"]
 
@@ -277,8 +281,8 @@ def test_the_install_reason_counts_the_rows_still_missing(shown):
     # Bug: the reason miscounts (off by one, or counts the Advanced file rows the program rows stand in for),
     # or it stays stale after a row turns good.
     win, root = shown
-    assert "Pick the 6 missing items above" in win.reason.cget("text")
-    for name in ("game", "wo1", "x360"):
+    assert "Pick the 7 missing items above" in win.reason.cget("text")
+    for name in ("game", "wo1", "wo1-x360", "x360"):
         win.good[name] = True
     win.refresh_buttons()
     assert "Pick the 3 missing items above" in win.reason.cget("text")
