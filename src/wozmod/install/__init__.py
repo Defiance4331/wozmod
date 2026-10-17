@@ -38,7 +38,7 @@ STOCK_FILES = {
 }
 # Release assets built by us; a release updates both pins with the files it ships.
 LETTERING = (12_193_440, "e186d9af9b21bf89806eaadff349c71e81622679d5f1087a70f52f5c978be324")
-DLL = (201_191, "17b08dfd8663ab4582373476f52ac5e672a19237073783e88bc60dedb40604db")
+DLL = (202_309, "78f38902dcf386bf6d5c869ce39baecf71e001f30090bd49eb9cc34faf2defad")
 
 _MOD_PATH = re.compile(r"d3d9\.dll|wozmod(/[A-Za-z0-9_][A-Za-z0-9_.-]*)+")
 
@@ -509,6 +509,7 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
     """
     from wozmod.art.compose import compose
     from wozmod.donors import PSP, WO1, WO1_X360, X360
+    from wozmod.movies import movie_donors
     from wozmod.voices import VOICE_DONOR_FILES
 
     donors, out = staging / "donors", staging / "out"
@@ -519,6 +520,8 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
         ("x360", X360, "wo2-x360", VOICE_DONOR_FILES, "reading the Warriors Orochi 2 Xbox 360 disc"),
         ("psp", PSP, "wo2-psp", psp_files, "reading the PSP disc"),
     ]
+    flags = {name: flag for flag, (name, _) in DISCS.items()}
+    plan += [(flags[name], donor, "movie", None, "copying the English movies") for name, donor in movie_donors().items()]
     sizes = [sum(m.size for m in donor.files if files is None or m.path in files) for _, donor, _, files, _ in plan]
     progress.begin("discs")
     offset, unread = 0, None
@@ -567,6 +570,7 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
     art = staging / "art/wozmod"
     for name in ("entries", "hires.bin", "prompts-xbox.bin", "glyphs.bin"):
         os.replace(art / name, out / "wozmod" / name)
+    os.replace(donors / "movie", out / "wozmod/movie")
     shutil.copyfile(inputs["dll"], out / "d3d9.dll")
     return out
 

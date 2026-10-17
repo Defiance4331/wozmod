@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from wozmod import __main__ as cli
-from wozmod import remembered
+from wozmod import remembered, resources
 
 
 class Terminal(io.StringIO):
@@ -31,6 +31,9 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("APPDATA", str(tmp_path / "config"))
     monkeypatch.setattr(sys, "frozen", True, raising=False)
+    for name in resources.PACKAGED:  # the bundle holds what the spec packages, and nothing else
+        (tmp_path / "bundle" / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "bundle" / name).symlink_to(resources.root() / name)
     monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path / "bundle"), raising=False)
 
 

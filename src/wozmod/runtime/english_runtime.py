@@ -64,6 +64,7 @@ ALWAYS_HOOKS = [
     (0x56B7C9, "83c408 393de0a12001", 29, None),  # Game Settings input read (mid-function)
     (0x5D1A30, "6aff 68c4ba6b00", 30, 0x14),    # archive read (thiscall): loose entries
     (0x5D06D0, "8b442404 8bd1", 31, 4),         # archive entry size (thiscall)
+    (0x5146FF, "d90538e57000", 105, None),      # movie path made, "./movie/movieNNN.wmv" at [esp] (mid-function)
     (0x5D7CE0, "53 8b5c2408", 36, 8),           # voice offset (thiscall): English voices
     (0x5D7D30, "8b442404 85c0", 37, 8),         # voice size (thiscall)
     (0x4A1710, "8b442404 f60010", 71, None),    # lip block handed to a slot (cdecl: state, slot, block)

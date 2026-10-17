@@ -6,15 +6,15 @@ import sys
 from pathlib import Path
 
 root = Path(SPECPATH).parent
+sys.path.insert(0, str(root / "src"))
+from wozmod.resources import PACKAGED
 # The python.org Windows build keeps the Tcl 9 and Tk 9 scripts in two zip files beside Python, not inside
 # the DLLs, so PyInstaller leaves them out. Tcl finds them when they sit next to tcl90.dll.
 tcl_zips = [(str(zip_file), ".") for zip_file in (Path(sys.base_prefix) / "tcl").glob("libt*.zip")] if sys.platform == "win32" else []
 common = dict(
     pathex=[str(root / "src")],
     datas=[
-        (str(root / "data/art"), "data/art"),
-        (str(root / "data/text"), "data/text"),
-        (str(root / "runtime"), "runtime"),
+        *((str(root / name), name if (root / name).is_dir() else str(Path(name).parent)) for name in PACKAGED),
         *tcl_zips,
     ],
     hiddenimports=["wozmod_native"],  # the Rust codecs; native.py imports them in a try block

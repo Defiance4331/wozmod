@@ -3671,6 +3671,41 @@ static void option_row(u32 row, u32 x, u32 y)
 
 static int display_hook(u32 id, struct frame *f, u32 *replace);
 
+/* The movie path just made at 0x5146FA, "./movie/movieNNN.wmv" or "./movie/movieNNN_s.wmv" (byte 0x7A4718 picks the
+ * small file): the English movie instead when it is installed and its language is on. The installer puts a speech
+ * movie in wozmod/movie/voice/ and a title card in wozmod/movie/text/, one file for both sizes. */
+static void movie_path(WCHAR *movie)
+{
+    static const WCHAR stock[] = L"./movie/", *const dirs[2] = {L"voice", L"text"};
+    WCHAR name[MAX_PATH], file[40];
+    char line[MAX_PATH];
+    u32 i, n, d;
+    for (i = 0; i < sizeof stock / sizeof *stock - 1; i++)
+        if (movie[i] != stock[i])
+            return;
+    for (n = 0; (file[n] = movie[i + n]); n++)
+        if (n + 1 >= sizeof file / sizeof *file || file[n] == '/' || file[n] == '\\')
+            return;
+    if (n > 6 && !lstrcmpiW(file + n - 6, L"_s.wmv"))
+        lstrcpyW(file + n - 6, L".wmv"), n -= 2;
+    if (lstrlenW(root) + sizeof "movie\\voice\\" + n >= MAX_PATH)
+        return;
+    for (d = 0; d < 2; d++) {
+        if (d ? !english : voice_saved)
+            continue;
+        lstrcatW(lstrcatW(lstrcatW(path(name, L"movie\\"), dirs[d]), L"\\"), file);
+        if (GetFileAttributesW(name) == INVALID_FILE_ATTRIBUTES)
+            continue;
+        lstrcpyW(movie + 2, L"wozmod/movie/");  /* relative, as stock: the game's folder is the working one */
+        lstrcatW(lstrcatW(lstrcatW(movie, dirs[d]), L"/"), file);
+        break;
+    }
+    for (i = 0; i + 1 < sizeof line && movie[i]; i++)  /* the log names the file that plays, stock or English */
+        line[i] = movie[i] < 0x80 ? (char)movie[i] : '?';
+    line[i] = 0;
+    note(line, 0);
+}
+
 static int always(u32 id, struct frame *f, u32 *replace)
 {
     struct loose *e;
@@ -3833,6 +3868,9 @@ static int always(u32 id, struct frame *f, u32 *replace)
         return 1;
     case 30:
         *replace = read_loose(f);
+        return 1;
+    case 105:  /* the path is the call's first argument, still on the stack */
+        movie_path(*(WCHAR **)f->esp);
         return 1;
     case 31:
         if ((e = served(f->arg[0])))
