@@ -10,6 +10,7 @@ import struct
 import sys
 import subprocess
 import tempfile
+import unicodedata
 import zlib
 from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from functools import lru_cache
@@ -630,6 +631,12 @@ class Face:
             prior = ({c: x + image.width + gap for c, (image, x, _) in self.glyphs.items()},
                      {c: -x for c, (_, x, _) in self.glyphs.items()})
         self.right, self.left, self.space = fit_spacing(pairs, prior, ink)
+        # An accent sits over its letter's body and leaves the sides alone. A letter seen only after a space
+        # (the donor cards' Ō) would otherwise take that donor's word gap as its own left side.
+        for char in list(self.left.keys() | self.right.keys()):
+            base = unicodedata.normalize("NFD", char)[0]
+            if base != char and base in self.left and base in self.right:
+                self.left[char], self.right[char] = self.left[base], self.right[base]
         if optical:
             self.gap = round(median(g for pair, found in gaps.items() if pair != " " for g in found))
             self.gaps = {pair: round(median(found)) for pair, found in gaps.items()}

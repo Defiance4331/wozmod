@@ -361,6 +361,7 @@ def test_command(memory: int, block: int, op: int, arg: int = 0, data: bytes = b
             5: "no such sub-scene in this stage's event scene, or the game refused it" if op == 8 else
                "no such queued script in this stage; run scripts",
             6: "review texture or rectangle is unavailable; check the test-only review.bin",
+            7: "an officer that sub-scene casts is not on the field (no model loaded); the stage would not start it now",
         }.get(result, f"result {result}"))
 
 
@@ -637,6 +638,7 @@ def perform(root: Path, request: dict) -> dict:
     elif action == "video":
         # Gamescope's PipeWire screen stream and the private sink's monitor, muxed by one pipeline so they stay in step.
         # NVENC keeps encoding off the CPU the game needs; start the run with --video (1080p output) for full speed.
+        # Pin BGRx: offered NV12, Gamescope converts each frame on its compositor thread and the game drops to 30 fps.
         name, seconds = request["name"], request["seconds"]
         if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", name):
             raise ValueError("video name must be a short filename stem, without slashes")
@@ -648,8 +650,8 @@ def perform(root: Path, request: dict) -> dict:
         with local_path(root, f"evidence/{name}.log").open("w") as log:
             subprocess.Popen(
                 ["timeout", "-s", "INT", str(seconds), "gst-launch-1.0", "-e",
-                 "pipewiresrc", "target-object=gamescope", "do-timestamp=true", "!", "queue", "!",
-                 "nvh264enc", "bitrate=12000", "!", "h264parse", "!", "queue", "!", "mux.",
+                 "pipewiresrc", "target-object=gamescope", "do-timestamp=true", "!", "video/x-raw,format=BGRx", "!",
+                 "queue", "!", "nvh264enc", "bitrate=12000", "!", "h264parse", "!", "queue", "!", "mux.",
                  "pulsesrc", "device=musou_harness.monitor", "do-timestamp=true", "!", "audioconvert", "!",
                  "opusenc", "bitrate=192000", "!", "queue", "!", "mux.",
                  "matroskamux", "name=mux", "!", "filesink", f"location={destination}"],

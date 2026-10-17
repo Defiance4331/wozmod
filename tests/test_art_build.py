@@ -36,6 +36,26 @@ def test_spacing_fit_does_not_drop_space_contribution():
             assert abs(got_right[x] + got_left[y] - right[x] - left[y]) < 1e-6
 
 
+def test_accented_letter_seen_only_after_a_wide_space_keeps_its_base_letter_sides():
+    # Bug: a letter met only after a space fits its left side from the donor's word gap, so a donor
+    # that set that gap wide puts the same wide gap before the letter in every word we draw.
+    row = Image.new("RGBA", (120, 16))
+    boxes = [(2, 4, 7, 14), (9, 4, 17, 14), (19, 4, 24, 14), (26, 4, 31, 14),  # a O a a
+             (41, 4, 46, 14), (48, 4, 56, 14), (58, 4, 63, 14),                    # a O a, 10px word gap
+             (73, 4, 78, 14),                                                     # a, 10px word gap
+             (98, 1, 106, 2), (98, 4, 106, 14), (108, 4, 113, 14)]                 # Ō a after a 20px gap
+    for box in boxes:
+        row.paste(FILL, box)
+    face = build.Face([(row, "aOaa aOa a Ōa", build.yellow, 3, None)])
+
+    def gap(text):
+        image, _ = face.render(text)
+        inked = [image.crop((x, 0, x + 1, image.height)).getbbox() is not None for x in range(image.width)]
+        return inked.index(True, inked.index(False)) - inked.index(False)
+
+    assert gap("a Ōa") == gap("a Oa") == 10
+
+
 def test_glyph_fills_keeps_a_dot_and_stem_as_one_letter():
     row = Image.new("RGBA", (40, 12), OUTLINE)
     for box in ((2, 2, 6, 10), (12, 1, 14, 3), (12, 5, 14, 10), (20, 2, 24, 10)):

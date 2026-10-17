@@ -336,7 +336,8 @@ def test_test_mailbox_screen_wait_and_say(tmp_path, monkeypatch):
                 if op in (3, 4, 5, 6, 8):
                     received.append((op, arg))
                     busy = op == 4 and received.count((4, arg)) == 1  # a script is playing at first
-                    struct.pack_into("<I", image, block + 44, 3 if (op, arg) == (3, 8) else 4 if busy else 0)
+                    refused = {(3, 8): 3, (8, 2): 7}.get((op, arg), 4 if busy else 0)  # scene 2's cast is absent
+                    struct.pack_into("<I", image, block + 44, refused)
                 struct.pack_into("<I", image, block + 32, command)
             time.sleep(0.005)
 
@@ -365,9 +366,11 @@ def test_test_mailbox_screen_wait_and_say(tmp_path, monkeypatch):
             harness.perform(tmp_path, {"action": "lose"})
         assert harness.perform(tmp_path, {"action": "script", "number": 12}) == {"queued": 12}
         assert harness.perform(tmp_path, {"action": "scene", "number": 1}) == {"scene": 1}  # op 8, never a script
+        with pytest.raises(RuntimeError, match="not on the field"):  # not "no such sub-scene"
+            harness.perform(tmp_path, {"action": "scene", "number": 2})
         harness.perform(tmp_path, {"action": "unlock"})
         assert received == [(1, b"\x84\x40da"), (2, "\u6575".encode("cp932")), (3, 7), (3, 8), (4, 12), (4, 12), (8, 1),
-                            (5, 0)]
+                            (8, 2), (5, 0)]
     finally:
         stop.set()
         thread.join()
@@ -1236,3 +1239,14 @@ def test_a_pad_run_routes_with_pad_buttons(tmp_path, monkeypatch):
     assert [(r["action"], r["names"]) for r in sent] == [("pad", ["DOWN", "A", "B"])]
     with pytest.raises(ValueError, match="F1"):
         harness.drive_step(tmp_path, ["F1"], None, None, "pad", quick=True)
+
+
+def test_video_pins_the_screen_stream_to_bgrx(tmp_path, monkeypatch):
+    """Bug: left to negotiate, NVENC takes Gamescope's NV12, whose per-frame conversion halves the game to 30 fps."""
+    (tmp_path / "evidence").mkdir()
+    calls = []
+    monkeypatch.setattr(harness.subprocess, "Popen", lambda command, **kwargs: calls.append(command))
+    harness.perform(tmp_path, {"action": "video", "name": "clip", "seconds": 5})
+    command = calls[0]
+    link = command.index("!", command.index("pipewiresrc"))
+    assert command[link + 1] == "video/x-raw,format=BGRx"

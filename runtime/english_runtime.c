@@ -352,6 +352,11 @@ static u32 texture(u32 handle)
 #define SCENE_ENTRY(slot) (((const u32 *const volatile *)0x89A06C)[slot])
 #define PLAYER ((const u8 *)0x7CDED0)
 #define SCENE_BUSY 0x8038000  /* requested, fading out, playing, fading back */
+/* Scene script: commands of u32 next (from the script start), u8 category, sub, n, n arg types, a data offset (from
+   +7), n arg sizes; a category 0xFF ends it. The game reads each arg with 0x4A70C0 (out, data, type, size). */
+#define SCENE_ARG ((const u8 *(*)(void *, const u8 *, u32, u32))0x4A70C0)
+#define OFFICER_MODEL(id) (*(const volatile u32 *)(0x8B6B8C + (id) * 0xBC))
+#define CAST_TABLE (*(const u8 *const volatile *)0x9C8FD0)
 
 
 struct test_text {
@@ -429,6 +434,31 @@ static void test_quad(u32 hook, const struct frame *f, u32 at)
 }
 
 static u32 test_review_set(u32 name, const u32 *rect);
+
+/* Whether every officer a sub-scene casts has its model loaded. Its cast setup 0x4A5BB0 builds no actor for an
+   officer whose model flag is 0 (unless 0x49EF50 names it special) and then reads that actor at 0x4A5E25; the
+   stage's own events start such a sub-scene only once the officer is on the field. */
+static u32 scene_cast_ready(const u8 *script)
+{
+    const u8 *c;
+    for (c = script; c[4] != 0xFF; c = script + *(const u32 *)c) {
+        const u8 *data = c + 7 + c[7 + c[6]];
+        u32 slot = 0, id = 0;
+        if (c[4] != 3 || c[5] != 0 || c[6] < 2)  /* (3, 0) declares a cast slot: slot, officer id, variant */
+            continue;
+        data = SCENE_ARG(&slot, data, c[7], c[8 + c[6]]);
+        SCENE_ARG(&id, data, c[8], c[9 + c[6]]);
+        id &= 0xFFFF;
+        if (id == 0x3E8)  /* the ids the cast setup's caller 0x4A5FD7 maps to an army's officer */
+            id = CAST_TABLE[*(const u32 *)0x801B34 * 36 + 0x7B12];
+        else if (id >= 0x3EB && id <= 0x3ED)
+            id = CAST_TABLE[id * 36 - 0x11FA];
+        if (id < 0x93 || id > 0x9E)  /* 0x4A5BB0 skips 0x9E, and 0x49EF50 needs no model for 0x93-0x9D */
+            if (!OFFICER_MODEL(id))
+                return 0;
+    }
+    return 1;
+}
 
 
 static void test_frame(void)
@@ -514,7 +544,8 @@ static void test_frame(void)
         break;
     case 8: {
         /* Play sub-scene arg of the current stage's event scene, as a category-39 command would (that path cannot
-           ask for sub-scene 0, the battle-start opening). Only the current stage's scene is loaded. */
+           ask for sub-scene 0, the battle-start opening). Only the current stage's scene is loaded. The game checks
+           no cast: stage events start a sub-scene only when their conditions put its officers on the field. */
         u32 slot = STAGE >= 0x44 ? STAGE - 4 : STAGE;
         const u32 *entry;
         b->result = 3;
@@ -527,9 +558,13 @@ static void test_frame(void)
         entry = slot < 0x8D ? SCENE_ENTRY(slot) : 0;
         if (!entry || b->arg >= entry[0])  /* the game would quietly play sub-scene 0 instead */
             break;
+        b->result = 7;
+        if (!scene_cast_ready((const u8 *)entry + entry[1 + b->arg]))  /* sub-scene data, as 0x49A6E0 finds it */
+            break;
+        b->result = 5;
         PLAY_SCENE(*(void *const *)(PLAYER + 8), PLAYER + (*(const u32 *)(PLAYER + 0x80) & 0x20000 ? 0x30 : 0x28),
                    b->arg);
-        if (BATTLE_FLAGS & 0x8000000) {  /* refused when scenes are skipped, in modes 3 and 4, or the cast is absent */
+        if (BATTLE_FLAGS & 0x8000000) {  /* refused when the scene is skipped (0x563290) or in modes 3 and 4 */
             RUNNING[0] |= 0x10;  /* stage scripts wait for the scene, as after a category-39 command */
             b->result = 0;
         }
