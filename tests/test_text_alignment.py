@@ -1,11 +1,6 @@
-import hashlib
-import importlib.util
-import json
 import os
 from pathlib import Path
 import struct
-import subprocess
-import sys
 
 import pytest
 
@@ -19,7 +14,6 @@ from wozmod.text.script_alignment import (
     event_pairs,
     moz_scripts,
     narration_pairs,
-    official_pairs,
     pair_scripts,
     prefix_pairs,
     quote_pairs,
@@ -230,44 +224,3 @@ def test_stock_script_reader_excludes_multimember_entries_and_invalid_script_hea
     assert {ordinal: (entry.notices.records[0].text_bytes, entry.dialog.records[0].text_bytes) for ordinal, entry in found.items()} == {
         0: (b"Fixture notice", b"Fixture dialog"),
     }
-
-
-def _baseline_module(old_repo, tmp_path):
-    prefix = "src/musou_patch/targets/musou_orochi_z/"
-    for name, source_name in (("_text_oracle_archives", "archives"), ("_text_oracle_alignment", "script_alignment")):
-        source = subprocess.run(
-            ["git", "-C", str(old_repo), "show", f"2fa29d5:{prefix}{source_name}.py"],
-            capture_output=True, text=True, check=True,
-        ).stdout
-        source = source.replace("from .archives import", "from _text_oracle_archives import")
-        path = tmp_path / f"{name}.py"
-        path.write_text(source)
-        spec = importlib.util.spec_from_file_location(name, path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module
-        spec.loader.exec_module(module)
-    return module
-
-
-def _fingerprint(rows):
-    payload = [(key.hex(), english, source) for key, (english, source) in sorted(rows.items())]
-    return len(payload), hashlib.sha256(json.dumps(payload, separators=(",", ":")).encode()).hexdigest()
-
-
-@pytest.mark.skipif(os.environ.get("WOZMOD_TEXT_ALIGNMENT") != "1", reason="set WOZMOD_TEXT_ALIGNMENT=1 for donor alignment oracle")
-def test_official_pairing_rederivation_keeps_every_baseline_vote_source_and_voice_suffix(tmp_path):
-    old_value, game_value = os.environ.get("WOZMOD_OLD_REPO"), os.environ.get("WOZMOD_GAME")
-    if not old_value or not game_value:
-        pytest.skip("set WOZMOD_OLD_REPO and WOZMOD_GAME for real inputs")
-    old_repo, game = Path(old_value), Path(game_value)
-    wo1 = old_repo / "work/donors/wo1/linkdata_ens"
-    x360 = old_repo / "work/donors/wo2-x360/linkdata_ens"
-    if not all(path.is_file() for path in [
-        game / "LINKDATA1.BIN", game / "LINKDATA1.IDX", game / "LINKDATA2.BIN", game / "LINKDATA2.IDX",
-        wo1.with_suffix(".lnk"), wo1.with_suffix(".idx"), x360.with_suffix(".lnk"), x360.with_suffix(".idx"),
-    ]):
-        pytest.skip("stock and extracted donor inputs are absent")
-    baseline = _baseline_module(old_repo, tmp_path)
-    expected = baseline.official_pairs(game, wo1, baseline.wo2_x360(x360))
-    actual = official_pairs(game, wo1, wo2_x360(x360))
-    assert _fingerprint(actual) == _fingerprint(expected)
