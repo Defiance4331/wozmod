@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import struct
 from pathlib import Path
 
@@ -14,8 +15,8 @@ from wozmod.text.stock import resolve_stock_ref, stock_strings
 
 TABLE = Path(__file__).resolve().parents[1] / "data/text/table.json"
 # The shipped table's rows: their count and the SHA-256 of their sorted keys, one per line.
-ROW_COUNT = 23924
-ROW_KEYS_SHA256 = "ce047999a171984c7003413b3ed3f3415e6d3b61add3de5db421251865db1064"
+ROW_COUNT = 23925
+ROW_KEYS_SHA256 = "c7a6dd34ce38a7002af41e2adcbeef95d9f794e9f55177a8e93c719aeeb35ddf"
 
 
 def test_shipped_table_is_valid_and_keeps_every_row() -> None:
@@ -261,3 +262,18 @@ def test_stock_substring_reference_cannot_use_a_shifted_offset_or_length(tmp_pat
         with pytest.raises(TableBuildError, match=key):
             resolve_stock_ref(tmp_path, reference, key)
 
+
+# Inventory sources the player reads as subtitles: event and movie captions, spoken battle lines, narration, stills.
+SUBTITLES = ("events", "captions", "spoken", "mesc 4071", "mesc 4073", "mesc 4103", "mesc 4105")
+
+
+@pytest.mark.skipif(not os.environ.get("WOZMOD_GAME"), reason="set WOZMOD_GAME to the stock game")
+def test_every_stock_subtitle_line_has_a_translation_row() -> None:
+    # Bug: a dropped or rekeyed row, or a subtitle source the table never covered, ships that line in Japanese.
+    from wozmod.text.inventory import inventory
+
+    keys = {row["key"] for row in json.loads(TABLE.read_text())["rows"]}
+    found = inventory(Path(os.environ["WOZMOD_GAME"]))
+    missing = [(source, key) for source in SUBTITLES for text in found.get(source, ())
+               if (key := hashlib.sha256(text.decode("cp932").encode("cp932")).hexdigest()) not in keys]
+    assert missing == []

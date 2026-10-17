@@ -38,7 +38,7 @@ def inventory(stock: Path) -> dict[str, dict[bytes, object]]:
     index = parse_index((stock / "LINKDATA2.IDX").read_bytes(), bin_path.stat().st_size)
     with bin_path.open("rb") as stream:
         for entry in index.entries:
-            if len(entry.stored_sizes) != 1:
+            if len(entry.stored_sizes) != 1 and entry.ordinal not in EVENTS:  # the Dream events come in several parts
                 continue
             data = entry_bytes(stream, entry)
             if entry.ordinal in CAPTIONS and len(data) >= 4:
