@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from wozmod.runtime import english_runtime as runtime
 from wozmod.runtime import runtime_edits
 
 
@@ -149,3 +150,36 @@ def test_sound_pool_holds_every_english_effect_bank_on_top_of_the_stock_ones() -
 
     assert SE_BANKS == len(moz_se_banks(seidx, se))
     assert runtime_edits.SOUND_POOL >= runtime_edits.STOCK_SOUND_POOL + growth, hex(growth)
+
+
+def test_xbox_defaults_bind_each_camera_action_to_its_right_stick_half() -> None:
+    """Bug: an edit lands on a neighbouring push (the flag's, a shifted offset) that holds the same stock byte, or
+    swaps a direction, so a camera action stays unbound or turns the wrong way; read back by setter call target."""
+    exe = Path(os.environ.get("WOZMOD_GAME") or "", "OROCHI_Z.exe")
+    if not exe.is_file():
+        pytest.skip("set WOZMOD_GAME to the stock game folder")
+    stock = exe.read_bytes()
+    layout = runtime.pe_layout(stock)
+    start, end = 0x5E378D, 0x5E3891  # layout 3's camera block, up to its return
+    code = bytearray(stock[runtime.file_offset(layout, start):runtime.file_offset(layout, end)])
+    for va, before, after in runtime_edits.PAD_CAMERA:
+        assert code[va - start:va - start + len(before)] == before
+        code[va - start:va - start + len(after)] = after
+    setter = {0x5E3D10: "action", 0x5E3E50: "axis", 0x5E3E00: "direction", 0x5E3E20: "index"}
+    bindings: dict[int, dict[str, int]] = {}
+    for at in range(len(code) - 4):
+        target = start + at + 5 + struct.unpack_from("<i", code, at + 1)[0]
+        if code[at] != 0xE8 or target not in setter:
+            continue
+        if setter[target] == "action":  # push n; mov ecx, esi; call
+            action = code[at - 3]
+            bindings[action] = {}
+        else:  # push 1 (the pad binding); push value; mov ecx, edi or esi; call
+            bindings[action][setter[target]] = struct.unpack("b", code[at - 3:at - 2])[0]
+    # Direction 1 keeps the negative half; axis 4 is the right stick's Y, axis 3 its X (lRx copied into lRz).
+    assert bindings == {
+        17: {"axis": 1, "direction": 1, "index": 4},  # Camera Up
+        18: {"axis": 1, "direction": 0, "index": 4},  # Camera Down
+        19: {"axis": 1, "direction": 1, "index": 3},  # Camera Left
+        20: {"axis": 1, "direction": 0, "index": 3},  # Camera Right
+    }

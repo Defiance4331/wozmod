@@ -793,3 +793,14 @@ def settings_rows(rows: int, distance: bool = False) -> list:
 STOCK_SOUND_POOL = 0x6300000
 SOUND_POOL = 0xCF00000
 VOICE_EDITS = [(va, b"\x68" + p32(STOCK_SOUND_POOL), b"\x68" + p32(SOUND_POOL)) for va in (0x5C9E43, 0x5CA4D8)]
+
+# The Xbox defaults (the pad auto-setting's layout 3, block 0x5E378D) bind Camera Up, Down, Left and Right (actions
+# 17-20) to the right stick instead of none: axis 4 is lRy, axis 3 is lRx, which the runtime copies into the lRz
+# slot the stock poll reads. Direction 1 keeps an axis's negative half (up, left). Each action's block is 0x41
+# bytes and pushes its pad binding's isAxis at +0x22, direction at +0x2D and index at +0x38.
+PAD_CAMERA = [
+    (0x5E378D + 0x41 * n + at, bytes([0x6A, stock]), bytes([0x6A, value]))
+    for n, (direction, axis) in enumerate([(1, 4), (0, 4), (1, 3), (0, 3)])
+    for at, stock, value in [(0x22, 0, 1), (0x2D, 0, direction), (0x38, 0xFF, axis)]
+    if value != stock
+]

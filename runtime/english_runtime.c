@@ -1872,19 +1872,35 @@ static void distance_input(u32 repeat)
 #define PAD_AUTO ((u32(*)(u32))0x5E2D30)
 #define XINPUT_SHAPE(pad) (*(const u32 *)((pad) + 0x160) == 5 && *(const u32 *)((pad) + 0x168) == 10)
 #define PADS ((void **const volatile *)0x140D440)
+#define CONTROLLER_PAGE (*(const u8 *const volatile *)0xC2FC90)
 
 
 
-static void bind_camera(u32 player)
+/* Bit per player map the input map load (hook 70) has read and the camera check below has not seen. */
+static u32 maps_loaded;
+
+/* Before wozmod, the Xbox defaults left Camera Up/Down/Left/Right unbound, and saved Key Configs kept that. A saved
+ * pad map that is exactly those defaults gets today's from the game's own auto-setting; any other map is the
+ * player's and is put back byte for byte. */
+static void camera_default(u32 player)
 {
-    static const u8 axis[4] = {4, 4, 3, 3}, negative[4] = {1, 0, 1, 0};
-    u32 a;
-    for (a = 0; a < 4; a++) {
-        u8 *b = PLAYER_MAP(player) + (17 + a) * 0x28 + 8 + 16;
-        if (*(u32 *)b != 10)
-            continue;
-        *(u32 *)b = PLAYER_JOY[player], b[4] = 1, *(u32 *)(b + 8) = negative[a], *(u32 *)(b + 12) = axis[a];
+    static u8 saved[21 * 0x28];
+    u8 *map = PLAYER_MAP(player);
+    u32 joy = PLAYER_JOY[player], i;
+    for (i = 17; i <= 20; i++)
+        if (*(const u32 *)(map + i * 0x28 + 0x18) != 10)
+            return;
+    CopyMemory(saved, map, sizeof saved);
+    PAD_AUTO(player);
+    for (i = 0; i < sizeof saved; i++)
+        if (map[i] != saved[i] && (i < 17 * 0x28 || i % 0x28 < 0x18))  /* all but the camera's pad bindings */
+            break;
+    if (i == sizeof saved && PLAYER_JOY[player] == joy) {
+        note("pad: camera bound for player", player + 1);
+        return;
     }
+    CopyMemory(map, saved, sizeof saved);
+    PLAYER_JOY[player] = joy;
 }
 
 
@@ -2365,11 +2381,11 @@ static void pad_read(const u8 *pad)
         bound = 1;
         if (PLAYER_JOY[0] == 10)
             note(PAD_AUTO(0) ? "pad: player 1 auto-set" : "pad: player 1 auto-set failed", 0);
-        if (PLAYER_JOY[0] < 8)
-            bind_camera(0);
-        if (PLAYER_JOY[1] < 8)
-            bind_camera(1);
     }
+    for (i = 0; i < 2; i++)
+        if ((maps_loaded >> i & 1) && PLAYER_JOY[i] < 8)
+            camera_default(i);
+    maps_loaded = 0;
     s[5] = s[3];
     if ((pov & 0xFFFF) != 0xFFFF) {
         dir = (pov + 2250) / 4500 % 8;
@@ -3844,7 +3860,15 @@ static int always(u32 id, struct frame *f, u32 *replace)
         return 1;
     case 70:
         pads_named();
+        maps_loaded |= 1u << f->arg[0];
         return 1;
+    case 106: {  /* no question: a player with a pad keeps their bindings, one without gets the defaults */
+        u32 player = *(const u32 *)(CONTROLLER_PAGE + 0x138);
+        if (PLAYER_JOY[player] >= 8 && PAD_AUTO(player))
+            note("pad: auto-set for player", player + 1);
+        f->eax = 0, *replace = 1;
+        return 1;
+    }
     case 48:
         prompts_load();
         hires_load();

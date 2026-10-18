@@ -77,6 +77,7 @@ ALWAYS_HOOKS = [
     (0x427F61, "8b4704 d9470c", 72, None),      # follow camera facing set: the camera stick keeps it (mid-function)
     (0x5E4F64, "8b8660010000", 47, None),       # joystick state read (mid-function)
     (0x5E38E0, "81ec40020000", 70, 0),          # input map load (cdecl): Xbox names before its auto-setting
+    (0x56FDC0, "e82b5a0700", 106, 0),           # Controller page, Key Config chosen: the pad auto-setting offer; always replaced
     (0x58E2BC, "5f5eb801000000", 48, None),     # 4079 prompt handles made (tail)
     (0x5ADC60, "8b442404 69c0f0000000", 49, 0),  # menu word, pressed (cdecl): A/B for a pad
     (0x5ADCA0, "8b442404 69c0f0000000", 50, 0),  # menu word, repeating (cdecl)

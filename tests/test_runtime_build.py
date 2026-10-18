@@ -197,8 +197,10 @@ def test_build_options_do_not_drop_preview_edits_or_runtime_defines(
     assert asked == [(1, options.get("render_distance", False)), (2, options.get("render_distance", False))]
     preview_edits = [(va, b"\x74\x04", b"\x90\x90")
                      for va in (0x57296B, 0x572991, 0x5729B4, 0x5729DA, 0x572A01)] if options.get("preview") else []
-    # Bug: an install with the English voice banks keeps the stock sound pool, which they overflow.
-    assert calls == [(stock, {0: font + code + preview_edits, 1: rows[1], 2: rows[2] + build.VOICE_EDITS},
+    # Bug: an install with the English voice banks keeps the stock sound pool, which they overflow. Bug: the
+    # Japanese text mode (no English group) leaves the Xbox defaults without the camera.
+    assert calls == [(stock, {0: font + code + preview_edits, 1: rows[1] + build.PAD_CAMERA,
+                              2: rows[2] + build.PAD_CAMERA + build.VOICE_EDITS},
                       [("hooks", expected_defines)], b"widths", hashlib.sha256(stock).hexdigest())]
 
 
