@@ -44,15 +44,19 @@ def launch(root: Path, pad: bool = False, size: str | None = None) -> subprocess
 
 
 def wait_up(root: Path, proc: subprocess.Popen, seconds: float = START_WAIT) -> bool:
-    """True once the game answers a screen request (a frame ran); False when the supervisor ended first
-    or the wait ran out."""
+    """True once the game answers a screen request (a frame ran); False when the run ended first or the wait ran
+    out. Raises at once on an error waiting cannot fix, such as a run path through a symlink."""
     deadline = time.monotonic() + seconds
     while proc.poll() is None and time.monotonic() < deadline:
         try:
             if harness.send(root, {"action": "screen"}, 30)["ok"]:
                 return True
-        except (ValueError, TimeoutError, OSError):  # not ready yet, or the run ended
+        except (harness.NotReady, TimeoutError, FileNotFoundError):  # still starting
             pass
+        except ValueError:
+            if harness.ended(root) is None:
+                raise  # a bad run path or a refused request: waiting will not fix it
+            return False
         time.sleep(0.5)
     return False
 

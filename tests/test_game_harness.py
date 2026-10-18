@@ -1206,12 +1206,18 @@ def test_check_report_names_the_shortcuts_behind_each_capture(tmp_path, monkeypa
     assert driver.shortcuts == {"save-prompt": ["win"], "customize-fusion-weapons": ["unlock"], "options": ["unlock"]}
 
 
-def test_two_runs_hold_the_two_game_slots_and_a_third_waits(tmp_path, monkeypatch):
-    """Bugs: two runs lock the same slot file (one waits for nothing, or both slots go to one run), or a third run
-    starts while two games are up."""
-    (tmp_path / "work").mkdir()
-    monkeypatch.setattr(harness, "REPO", tmp_path)
-    first, second = harness.take_slot(0.01), harness.take_slot(0.01)
+def test_two_runs_hold_the_two_game_slots_and_a_third_waits_across_worktrees(tmp_path, monkeypatch):
+    """Bugs: two runs lock the same slot file (one waits for nothing, or both slots go to one run), a third run
+    starts while two games are up, or a linked worktree locks slots of its own and starts a third game."""
+    main, worktree = tmp_path / "main", tmp_path / "worktree"
+    (main / "work").mkdir(parents=True)
+    (main / ".git/worktrees/worktree").mkdir(parents=True)
+    worktree.mkdir()
+    (worktree / ".git").write_text(f"gitdir: {main / '.git/worktrees/worktree'}\n")
+    monkeypatch.setattr(harness, "REPO", main)
+    first = harness.take_slot(0.01)
+    monkeypatch.setattr(harness, "REPO", worktree)
+    second = harness.take_slot(0.01)
     third, got = threading.Event(), []
     thread = threading.Thread(target=lambda: got.append(harness.take_slot(0.01)) or third.set(), daemon=True)
     thread.start()

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -246,3 +247,16 @@ def test_contact_sheet_shows_each_screens_capture_beside_its_own_rows(tmp_path, 
     assert "<h2>a</h2><img" in a and a.count("<li class=PASS>") == 2 and "FAIL" not in a
     assert "<h2>b</h2><p class=none>" in b and "<li class=FAIL><b>FAIL</b> fits {&quot;over&quot;: 3}" in b
     assert "2 screens, 3 rows, 1 failed" in page
+
+
+def test_wait_up_keeps_waiting_while_the_run_starts_but_fails_at_once_on_a_symlinked_run_path(tools, tmp_path):
+    # Bug: every ValueError counted as "not ready", so a bad run path waited out the whole boot timeout.
+    running = SimpleNamespace(poll=lambda: None)
+    root = tmp_path / "run"
+    (root / "control").mkdir(parents=True)
+    began = time.monotonic()
+    assert tools.run_check.wait_up(root, running, 1) is False
+    assert time.monotonic() - began >= 1
+    (tmp_path / "link").symlink_to(root)
+    with pytest.raises(ValueError, match="symlinks"):
+        tools.run_check.wait_up(tmp_path / "link", running, 2)

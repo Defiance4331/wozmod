@@ -797,16 +797,23 @@ def ended(root: Path) -> str | None:
     return f"the run has ended: {record.get('reason', 'unknown')}{code}; last actions: {last}"
 
 
-# Two games may run at once: a run holds one of these for its whole life. `flock work/.game-run.lock run`
-# holds the first; `run --slot` takes whichever is free.
+# Two games may run at once across the checkout and all its worktrees: a run holds one of these, in the main
+# checkout's work/, for its whole life. `flock work/.game-run.lock run` there holds the first; `run --slot` takes
+# whichever is free.
 SLOTS = ("work/.game-run.lock", "work/.game-run.1.lock")
+
+
+def main_checkout() -> Path:
+    """The main checkout; a linked worktree's .git file names its folder in the main checkout's .git/worktrees/."""
+    git = REPO / ".git"
+    return Path(git.read_text().removeprefix("gitdir:").strip()).parents[2] if git.is_file() else REPO
 
 
 def take_slot(poll: float = 1.0) -> int:
     """Wait for a free game slot and lock it; the descriptor stays open, so the lock lasts until the process ends."""
     while True:
         for slot in SLOTS:
-            fd = os.open(REPO / slot, os.O_RDWR | os.O_CREAT, 0o600)
+            fd = os.open(main_checkout() / slot, os.O_RDWR | os.O_CREAT, 0o600)
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 return fd
@@ -972,6 +979,10 @@ def run(root: Path, args: argparse.Namespace) -> int:
             pad.close()
 
 
+class NotReady(ValueError):
+    """The run is still starting or busy: the same request may succeed later."""
+
+
 def send(root: Path, request: dict, timeout: float) -> dict:
     control = local_path(root, "control")
     deadline = time.monotonic() + timeout
@@ -986,9 +997,11 @@ def send(root: Path, request: dict, timeout: float) -> dict:
                     raise TimeoutError("another agent holds this run's control lock") from None
                 time.sleep(0.1)
         if not (control / "ready.json").exists():
-            raise ValueError(ended(root) or "harness is not ready; read evidence/harness.log and launcher.log")
+            if reason := ended(root):
+                raise ValueError(reason)
+            raise NotReady("harness is not ready; read evidence/harness.log and launcher.log")
         if (control / "request.json").exists():
-            raise ValueError("an earlier command is pending; do not replay it")
+            raise NotReady("an earlier command is pending; do not replay it")
         request = dict(request, id=uuid.uuid4().hex)
         write_json(control / "request.json", request)
         while time.monotonic() < deadline:
