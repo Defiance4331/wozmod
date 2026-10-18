@@ -4131,6 +4131,18 @@ static int always(u32 id, struct frame *f, u32 *replace)
         pads_named();
         maps_loaded |= 1u << f->arg[0];
         return 1;
+    case 107: {  /* the window procedure: every close request and the window's end, so a quit names its source (a close
+                    quits at once since the edit at 0x5CBE88). Flags: 1 Alt down, 2 F4 down, 4 foreground, 8 minimized. */
+        u32 message = f->arg[1];
+        HWND window = (HWND)f->arg[0];
+        if (message == WM_CLOSE || message == WM_DESTROY || message == WM_QUERYENDSESSION || message == WM_ENDSESSION
+            || (message == WM_SYSCOMMAND && (f->arg[2] & 0xFFF0) == SC_CLOSE)) {
+            note("window: message << 16 | 0x80 | flags", message << 16 | 0x80 | (GetAsyncKeyState(VK_MENU) < 0)
+                 | (GetAsyncKeyState(VK_F4) < 0) << 1 | (GetForegroundWindow() == window) << 2 | !!IsIconic(window) << 3);
+            note("window: wParam", f->arg[2]), note("window: lParam", f->arg[3]);
+        }
+        return 1;
+    }
     case 106: {  /* no question: a player with a pad keeps their bindings, one without gets the defaults */
         u32 player = *(const u32 *)(CONTROLLER_PAGE + 0x138);
         if (PLAYER_JOY[player] >= 8 && PAD_AUTO(player))
@@ -5097,10 +5109,11 @@ __declspec(dllexport) int WINAPI D3DPERF_EndEvent(void)
 
 BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved)
 {
-    (void)reserved;
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(self);
         install(self);
     }
+    if (reason == DLL_PROCESS_DETACH)  /* 2: the process is ending; no line at all: it crashed or was ended from outside */
+        note("process exit", reserved ? 2 : 1);
     return TRUE;
 }

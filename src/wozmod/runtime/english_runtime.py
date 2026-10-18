@@ -129,6 +129,7 @@ ALWAYS_HOOKS = [
     (0x5CAAD0, "83ec10 55 8b6c241c", 96, 8),   # can the display take a size (thiscall: w, h)
     (0x56CB7F, "53 53 83c60a", 79, None),       # Graphics resolution value, its font set (mid-function)
     (0x5CBFE4, "89442414 8d442428", 97, None),  # window made: SCREEN stored with the window's size (mid-function)
+    (0x5CBD60, "6aff 68d8b86b00", 107, None),   # the window procedure (stdcall: window, message, wParam, lParam)
 ]
 # ENRT_LOG and ENRT_TEST builds only.
 LOG_HOOKS = []
