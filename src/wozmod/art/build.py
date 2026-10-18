@@ -27,7 +27,7 @@ from wozmod import native, resources
 from wozmod.progress import report as report_progress
 from wozmod.runtime.english_runtime import write_manifest
 from . import lettering, words
-from .hires import HIRES_OVERLAY, HIRES_RIGHT_GROW, hires_blob
+from .hires import HIRES_OVERLAY, HIRES_RIGHT_GROW, HIRES_SCALE, hires_bank, hires_blocks
 from wozmod.runtime.latin_font import CELL, LATIN_GLYPH
 from wozmod.donors import WO1_X360, X360, extract_donor, verify_file
 from wozmod.formats.textures import (
@@ -1559,28 +1559,28 @@ def packed_lzp2(data: bytes) -> bytes:
     partial.replace(path)
     return encoded
 
-HIRES = [(4069, 2, 2, 512, 1596, 42, 19), (4079, 43, 2, 512, 256, 35, 0), (4085, 16, 2, 512, 256, 35, 0),
+HIRES = [(4069, 2, 512, 1596, 42, 19), (4079, 43, 512, 256, 35, 0), (4085, 16, 512, 256, 35, 0),
          
-         (4060, 14, 2, 512, 630, 42, 0), (4064, 5, 2, 512, 420, 42, 0), (4080, 0, 2, 256, 462, 42, 0),
-         (4080, 44, 2, 512, 210, 42, 0), (4080, 45, 2, 512, 210, 42, 0), (4081, 0, 2, 512, 168, 42, 0),
-         (4079, 223, 2, 256, 64, 64, 0), (4098, 14, 2, 256, 128, 64, 0),
-         (4060, 44, 2, 256, 64, 64, 0), (4060, 45, 2, 256, 64, 64, 0),
+         (4060, 14, 512, 630, 42, 0), (4064, 5, 512, 420, 42, 0), (4080, 0, 256, 462, 42, 0),
+         (4080, 44, 512, 210, 42, 0), (4080, 45, 512, 210, 42, 0), (4081, 0, 512, 168, 42, 0),
+         (4079, 223, 256, 64, 64, 0), (4098, 14, 256, 128, 64, 0),
+         (4060, 44, 256, 64, 64, 0), (4060, 45, 256, 64, 64, 0),
          
-         (4060, 33, 2, 1024, 1024, 56, 0), (4064, 4, 2, 1024, 392, 56, 0), (4069, 26, 2, 512, 512, 56, 0),
-         (4080, 38, 2, 1024, 1024, 56, 0), (4079, 221, 2, 512, 64, 56, 0), (4079, 222, 2, 512, 64, 56, 0),
-         (4098, 10, 2, 512, 64, 56, 0), (4094, 5, 2, 512, 64, 56, 0), (4081, 18, 2, 512, 224, 56, 0),
-         (4082, 31, 2, 512, 64, 56, 0), (4077, 168, 2, 1024, 512, 56, 0), (4061, 12, 2, 1024, 256, 56, 0),
-         (4061, 13, 2, 1024, 64, 56, 0), (4061, 14, 2, 1024, 64, 56, 0), (4061, 15, 2, 1024, 64, 56, 0),
-         (4061, 16, 2, 1024, 64, 56, 0), (4099, 17, 2, 1024, 64, 56, 0), (4074, 0, 2, 512, 512, 56, 0),
+         (4060, 33, 1024, 1024, 56, 0), (4064, 4, 1024, 392, 56, 0), (4069, 26, 512, 512, 56, 0),
+         (4080, 38, 1024, 1024, 56, 0), (4079, 221, 512, 64, 56, 0), (4079, 222, 512, 64, 56, 0),
+         (4098, 10, 512, 64, 56, 0), (4094, 5, 512, 64, 56, 0), (4081, 18, 512, 224, 56, 0),
+         (4082, 31, 512, 64, 56, 0), (4077, 168, 1024, 512, 56, 0), (4061, 12, 1024, 256, 56, 0),
+         (4061, 13, 1024, 64, 56, 0), (4061, 14, 1024, 64, 56, 0), (4061, 15, 1024, 64, 56, 0),
+         (4061, 16, 1024, 64, 56, 0), (4099, 17, 1024, 64, 56, 0), (4074, 0, 512, 512, 56, 0),
 
-         (4085, 5, 2, 1024, 756, 84, 0), (4085, 6, 2, 1024, 756, 84, 0), (4085, 7, 2, 1024, 756, 84, 0),
-         (4085, 8, 2, 1024, 756, 84, 0),
+         (4085, 5, 1024, 756, 84, 0), (4085, 6, 1024, 756, 84, 0), (4085, 7, 1024, 756, 84, 0),
+         (4085, 8, 1024, 756, 84, 0),
          
-         (4069, 14, 2, 256, 714, 42, 0), (4069, 15, 2, 256, 714, 42, 0), (4077, 20, 2, 256, 256, 256, 0),
-         (4077, 21, 2, 256, 256, 256, 0), (4077, 22, 2, 256, 256, 256, 0), (4094, 6, 2, 256, 256, 256, 0),
-         (4094, 7, 2, 256, 256, 256, 0), (4094, 8, 2, 256, 256, 256, 0), (4079, 20, 2, 128, 128, 128, 0),
-         (4079, 21, 2, 128, 128, 128, 0), (4080, 40, 2, 128, 84, 42, 0),
-         (4080, 41, 2, 128, 84, 42, 0)]
+         (4069, 14, 256, 714, 42, 0), (4069, 15, 256, 714, 42, 0), (4077, 20, 256, 256, 256, 0),
+         (4077, 21, 256, 256, 256, 0), (4077, 22, 256, 256, 256, 0), (4094, 6, 256, 256, 256, 0),
+         (4094, 7, 256, 256, 256, 0), (4094, 8, 256, 256, 256, 0), (4079, 20, 128, 128, 128, 0),
+         (4079, 21, 128, 128, 128, 0), (4080, 40, 128, 84, 42, 0),
+         (4080, 41, 128, 84, 42, 0)]
 
 HEADER = {h[:2] for h in HIRES[13:31]}
 HEADER_RASTER = "wozmod.fonts.headerraster"
@@ -2222,17 +2222,6 @@ def option_rows_art(scale: int, squeeze: bool) -> Image.Image:
             art.paste(band, (0, k * OPTION_BAND * scale))
     return art
 
-def hires_sheet(art: Image.Image, stock_w: int, band_h: int, per_col: int, scale: int) -> Image.Image:
-
-    bands = art.height // (band_h * scale)
-    per_col = per_col or bands  
-    cols, col_h = -(-bands // per_col), per_col * band_h * scale
-    canvas = Image.new("RGBA", tuple(1 << (n - 1).bit_length() for n in (cols * stock_w * scale, col_h)))
-    for b in range(bands):
-        row = art.crop((0, b * band_h * scale, art.width, (b + 1) * band_h * scale))
-        canvas.paste(row, ((b // per_col) * stock_w * scale, (b % per_col) * band_h * scale))
-    return canvas
-
 def plate_cover(r: int, g: int, b: int, a: int) -> float:
 
     return (220 - (r + g + b) / 3) / 180 if a > 16 else 0.0
@@ -2390,7 +2379,11 @@ def native_menu_art(entry: int, item: int, served: Image.Image, mapping: dict,
 
     vertical_shift = max(0, y + box[3] - sampled_height) if box else 0
     y -= vertical_shift
-    if box and (x + box[0] < 0 or y + box[1] < 0 or y + box[3] > sampled_height):
+    # Our outline can be wider than the room the donor leaves before its fill: move right until it fits, never
+    # past the fill itself.
+    horizontal_shift = max(0, -(x + box[0])) if box else 0
+    x += horizontal_shift
+    if box and (horizontal_shift > metrics["ink"][0] - box[0] or y + box[1] < 0 or y + box[3] > sampled_height):
         raise ValueError(f"{entry}.{item}: complete native overlay leaves its sampled crop")
     art.alpha_composite(label, (x, y))
 
@@ -2400,7 +2393,7 @@ def native_menu_art(entry: int, item: int, served: Image.Image, mapping: dict,
     natural_minimum = 0 if fits else 4 * math.ceil((box[2] / scale + 2) / 4)
     art.info["minimum"] = max(natural_minimum, ABILITY_QUAD_MINIMUM.get((entry, item), 0))
     art.info["native_layout"] = dict({k: v for k, v in layout.items() if k != "label"}, hires_placement={
-        "scale": scale, "x": x, "y": y, "vertical_shift": vertical_shift,
+        "scale": scale, "x": x, "y": y, "vertical_shift": vertical_shift, "horizontal_shift": horizontal_shift,
         "sampled_height": sampled_height, "alpha_bbox": list(box) if box else None,
     })
     return art
@@ -2421,18 +2414,15 @@ def hires_bin(entries: Path, source: Path | None, vector: tuple | None = None,
         return _hires_bin(entries, source, vector, squeeze, jobs, pool.submit)
 
 
-def _sheet_g1t(g1t, size, pixels: bytes) -> bytes:
-    return rekeyed(g1t.with_texture_resized(0, *size, pixels)).encode()
-
-
 def _hires_bin(entries: Path, source: Path | None, vector: tuple | None, squeeze: bool, jobs: int, later) -> bytes:
     rows, packages, parsed = [], {}, {}
     plate_sources = entries.parent.parent / "vector-plate-sources"
     if vector:
         plate_sources.mkdir(parents=True, exist_ok=True)
     extras = list(DARK) + (sorted(HIRES_NATIVE_MENU) if vector else [])
-    plates = HIRES + [(e, i, 2, 0, 0, 0, 0) for e, i in extras]
-    for number, (entry, item, scale, w, h, band, per_col) in enumerate(plates):
+    plates = HIRES + [(e, i, 0, 0, 0, 0) for e, i in extras]
+    for number, (entry, item, w, h, band, per_col) in enumerate(plates):
+        scale = HIRES_SCALE
         report_progress("art", "drawing the large menu plates", 0.65 + 0.3 * number / len(plates),
                (number, len(plates)))
         if entry not in parsed:  # decode each entry once, however many of its items are used
@@ -2506,7 +2496,6 @@ def _hires_bin(entries: Path, source: Path | None, vector: tuple | None, squeeze
             w = max(w, art.info.get("minimum", 0))
         numeric_scale = scale & 0x3FFFFFFF
         art = art.crop((0, 0, w * numeric_scale, h * numeric_scale))
-        sheet = hires_sheet(art, w, band, per_col, numeric_scale)
         if (entry, item) in DARK_PLATE and vector:
             scale |= HIRES_OVERLAY
         else:
@@ -2517,11 +2506,10 @@ def _hires_bin(entries: Path, source: Path | None, vector: tuple | None, squeeze
             if vector and (entry, item) in ATTRIBUTE_QUAD_MINIMUM:
                 minimum = max(minimum, ATTRIBUTE_QUAD_MINIMUM[entry, item])
         rows.append((entry, item, scale, w, h, band | (minimum << 16), per_col,
-                     later(_sheet_g1t, g1t, sheet.size, sheet.tobytes())))
+                     later(hires_blocks, art, w, band, per_col)))
     if vector and (4069, 2) in {plate[:2] for plate in plates}:  # entry 0: no stock texture, the runtime draws it
-        sheet = hires_sheet(option_rows_art(2, squeeze), OPTION_W, OPTION_BAND, 0, 2)
-        rows.append((0, 0, 2, OPTION_W, len(OPTION_ROWS) * OPTION_BAND, OPTION_BAND, 0,
-                     later(_sheet_g1t, parsed[4069].items[2].g1t, sheet.size, sheet.tobytes())))
+        rows.append((0, 0, HIRES_SCALE, OPTION_W, len(OPTION_ROWS) * OPTION_BAND, OPTION_BAND, 0,
+                     later(hires_blocks, option_rows_art(HIRES_SCALE, squeeze), OPTION_W, OPTION_BAND, 0)))
     encoded = {entry: package.encode() for entry, package in packages.items()}
     packed = [entry for entry in encoded if (entries / f"{entry}.bin").read_bytes()[:4] == b"LZP2"]
     if jobs > 1 and len(packed) > 1 and not native.module:  # the Python encoder is slow: one entry per process
@@ -2532,7 +2520,7 @@ def _hires_bin(entries: Path, source: Path | None, vector: tuple | None, squeeze
         results = {entry: done.result() for entry, done in packing.items()}
     for entry, data in encoded.items():
         (entries / f"{entry}.bin").write_bytes(results.get(entry, data))
-    return hires_blob([(*row[:-1], row[-1].result()) for row in rows])
+    return hires_bank([(*row[:-1], row[-1].result()) for row in rows])
 
 # Shares of the art stage (measured): loading the donors 0 to 0.5, the entries to 0.65, the large plates to 0.95.
 LINKDATA2_FIRST = 4251  

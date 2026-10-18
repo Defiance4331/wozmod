@@ -1943,22 +1943,76 @@ static void prompts_load(void)
 
 
 
+typedef long(__stdcall *com1)(void *);
+typedef long(__stdcall *com2)(void *, u32);
+typedef long(__stdcall *com3)(void *, u32, u32);
+typedef long(__stdcall *com4)(void *, u32, u32, u32);
+typedef long(__stdcall *com5)(void *, u32, u32, u32, u32);
+#define COM(object, offset, n) ((com##n)(*(void ***)(object))[(offset) / 4])
+
+/* The hi-res bank, hires.bin (wozmod.art.hires): rows, each a stock texture's lettering, drawn once at 3 texels per
+ * stock texel and kept in packings (3x with a 1.5x level, and 2x), each packed into shared DXT5 sheets. The engine
+ * makes MANAGED textures, which on Windows keep a system-memory copy inside the game's 2 GB; so each sheet is registered
+ * through a 4x4 stand-in, and the runtime puts its own DEFAULT-pool texture where the stand-in's was (the engine reads
+ * that cell only to bind it, and normalises UVs by the handle's size, not the texture's). Only the sheets of the
+ * packing and level the display draws from are made, read from the file one sheet at a time, and again after every
+ * device Reset, which may change the display. */
 struct hires {
-    u32 entry, item, scale, w, h, band, per_col, offset, size;
+    u32 entry, item, scale, w, h, band, per_col;  /* scale: the drawing packing's, with the row's flags */
+    u32 sheet, origin;                            /* in the drawing packing; origin x | y << 16, level-0 texels */
 };
 #define HIRES_MAX 256
+#define HIRES_SHEETS 32
+#define HIRES_BANKS 4
 #define HIRES_OVERLAY 0x80000000u
 #define HIRES_RIGHT_GROW 0x40000000u
 #define HIRES_SCALE_MASK 0x3fffffffu
+#define HIRES_KEY 0x48570000u        /* "WH" + the sheet: the stand-ins' registry keys (G1T +4), never 0 */
+#define D3DFMT_DXT5 0x35545844u
 static struct hires hires_row[HIRES_MAX];
-static unsigned long long hires_handle[HIRES_MAX];
 static const u32 *hires_root[HIRES_MAX];
 static u32 hires_rows;
 static int hires_native;
+static u32 hires_banks, hires_bank_shape[HIRES_BANKS];  /* each packing's scale | levels << 8 */
+static u32 hires_place[HIRES_BANKS][HIRES_MAX][2];      /* each packing's sheet and origin for each row */
+static struct {
+    u32 shape, offset;               /* log2 w | log2 h << 8 | levels << 16; level 0 in the file, the rest after it */
+    u32 bank;                        /* the packing it belongs to */
+    unsigned long long handle;
+    const void *object;              /* the registry record's texture object, while the slot is still the stand-in's */
+    void **cell;                     /* where the engine reads the texture to bind */
+    void *stand_in, *texture;        /* the engine's 4x4 MANAGED texture, and ours while it is in the cell */
+} hires_sheet[HIRES_SHEETS];
+static u32 hires_sheets;
+static void *hires_device;
+static u32 area_h;  /* the 16:9 area's height in output px, set with the display size below */
 /* The row after the last stock one, entry 0: the sheet of the Game Settings rows wozmod adds (1-based, 0 = none). */
 static u32 option_sheet;
 /* The stock value sheets, 4069.14 dim and 4069.15 lit (1-based, 0 = none): bands 0 and 1 are ON and OFF. */
 static u32 value_sheet[2];
+
+/* A row's image in level-0 texels at a packing's scale: its band columns side by side. */
+static void hires_size(const struct hires *r, u32 scale, u32 *wide, u32 *high)
+{
+    u32 band = r->band & 0xFFFF;
+    *wide = r->w * scale * (r->per_col && band ? (r->h / band + r->per_col - 1) / r->per_col : 1);
+    *high = (r->per_col ? r->per_col * band : r->h) * scale;
+}
+
+#ifdef ENRT_LOG
+/* The row whose image holds texel (x, y) of the sheet with this handle, as 0x80000000 | entry << 8 | item, or 0. */
+static u32 hires_name(u32 handle, u32 x, u32 y)
+{
+    u32 i, wide, high;
+    for (i = 0; i < hires_rows; i++) {
+        const struct hires *r = hires_row + i;
+        hires_size(r, r->scale & HIRES_SCALE_MASK, &wide, &high);
+        if ((u32)hires_sheet[r->sheet].handle == handle && x - (r->origin & 0xFFFF) < wide && y - (r->origin >> 16) < high)
+            return 0x80000000u | r->entry << 8 | r->item;
+    }
+    return 0;
+}
+#endif
 
 static u32 hires_width(u32 entry, u32 item)
 {
@@ -1969,21 +2023,202 @@ static u32 hires_width(u32 entry, u32 item)
     return 0;
 }
 
-static void hires_load(void)
+/* What each 16:9 area height draws from, in half texels per stock texel (6 the 3x packing, 4 the 2x one, 3 the 3x
+   packing's half-size level): the one that kept the lettering sharpest under the GPU's bilinear sampling in an offline
+   model of every display size, 2x where it came within a hair. Each is at least as sharp as 2x everywhere. */
+static const unsigned short hires_pick[][2] = {
+    {720, 4}, {768, 3}, {810, 3}, {900, 4}, {945, 4}, {1080, 3}, {1440, 4}, {1600, 6}, {1800, 6}, {2160, 6},
+};
+
+/* The packing and level for the display: the table's entry for its height, else 2x below 1600 high and 3x from it. */
+static void hires_choose(u32 *bank, u32 *level)
+{
+    u32 want = area_h < 1600 ? 4 : 6, i, b, k;
+    for (i = 0; i < sizeof hires_pick / sizeof *hires_pick; i++)
+        if (hires_pick[i][0] == area_h)
+            want = hires_pick[i][1];
+    *bank = *level = 0;
+    for (b = 0; b < hires_banks; b++)
+        for (k = 0; k < hires_bank_shape[b] >> 8; k++)
+            if ((hires_bank_shape[b] & 0xFF) * 2 >> k == want && !((hires_bank_shape[b] & 0xFF) * 2 & ((1u << k) - 1))) {
+                *bank = b, *level = k;
+                return;
+            }
+}
+
+/* Our texture for sheet s at a level, filled through a SYSTEMMEM staging texture: the only copy of the sheet in the
+   game's address space is that one staging sheet, and only while it loads. */
+static void *hires_texture(HANDLE file, u32 s, u32 k)
+{
+    typedef long(__stdcall *create_fn)(void *, u32, u32, u32, u32, u32, u32, void **, void *);
+    struct { int pitch; u8 *bits; } locked;
+    u32 shape = hires_sheet[s].shape, at = hires_sheet[s].offset, i, rows, got;
+    u32 w = 1u << (shape & 0xFF), h = 1u << (shape >> 8 & 0xFF), ok;
+    void *staging = 0, *texture = 0;
+    for (i = 0; i < k; i++)
+        at += (w >> i) * (h >> i);  /* DXT5: a byte per texel */
+    w >>= k, h >>= k, rows = h / 4;
+    if (((create_fn)(*(void ***)hires_device)[23])(hires_device, w, h, 1, 0, D3DFMT_DXT5, 2, &staging, 0) < 0)
+        return 0;
+    ok = COM(staging, 0x4C, 5)(staging, 0, (u32)&locked, 0, 0) >= 0;
+    if (ok) {
+        ok = SetFilePointer(file, (LONG)at, 0, FILE_BEGIN) == at;
+        for (i = 0; ok && i < rows; i++)  /* a row of 4x4 blocks: w / 4 blocks of 16 bytes */
+            ok = ReadFile(file, locked.bits + i * locked.pitch, w * 4, (DWORD *)&got, 0) && got == w * 4;
+        COM(staging, 0x50, 2)(staging, 0);
+    }
+    if (ok && ((create_fn)(*(void ***)hires_device)[23])(hires_device, w, h, 1, 0, D3DFMT_DXT5, 0, &texture, 0) >= 0
+        && COM(hires_device, 0x7C, 3)(hires_device, (u32)staging, (u32)texture) < 0) {
+        COM(texture, 0x08, 1)(texture);
+        texture = 0;
+    }
+    COM(staging, 0x08, 1)(staging);
+    return texture;
+}
+
+static HANDLE hires_open(void)
 {
     WCHAR name[MAX_PATH];
-    u32 size, i, j, count;
-    u8 *data = english ? load(path(name, L"hires.bin"), &size) : 0;
-    if (!data)
+    return CreateFileW(path(name, L"hires.bin"), GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
+}
+
+/* Whether sheet s's registry slot still holds its stand-in: a screen's bulk free (0x5CCBE0) ignores the keep flag, and
+   frees whatever texture is in the cell. */
+static int hires_slot_kept(u32 s)
+{
+    const u8 *r = TEXTURE_RECORDS + ((u32)hires_sheet[s].handle & 0xFFFF) * 0x28;
+    return *(const u32 *)r == HIRES_KEY + s && *(const void *const *)(r + 4) == hires_sheet[s].object;
+}
+
+/* The display's packing into the rows, and its sheets' textures, at the display's level, into the stand-ins' cells
+   where they are still the stand-ins: at load, and after a Reset. */
+static void hires_attach(void)
+{
+    HANDLE file;
+    u32 s, i, bank, level;
+    if (!hires_sheets)
         return;
-    count = *(const u32 *)data;
-    for (i = 0; i < count && i < HIRES_MAX; i++) {
+    hires_choose(&bank, &level);
+    for (i = 0; i < hires_rows; i++) {  /* first, so a row never points into another packing's sheets */
+        struct hires *r = hires_row + i;
+        r->scale = (r->scale & ~HIRES_SCALE_MASK) | (hires_bank_shape[bank] & 0xFF);
+        r->sheet = hires_place[bank][i][0], r->origin = hires_place[bank][i][1];
+    }
+    if (!hires_device || (file = hires_open()) == INVALID_HANDLE_VALUE)
+        return;
+    for (s = 0; s < hires_sheets; s++)
+        if (hires_sheet[s].bank == bank && !hires_sheet[s].texture && hires_slot_kept(s) &&
+            *hires_sheet[s].cell == hires_sheet[s].stand_in && (hires_sheet[s].texture = hires_texture(file, s, level)))
+            *hires_sheet[s].cell = hires_sheet[s].texture;
+    CloseHandle(file);
+    note("hi-res packing, level:", (hires_bank_shape[bank] & 0xFF) << 16 | level);
+}
+
+/* Before a Reset, which DEFAULT-pool textures must not outlive: the stand-ins back into their cells, and ours gone.
+   The cell's texture is the engine's to release; while ours is in it, the stand-in is ours. Where the engine freed the
+   slot, it released ours, and the stand-in is left to us. */
+static void hires_detach(void)
+{
+    u32 s, stage;
+    if (!hires_device)
+        return;
+    for (stage = 0; stage < 8; stage++)
+        COM(hires_device, 0x104, 3)(hires_device, stage, 0);  /* SetTexture: a bound texture would live on */
+    for (s = 0; s < hires_sheets; s++)
+        if (hires_sheet[s].texture) {
+            if (hires_slot_kept(s) && *hires_sheet[s].cell == hires_sheet[s].texture) {
+                *hires_sheet[s].cell = hires_sheet[s].stand_in;
+                COM(hires_sheet[s].texture, 0x08, 1)(hires_sheet[s].texture);
+            } else {
+                COM(hires_sheet[s].stand_in, 0x08, 1)(hires_sheet[s].stand_in);
+                hires_sheet[s].stand_in = 0;
+            }
+            hires_sheet[s].texture = 0;
+        }
+}
+
+/* The cell the engine binds sheet s's texture from, as its 2D draw finds it (0x5CD241..0x5CD2D8): the handle's slot
+   in the registry, the record's texture object, the first of its wrappers (a one-texture G1T), the wrapper's +0. */
+static void **hires_find_cell(u32 s)
+{
+    const u8 *r = TEXTURE_RECORDS + ((u32)hires_sheet[s].handle & 0xFFFF) * 0x28, *object;
+    void **const *wrappers;
+    if (*(const u32 *)r != HIRES_KEY + s || !(object = *(const u8 *const *)(r + 4)) ||
+        !(wrappers = *(void **const *const *)(object + 0x10)))
+        return 0;
+    hires_sheet[s].object = object;
+    return *wrappers;
+}
+
+/* Read n bytes at the file's position, all or nothing. */
+static int hires_read(HANDLE file, void *to, u32 n)
+{
+    u32 got;
+    return ReadFile(file, to, n, (DWORD *)&got, 0) && got == n;
+}
+
+static void hires_load(void)
+{
+    /* A 4x4 DXT5 G1T, one level, transparent: the stand-in each sheet is registered through. Its key (+4) is made
+       unique per sheet, as the registry shares a texture between G1Ts with the same key. */
+    static u8 stand_in[60] = {'G', 'T', '1', 'G', 0, 0, 'W', 'H', 60, 0, 0, 0, 32, 0, 0, 0, 1, 0, 0, 0,
+                              [32] = 4, [36] = 0x10, 8, 0x22, 0, 0x11, 0x11, 0x01, 0};  /* clamp, linear */
+    static u32 file_place[HIRES_BANKS][HIRES_MAX][2];
+    HANDLE file;
+    u32 head[4], size, i, j, b, ok;
+    if (!english || (file = hires_open()) == INVALID_HANDLE_VALUE)
+        return;
+    size = GetFileSize(file, 0);
+    ok = hires_read(file, head, sizeof head) && head[0] == 0x33535248 /* HRS3 */ && head[1] <= HIRES_MAX
+         && head[2] && head[2] <= HIRES_BANKS && head[3] <= HIRES_SHEETS;
+    for (i = 0; ok && i < head[1]; i++)
+        ok = hires_read(file, hires_row + i, 7 * 4);
+    ok = ok && hires_read(file, hires_bank_shape, head[2] * 4);
+    for (b = 0; ok && b < head[2]; b++)  /* each packing's sheet and origin per row */
+        ok = hires_read(file, file_place[b], head[1] * 8);
+    for (i = 0; ok && i < head[3]; i++) {
+        u32 sheet[2], shape, w, h, levels, end, k;
+        if (!(ok = hires_read(file, sheet, sizeof sheet)))
+            break;
+        shape = sheet[0], w = 1u << (shape & 0xFF), h = 1u << (shape >> 8 & 0xFF), levels = shape >> 16;
+        for (k = 0, end = sheet[1]; k < levels && k < 8; k++)
+            end += (w >> k) * (h >> k);
+        ok = (shape & 0xFF) >= 3 && (shape & 0xFF) <= 12 && (shape >> 8 & 0xFF) >= 3 && (shape >> 8 & 0xFF) <= 12
+             && levels && levels <= 3 && end <= size && end >= sheet[1];
+        hires_sheet[i].shape = shape, hires_sheet[i].offset = sheet[1], hires_sheet[i].bank = HIRES_BANKS;
+    }
+    for (b = 0; ok && b < head[2]; b++)  /* a packing: a scale of 2 to 7, its levels within each of its sheets */
+        ok = (hires_bank_shape[b] & 0xFF) >= 2 && (hires_bank_shape[b] & 0xFF) <= 7 && hires_bank_shape[b] >> 8
+             && hires_bank_shape[b] >> 8 <= 3;
+    CloseHandle(file);
+    if (!ok) {
+        note("refused: hires.bin", head[0]);
+        return;
+    }
+    hires_banks = head[2], hires_sheets = head[3];
+    for (i = 0; i < head[1]; i++) {
         struct hires *r = hires_row + hires_rows;
-        *r = ((const struct hires *)(data + 4))[i];
+        u32 band, wide, high, fits = 1;
+        *r = hires_row[i];
+        band = r->band & 0xFFFF;
         for (j = 0; r->entry && j < sizeof roots / sizeof *roots; j++)
             if (roots[j][2] == r->entry && r->item < roots[j][1])
                 break;
-        if ((r->entry && j == sizeof roots / sizeof *roots) || r->offset + r->size > size || !r->scale) {
+        if ((r->entry && j == sizeof roots / sizeof *roots) || r->w > 4095 || r->h > 4095 || (r->per_col && !band))
+            fits = 0;
+        for (b = 0; fits && b < hires_banks; b++) {  /* in every packing: on a sheet of that packing, inside it */
+            u32 s = file_place[b][i][0], x = file_place[b][i][1] & 0xFFFF, y = file_place[b][i][1] >> 16, shape;
+            if (s >= hires_sheets || (hires_sheet[s].bank != HIRES_BANKS && hires_sheet[s].bank != b)) {
+                fits = 0;
+                break;
+            }
+            hires_sheet[s].bank = b, shape = hires_sheet[s].shape;
+            hires_size(r, hires_bank_shape[b] & 0xFF, &wide, &high);
+            fits = x + wide <= (1u << (shape & 0xFF)) && y + high <= (1u << (shape >> 8 & 0xFF)) && x + wide <= 4095
+                   && y + high <= 4095 && hires_sheet[s].shape >> 16 >= hires_bank_shape[b] >> 8;
+            hires_place[b][hires_rows][0] = s, hires_place[b][hires_rows][1] = file_place[b][i][1];
+        }
+        if (!fits) {
             note("refused: hires.bin row", i);
             continue;
         }
@@ -1992,11 +2227,22 @@ static void hires_load(void)
             option_sheet = hires_rows + 1;
         if (r->entry == 4069 && (r->item == 14 || r->item == 15))
             value_sheet[r->item - 14] = hires_rows + 1;
-        hires_handle[hires_rows] = TEXTURE_HANDLE(data + r->offset, 0x1F00, 0x3EE4 + i);
         hires_rows++;
     }
-    HeapFree(GetProcessHeap(), 0, data);
-    note("hi-res sheets:", hires_rows);
+    for (i = 0; i < hires_sheets; i++) {
+        u32 shape = hires_sheet[i].shape;
+        stand_in[4] = (u8)i, stand_in[5] = (u8)(i >> 8);
+        hires_sheet[i].handle = TEXTURE_HANDLE(stand_in, 0x1F00, 0);
+        hires_sheet[i].handle = (hires_sheet[i].handle & 0xFFFFFFFFull) |
+                                (unsigned long long)(0xFFFF0000u | (shape >> 8 & 0xFF) << 8 | (shape & 0xFF)) << 32;
+        if (!(hires_sheet[i].cell = hires_find_cell(i)) || !(hires_sheet[i].stand_in = *hires_sheet[i].cell)) {
+            note("refused: hires.bin stand-in", i);
+            hires_rows = hires_sheets = 0;
+            return;
+        }
+    }
+    hires_attach();
+    note("hi-res sheets:", hires_sheets << 16 | hires_rows);
 }
 
 static void glyphs_load(void)
@@ -2105,8 +2351,6 @@ static void hires_quad(u32 id, struct frame *f)
                 return;
             y -= col * col_h, x += col * r->w;
         }
-        if (x + w > 4095 / scale || y + h > 4095 / scale)
-            return;
 
 
         if ((r->entry == 4069 && r->item <= 1) && f->arg[3] == 88)
@@ -2132,8 +2376,9 @@ static void hires_quad(u32 id, struct frame *f)
             quad(a[0],a[1],a[2],a[3],a[4],a[5],a[6],a[7],a[8],a[9],a[10],a[11],a[12]);
             hires_native = 0;
         }
-        f->arg[0] = (u32)hires_handle[i], f->arg[1] = (u32)(hires_handle[i] >> 32);
-        f->arg[7] = x * scale, f->arg[8] = y * scale, f->arg[9] = w * scale, f->arg[10] = h * scale;
+        f->arg[0] = (u32)hires_sheet[r->sheet].handle, f->arg[1] = (u32)(hires_sheet[r->sheet].handle >> 32);
+        f->arg[7] = (r->origin & 0xFFFF) + x * scale, f->arg[8] = (r->origin >> 16) + y * scale;
+        f->arg[9] = w * scale, f->arg[10] = h * scale;
         return;
     }
 }
@@ -2223,7 +2468,8 @@ static void test_review_draw(void)
             u32 col_h = v->per_col * (v->band & 0xFFFF), col = sy / col_h;
             vx += col * v->w, vy -= col * col_h;
         }
-        review_quad(hires_handle[i],128,208+h,w,h,vx*scale,vy*scale,w*scale,h*scale);
+        review_quad(hires_sheet[v->sheet].handle,128,208+h,w,h,(v->origin & 0xFFFF)+vx*scale,(v->origin >> 16)+vy*scale,
+                    w*scale,h*scale);
         break;
     }
     review_drawing = hires_native = 0;
@@ -2414,12 +2660,6 @@ static void pad_read(const u8 *pad)
 #define PAD_INIT ((void(__attribute__((thiscall)) *)(void *, const char *, u32, u32, u32, float))0x5E7940)
 #define PAD_NUMBER ((void(__attribute__((thiscall)) *)(void *, u32))0x5E8420)
 #define GAME_WINDOW (*(const volatile u32 *)0x140C718)
-typedef long(__stdcall *com1)(void *);
-typedef long(__stdcall *com2)(void *, u32);
-typedef long(__stdcall *com3)(void *, u32, u32);
-typedef long(__stdcall *com4)(void *, u32, u32, u32);
-typedef long(__stdcall *com5)(void *, u32, u32, u32, u32);
-#define COM(object, offset, n) ((com##n)(*(void ***)(object))[(offset) / 4])
 
 static volatile u32 attached;
 
@@ -3256,6 +3496,7 @@ static long __stdcall reset(void *device, void *params)
 #ifdef ENRT_LOG
     state_dump(device, "reset: states before");
 #endif
+    hires_detach();
     result = real_reset(device, params);
 #ifdef ENRT_LOG
     note("reset: result", (u32)result);
@@ -3265,6 +3506,8 @@ static long __stdcall reset(void *device, void *params)
 #endif
     if (result >= 0)
         COM(device, 0x170, 2)(device, 0), COM(device, 0x1AC, 2)(device, 0);  /* SetVertexShader, SetPixelShader */
+    if (result >= 0)
+        hires_attach();  /* at the level the new display size needs */
     return result;
 }
 
@@ -3297,6 +3540,8 @@ static long __stdcall create_depth(void *d, u32 w, u32 h, u32 format, u32 ms, u3
 static long __stdcall create_device(void *d3d, u32 adapter, u32 type, void *window, u32 flags, void *params, void **device)
 {
     long result = real_create_device(d3d, adapter, type, window, flags, params, device);
+    if (result >= 0)
+        hires_device = *device;
 #ifdef ENRT_LOG
     note("display: device back buffer", ((u32 *)params)[0] << 16 | ((u32 *)params)[1]);
     note("display: device windowed", ((u32 *)params)[8]);
@@ -3666,7 +3911,6 @@ static u32 english_hook(u32 id, struct frame *f)
    borderless). ON and OFF come from the stock value sheets instead, and the field of view is plain text. */
 #define OPTION_W 310
 #define OPTION_BAND 42
-#define OPTION_SCALE 2
 #define LABEL_LEFT (-54)
 #define BAND_ENGLISH 5
 #define BAND_60 7
@@ -3687,12 +3931,13 @@ static const u32 cursor_tint = 0x80808080, idle_tint = 0x80404040, value_lit = 0
 
 static void sheet_text(u32 sheet, u32 band, u32 w, int x, u32 y, u32 tint)
 {
-    unsigned long long handle = hires_handle[sheet - 1];
-    u32 *quad;
+    const struct hires *r = hires_row + sheet - 1;
+    unsigned long long handle = hires_sheet[r->sheet].handle;
+    u32 *quad, scale = r->scale & HIRES_SCALE_MASK;
     hires_native = 1;
     quad = ((u32 *(*)(u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32))0x5DDAB0)(
-        (u32)handle, (u32)(handle >> 32), x, y, 0, w, OPTION_BAND, 0, band * OPTION_BAND * OPTION_SCALE,
-        w * OPTION_SCALE, OPTION_BAND * OPTION_SCALE, 0x80, 1);
+        (u32)handle, (u32)(handle >> 32), x, y, 0, w, OPTION_BAND, r->origin & 0xFFFF,
+        (r->origin >> 16) + band * OPTION_BAND * scale, w * scale, OPTION_BAND * scale, 0x80, 1);
     hires_native = 0;
     quad[8] = tint, quad[9] = 0x3f800000;
     ((void (*)(u32 *, u32))0x5DCA30)(quad, 0);
@@ -4555,10 +4800,8 @@ static void survey_packet(const u32 *node)
                         u32 name = texture(tex), k, key = name * 2654435761u ^ w * 40503u ^ h * 9973u ^ tw * 131u ^ th, at;
                         char line[96], *o = line;
                         FILETIME ft;
-                        for (k = 0; k < hires_rows && (u32)hires_handle[k] != tex; k++)
-                            ;
-                        if (k < hires_rows)
-                            name = 0x80000000u | hires_row[k].entry << 8 | hires_row[k].item;
+                        if ((k = hires_name(tex, (u[0] < u[1] ? u[0] : u[1]) >> 4, (v[0] < v[1] ? v[0] : v[1]) >> 4)))
+                            name = k;
                         for (at = key & 8191, k = 0; seen[at] && seen[at] != key && k < 64; k++)
                             at = (at + 1) & 8191;
                         if (seen[at] || !w || !tw)  /* seen, or a full table: drop rather than stall the game */
@@ -4593,10 +4836,8 @@ static void survey_builder(const struct frame *f)
     u32 handle = f->arg[0], name = texture(handle), k, at, key;
     char line[96], *o = line;
     FILETIME ft;
-    for (k = 0; k < hires_rows && (u32)hires_handle[k] != handle; k++)
-        ;
-    if (k < hires_rows)
-        name = 0x80000000u | hires_row[k].entry << 8 | hires_row[k].item;
+    if ((k = hires_name(handle, f->arg[7], f->arg[8])))
+        name = k;
     key = name * 2654435761u ^ f->arg[5] * 40503u ^ f->arg[6] * 9973u ^ f->arg[9] * 131u ^ f->arg[10];
     for (at = key & 4095, k = 0; seen[at] && seen[at] != key && k < 64; k++)
         at = (at + 1) & 4095;

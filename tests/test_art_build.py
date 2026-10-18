@@ -145,16 +145,6 @@ def test_composed_row_does_not_drop_prefix_strokes():
     assert [alpha.getpixel((x, 12)) for x in (14, 18, 22, 26, 29, 38)] == [255, 0, 255, 0, 255, 255]
 
 
-def test_hires_sheet_does_not_swap_band_rows_and_columns():
-    art = Image.new("RGBA", (8, 128))
-    for b in range(8):
-        art.paste((b + 1, 0, 0, 255), (0, b * 16, 8, b * 16 + 16))
-    sheet = build.hires_sheet(art, 4, 8, 2, 2)
-    assert sheet.size == (32, 32)
-    assert [sheet.getpixel(((b // 2) * 8, (b % 2) * 16))[0] for b in range(8)] == list(range(1, 9))
-    assert sheet.getpixel((16, 31)) == (6, 0, 0, 255)
-
-
 def test_native_plate_does_not_requantize_surrounding_pixels():
     import struct
     from wozmod.formats.textures import G1T_HEADER, G1T_TEXTURE_HEADER
@@ -303,7 +293,8 @@ def test_notice_growth_does_not_separate_shared_right_edges(monkeypatch, tmp_pat
 
 def test_hires_bank_does_not_serialize_a_sheet_smaller_than_its_quad(monkeypatch, tmp_path):
     import struct
-    HIRES_ROW = struct.Struct("<9I")
+
+    from test_art_hires import bank_rows
     from wozmod.formats.textures import G1T_HEADER, G1T_TEXTURE_HEADER
 
     original_temp = build.tempfile.TemporaryDirectory
@@ -317,9 +308,13 @@ def test_hires_bank_does_not_serialize_a_sheet_smaller_than_its_quad(monkeypatch
     entries = tmp_path / "wozmod/entries"
     entries.mkdir(parents=True)
     (entries / "4060.bin").write_bytes(source)
-    label = Image.new("RGBA", (692, 48))
-    label.paste((38, 38, 38, 255), (1, 8, 689, 40))
-    monkeypatch.setattr(build, "header_label", lambda *a: (label, {"ink": [1, 8, 689, 40], "baseline": 40}))
+    def label(text, scale, *args):  # 346 x 24 units, ink 0.5 to 344.5 across and 4 to 20 down
+        image = Image.new("RGBA", (346 * scale, 24 * scale))
+        ink = [scale // 2, 4 * scale, 689 * scale // 2, 20 * scale]
+        image.paste((38, 38, 38, 255), tuple(ink))
+        return image, {"ink": ink, "baseline": ink[3]}
+
+    monkeypatch.setattr(build, "header_label", label)
     monkeypatch.setattr(build, "HIRES", [])
     monkeypatch.setattr(build, "DARK", {(4060, 0): "help"})
     monkeypatch.setattr(build, "HIRES_NATIVE_MENU", set())
@@ -327,9 +322,9 @@ def test_hires_bank_does_not_serialize_a_sheet_smaller_than_its_quad(monkeypatch
     mapping = {"faces": {}, "textures": [{"entry": 4060, "item": 0,
                                            "rows": [[{"text": "Help"}]]}]}
     blob = build.hires_bin(entries, None, (mapping, {}))
-    row = HIRES_ROW.unpack_from(blob, 4)
-    sheet = build.parse_g1t(blob[row[7]:row[7] + row[8]]).textures[0]
-    assert (row[2], row[3], row[5] >> 16, sheet.width) == (2, 520, 520, 2048)
+    (row, blocks), = bank_rows(blob).values()
+    assert (row[2], row[3], row[5] >> 16) == (build.HIRES_SCALE, 520, 520)
+    assert len(blocks) == 520 * 3 * 32 * 3  # the 3x image spans the whole quad: DXT5, a byte per texel
     assert (entries / "4060.bin").read_bytes() == source
     # Bug: the threaded encode (native codecs, jobs > 1) hands back an unfinished or different sheet.
     assert build.hires_bin(entries, None, (mapping, {}), jobs=4) == blob
@@ -338,7 +333,7 @@ def test_hires_bank_does_not_serialize_a_sheet_smaller_than_its_quad(monkeypatch
 def test_hires_bank_does_not_shrink_frozen_attribute_samples(monkeypatch, tmp_path):
     import struct
 
-    HIRES_ROW = struct.Struct("<9I")
+    from test_art_hires import bank_rows
     from wozmod.formats.textures import G1T_HEADER, G1T_TEXTURE_HEADER
 
     minima = [76, 48, 52, 72, 56, 68, 92, 52, 76, 80, 64, 80, 72, 68]
@@ -385,22 +380,16 @@ def test_hires_bank_does_not_shrink_frozen_attribute_samples(monkeypatch, tmp_pa
     narrower = True
     after = build.hires_bin(entries, None, (mapping, {}))
 
-    def rows(blob):
-        count = struct.unpack_from("<I", blob)[0]
-        return {record[:2]: (record, blob[4 + index * HIRES_ROW.size:4 + (index + 1) * HIRES_ROW.size],
-                            blob[record[7]:record[7] + record[8]])
-                for index, record in enumerate(HIRES_ROW.iter_unpack(blob[4:4 + count * HIRES_ROW.size]))}
-
-    old, new = rows(before), rows(after)
+    old, new = bank_rows(before), bank_rows(after)
     assert set(old) == set(new) == {(4079, item) for item in accepted} | set(others)
     assert [old[4079, item][0][5] >> 16 for item in accepted] == minima
     assert [new[4079, item][0][5] >> 16 for item in accepted] == minima
-    for key, (record, header, payload) in old.items():
+    for key, (record, blocks) in old.items():
         if key[0] == 4079:
             assert new[key][0][:7] == record[:7], key
-            assert new[key][2] != payload, key
+            assert new[key][1] != blocks, key
         else:
-            assert new[key][1:] == (header, payload), key
+            assert new[key] == (record, blocks), key
     assert {entry: (entries / f"{entry}.bin").read_bytes() for entry in sources} == sources
 
 
@@ -463,7 +452,7 @@ def test_font_environment_does_not_drop_package_or_inherited_import_paths(monkey
     monkeypatch.setenv("PYTHONPATH", str(inherited))
     result = subprocess.run([
         sys.executable, "-S", "-c",
-        "from wozmod.art.hires import hires_blob; import authored_marker; print(authored_marker.VALUE)",
+        "from wozmod.art.hires import hires_bank; import authored_marker; print(authored_marker.VALUE)",
     ], cwd=tmp_path, env=build.font_environment(), check=True, capture_output=True, text=True)
     assert result.stdout == "marker\n"
 
@@ -569,6 +558,8 @@ def test_review_override_does_not_get_lost_or_leak_into_the_next_build(monkeypat
 
 
 def test_native_ability_bank_does_not_grow_fitting_ink_or_drop_fixed_reserve(monkeypatch, tmp_path):
+    from test_art_hires import bank_rows
+
     source = (struct.pack("<4s4s6I", b"GT1G", b"test", 44 + 128 * 64 * 4, 32, 1, 0, 0, 0)
               + struct.pack("<I", 4) + struct.pack("<BBHI", 0x10, 1, 0x67, 0)
               + bytes(128 * 64 * 4))
@@ -598,7 +589,8 @@ def test_native_ability_bank_does_not_grow_fitting_ink_or_drop_fixed_reserve(mon
         monkeypatch.setattr(build, "HIRES_NATIVE_MENU", {(4079, item)})
         mapping = {"textures": [{"entry": 4079, "item": item, "texture": 0, "text": str(right)}]}
         bank = build.hires_bin(entries, None, (mapping, {}))
-        actual = struct.unpack_from("<9I", bank, 4)[5] >> 16
+        (row, _), = bank_rows(bank).values()
+        actual = row[5] >> 16
         if actual != minimum:
             failures.append((item, right, actual, minimum))
     assert not failures, failures

@@ -106,3 +106,19 @@ def test_double_scale_glow_stays_inside_sampled_height(monkeypatch):
         if art.tobytes() != expected.tobytes() or art.getbbox()[3] > height * 2:
             failures.append((height, art.getbbox()))
     assert not failures, failures
+
+
+def test_triple_scale_outline_moves_inside_the_left_edge(monkeypatch):
+    """Bug: no left-edge rule, so a 4-px outline before a fill 3.82 px in stops the 3x build (4079.80)."""
+    label = Image.new("RGBA", (48, 100))
+    label.paste((214, 117, 107, 255), (4, 15, 44, 96))
+    metrics = {"baseline": 87, "ink": [16, 27, 40, 88]}
+    monkeypatch.setattr(build, "header_label", lambda *args: (label, metrics))
+    layout = {"style": "rounded.base", "role": None, "text": "Fixture",
+              "left": 3.817, "baseline": 27, "sampled_window": [0, 0, 140, 31]}
+    monkeypatch.setattr(build, "native_menu_layout", lambda *args: layout)
+    art = build.native_menu_art(4079, 80, Image.new("RGBA", (256, 64)), {"textures": [{"entry": 4079, "item": 80}]},
+                                {}, 3)
+    expected = Image.new("RGBA", art.size)
+    expected.alpha_composite(label, (-4, -6))  # round(3.817 * 3 - 16) = -5 puts the outline at -1: one right
+    assert art.tobytes() == expected.tobytes()

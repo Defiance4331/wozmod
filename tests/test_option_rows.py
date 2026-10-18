@@ -27,8 +27,7 @@ def test_option_sheet_bands_follow_the_order_the_runtime_draws_them() -> None:
     assert rows.index("60 FPS") == c_define("BAND_60") and rows[c_define("BAND_60") + 1] == "120 FPS"
     assert rows[c_define("BAND_DISPLAY"):c_define("BAND_DISPLAY") + 3] == ["FULLSCREEN", "WINDOWED", "BORDERLESS"]
     assert len(rows) == c_define("BAND_DISPLAY") + 3  # the field of view is plain text, not lettering
-    assert (c_define("OPTION_W"), c_define("OPTION_BAND"), c_define("OPTION_SCALE")) == (
-        build.OPTION_W, build.OPTION_BAND, 2)
+    assert (c_define("OPTION_W"), c_define("OPTION_BAND")) == (build.OPTION_W, build.OPTION_BAND)
 
 
 def test_every_option_text_is_in_the_label_face() -> None:
@@ -68,8 +67,10 @@ def test_option_sheet_puts_each_text_in_its_own_band_centred_and_inside_its_room
 
 def test_hires_bank_carries_the_option_sheet_as_an_entry_zero_row(monkeypatch, tmp_path) -> None:
     """Bug: no entry-0 row, so the runtime finds no option sheet and silently draws the rows in the game font."""
+    from test_art_hires import bank_rows
+
     served = Image.new("RGBA", (64, 64))
-    rows_h = len(build.OPTION_ROWS) * build.OPTION_BAND  # 12 bands: 1008 px at 2x, one 1024-high column
+    rows_h = len(build.OPTION_ROWS) * build.OPTION_BAND
     pixels = served.tobytes("raw", "BGRA")
     size = G1T_HEADER.size + 4 + G1T_TEXTURE_HEADER.size + len(pixels)
     entry = (G1T_HEADER.pack(b"GT1G", b"0000", size, G1T_HEADER.size, 1, 0, 0, 0)
@@ -78,20 +79,21 @@ def test_hires_bank_carries_the_option_sheet_as_an_entry_zero_row(monkeypatch, t
     entries.mkdir(parents=True)
     monkeypatch.setattr(build, "parse_texture_package", lambda data: type("P", (), {"items": [
         type("I", (), {"g1t": parse_g1t(entry)})() for _ in range(3)]})())
-    monkeypatch.setattr(build, "HIRES", [(4069, 2, 2, 64, 64, 64, 0)])
+    monkeypatch.setattr(build, "HIRES", [(4069, 2, 64, 64, 64, 0)])
     monkeypatch.setattr(build, "DARK", {})
     monkeypatch.setattr(build, "HIRES_NATIVE_MENU", set())
-    monkeypatch.setattr(build, "vector_art", lambda *a, **k: Image.new("RGBA", (128, 128)))
+    monkeypatch.setattr(build, "vector_art", lambda *a, **k: Image.new("RGBA", (64 * build.HIRES_SCALE,) * 2))
     monkeypatch.setattr(build, "hires_texts", lambda *a: ["x"])
     monkeypatch.setattr(build, "option_rows_art",
-                        lambda scale, squeeze: Image.new("RGBA", (build.OPTION_W * 2, rows_h * 2)))
+                        lambda scale, squeeze: Image.new("RGBA", (build.OPTION_W * scale, rows_h * scale)))
     (entries / "4069.bin").write_bytes(b"package")
     mapping = {"faces": {}, "textures": [{"entry": 4069, "item": 2, "rows": [[{"text": "x"}]]}]}
     blob = build.hires_bin(entries, None, (mapping, {}))
-    rows = [struct.unpack_from("<9I", blob, 4 + 36 * k) for k in range(struct.unpack_from("<I", blob)[0])]
-    assert [row[:7] for row in rows] == [(4069, 2, 2, 64, 64, 64, 0), (0, 0, 2, 310, rows_h, 42, 0)]
-    sheet = parse_g1t(blob[rows[1][7]:rows[1][7] + rows[1][8]]).textures[0]
-    assert (sheet.width, sheet.height) == (1024, 1024)
+    rows = bank_rows(blob)
+    scale = build.HIRES_SCALE
+    assert [row[:7] for row, _ in rows.values()] == [(4069, 2, scale, 64, 64, 64, 0),
+                                                      (0, 0, scale, 310, rows_h, 42, 0)]
+    assert len(rows[0, 0][1]) == -(-310 * scale // 8) * 8 * -(-rows_h * scale // 8) * 8  # the whole sheet
 
 
 def test_display_mode_plates_step_by_their_lettering_room() -> None:

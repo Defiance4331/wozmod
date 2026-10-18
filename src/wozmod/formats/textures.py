@@ -445,6 +445,11 @@ def _swap_red_blue(pixels: bytes) -> bytes:
     return bytes(swapped)
 
 
+def encode_dxt5(rgba: bytes, width: int, height: int) -> bytes:
+    """The DXT5 blocks of an RGBA image, row-major."""
+    return _encode_dxt(PIXEL_FORMAT_DXT5, rgba, width, height, None)
+
+
 def _encode_top(pixel_format: int, rgba: bytes, width: int, height: int, base: G1tTexture | None = None) -> bytes:
     """Encode the top mip. Every block of a DXT texture that `base` already shows the same pixels in, at the
     same block position, keeps `base`'s compressed bytes, so only edited blocks pass through the encoder."""
