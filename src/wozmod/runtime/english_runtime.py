@@ -74,7 +74,6 @@ ALWAYS_HOOKS = [
     (0x5D5A20, "8b442404 83f87d", 41, 4),       # SE bank data size (thiscall)
     (0x428E33, "d9ee d99d20020000", 45, None),  # battle camera FOV stored (mid-function)
     (0x428FB4, "8d442438 d9ee", 46, None),      # 40-degree battle camera FOV stored (mid-function)
-    (0x427F61, "8b4704 d9470c", 72, None),      # follow camera facing set: the camera stick keeps it (mid-function)
     (0x5E4F64, "8b8660010000", 47, None),       # joystick state read (mid-function)
     (0x5E38E0, "81ec40020000", 70, 0),          # input map load (cdecl): Xbox names before its auto-setting
     (0x56FDC0, "e82b5a0700", 106, 0),           # Controller page, Key Config chosen: the pad auto-setting offer; always replaced
@@ -131,6 +130,10 @@ ALWAYS_HOOKS = [
     (0x5CBFE4, "89442414 8d442428", 97, None),  # window made: SCREEN stored with the window's size (mid-function)
     (0x5CBD60, "6aff 68d8b86b00", 107, None),   # the window procedure (stdcall: window, message, wParam, lParam)
 ]
+# ENRT_MOVING_FIX builds only: out of release 1, kept for later.
+MOVING_FIX_HOOKS = [
+    (0x427F61, "8b4704 d9470c", 72, None),      # follow camera facing set: the camera stick keeps it (mid-function)
+]
 # ENRT_LOG and ENRT_TEST builds only.
 LOG_HOOKS = []
 # ENRT_TEST builds only.
@@ -181,6 +184,8 @@ def file_offset(layout: dict, va: int) -> int:
 def hook_sites(defines: tuple[str, ...] = ()) -> list[tuple[int, bytes, int, int | None, bool]]:
     """(VA, prologue, id, pops, English only) for every hook a build with ``defines`` installs."""
     sites = [(*h, True) for h in HOOKS] + [(*h, False) for h in ALWAYS_HOOKS]
+    if "ENRT_MOVING_FIX" in defines:
+        sites += [(*h, False) for h in MOVING_FIX_HOOKS]
     if {"ENRT_LOG", "ENRT_TEST"} & set(defines):
         sites += [(*h, False) for h in LOG_HOOKS]
     if "ENRT_TEST" in defines:

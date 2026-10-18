@@ -161,6 +161,7 @@ def test_compiler_prefers_native_and_falls_back_to_pinned_docker(
     ({"log": True, "preview": True, "test": True, "cell": 48},
      ("ENRT_LOG", "ENRT_TAG_PREVIEW", "ENRT_TEST", "ENRT_CELL=48")),
     ({"render_distance": True}, ("ENRT_RENDER_DISTANCE",)),
+    ({"moving_fix": True}, ("ENRT_MOVING_FIX",)),
 ])
 def test_build_options_do_not_drop_preview_edits_or_runtime_defines(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, options: dict, expected_defines: tuple,
@@ -178,7 +179,8 @@ def test_build_options_do_not_drop_preview_edits_or_runtime_defines(
     monkeypatch.setattr(build, "FONT_ROUTE", font)
     monkeypatch.setattr(build, "CODE_EDITS", code)
     monkeypatch.setattr(build, "WIDTHS", b"widths")
-    monkeypatch.setattr(build, "settings_rows", lambda count, distance: asked.append((count, distance)) or rows[count])
+    monkeypatch.setattr(build, "settings_rows",
+                        lambda count, distance, moving: asked.append((count, distance, moving)) or rows[count])
     monkeypatch.setattr(build, "hook_sites", lambda defines: [("hooks", defines)])
 
     def fake_header(*args):
@@ -193,8 +195,9 @@ def test_build_options_do_not_drop_preview_edits_or_runtime_defines(
     monkeypatch.setattr(build, "compile_dll", fake_compile)
     assert build.build_dll(source, output, **options) == output
     assert output.read_bytes() == b"synthetic result"
-    # Bug: a release build keeps the cursor slot of the compiled-out RENDER DISTANCE row.
-    assert asked == [(1, options.get("render_distance", False)), (2, options.get("render_distance", False))]
+    # Bug: a release build keeps the cursor slot of a compiled-out row (RENDER DISTANCE, MOVING CAMERA FIX).
+    dev_rows = options.get("render_distance", False), options.get("moving_fix", False)
+    assert asked == [(1, *dev_rows), (2, *dev_rows)]
     preview_edits = [(va, b"\x74\x04", b"\x90\x90")
                      for va in (0x57296B, 0x572991, 0x5729B4, 0x5729DA, 0x572A01)] if options.get("preview") else []
     # Bug: an install with the English voice banks keeps the stock sound pool, which they overflow. Bug: the
@@ -252,6 +255,29 @@ def test_release_runtime_has_no_render_distance_row_key_or_patch(tmp_path: Path)
         dlls[name] = (tmp_path / f"{name}.dll").read_bytes()
     assert [probe in dlls["release"] for probe in probes] == [False] * 3
     assert [probe in dlls["development"] for probe in probes] == [True] * 3
+
+
+def test_shipped_builds_never_install_the_moving_camera_fix_hook() -> None:
+    """Bug: release 1 still installs hook 72 (0x427F61), so the moving camera fix engages although its row is gone
+    in release 1. The ENRT_MOVING_FIX build is the control that the probe sees it."""
+    shipped = [("ENRT_LOG",), ("ENRT_TEST",), ("ENRT_LOG", "ENRT_TEST"), ()]
+    assert [any(va == 0x427F61 for va, *_ in runtime.hook_sites(d)) for d in shipped] == [False] * 4
+    assert any(va == 0x427F61 for va, *_ in runtime.hook_sites(("ENRT_MOVING_FIX",)))
+
+
+@pytest.mark.skipif(os.environ.get("WOZMOD_RUNTIME_COMPILE") != "1",
+                    reason="set WOZMOD_RUNTIME_COMPILE=1")
+def test_release_runtime_has_no_moving_camera_fix_row_or_key(tmp_path: Path) -> None:
+    """Bug: the release or test build still draws the MOVING CAMERA FIX row or reads its settings.ini key
+    in release 1. The ENRT_MOVING_FIX build is the control that the probes see them."""
+    _need_compiler()
+    probes = [b"MOVING CAMERA FIX", "moving_fix".encode("utf-16-le")]
+    dlls = {}
+    for name, defines in [("release", ()), ("test", ("ENRT_LOG", "ENRT_TEST")), ("dev", ("ENRT_MOVING_FIX",))]:
+        runtime.compile_dll(tmp_path / f"{name}.dll", SYNTHETIC_HEADER, defines)
+        dlls[name] = (tmp_path / f"{name}.dll").read_bytes()
+    assert [[probe in dlls[name] for probe in probes] for name in ("release", "test", "dev")] == [
+        [False, False], [False, False], [True, True]]
 
 
 @pytest.mark.skipif(os.environ.get("WOZMOD_RUNTIME_COMPILE") != "1",

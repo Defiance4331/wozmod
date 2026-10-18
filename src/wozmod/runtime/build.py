@@ -26,6 +26,7 @@ def build_dll(
     test: bool = False,
     cell: int = 24,
     render_distance: bool = False,
+    moving_fix: bool = False,
 ) -> Path:
     """Write a DLL with checked stock spans and the requested build defines."""
     stock = stock_exe.read_bytes()
@@ -35,14 +36,15 @@ def build_dll(
     ]
     edits = {
         ENGLISH: FONT_ROUTE + CODE_EDITS + unlocks * preview,
-        ONE_ROW: settings_rows(1, render_distance) + PAD_CAMERA,  # one of the row groups installs in either text mode
-        TWO_ROWS: settings_rows(2, render_distance) + PAD_CAMERA + VOICE_EDITS,  # installs with the English voice banks
+        ONE_ROW: settings_rows(1, render_distance, moving_fix) + PAD_CAMERA,  # one of the row groups installs in either text mode
+        TWO_ROWS: settings_rows(2, render_distance, moving_fix) + PAD_CAMERA + VOICE_EDITS,  # installs with the English voice banks
     }
     defines = (
         ("ENRT_LOG",) * log
         + ("ENRT_TAG_PREVIEW",) * preview
         + ("ENRT_TEST",) * test
         + ("ENRT_RENDER_DISTANCE",) * render_distance
+        + ("ENRT_MOVING_FIX",) * moving_fix
         + (f"ENRT_CELL={cell}",) * (cell != 24)
     )
     header = data_header(

@@ -27,13 +27,14 @@ def test_detour_does_not_pad_past_the_overwritten_stock_span() -> None:
     ]
 
 
-@pytest.mark.parametrize(("rows", "distance", "count", "value_stop", "default"),
-                         [(1, True, 9, 6, 8), (2, True, 10, 7, 9), (1, False, 8, 5, 7), (2, False, 9, 6, 8)])
+@pytest.mark.parametrize(("rows", "distance", "moving_fix", "count", "value_stop", "default"),
+                         [(1, False, False, 7, 4, 6), (2, False, False, 8, 5, 7), (1, True, False, 8, 5, 7),
+                          (1, False, True, 8, 5, 7), (2, True, True, 10, 7, 9)])
 def test_settings_rows_does_not_leave_default_at_the_old_index(
-    rows: int, distance: bool, count: int, value_stop: int, default: int,
+    rows: int, distance: bool, moving_fix: bool, count: int, value_stop: int, default: int,
 ) -> None:
-    # Bug: a release build keeps a cursor slot for the compiled-out render distance row, an empty row.
-    edits = runtime_edits.settings_rows(rows, distance)
+    # Bug: a release build keeps a cursor slot for a compiled-out row (render distance, moving camera fix): an empty row.
+    edits = runtime_edits.settings_rows(rows, distance, moving_fix)
     assert [(va, len(stock), len(patched)) for va, stock, patched in edits] == [
         (0x56B2ED, 17, 17), (0x56B60B, 3, 3), (0x56B750, 3, 3),
         (0x56B7E4, 3, 3), (0x56B806, 3, 3), (0x56B86A, 19, 19), (0x56B8AB, 19, 19),
