@@ -25,5 +25,5 @@ def movie_donors(data: Path | None = None) -> dict[str, Donor]:
             raise ValueError(f"{row['slot']}: unknown language setting {row['language']!r}")
         by_donor.setdefault(row["donor"], []).append(
             DonorFile(f"{row['language']}/{row['slot']}.wmv", row["source"], row["size"], row["sha256"]))
-    return {name: Donor(name, DONORS[name].format, tuple(files), DONORS[name].first_cabinet)
+    return {name: Donor(name, DONORS[name].format, tuple(files))
             for name, files in by_donor.items()}

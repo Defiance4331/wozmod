@@ -28,7 +28,6 @@ HELP_URL = "https://github.com/Defiance4331/wozmod#tested-decryption-programs"
 ROWS = (
     ("game", "Musou Orochi Z folder", "folder",
      "The folder that contains the game's .exe (the Japanese PC release)."),
-    ("wo1", "Warriors Orochi (PC, Europe)", "image", "The .iso file made from this disc."),
     ("wo1-x360", "Warriors Orochi (Xbox 360, US)", "image", "The .iso file made from this disc."),
     ("x360", "Warriors Orochi 2 (Xbox 360, US)", "image", "The .iso file made from this disc."),
     ("psp", "Warriors Orochi 2 (PSP, US)", "image", "The .iso file made from this disc."),
@@ -45,7 +44,7 @@ ADVANCED = (
     ("psp-file", "Already decrypted PSP EBOOT", "file",
      "The decrypted PSP_GAME/SYSDIR/EBOOT.BIN. Use it instead of the program above."),
 )
-SECTIONS = {"game": "1. Your game", "wo1": "2. Your disc images", "x360-tool": "3. Your decryption programs"}
+SECTIONS = {"game": "1. Your game", "wo1-x360": "2. Your disc images", "x360-tool": "3. Your decryption programs"}
 NOT_NEEDED = {"disc": "Not needed: your disc image already has the decrypted file",
               "file": "Not needed: using the decrypted file under Advanced"}
 GOOD, BAD, QUIET, ACCENT = "#1a7f37", "#b42318", "#595959", "#0b5cad"
@@ -411,7 +410,7 @@ class SetupWindow:
         try:
             if action == "install":
                 inputs = {name: Path(values[name]) if values[name] else None
-                          for name in ("wo1", *PROGRAMS, *TOOLS, *FILES.values())}
+                          for name in (*PROGRAMS, *TOOLS, *FILES.values())}
                 inputs["lettering"] = resources.root() / "lettering.zip"
                 inputs["dll"] = resources.root() / "d3d9.dll"
                 install(Path(values["game"]), inputs, force=True, log=log, progress=progress)

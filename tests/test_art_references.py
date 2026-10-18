@@ -8,8 +8,8 @@ import pytest
 from wozmod.fonts import menu_references as references
 
 
-def xbox_texture(pixel_format=6):
-    payload = struct.pack(">HHIHHI", 0xF800, 0x001F, 0, 0x001F, 0xF800, 0)
+def xbox_texture(pixel_format=6, indices=0):
+    payload = struct.pack(">HHIHHI", 0xF800, 0x001F, indices, 0x001F, 0xF800, indices)
     return (b"G1TG0050" + struct.pack(">6I", 60, 32, 1, 2, 0, 0)
             + struct.pack(">I", 4) + struct.pack(">8B", 1, pixel_format, 0x32, 0, 0x11, 0x11, 0x10, 0)
             + payload)
@@ -90,10 +90,13 @@ def test_unknown_catalog_schema_cannot_supply_recipe_rows(tmp_path, monkeypatch)
         references.load_catalog.cache_clear()
 
 
+VARIED = 0x1B4EB1E4  # each row of each block a different order of the four DXT1 colours
+
+
 def donor_folder(tmp_path):
     folder = tmp_path / "wo1-x360"
     folder.mkdir()
-    texture = xbox_texture()
+    texture = xbox_texture(indices=VARIED)
     (folder / "linkdata_ens.lnk").write_bytes(texture + bytes(2048 - len(texture)))
     (folder / "linkdata_ens.idx").write_bytes(
         struct.pack(">4s3I4I", b"SM4L", 1, 1, 0, 0, 1, len(texture), 0))
@@ -102,8 +105,9 @@ def donor_folder(tmp_path):
 
 def test_donor_reader_cannot_read_the_wrong_folder_or_crop_origin(tmp_path):
     """Bug: a reference read from another disc's folder, or cropped from the wrong origin, returns other pixels."""
-    want = references.x360_members(xbox_texture())[0].textures[0]
+    want = references.x360_members(xbox_texture(indices=VARIED))[0].textures[0]
     whole = references.Image.frombytes("RGBA", (want.width, want.height), bytes(want.decode_rgba()))
+    assert whole.crop((1, 2, 4, 4)).tobytes() not in (whole.crop((0, 2, 3, 4)).tobytes(), whole.crop((1, 0, 4, 2)).tobytes())
     reader = references.DonorReader(donor_folder(tmp_path))
     image = reader.image({"donor": "wo1-x360", "ens": [0, 0, 0], "crop": [1, 2, 4, 4]})
     assert (image.size, image.tobytes()) == ((3, 2), whole.crop((1, 2, 4, 4)).tobytes())

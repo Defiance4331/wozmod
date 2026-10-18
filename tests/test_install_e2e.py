@@ -21,7 +21,7 @@ import pytest
 
 from wozmod.__main__ import main
 
-INPUTS = {"wo1": "WOZMOD_WO1_ISO", "wo1-x360": "WOZMOD_WO1_X360_ISO", "x360": "WOZMOD_X360_ISO", "psp": "WOZMOD_PSP_ISO",
+INPUTS = {"wo1-x360": "WOZMOD_WO1_X360_ISO", "x360": "WOZMOD_X360_ISO", "psp": "WOZMOD_PSP_ISO",
           "x360-tool": "WOZMOD_X360_TOOL", "psp-tool": "WOZMOD_PSP_TOOL",
           "lettering": "WOZMOD_LETTERING", "dll": "WOZMOD_DLL"}
 

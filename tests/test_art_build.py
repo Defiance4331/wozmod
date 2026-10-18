@@ -479,7 +479,7 @@ def test_font_environment_does_not_drop_package_or_inherited_import_paths(monkey
 ])
 def test_cli_rejects_invalid_selection_before_opening_inputs(monkeypatch, capsys, tmp_path, extra, message):
     monkeypatch.chdir(tmp_path)
-    for name in ("WOZMOD_WO1_DONOR", "WOZMOD_X360_DONOR", "WOZMOD_WO1_ISO", "WOZMOD_X360_ISO"):
+    for name in ("WOZMOD_WO1_X360_DONOR", "WOZMOD_X360_DONOR", "WOZMOD_WO1_X360_ISO", "WOZMOD_X360_ISO"):
         monkeypatch.delenv(name, raising=False)
     with pytest.raises(SystemExit) as error:
         build.main(["--game", str(tmp_path / "absent-game"), *extra])
@@ -742,10 +742,10 @@ def test_header_sheet_bands_keep_their_words_past_a_line_the_face_leaves_unread(
 
 
 def _wo1_pc_pointers(value, path=""):
-    """WO1 PC pointers: art donors numbered from WO1_PC_ENTRIES on, and reference crops naming the "wo1" disc."""
+    """WO1 PC pointers: art donors numbered from WO1_PC_ENTRIES on (the repository hygiene test finds the "wo1" name)."""
     if isinstance(value, dict):
         donor = value.get("donor")
-        if isinstance(donor, list) and donor[0] >= build.WO1_PC_ENTRIES or donor == "wo1":
+        if isinstance(donor, list) and donor[0] >= build.WO1_PC_ENTRIES:
             yield f"{path}: donor {donor}"
         for key, item in value.items():
             yield from _wo1_pc_pointers(item, f"{path}/{key}")
@@ -755,8 +755,7 @@ def _wo1_pc_pointers(value, path=""):
 
 
 def test_art_data_names_no_warriors_orochi_pc_art():
-    """A WO1 PC pointer anywhere in the art data (a face row, a recipe, a piece, a reference crop) brings the PC disc
-    back."""
+    """A WO1 PC entry number anywhere in the art data (a face row, a recipe, a piece) brings the PC disc back."""
     mapping = json.loads(build.MAPPING.read_text(encoding="utf-8"))
     stages = mapping["stage_names"]
     found = [*(f"{path.name}{found}" for path in sorted(build.MAPPING.parent.glob("*.json"))

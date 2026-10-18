@@ -111,7 +111,6 @@ def _pinned(path: Path, pin: tuple[int, str]) -> str | None:
 # The plain names the command line and the setup window both show.
 LABELS = {
     "game": "Game folder",
-    "wo1": "Warriors Orochi disc image",
     "wo1-x360": "Warriors Orochi Xbox 360 disc image",
     "x360": "Warriors Orochi 2 Xbox 360 disc image",
     "psp": "PSP disc image",
@@ -124,7 +123,6 @@ LABELS = {
     "dll": "d3d9.dll",
 }
 DISCS = {  # input name: (donor, the disc to give)
-    "wo1": ("wo1", "the Warriors Orochi (Europe) PC disc image"),
     "wo1-x360": ("wo1-x360", "the Warriors Orochi (USA) Xbox 360 disc image"),
     "x360": ("wo2-x360", "the Warriors Orochi 2 (USA) Xbox 360 disc image"),
     "psp": ("wo2-psp", "the Warriors Orochi 2 (USA) PSP disc image"),
@@ -508,14 +506,13 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
     The input checks run while the discs are read; `checked()` waits for them and raises when an input is wrong.
     """
     from wozmod.art.compose import compose
-    from wozmod.donors import PSP, WO1, WO1_X360, X360
+    from wozmod.donors import PSP, WO1_X360, X360
     from wozmod.movies import movie_donors
     from wozmod.voices import VOICE_DONOR_FILES
 
     donors, out = staging / "donors", staging / "out"
     psp_files = ["PSP_GAME/USRDIR/LINKDATA_NA.FNS"]
     plan = [  # (input, donor, folder, files, what the progress view says, bytes to read)
-        ("wo1", WO1, "wo1", ("linkdata_ens.idx", "linkdata_ens.lnk"), "reading the Warriors Orochi disc"),
         ("wo1-x360", WO1_X360, "wo1-x360", VOICE_DONOR_FILES, "reading the Warriors Orochi Xbox 360 disc"),
         ("x360", X360, "wo2-x360", VOICE_DONOR_FILES, "reading the Warriors Orochi 2 Xbox 360 disc"),
         ("psp", PSP, "wo2-psp", psp_files, "reading the PSP disc"),
@@ -554,7 +551,7 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
         futures = {
             pool.submit(_text_table, game, donors, out / "wozmod/table.bin"): "text",
             pool.submit(_voice_banks, game, donors, out / "wozmod", jobs): "voices",
-            pool.submit(compose, game, {"wo1": donors / "wo1/linkdata_ens", "wo1-x360": donors / "wo1-x360/linkdata_ens",
+            pool.submit(compose, game, {"wo1-x360": donors / "wo1-x360/linkdata_ens",
                                         "x360": donors / "wo2-x360/linkdata_ens", "text": donors},
                         inputs["lettering"], staging / "art", True, jobs): "art",
         }

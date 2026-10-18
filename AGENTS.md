@@ -4,8 +4,8 @@ A fan mod for Musou Orochi Z, the Japanese Windows PC release (Koei Tecmo,
 2009): English text, voices and menu art, plus gameplay and display patches.
 Players get a proxy `d3d9.dll` and a `wozmod/` folder beside the stock
 `OROCHI_Z.exe`. The installer builds `wozmod/` on the player's machine from
-their own copies of Musou Orochi Z, Warriors Orochi PC (Europe), and Warriors
-Orochi 2 Xbox 360 and PSP (both USA). No stock file changes.
+their own copies of Musou Orochi Z, Warriors Orochi Xbox 360, and Warriors
+Orochi 2 Xbox 360 and PSP (all USA). No stock file changes.
 
 ## Our own work only
 

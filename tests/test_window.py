@@ -25,7 +25,7 @@ def test_the_window_and_the_command_give_the_same_verdict_on_each_input(tmp_path
     monkeypatch.setattr(installer.resources, "ffmpeg", lambda: "ffmpeg")
     wrong = tmp_path / "wrong"
     wrong.write_bytes(b"xyz")
-    values = {"game": str(tmp_path), "wo1": str(wrong), "wo1-x360": str(wrong), "x360": str(tmp_path / "none"), "psp": str(wrong),
+    values = {"game": str(tmp_path), "wo1-x360": str(wrong), "x360": str(tmp_path / "none"), "psp": str(wrong),
               "lettering": str(wrong), "dll": str(wrong)}
     with pytest.raises(InstallError) as caught:
         installer.check_inputs(tmp_path, {name: Path(path) for name, path in values.items()})
@@ -252,7 +252,7 @@ def test_a_good_advanced_file_makes_its_program_row_not_required_and_a_bad_one_d
     good, wrong = tmp_path / "plain.pe", tmp_path / "wrong"
     good.write_bytes(plain)
     wrong.write_bytes(b"x")
-    for name in ("game", "wo1", "psp", "psp-tool"):
+    for name in ("game", "psp", "psp-tool"):
         win.vars[name].set(str(tmp_path))
     for name in ("x360", "wo1-x360"):
         win.vars[name].set(str(xbox_image(tmp_path, b"default.xex", encrypted)))
@@ -281,8 +281,8 @@ def test_the_install_reason_counts_the_rows_still_missing(shown):
     # Bug: the reason miscounts (off by one, or counts the Advanced file rows the program rows stand in for),
     # or it stays stale after a row turns good.
     win, root = shown
-    assert "Pick the 7 missing items above" in win.reason.cget("text")
-    for name in ("game", "wo1", "wo1-x360", "x360"):
+    assert "Pick the 6 missing items above" in win.reason.cget("text")
+    for name in ("game", "wo1-x360", "x360"):
         win.good[name] = True
     win.refresh_buttons()
     assert "Pick the 3 missing items above" in win.reason.cget("text")
@@ -312,9 +312,9 @@ def test_a_long_path_box_shows_the_end_of_the_path(shown):
     # Bug: a path longer than the box shows its start, so the player never sees the file name.
     win, root = shown
     root.deiconify()
-    win.vars["wo1"].set("/very/long/" + "folder/" * 30 + "Warriors Orochi.iso")
-    _wait(root, lambda: win.entries["wo1"].xview()[1] == 1.0)
-    assert win.entries["wo1"].xview()[0] > 0
+    win.vars["psp"].set("/very/long/" + "folder/" * 30 + "Warriors Orochi 2.iso")
+    _wait(root, lambda: win.entries["psp"].xview()[1] == 1.0)
+    assert win.entries["psp"].xview()[0] > 0
 
 
 def test_the_help_link_opens_the_list_of_tested_programs(shown, monkeypatch):

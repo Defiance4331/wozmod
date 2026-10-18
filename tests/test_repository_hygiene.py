@@ -108,6 +108,27 @@ def test_json_holds_no_byte_dumps_or_machine_paths() -> None:
     assert offending == []
 
 
+def _wo1_pc_pointers(value, where: str = ""):
+    """Where a JSON value names the Warriors Orochi PC donor, "wo1": a {"donor": "wo1"} source or a ["wo1", ...] ref."""
+    if isinstance(value, dict):
+        if value.get("donor") == "wo1":
+            yield where
+        for key, item in value.items():
+            yield from _wo1_pc_pointers(item, f"{where}/{key}")
+    elif isinstance(value, list):
+        if value[:1] == ["wo1"]:
+            yield where
+        for index, item in enumerate(value):
+            yield from _wo1_pc_pointers(item, f"{where}[{index}]")
+
+
+def test_no_data_points_into_the_warriors_orochi_pc_disc() -> None:
+    """Bug: a reference crop, text row or art piece still names the Warriors Orochi PC disc, which no install reads."""
+    found = [f"{path.relative_to(REPO)}{where}" for path in _files() if path.suffix == ".json"
+             for where in _wo1_pc_pointers(json.loads(path.read_text(encoding="utf-8")))]
+    assert found == []
+
+
 def _members(archive: zipfile.ZipFile, prefix: str = ""):
     """(name, bytes) of every member, nested zips opened in place."""
     for name in archive.namelist():

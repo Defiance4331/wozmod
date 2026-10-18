@@ -9,7 +9,6 @@ from wozmod.donors import DONORS, extract_donor
 
 @pytest.mark.skipif(os.environ.get("WOZMOD_DISCS") != "1", reason="Full disc oracle is opt-in")
 @pytest.mark.parametrize("donor_name,variable", [
-    ("wo1", "WOZMOD_WO1_ISO"),
     ("wo2-x360", "WOZMOD_X360_ISO"),
     ("wo2-psp", "WOZMOD_PSP_ISO"),
 ])

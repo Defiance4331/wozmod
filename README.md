@@ -41,7 +41,7 @@ folder, `wozmod`, to the game folder.
    installed. wozmod checks the game files first. If they are a different
    version, wozmod changes nothing.
 2. **Your own copies of these three games:**
-   - **Warriors Orochi for PC** (the European release), as a disc image
+   - **Warriors Orochi for Xbox 360** (the US release), as a disc image
      (`.iso`).
    - **Warriors Orochi 2 for Xbox 360** (the US release), as a disc image
      (`.iso`).
@@ -50,13 +50,15 @@ folder, `wozmod`, to the game folder.
    wozmod reads the official English text, art and voices from these games
    when you install it. We cannot include them, because they belong to Koei
    Tecmo. You need all three.
-3. **A decryption program for each of the two encrypted files.** The
-   program files of the two Warriors Orochi 2 games are encrypted on the
-   disc, and wozmod does not decrypt files. Bring a decryption program for
-   each one, and wozmod runs it on the file from your disc image:
+3. **A decryption program for the Xbox 360 files, and one for the PSP
+   file.** The program files of the three games are encrypted on the disc,
+   and wozmod does not decrypt files. One program serves both Xbox 360
+   discs. Bring the programs, and wozmod runs each one on the file from your
+   disc image:
 
    | Game | File on the disc image |
    |---|---|
+   | Warriors Orochi for Xbox 360 | `default.xex` |
    | Warriors Orochi 2 for Xbox 360 | `default.xex` |
    | Warriors Orochi 2 for PSP | `PSP_GAME/SYSDIR/EBOOT.BIN` |
 
@@ -79,6 +81,7 @@ These programs have been tested to produce files that wozmod accepts:
 | Game file | Program |
 |---|---|
 | Warriors Orochi 2 for PSP, `EBOOT.BIN` | pspdecrypt 1.0 |
+| Warriors Orochi for Xbox 360, `default.xex` | xex2ool 0.3.0 |
 | Warriors Orochi 2 for Xbox 360, `default.xex` | xex2ool 0.3.0, or XexTool 7.0 |
 
 We do not ship, provide or endorse any tool, and we make no legal claim about
@@ -96,8 +99,8 @@ disc images.
 3. Pick your files. Click **Browse...** next to each one:
    - **1. Your game:** the Musou Orochi Z folder.
    - **2. Your disc images:** the disc image of each of the three games.
-   - **3. Your decryption programs:** the program for the Xbox 360 file, and
-     the one for the PSP file, from "What you need".
+   - **3. Your decryption programs:** the program for the Xbox 360 files,
+     and the one for the PSP file, from "What you need".
 
    wozmod checks each file when you pick it. For a decryption program, it
    runs the program on the file from your disc image. A tick means the file
@@ -182,15 +185,15 @@ To give everything in one command:
 
 ```
 wozmod install --game "<Musou Orochi Z folder>" \
-  --wo1 <Warriors Orochi .iso> --x360 <Warriors Orochi 2 360 .iso> \
+  --wo1-x360 <Warriors Orochi 360 .iso> --x360 <Warriors Orochi 2 360 .iso> \
   --psp <Warriors Orochi 2 PSP .iso> \
   --x360-tool <decryption program for default.xex> \
   --psp-tool <decryption program for EBOOT.BIN>
 ```
 
-- **Already decrypted files:** use `--x360-file` or `--psp-file` in place of
-  `--x360-tool` or `--psp-tool`. If you give both, wozmod uses the file and
-  does not run the program.
+- **Already decrypted files:** use `--wo1-x360-file`, `--x360-file` or
+  `--psp-file` in place of `--x360-tool` or `--psp-tool`. If you give both,
+  wozmod uses the file and does not run the program.
 - **Update:** run the same command with the new release. To reinstall the
   same version, or go back to an older one, add `--force`.
 - **Uninstall:** run `wozmod uninstall --game "<Musou Orochi Z folder>"`. Add

@@ -1,8 +1,7 @@
-"""Read-only disc image and cabinet readers."""
+"""Read-only disc image readers."""
 
-from .cabinet import CabinetSet
 from .common import DiscError, DiscFile
 from .iso9660 import Iso9660
 from .xdvdfs import Xdvdfs
 
-__all__ = ["CabinetSet", "DiscError", "DiscFile", "Iso9660", "Xdvdfs"]
+__all__ = ["DiscError", "DiscFile", "Iso9660", "Xdvdfs"]

@@ -12,7 +12,6 @@ from wozmod.interactive import ask_choice, ask_path, ask_yes, interactive
 from wozmod.progress import Cancelled, Progress, TerminalView, duration
 
 INPUTS = (
-    ("wo1", "Warriors Orochi PC (Europe) disc image"),
     ("wo1-x360", "Warriors Orochi Xbox 360 (USA) disc image"),
     ("x360", "Warriors Orochi 2 Xbox 360 (USA) disc image"),
     ("psp", "Warriors Orochi 2 PSP (USA) disc image"),
@@ -24,7 +23,7 @@ INPUTS = (
     ("lettering", None),  # for development: the release lettering bundle
     ("dll", None),  # for development: the release d3d9.dll
 )
-ASKED = ("game", "wo1", *PROGRAMS, *TOOLS)  # the inputs the terminal asks for when they are missing
+ASKED = ("game", *PROGRAMS, *TOOLS)  # the inputs the terminal asks for when they are missing
 SHIPPED = {"lettering": "lettering.zip", "dll": "d3d9.dll"}  # inside the packaged program's resource folder
 
 

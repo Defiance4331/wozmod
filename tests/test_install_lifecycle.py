@@ -46,14 +46,14 @@ def game(tmp_path: Path, monkeypatch) -> Path:
 
 def _inputs(tmp_path: Path) -> dict[str, Path]:
     return {name: tmp_path / name for name in
-            ("wo1", "wo1-x360", "x360", "psp", "x360-tool", "psp-tool", "lettering", "dll")}
+            ("wo1-x360", "x360", "psp", "x360-tool", "psp-tool", "lettering", "dll")}
 
 
 def test_every_missing_or_wrong_input_is_named_and_no_right_one(game, tmp_path, monkeypatch):
     # Bug: a wrong input passes, the error blames the wrong input, or it stops at the first problem.
     inputs = _inputs(tmp_path)
     (game / "data/LINKDATA1.BIN").write_bytes(b"patched archive")
-    inputs["wo1"].write_bytes(b"not a disc image")
+    inputs["wo1-x360"].write_bytes(b"not a disc image")
     inputs["lettering"].write_bytes(b"bundle")
     inputs["dll"].write_bytes(b"other dll")
     monkeypatch.setattr(installer, "LETTERING", _pin(b"bundle"))
@@ -63,7 +63,7 @@ def test_every_missing_or_wrong_input_is_named_and_no_right_one(game, tmp_path, 
         install(game, inputs)
 
     named = {line.split(":")[0] for line in str(caught.value).splitlines() if ": " in line}
-    assert named == {"Game folder", "Warriors Orochi disc image", "Warriors Orochi Xbox 360 disc image",
+    assert named == {"Game folder", "Warriors Orochi Xbox 360 disc image",
                      "Warriors Orochi 2 Xbox 360 disc image", "PSP disc image", "d3d9.dll"}
     assert "data/LINKDATA1.BIN" in str(caught.value) and "OROCHI_Z.exe" not in str(caught.value)
     assert not (game / "wozmod").exists()

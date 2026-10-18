@@ -33,7 +33,6 @@ class Donor:
     name: str
     format: str
     files: tuple[DonorFile, ...]
-    first_cabinet: str | None = None
 
     def __post_init__(self) -> None:
         if self.format not in ("iso9660", "xdvdfs"):
@@ -42,39 +41,7 @@ class Donor:
             names = [getattr(file, field).casefold() for file in self.files]
             if len(set(names)) != len(names):
                 raise ValueError("Duplicate member identity")
-        if self.first_cabinet is not None:
-            _relative_path(self.first_cabinet)
 
-
-
-WO1 = Donor(
-    'wo1', 'iso9660', (
-        DonorFile('link_sebank.bdx', 'link_sebank.bdx', 113721344,
-                  'e1b79560d6474cd8a00ec49beb6b19207537eb6f1b68557ab188accbdcadf1ff'),
-        DonorFile('link_sebank.hdx', 'link_sebank.hdx', 212992,
-                  'dabadb9a8157db3af9c3e910d0c4b72bd81cd8ae66a4e7e26578739b21f307e0'),
-        DonorFile('link_vodat.bdx', 'link_vodat.bdx', 236677120,
-                  '82f769306a1ec10b55d4f9f767cb942675f4dacd4470d6a6953863de8ae50c10'),
-        DonorFile('linkdata_ans.idx', 'linkdata_ans.idx', 147904,
-                  '7fed7b4ce12cab34700b00969d6d48f5b7068ca35c62d563a0d8a420f6a3d593'),
-        DonorFile('linkdata_ens.idx', 'linkdata_ens.idx', 13952,
-                  'd2f7a5f098dcb4753c295ccfa6f5158ac38c212973c9b1c0e7912c25c310c815'),
-        DonorFile('linkdata_ens.lnk', 'linkdata_ens.lnk', 1027012608,
-                  'd700ddf6bf298d33b60b6bae40996c9e875b6e05641a27f21ec3226f2eb54a6d'),
-        DonorFile('movie/mev01.wmv', 'mev01.wmv', 40994782,
-                  '233ebc09cf0e68649b16375eba9fc6bc8c1dca1056b6998eb9f02a1764b53d21'),
-        DonorFile('movie/mev06.wmv', 'mev06.wmv', 36529842,
-                  '72be03db89bbfdd8602cec8696331760c29a34175ca1f67d56b69d30762becd1'),
-        DonorFile('movie/mev11.wmv', 'mev11.wmv', 1072928,
-                  '965e135cdefa6e5093655a21c802620fd20465bd73af5369f3f7197a3c10f64c'),
-        DonorFile('movie/mev12.wmv', 'mev12.wmv', 974438,
-                  'e2fda95b1821a2926c405cf0064e57da118b169d4c2074b81a27ee027ff89f45'),
-        DonorFile('movie/mev13.wmv', 'mev13.wmv', 941608,
-                  '4d3c49514c96a9ab8e14e5485454c0bf11679f092f3a8512f89738834d04ac86'),
-        DonorFile('movie/mev14.wmv', 'mev14.wmv', 974438,
-                  'b79968a8feb533c6e91d8da9aa90b108fcf768fc567b4a412de6d9170352be39'),
-    ), first_cabinet="OROCHI.cab"
-)
 
 
 X360 = Donor(
@@ -165,7 +132,7 @@ PSP = Donor(
 )
 
 
-DONORS = {donor.name: donor for donor in (WO1, WO1_X360, X360, PSP)}
+DONORS = {donor.name: donor for donor in (WO1_X360, X360, PSP)}
 
 PSP_ENCRYPTED_FILE = DonorFile(
     "PSP_GAME/SYSDIR/EBOOT.BIN", "PSP_GAME/SYSDIR/EBOOT.BIN", 3198240,

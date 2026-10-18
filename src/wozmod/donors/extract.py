@@ -9,7 +9,6 @@ from contextlib import ExitStack
 from pathlib import Path
 from typing import Callable, Iterable
 
-from wozmod.discs.cabinet import CabinetSet
 from wozmod.discs.common import DiscError
 from wozmod.discs.iso9660 import Iso9660
 from wozmod.discs.xdvdfs import Xdvdfs
@@ -40,8 +39,7 @@ def check_donor_image(image: Path | str, donor: Donor | str) -> None:
     if isinstance(donor, str):
         donor = DONORS[donor]
     with _open_disc(image, donor) as disc:
-        archive = CabinetSet(disc.open, donor.first_cabinet) if donor.first_cabinet else disc
-        available = {member.path.casefold(): member.size for member in archive.files()}
+        available = {member.path.casefold(): member.size for member in disc.files()}
     for member in donor.files:
         if available.get(member.source.casefold()) != member.size:
             raise DiscError(f"Missing or wrong-sized donor member: {member.source}")
@@ -92,8 +90,7 @@ def extract_donor(
     with _open_disc(image, donor) as disc, tempfile.TemporaryDirectory(
         prefix=".donor-", dir=destination.parent
     ) as staging:
-        archive = CabinetSet(disc.open, donor.first_cabinet) if donor.first_cabinet else disc
-        available = {member.path.casefold(): member for member in archive.files()}
+        available = {member.path.casefold(): member for member in disc.files()}
         resolved = {}
         for member in selected:
             actual = available.get(member.source.casefold())
@@ -109,20 +106,13 @@ def extract_donor(
                 path.parent.mkdir(parents=True, exist_ok=True)
                 staged[member.path] = path
                 outputs[member.source.casefold()] = stack.enter_context(path.open("wb"))
-            if donor.first_cabinet:
-                for name, chunk in archive.iter_files(resolved[member.source] for member in selected):
-                    outputs[name.casefold()].write(chunk)
-                    done += len(chunk)
-                    if on_bytes:
-                        on_bytes(done, total)
-            else:
-                for member in selected:
-                    with disc.open(resolved[member.source]) as source:
-                        while chunk := source.read(1024 * 1024):
-                            outputs[member.source.casefold()].write(chunk)
-                            done += len(chunk)
-                            if on_bytes:
-                                on_bytes(done, total)
+            for member in selected:
+                with disc.open(resolved[member.source]) as source:
+                    while chunk := source.read(1024 * 1024):
+                        outputs[member.source.casefold()].write(chunk)
+                        done += len(chunk)
+                        if on_bytes:
+                            on_bytes(done, total)
         for member in selected:
             verify_file(staged[member.path], member)
         for member, target in zip(selected, targets, strict=True):

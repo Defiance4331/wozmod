@@ -1,7 +1,7 @@
 """Pinned donor inputs and verified extraction."""
 
 from .extract import check_donor_image, extract_donor, read_disc_member, verify_file
-from .inventory import DONORS, PSP, PSP_ENCRYPTED_FILE, WO1, WO1_X360, X360, Donor, DonorFile
+from .inventory import DONORS, PSP, PSP_ENCRYPTED_FILE, WO1_X360, X360, Donor, DonorFile
 from .programs import (
     PSP_ENCRYPTED_PROGRAM,
     PSP_PROGRAM,
@@ -18,7 +18,7 @@ from .programs import (
 )
 
 __all__ = [
-    "check_donor_image", "read_disc_member", "DONORS", "PSP", "WO1", "WO1_X360", "X360", "Donor", "DonorFile", "extract_donor", "verify_file",
+    "check_donor_image", "read_disc_member", "DONORS", "PSP", "WO1_X360", "X360", "Donor", "DonorFile", "extract_donor", "verify_file",
     "PSP_PROGRAM", "X360_PROGRAM", "ProgramIdentity", "run_tool", "NOT_PRODUCED", "trim_program", "verify_program",
     "PSP_ENCRYPTED_FILE", "PSP_ENCRYPTED_PROGRAM", "X360_ENCRYPTED_PROGRAM", "ProgramError",
     "WO1_X360_PROGRAM", "WO1_X360_ENCRYPTED_PROGRAM",
