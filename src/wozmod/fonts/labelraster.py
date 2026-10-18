@@ -10,6 +10,7 @@ from PIL import Image
 
 from . import labelvec as V
 from .buttonraster import Label, blur, coverage, path
+from .word_key import word_key
 
 FILL_A = 0.908100490
 
@@ -35,7 +36,7 @@ def layout(text):
     g = glyphs()
 
 
-    lefts = V.SETS.get(text)
+    lefts = V.SETS.get(word_key(text))
     if lefts is not None:
         chars = text.replace(" ", "")
         ls = V.BEARINGS[chars[0]][0]
@@ -43,7 +44,7 @@ def layout(text):
         last = chars[-1]
         advance = ls + lefts[-1] + g[last][1][2] - g[last][1][0] + V.BEARINGS[last][1]
         return placed, advance
-    track, space = V.ROWS.get(text, (0.0, V.SPACE))
+    track, space = V.ROWS.get(word_key(text), (0.0, V.SPACE))
     pen, out = 0.0, []
     for k, ch in enumerate(text):
         pen += track if k else 0.0

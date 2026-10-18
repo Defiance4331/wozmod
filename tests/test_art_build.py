@@ -778,3 +778,19 @@ def test_art_build_runs_without_the_warriors_orochi_pc_disc(tmp_path):
                           "--output-dir", str(tmp_path / "out"), "--hires", "vector"],
                          capture_output=True, text=True)
     assert run.returncode == 0, run.stdout[-2000:] + run.stderr[-4000:]
+
+
+def test_every_spacing_table_key_is_a_word_its_face_draws() -> None:
+    """Bug: the per-word spacing tables are keyed by the word's SHA-256, so a key whose word the recipe does not draw
+    with that face (a reworded menu word, a word hashed with other casing) silently falls back to default spacing."""
+    import ast
+
+    requests = json.loads((build.REPO / "data/art/lettering.json").read_text())["requests"].values()
+    for face, tables in (("labelvec", ("ROWS", "SETS")), ("mainvec", ("SETS",))):
+        raster = "wozmod.fonts." + face.replace("vec", "raster")
+        drawn = {request["text"]["text_sha256"] for request in requests if request.get("raster") == raster}
+        source = ast.parse((build.REPO / "data/art/faces" / f"{face}.py").read_text())
+        for node in source.body:
+            if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", None) in tables:
+                keys = {key.value for key in node.value.keys}
+                assert keys and keys <= drawn, (face, node.targets[0].id, keys - drawn)

@@ -4,7 +4,7 @@
     {
       "key": "0e720fa3f5e74b66073c6fd060f88f3eed9d1ac752dadad6fdb47b8222ac6276",
       "source": "authored",
-      "en": "Checking game data..."
+      "en": "Checking save data..."
     },
     {
       "key": "1efae4cda24f510fdf241a11eeccd27749ba87045979f625ec33c08a080489de",
@@ -25,12 +25,12 @@
     {
       "key": "61763c693cc39fd8490600649e428d5f63d71e9589b70fabd1cb1a8e1801b9e0",
       "source": "authored",
-      "en": "donor:e71ef2792c6c133b"
+      "en": "Save data found."
     },
     {
       "key": "122576ac06b9d3a09dccc65f3b39521066e59e9f36c3439655ac82e3a612f908",
       "source": "authored",
-      "en": "donor:09b40121b096d9b2"
+      "en": "No save data found."
     },
     {
       "key": "e04d401f7ea0ef1af155f2b9f41f4307038972532c45dfba3aa4858dd5b0a944",
@@ -53,32 +53,32 @@
     {
       "key": "edf971b9110488aad6c2769c8736033f45898a22efc8a6e8fa1d091cffaac45f",
       "source": "authored",
-      "en": "Saving game data..."
+      "en": "Writing save data..."
     },
     {
       "key": "0c55a3daf6c35f63cd241cd00974e003d220d21fa74f2597ea41dd68e3e175e6",
       "source": "authored",
-      "en": "Loading game data..."
+      "en": "Loading save data..."
     },
     {
       "key": "c2346f0100572e78967de79d7a16294c4996b2d905fc5859a1bce713d1982a67",
       "source": "authored",
-      "en": "Failed to save game data."
+      "en": "Save failed."
     },
     {
       "key": "a96e7503051b24d4100a3fac63407c7586b1d4ecbfc711a10b72c9f29d67a1c1",
       "source": "authored",
-      "en": "Failed to load\ngame data."
+      "en": "Load failed."
     },
     {
       "key": "bbc67cf6d0631de99c52c18097c7ea4ff6dd01c6303ec09bd3b575c4efb1fc6e",
       "source": "authored",
-      "en": "donor:3cef8d593dc0ae86"
+      "en": "Save complete."
     },
     {
       "key": "dcd3a53706c02c1ff3f42e12694b47a0289054178db8a9914f6e207321555ec1",
       "source": "authored",
-      "en": "donor:ccec86e759e4f4f9"
+      "en": "Load complete."
     },
     {
       "key": "a8febfb96e1df66e175f7018c7c35c450991da63cc6ccfcf0d85bf2cdba23802",
@@ -115,12 +115,12 @@
     {
       "key": "48cd07af98b0504d1c80d6f83800bd680e627f5856d58b29dfe1d57428d3d2bb",
       "source": "authored",
-      "en": "This will load your game data.\nIf you have not saved first,\nyour current game data will be lost.\nContinue loading?"
+      "en": "Loading replaces the current\nprogress. Unsaved progress\nwill be lost.\nContinue loading?"
     },
     {
       "key": "8313aac57b43e63379cc39f7f2fbe69ded18474c93dc79aacca293c9f4238f39",
       "source": "authored",
-      "en": "You will not be able to save.\nStart the game anyway?"
+      "en": "Saving will be unavailable.\nStart the game anyway?"
     },
     {
       "key": "ced7ed98e41b4c353eaa25b92758b8fe967e8a254e2966f43bf70001d60decad",
@@ -207,12 +207,12 @@
     {
       "key": "f258093fe301a92f60f08d07bf83e14f9a59b6f8e41a0b6ccc80cc6b514b19cf",
       "source": "authored",
-      "en": "The game will now start.\nGame data cannot be saved\nwhile you play."
+      "en": "The game will now start.\nSaving is unavailable\nduring play."
     },
     {
       "key": "ad282e3d80693f8d44bf42311a5c20e255bf933a1abd7d3e635af487579ccaf1",
       "source": "authored",
-      "en": "There is not enough free disk space\nto save game data."
+      "en": "Not enough free disk space\nto write save data."
     },
     {
       "key": "81f7995d87c334fff50063460d73276d904c87b3dc802dbf61d3d3857cbc23df",
@@ -4923,12 +4923,12 @@
     {
       "key": "806b37e9559c7e80bd26596d46dde31b8fc4becdf322dc7fa045c7d0a18ce475",
       "source": "authored",
-      "en": "Warriors Orochi Z game data is corrupted\nand cannot be loaded. Press Enter."
+      "en": "The save data is corrupted\nand cannot be loaded. Press Enter."
     },
     {
       "key": "666275bcec8886dd1fab6831943bbbf3bfe6c86de48ea1a5476c1b74a4457b05",
       "source": "authored",
-      "en": "Warriors Orochi Z game data is corrupted\nand cannot be saved."
+      "en": "The save data is corrupted\nand cannot be overwritten."
     },
     {
       "key": "bd456cab0f0a86f4f4ee610d3ccfcea5ea7b6c2cc6ba8061aaaffe99ff78d7d9",
@@ -5041,13 +5041,24 @@
     },
     {
       "key": "7177f67de0e342ce4f08b23813cb1daf45afb9d0fb965577e8318a69a28589eb",
-      "source": "authored",
-      "en": "donor:070a8fb4f0516dc8"
+      "source": "edited",
+      "ref": [
+        "x360",
+        "pe",
+        37076
+      ],
+      "edits": [
+        [
+          16,
+          17,
+          "\n"
+        ]
+      ]
     },
     {
       "key": "f8226e6157ffd45d34330cdfcba4be2de6972c8227d8eba771ae6047c62e34fb",
       "source": "authored",
-      "en": "Loaded another user's save.\nYou cannot save data or earn\ntrophies."
+      "en": "Another user's save\nis loaded. Saving and\ntrophies are unavailable."
     },
     {
       "key": "634fe4a38a2de3df4993e05a31b627233340809f918613f6a0b755bcc82754b7",

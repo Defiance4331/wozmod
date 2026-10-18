@@ -10,6 +10,7 @@ from PIL import Image
 
 from . import mainvec as V
 from .buttonraster import Label, blur, coverage, path
+from .word_key import word_key
 
 RING = 3.0
 HALO_R, HALO_SIGMA, HALO_K = 6.5, 2.53, 0.775
@@ -66,7 +67,7 @@ def layout(text):
     for ch in letters:
         if ch not in g:
             raise KeyError(f"mainvec has no glyph for {ch!r} in {text!r}")
-    ink = V.SETS.get(text)
+    ink = V.SETS.get(word_key(text))
     if ink is None:
         ink, pen, prev = [], 0.0, None
         for ch in text:
