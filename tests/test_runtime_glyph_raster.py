@@ -3,24 +3,16 @@
 from __future__ import annotations
 
 import ctypes
-import shutil
-import subprocess
 
 import pytest
 
-from wozmod.runtime.english_runtime import C_SOURCE
 
 ZONES = (-185, -12, 655, 669, 860, 872, 965)  # desc, base_over, xh, xh_over, cap, cap_over, asc (the face's)
 
 
 @pytest.fixture(scope="module")
-def raster(tmp_path_factory):
-    compiler = shutil.which("cc")
-    if not compiler:
-        pytest.skip("a native C compiler is unavailable")
-    directory = tmp_path_factory.mktemp("glyph-raster")
-    source = directory / "raster.c"
-    source.write_text(r'''
+def raster(c_library):
+    return c_library("raster", r'''
 #include "glyph_raster.h"
 void polygon(const float *pts, int n, int w, int h, unsigned char *out)
 {
@@ -58,10 +50,6 @@ void up(const short *z, const short *bars, int count, float scale, const float *
         out[i] = gr_map(&w, in[i]);
 }
 ''')
-    library = directory / "raster.so"
-    subprocess.run([compiler, "-std=c11", "-O2", "-Wall", "-Werror", "-shared", "-fPIC", "-I", str(C_SOURCE.parent),
-                    str(source), "-o", str(library)], check=True)
-    return ctypes.CDLL(str(library))
 
 
 def floats(values):

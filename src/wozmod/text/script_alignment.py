@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from wozmod.formats.linkdata import (
-    decoded_member, entry_bytes, moz_entries, parse_index, wo1_entries, wo2_members,
+    archive, decoded_member,
 )
 from wozmod.formats.scripts import (
     Script, ScriptError, caption_cues, donor_text,
@@ -68,24 +68,16 @@ def _parse(data: bytes) -> Script | None:
         return None
 
 
-def moz_scripts(bin_path: Path, idx_path: Path) -> dict[int, Script]:
+def moz_scripts(stem: Path) -> dict[int, Script]:
     """Read every single-member four-section stock script."""
-    index = parse_index(idx_path.read_bytes(), bin_path.stat().st_size)
-    scripts = {}
-    with bin_path.open("rb") as stream:
-        for entry in index.entries:
-            if len(entry.stored_sizes) != 1:
-                continue
-            data = entry_bytes(stream, entry)
-            if data[:4] == b"\x04\0\0\0" and (parsed := _parse(data)):
-                scripts[entry.ordinal] = parsed
-    return scripts
+    entries = archive(stem)
+    single = entries.read(o for o in entries if entries.parts(o) == 1)
+    return {o: parsed for o, data in single.items() if data[:4] == b"\x04\0\0\0" and (parsed := _parse(data))}
 
 
-def wo1_scripts(lnk_path: Path, idx_path: Path) -> dict[int, Script]:
+def wo1_scripts(stem: Path) -> dict[int, Script]:
     """Read the WO1 X360 USA stage scripts."""
-    return {o: parse_script(d, ">")
-            for o, d in wo1_entries(lnk_path, idx_path, WO1_SCRIPTS).items()}
+    return {o: parse_script(d, ">") for o, d in archive(stem).read(WO1_SCRIPTS).items()}
 
 
 @dataclass(frozen=True)
@@ -102,21 +94,12 @@ class Wo2Donor:
 
 def x360_members(ens: Path, members) -> dict[int, bytes]:
     """Read X360 archive entries using the matching PS2 member ids."""
-    found = wo1_entries(ens.with_suffix(".lnk"), ens.with_suffix(".idx"), sorted({X360_ENS[m] for m in members}))
+    found = archive(ens).read(sorted({X360_ENS[m] for m in members}))
     return {m: found[X360_ENS[m]] for m in members}
-
-
-def wo2_ps2(iso_path: Path) -> Wo2Donor:
-    return Wo2Donor(partial(wo2_members, iso_path), "<", "wo2-ps2")
 
 
 def wo2_x360(ens: Path) -> Wo2Donor:
     return Wo2Donor(partial(x360_members, ens), ">", "wo2-x360")
-
-
-def wo2_scripts(iso_path: Path) -> dict[int, Script]:
-    """Read the WO2 PS2 USA stage scripts."""
-    return wo2_ps2(iso_path).scripts()
 
 
 def _voices(entry: Script) -> set[bytes]:
@@ -207,9 +190,9 @@ def quote_pairs(moz: bytes, donor: bytes, officers: bool = True, order: str = "<
 
 def official_pairs(stock: Path, wo1: Path, wo2_donor: Wo2Donor) -> dict[bytes, tuple[str, str]]:
     """Re-derive stock bytes to (English, source), preserving baseline votes and suffixes."""
-    lnk, idx = wo1.with_suffix(".lnk"), wo1.with_suffix(".idx")
-    moz = moz_scripts(stock / "LINKDATA2.BIN", stock / "LINKDATA2.IDX")
-    wo1_by_ordinal, wo2 = wo1_scripts(lnk, idx), wo2_donor.scripts()
+    linkdata1, linkdata2 = archive(stock / "LINKDATA1"), archive(stock / "LINKDATA2")
+    moz = moz_scripts(stock / "LINKDATA2")
+    wo1_by_ordinal, wo2 = wo1_scripts(wo1), wo2_donor.scripts()
     wo1_ids = {id(d) for d in wo1_by_ordinal.values()}
     found = [(pairs, "wo1" if id(d) in wo1_ids else "wo2") for pairs, d in (
         (record_pairs(moz[o], d), d)
@@ -221,10 +204,9 @@ def official_pairs(stock: Path, wo1: Path, wo2_donor: Wo2Donor) -> dict[bytes, t
     wanted = {"wo1": {wo1_quotes}, "wo2": {*briefing_members, wo2_quotes}}
     for _, source, entry in [*NARRATION, *events]:
         wanted[source].add(entry)
-    donor = {("wo1", k): v for k, v in wo1_entries(lnk, idx, sorted(wanted["wo1"])).items()}
+    donor = {("wo1", k): v for k, v in archive(wo1).read(sorted(wanted["wo1"])).items()}
     donor |= {("wo2", k): v for k, v in wo2_donor.members(sorted(wanted["wo2"])).items()}
-    narration = moz_entries(stock / "LINKDATA1.BIN", stock / "LINKDATA1.IDX",
-                            [*(n for n, _, _ in NARRATION), briefing_entry, quotes_entry])
+    narration = linkdata1.read([*(n for n, _, _ in NARRATION), briefing_entry, quotes_entry])
     found += [(narration_pairs(narration[n], donor[s, d]), s) for n, s, d in NARRATION]
                                                                                              
     found += [(quote_pairs(narration[quotes_entry], donor["wo1", wo1_quotes], officers=False, order=">",
@@ -232,9 +214,9 @@ def official_pairs(stock: Path, wo1: Path, wo2_donor: Wo2Donor) -> dict[bytes, t
               (quote_pairs(narration[quotes_entry], donor["wo2", wo2_quotes], order=wo2_donor.order), "wo2")]
     found.append((narration_pairs(narration[briefing_entry], b"".join(
         decoded_member(donor["wo2", m]) for m in briefing_members)), "wo2"))
-    scenes = moz_entries(stock / "LINKDATA2.BIN", stock / "LINKDATA2.IDX", [o for o, _, _ in events])
+    scenes = linkdata2.read([o for o, _, _ in events])
     found += [(event_pairs(scenes[o], donor[s, d], wo2_donor.order if s == "wo2" else ">"), s) for o, s, d in events]
-    movies = moz_entries(stock / "LINKDATA2.BIN", stock / "LINKDATA2.IDX", CAPTIONS)
+    movies = linkdata2.read(CAPTIONS)
     captions = wo2_donor.members([o + CAPTION_MEMBER for o in CAPTIONS])
     found += [(_decoded(caption_pairs(movies[o], captions[o + CAPTION_MEMBER])), "wo2") for o in CAPTIONS]
     votes: dict[bytes, dict[str, list]] = {}

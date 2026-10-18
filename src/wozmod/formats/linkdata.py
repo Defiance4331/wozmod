@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import struct
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,8 +27,6 @@ SM4L_RECORD = struct.Struct(">IIII")
 PS2_HEADER = struct.Struct("<4I")
 PS2_RECORD = struct.Struct("<II")
 # WO2 PS2 USA: LINKDATA.BNS starts at disc sector 501815 with a 2969-member table.
-BNS_BASE = 501815 * SECTOR_SIZE
-WO2_BNS_HEADER = struct.pack("<4I", 0x33B59, 2969, 2048, 0)
 
 
 class ArchiveError(ValueError):
@@ -43,10 +42,6 @@ class Lzp2Member:
     compressed_bytes: int
     token_bytes: int
     stream_padding_bytes: int
-
-    def encode(self) -> bytes:
-
-        return self.source
 
 
 def _decode_stream(stream: bytes, expected_size: int) -> tuple[bytes, int]:
@@ -401,14 +396,6 @@ def parse_index(data: bytes, data_size: int) -> LinkdataIndex:
     )
 
 
-def encode_records(
-    records: tuple[LinkdataIdxRecord, ...] | list[LinkdataIdxRecord],
-    trailer: bytes = b"",
-) -> bytes:
-
-    return b"".join(record.encode() for record in records) + bytes(trailer)
-
-
 def entry_bytes(stream, entry: LinkdataEntryGeometry) -> bytes:
     stream.seek(entry.offset)
     blob = stream.read(entry.allocated_bytes)
@@ -417,6 +404,63 @@ def entry_bytes(stream, entry: LinkdataEntryGeometry) -> bytes:
         data = blob[member.relative_offset:member.relative_offset + member.stored_bytes]
         parts.append(parse_lzp2(data).decoded if data[:4] == b"LZP2" else data)
     return b"".join(parts)
+
+
+def unpacked(data: bytes) -> bytes:
+    """`data`, or what it holds when it is LZP2 packed under either known signature."""
+    if data[:4] != LZP2_MAGIC:
+        return data
+    return parse_lzp2(data, data[4:8] if data[4:8] == WO1_LZP2_SIGNATURE else LZP2_SIGNATURE).decoded
+
+
+class Archive(Mapping):
+    """One archive's entries by ordinal, each with its parts joined and unpacked."""
+
+    def __init__(self, path: Path, entries: tuple[tuple[int, tuple[int, ...]], ...]):
+        self.path, self._entries = path, entries  # (offset, stored size of each part) per ordinal
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+    def __iter__(self):
+        return iter(range(len(self._entries)))
+
+    def __contains__(self, ordinal) -> bool:
+        return type(ordinal) is int and 0 <= ordinal < len(self._entries)
+
+    def __getitem__(self, ordinal: int) -> bytes:
+        return self.read([ordinal])[ordinal]
+
+    def parts(self, ordinal: int) -> int:
+        return len(self._entries[ordinal][1])
+
+    def read(self, ordinals) -> dict[int, bytes]:
+        """Several entries with one open, in the order asked."""
+        found = {}
+        with self.path.open("rb") as stream:
+            for ordinal in ordinals:
+                if ordinal not in self:
+                    raise KeyError(ordinal)
+                offset, sizes = self._entries[ordinal]
+                parts = []
+                for size in sizes:
+                    stream.seek(offset)
+                    parts.append(unpacked(stream.read(size)))
+                    offset += align(size)
+                found[ordinal] = b"".join(parts)
+        return found
+
+
+def archive(stem: Path) -> Archive:
+    """The archive at `stem`: a donor ENS archive when `stem`.lnk exists, else stock LINKDATA (`stem`.BIN/.IDX)."""
+    stem = Path(stem)
+    lnk = stem.parent / f"{stem.name}.lnk"
+    if lnk.exists():
+        records = parse_wo1_index((stem.parent / f"{stem.name}.idx").read_bytes(), data_size=lnk.stat().st_size)
+        return Archive(lnk, tuple((r.offset_sectors * SECTOR_SIZE, (r.stored_bytes,)) for r in records))
+    data = stem.parent / f"{stem.name}.BIN"
+    index = parse_index((stem.parent / f"{stem.name}.IDX").read_bytes(), data.stat().st_size)
+    return Archive(data, tuple((e.offset, e.stored_sizes) for e in index.entries))
 
 
 def moz_entries(bin_path: Path, idx_path: Path, ordinals) -> dict[int, bytes]:
@@ -472,20 +516,6 @@ def wo1_entries(lnk_path: Path, idx_path: Path, ordinals) -> dict[int, bytes]:
             if data[:4] == b"LZP2":
                 data = parse_lzp2(data, WO1_LZP2_SIGNATURE).decoded
             entries[ordinal] = data
-    return entries
-
-
-def wo2_members(iso_path: Path, members) -> dict[int, bytes]:
-    entries = {}
-    with iso_path.open("rb") as stream:
-        stream.seek(BNS_BASE)
-        if stream.read(16) != WO2_BNS_HEADER:
-            raise ValueError("unexpected WO2 LINKDATA.BNS header")
-        table = stream.read(2969 * 8)
-        for member in members:
-            block, size = struct.unpack_from("<II", table, member * 8)
-            stream.seek(BNS_BASE + block * SECTOR_SIZE)
-            entries[member] = stream.read(size)
     return entries
 
 

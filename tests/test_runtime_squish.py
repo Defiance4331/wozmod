@@ -3,22 +3,13 @@
 from __future__ import annotations
 
 import ctypes
-import shutil
-import subprocess
 
 import pytest
 
-from wozmod.runtime.english_runtime import C_SOURCE
-
 
 @pytest.fixture(scope="module")
-def fit_runtime(tmp_path_factory):
-    compiler = shutil.which("cc")
-    if not compiler:
-        pytest.skip("a native C compiler is unavailable")
-    directory = tmp_path_factory.mktemp("text-fit")
-    source = directory / "fit.c"
-    source.write_text(r'''
+def fit_runtime(c_library):
+    fit = c_library("fit", r'''
 #include "text_fit.h"
 double names(unsigned int width, unsigned int fixed, unsigned int room)
 {
@@ -52,10 +43,6 @@ void quad(unsigned int *data, int four, double anchor, unsigned int text, unsign
     text_fit_quad(data, four, anchor, text_fit(text, text, box, align, enabled), pixels);
 }
 ''')
-    library = directory / "fit.so"
-    subprocess.run([compiler, "-std=c11", "-O2", "-Wall", "-Werror", "-shared", "-fPIC",
-                    "-I", str(C_SOURCE.parent), str(source), "-o", str(library)], check=True)
-    fit = ctypes.CDLL(str(library))
     fit.factor.argtypes = [ctypes.c_uint, ctypes.c_uint, ctypes.c_uint, ctypes.c_int]
     fit.factor.restype = ctypes.c_double
     fit.names.argtypes = [ctypes.c_uint, ctypes.c_uint, ctypes.c_uint]

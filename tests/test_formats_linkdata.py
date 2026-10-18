@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 import io
-import os
 import struct
-import subprocess
-import sys
-import types
 from dataclasses import asdict
 from pathlib import Path
 
 import pytest
 
 from wozmod.formats import linkdata
+from synthetic import write_ens, write_stock_archive
 
 
 def _index_fixture() -> tuple[bytes, bytes]:
@@ -32,7 +29,6 @@ def test_zero_allocation_row_does_not_shift_later_linkdata_members() -> None:
     index = linkdata.parse_index(fixture, len(data))
 
     assert index.encode() == fixture
-    assert linkdata.encode_records(index.records, index.trailer) == fixture
     assert [
         (e.offset, e.allocated_bytes, e.stored_bytes, e.padding_bytes,
          [(m.relative_offset, m.stored_bytes, m.allocated_bytes) for m in e.members])
@@ -68,7 +64,6 @@ def test_lzp2_token_lengths_and_distance_do_not_drop_a_byte(signature: bytes) ->
     member = linkdata.parse_lzp2(fixture, signature)
 
     assert (member.decoded, member.token_bytes, member.stream_padding_bytes) == (b"abcabcZZZZZ", 10, 6)
-    assert member.encode() == fixture
 
 
 def test_lzp2_encoder_preserves_baseline_token_choice_and_alignment() -> None:
@@ -195,17 +190,6 @@ def test_wo2_raw_member_is_not_rejected_as_a_packed_header() -> None:
     assert linkdata.decoded_member(raw) == raw
 
 
-def test_wo2_disc_member_offsets_are_relative_to_bns_base(tmp_path: Path) -> None:
-    iso = tmp_path / "donor.iso"
-    with iso.open("wb") as stream:
-        stream.seek(501815 * 2048)
-        stream.write(struct.pack("<4I", 0x33B59, 2969, 2048, 0))
-        stream.write(struct.pack("<II", 12, 3) + bytes(2968 * 8))
-        stream.seek((501815 + 12) * 2048)
-        stream.write(b"abc")
-    assert linkdata.wo2_members(iso, [0]) == {0: b"abc"}
-
-
 def test_ps2_member_sector_offsets_do_not_read_table_bytes(tmp_path: Path) -> None:
     path = tmp_path / "archive.fns"
     blob = bytearray(4099)
@@ -286,20 +270,17 @@ def test_wo2_member_with_two_control_words_and_two_long_matches_decodes_every_by
     assert linkdata.unpack_member(packed) == expected
 
 
-def test_wo2_members_past_the_first_read_their_own_table_row(tmp_path: Path) -> None:
-    # Bug: a wrong table stride, or no stride, returns another member's bytes.
-    iso = tmp_path / "donor.iso"
-    with iso.open("wb") as stream:
-        stream.seek(501815 * 2048)
-        table = bytearray(2969 * 8)
-        for member, row in ((0, (10, 4)), (1, (11, 3)), (2968, (12, 4))):
-            struct.pack_into("<II", table, member * 8, *row)
-        stream.write(struct.pack("<4I", 0x33B59, 2969, 2048, 0) + table)
-        for block, data in ((10, b"zero"), (11, b"one"), (12, b"last")):
-            stream.seek((501815 + block) * 2048)
-            stream.write(data)
+def test_archive_unpacks_either_signature_joins_stock_parts_and_keeps_the_order_asked(tmp_path: Path) -> None:
+    # Bug: an ENS entry packed under the other LZP2 signature (as wo2-x360 entries 35-74 are) raises, a stock
+    # entry's second part is read from the first part's sector, or entries come back in index order.
+    x360, wo1 = b"x360 packed " * 40, b"wo1 packed " * 40
+    packed = linkdata.encode_lzp2(wo1)
+    ens = write_ens(tmp_path, {0: b"raw", 1: packed[:4] + linkdata.WO1_LZP2_SIGNATURE + packed[8:],
+                               2: linkdata.encode_lzp2(x360)})
+    write_stock_archive(tmp_path, "LINKDATA2", {0: b"one", 1: (b"head", linkdata.encode_lzp2(x360))})
 
-    assert linkdata.wo2_members(iso, [2968, 1]) == {2968: b"last", 1: b"one"}
+    assert list(linkdata.archive(ens).read([2, 0, 1]).items()) == [(2, x360), (0, b"raw"), (1, wo1)]
+    assert linkdata.archive(tmp_path / "LINKDATA2")[1] == b"head" + x360
 
 
 def test_ps2_table_longer_than_a_sector_cannot_be_read_as_a_member(tmp_path: Path) -> None:
@@ -317,33 +298,3 @@ def test_ps2_table_longer_than_a_sector_cannot_be_read_as_a_member(tmp_path: Pat
         linkdata.ps2_members(path, [1])
     with pytest.raises(linkdata.ArchiveError, match="out of range: 300"):
         linkdata.ps2_members(path, [300])
-
-
-@pytest.mark.skipif(os.environ.get("WOZMOD_FORMATS_ORACLE") != "1", reason="opt-in real archive oracle")
-def test_real_linkdata_high_ordinal_rows_are_not_cut_off_by_a_small_table_limit() -> None:
-    game_root, old_root = os.environ.get("WOZMOD_GAME"), os.environ.get("WOZMOD_OLD_REPO")
-    if not game_root or not old_root:
-        pytest.skip("WOZMOD_GAME and WOZMOD_OLD_REPO are required")
-    old_source = Path(old_root) / "src/musou_patch/targets/musou_orochi_z/archives.py"
-    bin_path, idx_path = Path(game_root) / "LINKDATA2.BIN", Path(game_root) / "LINKDATA2.IDX"
-    if not all(p.is_file() for p in (old_source, bin_path, idx_path)):
-        pytest.skip("archive oracle inputs are absent")
-    name = "_wozmod_archive_oracle"
-    old = types.ModuleType(name)
-    sys.modules[name] = old
-    try:
-        source = subprocess.check_output([
-            "git", "-C", old_root, "show", "2fa29d5:src/musou_patch/targets/musou_orochi_z/archives.py",
-        ])
-        exec(compile(source, str(old_source), "exec"), old.__dict__)
-        blob = idx_path.read_bytes()
-        before, after = old.parse_index(blob, bin_path.stat().st_size), linkdata.parse_index(blob, bin_path.stat().st_size)
-        assert asdict(after) == asdict(before)
-        assert after.encode() == before.encode() == blob
-        with bin_path.open("rb") as stream:
-            before_data = old.entry_bytes(stream, before.entries[0])
-            after_data = linkdata.entry_bytes(stream, after.entries[0])
-        assert after_data == before_data
-        assert linkdata.encode_lzp2(after_data) == old.encode_lzp2(before_data)
-    finally:
-        del sys.modules[name]

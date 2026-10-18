@@ -2,18 +2,13 @@
 
 from __future__ import annotations
 
-import importlib.util
-import sys
 from pathlib import Path
 
 import pytest
+import screen_checks as sc
 from PIL import Image, ImageDraw
 
 REPO = Path(__file__).resolve().parents[1]
-_spec = importlib.util.spec_from_file_location("screen_checks", REPO / "tools" / "screen_checks.py")
-sc = importlib.util.module_from_spec(_spec)
-sys.modules["screen_checks"] = sc
-_spec.loader.exec_module(sc)
 
 
 def text(x, y, width, string="abc", caller="0x1"):

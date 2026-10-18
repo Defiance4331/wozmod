@@ -1,13 +1,9 @@
 from __future__ import annotations
 
 import dataclasses
-import hashlib
 import os
 import shutil
 import struct
-import subprocess
-import sys
-import types
 from pathlib import Path
 
 import pytest
@@ -19,7 +15,6 @@ from wozmod.formats.audio import (
     build_synthetic_kovs_record,
     english_voice_bank,
     english_voice_clips,
-    inspect_voice_bank,
     kovs_record,
     moz_se_banks,
     parse_kovs_record,
@@ -51,46 +46,10 @@ def _record(size: int, *, serial: int = 0x53594E54, samples: int = 0, rate: int 
     return b"KOVS" + struct.pack("<Ii", len(page), 0) + bytes(20) + page
 
 
-def _allocated(record: bytes) -> bytes:
-    return record + bytes(-len(record) % 16)
-
-
 def _se_header(entries: list[bytes]) -> bytes:
     offsets = [8 + 4 * len(entries) + 40 * k for k in range(len(entries))]
     body = struct.pack(f"<HHI{len(entries)}I", 0x3200, len(entries), 0, *offsets) + b"".join(entries)
     return b"_HBW0000" + struct.pack("<I", 12 + len(body)) + body
-
-
-def test_voice_bank_advances_over_padding_without_dropping_second_record(tmp_path: Path) -> None:
-    records = [_record(90, serial=101), _record(101, serial=202, samples=1234)]
-    bank = b"".join(map(_allocated, records))
-    source = tmp_path / "voice.bin"
-    source.write_bytes(bank)
-
-    layout = inspect_voice_bank(source, expected_sha256=hashlib.sha256(bank).hexdigest())
-
-    assert layout.source_bytes == 208
-    assert layout.source_sha256 == hashlib.sha256(bank).hexdigest()
-    assert [(r.ordinal, r.offset, r.stream_bytes, r.logical_bytes, r.allocated_bytes, r.padding_bytes, r.ogg.stream_serial, r.ogg.sample_count, r.sha256) for r in layout.records] == [
-        (0, 0, 58, 90, 96, 6, 101, 0, hashlib.sha256(records[0]).hexdigest()),
-        (1, 96, 69, 101, 112, 11, 202, 1234, hashlib.sha256(records[1]).hexdigest()),
-    ]
-
-
-@pytest.mark.parametrize("damage", ["padding", "trailer", "allocation"])
-def test_voice_bank_rejects_nonzero_padding_trailer_and_oversized_allocation(tmp_path: Path, damage: str) -> None:
-    changed = bytearray(_allocated(_record(90)))
-    if damage == "padding":
-        changed[95] = 1
-    elif damage == "trailer":
-        changed.extend(bytes(16))
-    else:
-        struct.pack_into("<I", changed, 4, 10_000)
-    source = tmp_path / "voice.bin"
-    source.write_bytes(changed)
-
-    with pytest.raises(VoiceBankError):
-        inspect_voice_bank(source)
 
 
 def test_kovs_rejects_corruption_after_the_identification_packet() -> None:
@@ -132,17 +91,6 @@ def test_kovs_metadata_does_not_drop_signed_loop_start_or_use_a_fixed_sample_rat
 def test_synthetic_record_does_not_add_a_zero_length_packet_at_minimum_size() -> None:
     for size in (90, 101, 150):
         assert build_synthetic_kovs_record(size, stream_serial=71, sample_rate=22_050, sample_count=901) == _record(size, serial=71, rate=22_050, samples=901)
-
-
-@pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="needs no-follow file opens")
-def test_voice_bank_does_not_follow_a_symlink_to_another_input(tmp_path: Path) -> None:
-    source = tmp_path / "voice.bin"
-    source.write_bytes(_allocated(_record(90)))
-    link = tmp_path / "other.bin"
-    link.symlink_to(source)
-
-    with pytest.raises(VoiceBankError, match="read-only"):
-        inspect_voice_bank(link)
 
 
 def test_wo2_voice_index_requires_contiguous_sector_starts() -> None:
@@ -255,32 +203,6 @@ def test_batched_x360_clips_keep_their_own_audio_across_batch_boundaries(tmp_pat
 
     assert {moz_id: parse_kovs_record(clip)[2].sample_count for moz_id, clip in converted.items()} == {
         100 + i: n for i, n in enumerate(lengths)}
-
-
-@pytest.mark.skipif(not os.environ.get("WOZMOD_GAME") or not os.environ.get("WOZMOD_OLD_REPO"), reason="set WOZMOD_GAME and WOZMOD_OLD_REPO")
-def test_real_donor_indices_do_not_drop_rows_in_large_record_tables() -> None:
-    old_repo = Path(os.environ["WOZMOD_OLD_REPO"])
-    paths = [old_repo / "work/donors" / donor / name for donor, name in (("wo2-x360", "linkdata_ans.idx"), ("wo2-x360", "link_sebank.hdx"))]
-    if not all(path.is_file() for path in paths):
-        pytest.skip("donor extracts are absent")
-    source = subprocess.run(["git", "-C", str(old_repo), "show", "2fa29d5:src/musou_patch/targets/musou_orochi_z/audio.py"], capture_output=True, text=True, check=True).stdout
-    old = types.ModuleType("_wozmod_audio_baseline_test")
-    sys.modules[old.__name__] = old
-    try:
-        exec(compile(source, "audio-baseline", "exec"), old.__dict__)
-        for name, path in zip(("wo2_voice_records", "wo2_se_entries"), paths, strict=True):
-            assert globals()[name](path.read_bytes()) == getattr(old, name)(path.read_bytes())
-        bank = Path(os.environ["WOZMOD_GAME"]) / "data/Sound/Voice/Voice.bin"
-        if not bank.is_file():
-            pytest.skip("stock voice bank is absent")
-        with bank.open("rb") as stream:
-            header = stream.read(32)
-            payload = header + stream.read(struct.unpack_from("<I", header, 4)[0])
-        new_result = parse_kovs_record(payload)
-        old_result = old.parse_kovs_record(payload)
-        assert (new_result[:2], dataclasses.astuple(new_result[2])) == (old_result[:2], dataclasses.astuple(old_result[2]))
-    finally:
-        sys.modules.pop(old.__name__, None)
 
 
 def test_pcm_se_entries_say_pcm_not_adpcm_and_point_at_whole_samples() -> None:

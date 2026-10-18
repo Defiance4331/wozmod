@@ -3,28 +3,21 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import os
 import shutil
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-TOOLS = Path(__file__).resolve().parents[1] / "tools"
-
 
 @pytest.fixture
-def tools(monkeypatch):
-    monkeypatch.syspath_prepend(str(TOOLS))
-    modules = {}
-    for name in ("prepare_run", "run_check", "game_harness"):
-        spec = importlib.util.spec_from_file_location(name, TOOLS / f"{name}.py")
-        modules[name] = sys.modules[name] = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(modules[name])
-    return SimpleNamespace(**modules)
+def tools():
+    import game_harness
+    import prepare_run
+    import run_check
+    return SimpleNamespace(prepare_run=prepare_run, run_check=run_check, game_harness=game_harness)
 
 
 def digest(data: bytes) -> str:
@@ -237,7 +230,6 @@ def test_settings_land_where_the_runtime_reads_them(tools):
 def test_contact_sheet_shows_each_screens_capture_beside_its_own_rows(tmp_path, monkeypatch):
     # Bug: rows grouped under the wrong screen, or a capture shown for a screen that was never captured,
     # makes a FAIL look like it belongs to a screen that passed.
-    monkeypatch.syspath_prepend(str(TOOLS))
     import contact_sheet
     from PIL import Image
 

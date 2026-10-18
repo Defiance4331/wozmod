@@ -18,9 +18,9 @@ from wozmod.text.script_alignment import (
     prefix_pairs,
     quote_pairs,
     record_pairs,
-    wo2_x360,
     x360_members,
 )
+from synthetic import mesc, script, spans, strings, write_ens
 
 
 def _script(notices=(), dialog=()):
@@ -34,41 +34,16 @@ def _voices(indices):
     return _script(dialog=[(b"@%04d" % index, b"Fixture") for index in indices])
 
 
-def _strings(*lines, order="<"):
-    offsets, body = [], b""
-    for line in lines:
-        offsets.append(4 + 4 * len(lines) + len(body))
-        body += line + b"\0"
-    return struct.pack(f"{order}{1 + len(lines)}I", len(lines), *offsets) + body
-
-
-def _spans(parts, head=b"", order="<"):
-    offset, table = len(head) + 8 * len(parts), b""
-    for part in parts:
-        table += struct.pack(f"{order}II", offset, len(part))
-        offset += len(part)
-    return head + table + b"".join(parts)
-
-
 def _quotes(formats, officers, order="<"):
-    return _spans(
+    return spans(
         [
-            _strings(*formats, order=order),
-            _strings(b"11Fixture %s", order=order),
-            _spans([_strings(*lines, order=order) for lines in officers], order=order),
+            strings(*formats, order=order),
+            strings(b"11Fixture %s", order=order),
+            spans([strings(*lines, order=order) for lines in officers], order=order),
         ],
         struct.pack(f"{order}I", 3),
         order,
     )
-
-
-def _mesc(*lines):
-    offsets, body = [], b""
-    for line in lines:
-        offsets.append(12 + 4 * len(lines) + len(body))
-        body += line + b"\0"
-    size = 12 + 4 * len(lines) + len(body)
-    return b"MESC" + struct.pack(f"<II{len(lines)}I", len(lines), size, *offsets) + body
 
 
 def _event(*lines, order="<"):
@@ -84,13 +59,6 @@ def _telop(*cues):
     return struct.pack(f"<{1 + 2 * len(cues)}I", len(cues), *times) + b"".join(
         text + b"\0" for _, _, text in cues
     )
-
-
-def _script_bytes():
-    notices = _strings(b"32Fixture notice")
-    notices += bytes(-len(notices) % 4)
-    dialog = _strings(b"00Fixture dialog@0001")
-    return struct.pack("<5I", 4, 20, 24, 28, 28 + len(notices)) + b"HEADTAIL" + notices + dialog
 
 
 def test_script_pairing_keeps_the_exact_union_threshold_and_skips_voiceless_rows():
@@ -129,8 +97,8 @@ def test_prefix_pairing_keeps_renumbered_dialog_and_stops_before_appended_rows()
 
 
 def test_narration_pairing_drops_unequal_blocks_and_blank_stock_slots():
-    stock = _mesc(b"S1", b"\x81\x40", b"S3") + _mesc(b"S4", b"S5")
-    donor = _mesc(b"Fixture A", b"Fixture blank", b"Fixture C") + _mesc(b"Fixture mismatch")
+    stock = mesc(b"S1", b"\x81\x40", b"S3") + mesc(b"S4", b"S5")
+    donor = mesc(b"Fixture A", b"Fixture blank", b"Fixture C") + mesc(b"Fixture mismatch")
     assert narration_pairs(stock, donor) == [(b"S1", "Fixture A"), (b"S3", "Fixture C")]
 
 
@@ -139,14 +107,13 @@ def test_narration_pairing_drops_unequal_blocks_and_blank_stock_slots():
 def test_each_narration_donor_entry_has_the_stock_pages_block_for_block():
     # Catches a narration entry off by one (WO1 X360 still pages are ENS 6, which 0x8226F09C loads; ENS 7 has no
     # pages), which pairs no page at all.
-    from wozmod.formats.linkdata import moz_entries, wo1_entries
+    from wozmod.formats.linkdata import archive
     from wozmod.formats.scripts import mesc_blocks
 
     donors, game = Path(os.environ["WOZMOD_DONORS"]), Path(os.environ["WOZMOD_GAME"])
-    stock = moz_entries(game / "LINKDATA1.BIN", game / "LINKDATA1.IDX", [n for n, _, _ in NARRATION])
-    wo1 = wo1_entries(donors / "wo1-x360/linkdata_ens.lnk", donors / "wo1-x360/linkdata_ens.idx",
-                      [e for _, s, e in NARRATION if s == "wo1"])
-    wo2 = wo2_x360(donors / "wo2-x360/linkdata_ens").members([e for _, s, e in NARRATION if s == "wo2"])
+    stock = archive(game / "LINKDATA1").read(n for n, _, _ in NARRATION)
+    wo1 = archive(donors / "wo1-x360/linkdata_ens").read(e for _, s, e in NARRATION if s == "wo1")
+    wo2 = x360_members(donors / "wo2-x360/linkdata_ens", [e for _, s, e in NARRATION if s == "wo2"])
     unequal = [n for n, s, e in NARRATION if [len(b) for b in mesc_blocks(stock[n])]
                != [len(b) for b in mesc_blocks((wo1 if s == "wo1" else wo2)[e])]]
     assert unequal == []
@@ -195,32 +162,21 @@ def test_quote_pairing_with_officers_disabled_keeps_only_the_two_format_tables()
 
 def test_x360_member_reader_does_not_shift_ps2_member_ids_or_relabel_results(tmp_path):
     values = {17: b"Fixture quote", 103: b"Fixture first script", 275: b"Fixture last event"}
-    records, body, sector = [], b"", 0
-    for ordinal in range(276):
-        value = values.get(ordinal, b"")
-        allocation = int(bool(value))
-        records.append(struct.pack(">4I", sector, allocation, len(value), 0))
-        if value:
-            body += value + bytes(2048 - len(value))
-        sector += allocation
-    ens = tmp_path / "linkdata_ens"
-    ens.with_suffix(".idx").write_bytes(struct.pack(">4sIII", b"SM4L", 276, sector, 0) + b"".join(records))
-    ens.with_suffix(".lnk").write_bytes(body)
+    ens = write_ens(tmp_path, values, 276)
     assert x360_members(ens, [2968, 45, 2796]) == {
         2968: b"Fixture last event", 45: b"Fixture quote", 2796: b"Fixture first script",
     }
 
 
 def test_stock_script_reader_excludes_multimember_entries_and_invalid_script_headers(tmp_path):
-    script = _script_bytes()
+    data = script(strings(b"32Fixture notice"), strings(b"00Fixture dialog@0001"))
     allocation = lambda data: data + bytes(-len(data) % 2048)
-    body = allocation(script) + allocation(script[:24]) + allocation(script[24:]) + allocation(struct.pack("<I", 4))
-    index = struct.pack("<9I", len(script), 0, 0, 1, 4096, 0, 4, 0, 0)
-    index += struct.pack("<3I", 24, len(script) - 24, 0)
-    bin_path, idx_path = tmp_path / "LINKDATA2.BIN", tmp_path / "LINKDATA2.IDX"
-    bin_path.write_bytes(body)
-    idx_path.write_bytes(index)
-    found = moz_scripts(bin_path, idx_path)
+    body = allocation(data) + allocation(data[:24]) + allocation(data[24:]) + allocation(struct.pack("<I", 4))
+    index = struct.pack("<9I", len(data), 0, 0, 1, 4096, 0, 4, 0, 0)
+    index += struct.pack("<3I", 24, len(data) - 24, 0)
+    (tmp_path / "LINKDATA2.BIN").write_bytes(body)
+    (tmp_path / "LINKDATA2.IDX").write_bytes(index)
+    found = moz_scripts(tmp_path / "LINKDATA2")
     assert {ordinal: (entry.notices.records[0].text_bytes, entry.dialog.records[0].text_bytes) for ordinal, entry in found.items()} == {
         0: (b"Fixture notice", b"Fixture dialog"),
     }

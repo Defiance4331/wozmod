@@ -22,7 +22,7 @@ from __future__ import annotations
 from functools import cache
 from pathlib import Path
 
-from wozmod.formats.linkdata import decoded_member, ps2_members, wo1_entries
+from wozmod.formats.linkdata import archive, decoded_member, ps2_members
 from wozmod.formats.scripts import (
     caption_cues, donor_text, event_lines, mesc_blocks, parse_script,
     quote_tables, quote_text,
@@ -64,8 +64,7 @@ class DonorResolver:
         folder = {"wo1-x360": "wo1-x360", "x360": "wo2-x360"}.get(donor)
         if folder is None or not isinstance(ordinal, int) or ordinal < 0:
             raise ValueError("Invalid ENS donor or entry")
-        base = self.root / folder / "linkdata_ens"
-        return wo1_entries(base.with_suffix(".lnk"), base.with_suffix(".idx"), [ordinal])[ordinal]
+        return archive(self.root / folder / "linkdata_ens")[ordinal]
 
     @cache
     def psp_archive(self) -> Path:

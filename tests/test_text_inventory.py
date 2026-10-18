@@ -1,55 +1,15 @@
 import struct
-from pathlib import Path
 
 from wozmod.text.inventory import inventory
+from synthetic import mesc, script, spans, strings, write_stock_archive
 
 
 def _cp932(ordinal):
     return chr(0x3042 + 2 * ordinal).encode("cp932")
 
 
-def _strings(*values):
-    head = 4 * (len(values) + 1)
-    offsets = [head + sum(len(v) + 1 for v in values[:i]) for i in range(len(values))]
-    return struct.pack(f"<{len(values) + 1}I", len(values), *offsets) + b"".join(v + b"\0" for v in values)
-
-
 def _script(notice, spoken):
-    notices = _strings(b"32" + notice, b"00ASCII", b"00\x81\x40 \n")
-    parts = [b"AAAA", b"BBBB", notices + bytes(-len(notices) % 4), _strings(b"00" + spoken + b"@0042")]
-    offsets = [20 + sum(map(len, parts[:i])) for i in range(4)]
-    return struct.pack("<5I", 4, *offsets) + b"".join(parts)
-
-
-def _mesc(value):
-    return b"MESC" + struct.pack("<3I", 1, 17 + len(value), 16) + value + b"\0"
-
-
-def _spans(parts, head=b""):
-    offset, pairs = len(head) + 8 * len(parts), []
-    for part in parts:
-        pairs.extend((offset, len(part)))
-        offset += len(part)
-    return head + struct.pack(f"<{len(pairs)}I", *pairs) + b"".join(parts)
-
-
-def _archive(root: Path, name, entries):
-    records, trailer, payload = [], b"", b""
-    for ordinal in range(max(entries) + 1):
-        parts = entries.get(ordinal, ())
-        if not parts:
-            records.append((0, 0, 0))
-            continue
-        allocation = sum((len(p) + 2047) // 2048 * 2048 for p in parts)
-        if len(parts) == 1:
-            records.append((len(parts[0]), 0, 0))
-        else:
-            records.append((1, allocation, len(trailer)))
-            trailer += struct.pack(f"<{len(parts) + 1}I", *(len(p) for p in parts), 0)
-        for part in parts:
-            payload += part + bytes(-len(part) % 2048)
-    (root / f"{name}.BIN").write_bytes(payload)
-    (root / f"{name}.IDX").write_bytes(b"".join(struct.pack("<3I", *r) for r in records) + trailer)
+    return script(strings(b"32" + notice, b"00ASCII", b"00\x81\x40 \n"), strings(b"00" + spoken + b"@0042"))
 
 
 def _exe(messages):
@@ -73,7 +33,7 @@ def test_inventory_reads_the_supplied_root_without_dropping_boundary_rows(tmp_pa
     values = [_cp932(i) for i in range(20)]
     cue = lambda text: struct.pack("<3I", 1, 5, 9) + text + b"\0" + _cp932(30) + b"\0"
     event = lambda text: b"\xff" * 4 + text + _cp932(31) + b"\0"
-    _archive(tmp_path, "LINKDATA2", {
+    write_stock_archive(tmp_path, "LINKDATA2", {
         1: (_script(values[0], values[1]),),
         2: (_script(values[2], values[3]), b"tail"),
         145: (cue(values[4]),),
@@ -81,14 +41,14 @@ def test_inventory_reads_the_supplied_root_without_dropping_boundary_rows(tmp_pa
         177: (event(values[6]),),
         413: (event(values[7]),),
     })
-    quotes = _spans([
-        _strings(b"33" + values[13]), _strings(b"32" + values[14]),
-        _spans([_strings(b"00" + values[15] + b"@0099"), _strings(b"00" + values[16])]),
+    quotes = spans([
+        strings(b"33" + values[13]), strings(b"32" + values[14]),
+        spans([strings(b"00" + values[15] + b"@0099"), strings(b"00" + values[16])]),
     ], struct.pack("<I", 3))
-    _archive(tmp_path, "LINKDATA1", {
-        4071: (_mesc(values[8]),), 4073: (_mesc(values[9]),),
-        4103: (_mesc(values[10]),), 4105: (_mesc(values[11]),),
-        4190: (_mesc(values[12]),), 4084: (quotes,),
+    write_stock_archive(tmp_path, "LINKDATA1", {
+        4071: (mesc(values[8]),), 4073: (mesc(values[9]),),
+        4103: (mesc(values[10]),), 4105: (mesc(values[11]),),
+        4190: (mesc(values[12]),), 4084: (quotes,),
     })
     (tmp_path / "OROCHI_Z.exe").write_bytes(_exe({0: values[17], 455: values[18], 910: values[19]}))
 

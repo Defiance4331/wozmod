@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 import ctypes
-import shutil
 import struct
-import subprocess
 
 import pytest
 
 from wozmod.art.build import glyph_sheet_header
 from wozmod.fonts.glyph_outlines import bars, encode, even_stems, stems
 from wozmod.formats.textures import G1T_HEADER, G1T_TEXTURE_HEADER, PIXEL_FORMAT_BGRA8, parse_g1t
-from wozmod.runtime.english_runtime import C_SOURCE
 
 ZONE = {"desc": -250, "base_over": -36, "xh": 655, "xh_over": 669, "cap": 860, "cap_over": 865, "asc": 880}
 
@@ -22,12 +19,8 @@ def rect(x0, y0, x1, y1):
 
 
 @pytest.fixture(scope="module")
-def reader(tmp_path_factory):
-    compiler = shutil.which("cc")
-    if not compiler:
-        pytest.skip("a native C compiler is unavailable")
-    directory = tmp_path_factory.mktemp("glyph-reader")
-    (directory / "reader.c").write_text(r'''
+def reader(c_library):
+    return c_library("reader", r'''
 #include "glyph_raster.h"
 int head(const unsigned char *blob, unsigned int size, int *out)
 {
@@ -57,10 +50,6 @@ int outline(const unsigned char *blob, unsigned int size, unsigned int number, i
     return (int)n;
 }
 ''')
-    library = directory / "reader.so"
-    subprocess.run([compiler, "-std=c11", "-O2", "-Wall", "-Werror", "-shared", "-fPIC", "-I", str(C_SOURCE.parent),
-                    str(directory / "reader.c"), "-o", str(library)], check=True)
-    return ctypes.CDLL(str(library))
 
 
 def test_the_runtime_reads_back_every_field_the_build_writes(reader):

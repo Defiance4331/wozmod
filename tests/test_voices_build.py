@@ -3,54 +3,16 @@ import struct
 
 from wozmod.formats.audio import build_synthetic_kovs_record
 from wozmod.voices import build_voice_banks
-
-
-def _strings(lines, order):
-    body, offsets = b"", []
-    for line in lines:
-        offsets.append(4 + 4 * len(lines) + len(body))
-        body += line + b"\0"
-    return struct.pack(f"{order}{len(lines) + 1}I", len(lines), *offsets) + body
-
-
-def _spans(parts, order, head=b""):
-    at, spans = len(head) + 8 * len(parts), b""
-    for part in parts:
-        spans += struct.pack(f"{order}II", at, len(part))
-        at += len(part)
-    return head + spans + b"".join(parts)
+from synthetic import script, spans, strings, write_ens, write_stock_archive
 
 
 def _quotes(order):
-    officers = _spans([_strings([], order)], order)
-    return _spans([_strings([], order), _strings([], order), officers], order,
-                  struct.pack(f"{order}I", 3))
+    officers = spans([strings(order=order)], order=order)
+    return spans([strings(order=order), strings(order=order), officers], struct.pack(f"{order}I", 3), order)
 
 
 def _script(order):
-    return struct.pack(f"{order}5I", 4, 20, 24, 28, 32) + b"HEADTAIL" + bytes(8)
-
-
-def _stock_archive(folder, stem, values, count):
-    index, body = b"", b""
-    for ordinal in range(count):
-        value = values.get(ordinal, b"")
-        index += struct.pack("<3I", len(value), 0, 0)
-        body += value + bytes(-len(value) % 2048)
-    (folder / (stem + ".IDX")).write_bytes(index)
-    (folder / (stem + ".BIN")).write_bytes(body)
-
-
-def _ens(folder, values, count):
-    index, body, sector = b"", b"", 0
-    for ordinal in range(count):
-        value = values.get(ordinal, b"")
-        allocation = -(-len(value) // 2048)
-        index += struct.pack(">4I", sector, allocation, len(value), 0)
-        body += value + bytes(-len(value) % 2048)
-        sector += allocation
-    (folder / "linkdata_ens.idx").write_bytes(struct.pack(">4sIII", b"SM4L", count, sector, 0) + index)
-    (folder / "linkdata_ens.lnk").write_bytes(body)
+    return script(strings(order=order), strings(order=order), order)
 
 
 def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_under_mod_voice(tmp_path):
@@ -63,12 +25,12 @@ def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_unde
     voiceidx = bytes(8) + struct.pack(">II", 0, 96) * 22665
     se_header = b"_HBW0000" + struct.pack("<IHHI", 20, 0x3200, 0, 0)
     seidx = struct.pack(">II", 244, 0) + (struct.pack(">II", 0, 20) + struct.pack(">II", 20, 0)) * 122
-    _stock_archive(stock, "LINKDATA1", {4056: seidx, 4057: se_header, 4058: voiceidx, 4084: _quotes("<")}, 4085)
+    write_stock_archive(stock, "LINKDATA1", {4056: seidx, 4057: se_header, 4058: voiceidx, 4084: _quotes("<")}, 4085)
     events = {o: b"no lip blocks" for o in range(177, 402)}
-    _stock_archive(stock, "LINKDATA2", {**{o: _script("<") for o in range(40, 68)}, **events}, 402)
-    _ens(one, {21: _quotes(">"), **{o: _script(">") for o in range(88, 148)},
+    write_stock_archive(stock, "LINKDATA2", {**{o: _script("<") for o in range(40, 68)}, **events}, 402)
+    write_ens(one, {21: _quotes(">"), **{o: _script(">") for o in range(88, 148)},
                **{o: events[177] for o in range(149, 367)}}, 367)
-    _ens(two, {17: _quotes(">"), **{o: _script(">") for o in range(103, 171)},
+    write_ens(two, {17: _quotes(">"), **{o: _script(">") for o in range(103, 171)},
                **{o: events[177] for o in range(176, 238)}}, 238)
     placeholder = b"Fixture"
     hdx = b"SDsdVers" + bytes(8) + b"SDsdSmpl" + struct.pack("<II", 0, 1)

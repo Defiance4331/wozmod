@@ -3,12 +3,8 @@
 from __future__ import annotations
 
 import ctypes
-import shutil
-import subprocess
 
 import pytest
-
-from wozmod.runtime.english_runtime import C_SOURCE
 
 
 class Fit(ctypes.Structure):
@@ -17,24 +13,16 @@ class Fit(ctypes.Structure):
 
 
 @pytest.fixture(scope="module")
-def display(tmp_path_factory):
-    compiler = shutil.which("cc")
-    if not compiler:
-        pytest.skip("a native C compiler is unavailable")
-    directory = tmp_path_factory.mktemp("display-fit")
-    (directory / "fit.c").write_text(r'''
+def display(c_library):
+    lib = c_library("fit", r'''
 #include "display_fit.h"
 struct display_fit fit(unsigned int w, unsigned int h) { return display_fit(w, h); }
 int size_index(unsigned int w, unsigned int h) { return display_size_index(w, h); }
 void shift(unsigned int *p, unsigned int qwc, int d) { display_packet_shift(p, qwc, d); }
 void clip(unsigned int w, unsigned int h, unsigned int *c) { struct display_fit f = display_fit(w, h); display_clip(&f, w, h, c); }
-unsigned int sizes(unsigned short *out) { unsigned int i; for (i = 0; i < DISPLAY_SIZES; i++)
-    out[2 * i] = display_sizes[i][0], out[2 * i + 1] = display_sizes[i][1]; return DISPLAY_SIZES; }
+unsigned int sizes(unsigned short *out) { unsigned int i; for (i = 0; i < DISPLAY_SIZES; i++) {
+    out[2 * i] = display_sizes[i][0], out[2 * i + 1] = display_sizes[i][1]; } return DISPLAY_SIZES; }
 ''')
-    library = directory / "fit.so"
-    subprocess.run([compiler, "-shared", "-fPIC", "-O2", "-I", str(C_SOURCE.parent), str(directory / "fit.c"),
-                    "-o", str(library)], check=True)
-    lib = ctypes.CDLL(str(library))
     lib.fit.restype = Fit
     return lib
 

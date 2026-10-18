@@ -13,26 +13,13 @@ from wozmod.formats.scripts import (
     quote_tables,
     quote_text,
 )
+from synthetic import mesc, script, spans, strings
 
 
 def _table(*records, order="<"):
     header = 4 + 4 * len(records)
     offsets = [header + sum(map(len, records[:i])) for i in range(len(records))]
     return struct.pack(f"{order}{len(records) + 1}I", len(records), *offsets) + b"".join(records)
-
-
-def _script(notices, dialog, order="<"):
-    sections = [b"AAAA", b"BBBB", notices + bytes(-len(notices) % 4), dialog]
-    offsets = [20 + sum(map(len, sections[:i])) for i in range(4)]
-    return struct.pack(f"{order}5I", 4, *offsets) + b"".join(sections)
-
-
-def _mesc(*lines):
-    offsets, body = [], b""
-    for line in lines:
-        offsets.append(12 + 4 * len(lines) + len(body))
-        body += line + b"\0"
-    return b"MESC" + struct.pack(f"<II{len(lines)}I", len(lines), 12 + 4 * len(lines) + len(body), *offsets) + body
 
 
 def _event(*lines, order="<"):
@@ -43,21 +30,9 @@ def _event(*lines, order="<"):
     return data
 
 
-def _strings(*lines, order="<"):
-    return _table(*(line + b"\0" for line in lines), order=order)
-
-
-def _spans(parts, head=b"", order="<"):
-    at, table = len(head) + 8 * len(parts), b""
-    for part in parts:
-        table += struct.pack(f"{order}II", at, len(part))
-        at += len(part)
-    return head + table + b"".join(parts)
-
-
 def test_parse_script_drops_exactly_two_route_bytes_in_both_sections_and_word_orders():
     for order in "<>":
-        data = _script(
+        data = script(
             _table(b"32Notice A\0", b"11Notice B\0\xaa", order=order),
             _table(b"00Record A@0042\0\xcc", b"00Record B\0", order=order),
             order,
@@ -70,7 +45,7 @@ def test_parse_script_drops_exactly_two_route_bytes_in_both_sections_and_word_or
 
 
 def test_parse_script_rejects_invalid_section_headers_and_offsets():
-    data = _script(_table(b"00N\0"), _table(b"00D\0"))
+    data = script(_table(b"00N\0"), _table(b"00D\0"))
     count, *offsets = struct.unpack_from("<5I", data)
     headers = [
         (3, *offsets),
@@ -95,34 +70,34 @@ def test_parse_script_rejects_table_offsets_that_do_not_bound_string_records():
     ]
     for notice_table in broken:
         with pytest.raises(ScriptError):
-            parse_script(_script(notice_table, _table(b"00D\0")))
+            parse_script(script(notice_table, _table(b"00D\0")))
     with pytest.raises(ScriptError):
-        parse_script(_script(_table(b"00N\0"), b"\0" * 3))
+        parse_script(script(_table(b"00N\0"), b"\0" * 3))
 
 
 def test_parse_script_rejects_a_non_numeric_route_prefix():
     with pytest.raises(ScriptError):
-        parse_script(_script(_table(b"x1N\0"), _table(b"00D\0")))
+        parse_script(script(_table(b"x1N\0"), _table(b"00D\0")))
 
 
 def test_parse_script_rejects_an_invalid_cp932_record():
     with pytest.raises(ScriptError):
-        parse_script(_script(_table(b"00\x81\0"), _table(b"00D\0")))
+        parse_script(script(_table(b"00\x81\0"), _table(b"00D\0")))
 
 
 def test_parse_script_rejects_a_notice_route_in_a_spoken_record():
     with pytest.raises(ScriptError):
-        parse_script(_script(_table(b"00N\0"), _table(b"11D\0")))
+        parse_script(script(_table(b"00N\0"), _table(b"11D\0")))
 
 
 def test_parse_script_rejects_an_unterminated_spoken_record():
     with pytest.raises(ScriptError):
-        parse_script(_script(_table(b"00N\0"), _table(b"00D")))
+        parse_script(script(_table(b"00N\0"), _table(b"00D")))
 
 
 def test_mesc_blocks_skips_an_embedded_marker_before_reading_the_next_block():
     cp932 = b"\x81\x40"
-    data = b"prefix" + _mesc(b"record MESC marker", cp932) + b"gap" + _mesc(b"last")
+    data = b"prefix" + mesc(b"record MESC marker", cp932) + b"gap" + mesc(b"last")
     assert mesc_blocks(data) == [[b"record MESC marker", cp932], [b"last"]]
 
 
@@ -147,11 +122,11 @@ def test_caption_cues_keeps_each_interval_with_its_corresponding_text():
 def test_quote_tables_reads_every_nested_officer_span_in_both_word_orders():
     for order in "<>":
         tables = [
-            _strings(b"33F1", b"11F2", order=order),
-            _strings(b"32N1", order=order),
-            _spans([_strings(b"00A@1001", b"", order=order), _strings(b"00B@1002", order=order)], order=order),
+            strings(b"33F1", b"11F2", order=order),
+            strings(b"32N1", order=order),
+            spans([strings(b"00A@1001", b"", order=order), strings(b"00B@1002", order=order)], order=order),
         ]
-        data = _spans(tables, struct.pack(f"{order}I", 3), order)
+        data = spans(tables, struct.pack(f"{order}I", 3), order)
         assert quote_tables(data, order) == [[b"33F1", b"11F2"], [b"32N1"], [b"00A@1001", b""], [b"00B@1002"]]
 
 

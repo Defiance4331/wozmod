@@ -133,8 +133,3 @@ PSP = Donor(
 
 
 DONORS = {donor.name: donor for donor in (WO1_X360, X360, PSP)}
-
-PSP_ENCRYPTED_FILE = DonorFile(
-    "PSP_GAME/SYSDIR/EBOOT.BIN", "PSP_GAME/SYSDIR/EBOOT.BIN", 3198240,
-    "e7c3714e77f13a83beb0cd0586fc2340efc2214122b1d184fc72bd40c9c39d11",
-)

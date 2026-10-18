@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from wozmod.formats.linkdata import decoded_member, moz_entries, ps2_members
+from wozmod.formats.linkdata import archive, decoded_member, ps2_members
 from wozmod.formats.scripts import (
     Script, caption_cues, donor_text, event_lines, mesc_blocks, parse_script,
     quote_tables, quote_text,
@@ -92,9 +92,8 @@ def paired_psp_rows(stock_dir: Path, fns_path: Path) -> list[PspPair]:
         if text is not None and text.strip():
             rows.append(PspPair(stock, ["psp", "fns", member, view, *indices], group, location))
 
-    stages = moz_entries(
-        stock_dir / "LINKDATA2.BIN", stock_dir / "LINKDATA2.IDX", PSP_STAGE_MEMBERS,
-    )
+    linkdata2 = archive(stock_dir / "LINKDATA2")
+    stages = linkdata2.read(PSP_STAGE_MEMBERS)
     for ordinal, member in PSP_STAGE_MEMBERS.items():
         stock, donor = parse_script(stages[ordinal]), parse_script(decoded_member(members[member]))
         for view, stock_index, donor_index in stage_slots(ordinal, stock, donor):
@@ -102,9 +101,7 @@ def paired_psp_rows(stock_dir: Path, fns_path: Path) -> list[PspPair]:
             add(ours[stock_index].text_bytes, theirs[donor_index].text_bytes, member, view,
                 [donor_index], "Z Dream stage lines", ["linkdata2", ordinal, view, stock_index])
 
-    text_entries = moz_entries(
-        stock_dir / "LINKDATA1.BIN", stock_dir / "LINKDATA1.IDX", [BRIEFINGS[0], QUOTES[0]],
-    )
+    text_entries = archive(stock_dir / "LINKDATA1").read([BRIEFINGS[0], QUOTES[0]])
     briefings = mesc_blocks(text_entries[BRIEFINGS[0]])
     for row in range(28, 40):
         member = 33 + row
@@ -126,10 +123,7 @@ def paired_psp_rows(stock_dir: Path, fns_path: Path) -> list[PspPair]:
             add(quote_text(stock), psp_quote_text(donor), 27, "quotes", [table, slot], group,
                 ["linkdata1", QUOTES[0], "quotes", table, slot])
 
-    scenes = moz_entries(
-        stock_dir / "LINKDATA2.BIN", stock_dir / "LINKDATA2.IDX",
-        [*PSP_EVENT_MEMBERS, *PSP_MOVIE_MEMBERS],
-    )
+    scenes = linkdata2.read([*PSP_EVENT_MEMBERS, *PSP_MOVIE_MEMBERS])
     for ordinal, member in PSP_EVENT_MEMBERS.items():
         stock, donor = event_lines(scenes[ordinal]), caption_cues(members[member])
         for line_id, cue in event_caption_slots(stock, donor):

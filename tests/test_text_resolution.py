@@ -5,41 +5,13 @@ import pytest
 
 from wozmod.text import DonorResolver
 from wozmod.text.resolver import program_text
-
-
-def _strings(*records: bytes, order: str = "<") -> bytes:
-    body, offsets = bytearray(), []
-    for record in records:
-        offsets.append(4 + 4 * len(records) + len(body))
-        body.extend(record + b"\0")
-    return struct.pack(f"{order}{len(records) + 1}I", len(records), *offsets) + body
-
-
-def _spans(parts: list[bytes], order: str, *, head: bytes = b"") -> bytes:
-    offsets, position = [], len(head) + 8 * len(parts)
-    for part in parts:
-        offsets.extend((position, len(part)))
-        position += len(part)
-    return head + struct.pack(f"{order}{len(offsets)}I", *offsets) + b"".join(parts)
+from synthetic import mesc, script, spans, strings, write_ens
 
 
 def _script(tag: bytes, order: str) -> bytes:
-    notices = _strings(b"32" + tag + b" notice zero", b"11" + tag + b" notice one", order=order)
-    dialog = _strings(b"00" + tag + b" dialog zero@0020", b"00" + tag + b" dialog one@0021", order=order)
-    sections = [bytes(4), bytes(4), notices + bytes(-len(notices) % 4), dialog]
-    offsets = [20]
-    for section in sections[:-1]:
-        offsets.append(offsets[-1] + len(section))
-    return struct.pack(f"{order}5I", 4, *offsets) + b"".join(sections)
-
-
-def _mesc(*records: bytes) -> bytes:
-    body, offsets = bytearray(), []
-    for record in records:
-        offsets.append(12 + 4 * len(records) + len(body))
-        body.extend(record + b"\0")
-    size = 12 + 4 * len(records) + len(body)
-    return b"MESC" + struct.pack(f"<II{len(records)}I", len(records), size, *offsets) + body
+    notices = strings(b"32" + tag + b" notice zero", b"11" + tag + b" notice one", order=order)
+    dialog = strings(b"00" + tag + b" dialog zero@0020", b"00" + tag + b" dialog one@0021", order=order)
+    return script(notices, dialog, order)
 
 
 def _events(tag: bytes, order: str) -> bytes:
@@ -50,37 +22,30 @@ def _events(tag: bytes, order: str) -> bytes:
     return bytes(body)
 
 
-def _write_ens(folder: Path, records: list[bytes]) -> None:
-    folder.mkdir(parents=True)
-    index = struct.pack(">4sIII", b"SM4L", len(records), len(records), 0)
-    index += b"".join(struct.pack(">4I", slot, 1, len(record), 0) for slot, record in enumerate(records))
-    (folder / "linkdata_ens.idx").write_bytes(index)
-    (folder / "linkdata_ens.lnk").write_bytes(b"".join(record + bytes(2048 - len(record)) for record in records))
-
-
 @pytest.fixture
 def donors(tmp_path: Path) -> DonorResolver:
     for folder, tag, order in (("wo1-x360", b"WO1", ">"), ("wo2-x360", b"WO2", ">")):
         quote_parts = [
-            _strings(b"33" + tag + b" format zero", b"11" + tag + b" format one", order=order),
-            _strings(b"32" + tag + b" quote notice", order=order),
-            _spans([
-                _strings(b"00" + tag + b" first officer@0010", order=order),
-                _strings(b"00" + tag + b" second officer zero@0020", b"00" + tag + b" second officer one@0021", order=order),
-            ], order),
+            strings(b"33" + tag + b" format zero", b"11" + tag + b" format one", order=order),
+            strings(b"32" + tag + b" quote notice", order=order),
+            spans([
+                strings(b"00" + tag + b" first officer@0010", order=order),
+                strings(b"00" + tag + b" second officer zero@0020", b"00" + tag + b" second officer one@0021", order=order),
+            ], order=order),
         ]
         records = [
             _script(tag, order),
-            b"prefix" + _mesc(tag + b" block zero slot zero", tag + b" block zero slot one")
-            + _mesc(tag + b" block one slot zero \xd3", tag + b" block one slot one"),
-            _spans(quote_parts, order, head=struct.pack(f"{order}I", 3)),
+            b"prefix" + mesc(tag + b" block zero slot zero", tag + b" block zero slot one")
+            + mesc(tag + b" block one slot zero \xd3", tag + b" block one slot one"),
+            spans(quote_parts, struct.pack(f"{order}I", 3), order),
             _events(tag, order),
             struct.pack("<7I", 3, 10, 20, 30, 40, 50, 60)
             + b" \t" + tag + b" first\ncaption  \0unused middle\0" + tag + b" last cue\0",
             b"decoy\0Prefix alpha beta gamma\0trailer\0",
             b"decoy\0Invalid donor byte \x81\0",
         ]
-        _write_ens(tmp_path / folder, records)
+        (tmp_path / folder).mkdir()
+        write_ens(tmp_path / folder, dict(enumerate(records)))
     return DonorResolver(tmp_path)
 
 

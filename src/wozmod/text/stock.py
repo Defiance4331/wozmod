@@ -6,7 +6,7 @@ import hashlib
 import struct
 from pathlib import Path
 
-from wozmod.formats.linkdata import entry_bytes, moz_entries, parse_index
+from wozmod.formats.linkdata import archive
 from wozmod.formats.scripts import EVENT_TEXT, event_lines, quote_tables
 from wozmod.runtime.english_runtime import file_offset, pe_layout
 
@@ -30,16 +30,12 @@ def stock_strings(stock: Path) -> dict[str, bytes]:
     for source in inventory(stock).values():
         for value in source:
             add(value)
-    bin_path = stock / "LINKDATA2.BIN"
-    index = parse_index((stock / "LINKDATA2.IDX").read_bytes(), bin_path.stat().st_size)
-    with bin_path.open("rb") as stream:
-        for entry in index.entries:
-            if entry.ordinal in EVENTS:
-                data = entry_bytes(stream, entry)
-                for value in event_lines(data).values():
-                    add(value)
-                for match in EVENT_TEXT.finditer(data):
-                    add(match.group(1) or match.group(2))
+    linkdata2 = archive(stock / "LINKDATA2")
+    for data in linkdata2.read(o for o in EVENTS if o in linkdata2).values():
+        for value in event_lines(data).values():
+            add(value)
+        for match in EVENT_TEXT.finditer(data):
+            add(match.group(1) or match.group(2))
     exe = (stock / "OROCHI_Z.exe").read_bytes()
     for match in EXE_STRING.finditer(exe):
         add(match.group())
@@ -48,7 +44,7 @@ def stock_strings(stock: Path) -> dict[str, bytes]:
         pointer = file_offset(layout, NAME_TABLE + 8 * index)
         at = file_offset(layout, struct.unpack_from("<I", exe, pointer)[0])
         add(exe[at:exe.index(b"\0", at)])
-    quote_data = moz_entries(stock / "LINKDATA1.BIN", stock / "LINKDATA1.IDX", [QUOTES[0]])[QUOTES[0]]
+    quote_data = archive(stock / "LINKDATA1")[QUOTES[0]]
     for table in quote_tables(quote_data):
         for line in table:
             add(line[2:])

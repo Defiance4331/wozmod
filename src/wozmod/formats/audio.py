@@ -5,13 +5,11 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-import stat
 import struct
 import zlib
-from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Iterator
+from typing import BinaryIO
 
 from wozmod import resources
 from wozmod.progress import report
@@ -34,45 +32,6 @@ class OggStreamMetadata:
     channels: int
     sample_rate: int
     sample_count: int
-
-
-@dataclass(frozen=True)
-class VoiceBankRecord:
-    """KOVS record geometry and identity."""
-
-    ordinal: int
-    offset: int
-    stream_bytes: int
-    logical_bytes: int
-    allocated_bytes: int
-    padding_bytes: int
-    loop_start_sample: int | None
-    sha256: str
-    ogg: OggStreamMetadata
-
-
-@dataclass(frozen=True)
-class VoiceBankLayout:
-    """Voice-bank geometry and identity."""
-
-    source_bytes: int
-    source_sha256: str
-    records: tuple[VoiceBankRecord, ...]
-
-
-@contextmanager
-def _open_read_only_regular(path: Path, label: str) -> Iterator[BinaryIO]:
-    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
-    flags |= getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(path, flags)
-    except OSError as exc:
-        raise VoiceBankError(f"cannot open {label} read-only: {path}") from exc
-    with os.fdopen(descriptor, "rb") as stream:
-        status = os.fstat(stream.fileno())
-        if not stat.S_ISREG(status.st_mode):
-            raise VoiceBankError(f"{label} is not a regular file: {path}")
-        yield stream
 
 
 def _read_exact(stream: BinaryIO, size: int, label: str) -> bytes:
@@ -231,90 +190,6 @@ def parse_kovs_record(
         verify_checksums=verify_checksums,
     )
     return stream_bytes, loop_start if loop_start != 0 else None, ogg
-
-
-def inspect_voice_bank(
-    path: Path,
-    *,
-    expected_sha256: str | None = None,
-    verify_checksums: bool = True,
-) -> VoiceBankLayout:
-    """Parse sequential KOVS records and zero padding."""
-
-    path = Path(path)
-    records: list[VoiceBankRecord] = []
-    source_hash = hashlib.sha256()
-    with _open_read_only_regular(path, "voice bank") as stream:
-        before = os.fstat(stream.fileno())
-        source_bytes = before.st_size
-        if source_bytes == 0 or source_bytes % VOICE_RECORD_ALIGNMENT:
-            raise VoiceBankError("voice bank size is not a non-zero multiple of 16")
-
-        offset = 0
-        while offset < source_bytes:
-            ordinal = len(records)
-            header = _read_exact(stream, KOVS_HEADER_BYTES, f"record {ordinal} header")
-            if header[:4] != b"KOVS":
-                raise VoiceBankError(
-                    f"record {ordinal} does not start with KOVS at byte {offset}"
-                )
-            stream_bytes = struct.unpack_from("<I", header, 4)[0]
-            logical_bytes = KOVS_HEADER_BYTES + stream_bytes
-            allocated_bytes = _aligned_size(logical_bytes)
-            if offset + allocated_bytes > source_bytes:
-                raise VoiceBankError(f"record {ordinal} allocation exceeds the bank")
-            encoded_stream = _read_exact(
-                stream, stream_bytes, f"record {ordinal} KOVS stream"
-            )
-            payload = header + encoded_stream
-            parsed_stream_bytes, loop_start, ogg = parse_kovs_record(
-                payload,
-                ordinal=ordinal,
-                verify_checksums=verify_checksums,
-            )
-            padding_bytes = allocated_bytes - logical_bytes
-            padding = _read_exact(stream, padding_bytes, f"record {ordinal} padding")
-            if any(padding):
-                raise VoiceBankError(f"record {ordinal} padding is non-zero")
-            source_hash.update(payload)
-            source_hash.update(padding)
-            records.append(
-                VoiceBankRecord(
-                    ordinal=ordinal,
-                    offset=offset,
-                    stream_bytes=parsed_stream_bytes,
-                    logical_bytes=logical_bytes,
-                    allocated_bytes=allocated_bytes,
-                    padding_bytes=padding_bytes,
-                    loop_start_sample=loop_start,
-                    sha256=hashlib.sha256(payload).hexdigest(),
-                    ogg=ogg,
-                )
-            )
-            offset += allocated_bytes
-
-        after = os.fstat(stream.fileno())
-        if (
-            before.st_dev,
-            before.st_ino,
-            before.st_size,
-            before.st_mtime_ns,
-        ) != (
-            after.st_dev,
-            after.st_ino,
-            after.st_size,
-            after.st_mtime_ns,
-        ):
-            raise VoiceBankError("voice bank changed during read-only inspection")
-
-    digest = source_hash.hexdigest()
-    if expected_sha256 is not None and digest != expected_sha256.lower():
-        raise VoiceBankError("voice bank SHA-256 does not match the expected target")
-    return VoiceBankLayout(
-        source_bytes=source_bytes,
-        source_sha256=digest,
-        records=tuple(records),
-    )
 
 
 def build_synthetic_kovs_record(

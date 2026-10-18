@@ -6,6 +6,7 @@ from wozmod.formats.scripts import Line, Script, Table
 from wozmod.text.psp_alignment import (
     PspPair, event_caption_slots, paired_psp_rows, psp_quote_text, stage_slots,
 )
+from synthetic import mesc, script, spans, strings, write_stock_archive
 
 
 def _script(notices=(), dialog=()):
@@ -85,36 +86,13 @@ def test_psp_quote_suffix_strip_keeps_internal_tags_and_non_voice_suffixes():
     assert [(value, psp_quote_text(value)) for value, _ in cases] == cases
 
 
-def _strings(*lines):
-    offsets, body = [], b""
-    for line in lines:
-        offsets.append(4 + 4 * len(lines) + len(body))
-        body += line + b"\0"
-    return struct.pack(f"<{len(lines) + 1}I", len(lines), *offsets) + body
-
-
 def _script_bytes(notices, dialog):
-    notices = _strings(*([b"32Stock"] * notices))
-    notices += bytes(-len(notices) % 4)
-    dialog = _strings(*([b"00Stock@0001"] * dialog))
-    return struct.pack("<5I", 4, 20, 24, 28, 28 + len(notices)) + b"HEADTAIL" + notices + dialog
-
-
-def _mesc():
-    return b"MESC" + struct.pack("<3I", 1, 22, 16) + b"Stock\0"
-
-
-def _spans(parts, head=b""):
-    offset, body = len(head) + 8 * len(parts), b""
-    for part in parts:
-        body += struct.pack("<II", offset, len(part))
-        offset += len(part)
-    return head + body + b"".join(parts)
+    return script(strings(*([b"32Stock"] * notices)), strings(*([b"00Stock@0001"] * dialog)))
 
 
 def _quotes(suffix):
-    slot = _strings(b"00Stock" + suffix)
-    return _spans([slot, slot, _spans([slot] * 107)], struct.pack("<I", 3))
+    slot = strings(b"00Stock" + suffix)
+    return spans([slot, slot, spans([slot] * 107)], struct.pack("<I", 3))
 
 
 def _telop(count):
@@ -127,16 +105,6 @@ def _event():
         body += b"\xff" * 4 + struct.pack("<HH", index, 32) + b"Stock\0"
         body += bytes((12 - len(body)) % 16)
     return body
-
-
-def _write_stock_archive(folder, name, entries):
-    index, body = b"", b""
-    for ordinal in range(max(entries) + 1):
-        data = entries.get(ordinal, b"")
-        index += struct.pack("<III", len(data), 0, 0)
-        body += data + bytes(-len(data) % 2048)
-    (folder / f"{name}.BIN").write_bytes(body)
-    (folder / f"{name}.IDX").write_bytes(index)
 
 
 def _write_psp_archive(path, entries):
@@ -166,9 +134,9 @@ def test_psp_candidate_reader_keeps_duplicate_occurrences_at_their_original_memb
             stock_slot = slot + 12 if ordinal == 139 and slot >= 56 else slot
             expected.append(PspPair(b"Stock", ["psp", "fns", member, "dialog", slot],
                                     "Z Dream stage lines", ["linkdata2", ordinal, "dialog", stock_slot]))
-    _write_stock_archive(tmp_path, "LINKDATA1", {4190: _mesc() * 40, 4084: _quotes(b"@0001")})
+    write_stock_archive(tmp_path, "LINKDATA1", {4190: mesc(b"Stock") * 40, 4084: _quotes(b"@0001")})
     for row in range(28, 40):
-        donor_entries[33 + row] = _mesc()
+        donor_entries[33 + row] = mesc(b"Stock")
         expected.append(PspPair(b"Stock", ["psp", "fns", 33 + row, "mesc", 0, 0],
                                 "Z Dream briefings", ["linkdata1", 4190, "mesc", row, 0]))
     donor_entries[27] = _quotes(b"@SV1_2")
@@ -190,7 +158,7 @@ def test_psp_candidate_reader_keeps_duplicate_occurrences_at_their_original_memb
         stock_entries[ordinal], donor_entries[member] = _telop(1), _telop(1)
         expected.append(PspPair(b"Stock", ["psp", "fns", member, "captions", [0]],
                                 "Movie captions", ["linkdata2", ordinal, "captions", 0]))
-    _write_stock_archive(tmp_path, "LINKDATA2", stock_entries)
+    write_stock_archive(tmp_path, "LINKDATA2", stock_entries)
     fns_path = tmp_path / "LINKDATA_NA.FNS"
     _write_psp_archive(fns_path, donor_entries)
 

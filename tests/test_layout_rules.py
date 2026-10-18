@@ -2,17 +2,7 @@
 
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
-
-REPO = Path(__file__).resolve().parents[1]
-for name in ("screen_checks", "layout_rules"):
-    spec = importlib.util.spec_from_file_location(name, REPO / "tools" / f"{name}.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-lr = sys.modules["layout_rules"]
+import layout_rules as lr
 
 
 def text(x, y, width, caller="0x500000"):
