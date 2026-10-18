@@ -809,3 +809,15 @@ PAD_CAMERA = [
     for at, stock, value in [(0x22, 0, 1), (0x2D, 0, direction), (0x38, 0xFF, axis)]
     if value != stock
 ]
+
+# A new save and the Controller page's DEFAULT start CAMERA - HORIZONTAL at STANDARD: bit 0x1 of the player's options
+# byte (0x801508 + 0x11 * player) set, so the stick camera (0x4AF600) turns the view the way the stick is pushed. Stock
+# clears it, INVERSE. The first-run defaults (0x475440, from 0x476FF0) clear bits 0-2 for both players before any save
+# is copied over them, so a loaded save keeps its own value.
+STANDARD_CAMERA = [
+    *detour(0x47544C, bytes.fromhex("24f8 6a01 6a00"), CAVE + 0xA40, 0x475452,  # player 1: and al, 0xF8; or al, 1
+            bytes.fromhex("24f8 0c01 6a01 6a00")),
+    *detour(0x475468, bytes.fromhex("24f8 6a01 6a01"), CAVE + 0xA60, 0x47546E,  # player 2
+            bytes.fromhex("24f8 0c01 6a01 6a01")),
+    (0x570C98, bytes.fromhex("80a40208158000fe"), bytes.fromhex("808c020815800001")),  # DEFAULT: or 1, not and 0xFE
+]

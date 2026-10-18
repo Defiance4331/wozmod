@@ -153,6 +153,38 @@ def test_sound_pool_holds_every_english_effect_bank_on_top_of_the_stock_ones() -
     assert runtime_edits.SOUND_POOL >= runtime_edits.STOCK_SOUND_POOL + growth, hex(growth)
 
 
+def _options_byte_after(code: bytes, value: int) -> int:
+    """The options byte after a patched sequence's leading byte operations: and/or al, imm8 (24, 0C) on the byte in
+    al, or and/or r/m8, imm8 (80 /4, 80 /1 with a SIB and disp32) on the byte in memory. Stops at anything else."""
+    at = 0
+    while at < len(code):
+        if code[at] in (0x24, 0x0C):
+            value = value & code[at + 1] if code[at] == 0x24 else value | code[at + 1]
+            at += 2
+        elif code[at] == 0x80 and code[at + 1] in (0xA4, 0x8C):  # and/or byte [reg + reg + disp32], imm8
+            value = value & code[at + 7] if code[at + 1] == 0xA4 else value | code[at + 7]
+            at += 8
+        else:
+            break
+    return value
+
+
+def test_new_saves_and_controller_default_start_the_horizontal_camera_at_standard() -> None:
+    """Bug: a new save or the Controller page's DEFAULT leaves CAMERA - HORIZONTAL at the stock INVERSE (bit 0x1
+    clear), sets the vertical bit (0x2) instead, misses player 2, or DEFAULT also changes the other options."""
+    edits = {va: after for va, _, after in runtime_edits.STANDARD_CAMERA}
+    # The two first-run sites jump into the cave; the cave code is what runs on the options byte in al.
+    caves = {site: edits[site + 5 + struct.unpack_from("<i", edits[site], 1)[0]] for site in (0x47544C, 0x475468)}
+    wrong = []
+    for value in range(256):
+        for site, cave in caves.items():  # first run: horizontal set, vertical and vibration clear, the rest kept
+            if _options_byte_after(cave, value) != (value & 0xF8) | 0x01:
+                wrong.append((hex(site), value))
+        if _options_byte_after(edits[0x570C98], value) != value | 0x01:  # DEFAULT: only the horizontal bit set
+            wrong.append(("default", value))
+    assert not wrong[:4]
+
+
 def test_xbox_defaults_bind_each_camera_action_to_its_right_stick_half() -> None:
     """Bug: an edit lands on a neighbouring push (the flag's, a shifted offset) that holds the same stock byte, or
     swaps a direction, so a camera action stays unbound or turns the wrong way; read back by setter call target."""
