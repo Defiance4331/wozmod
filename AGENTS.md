@@ -1,7 +1,7 @@
 # wozmod
 
 A fan mod for Musou Orochi Z, the Japanese Windows PC release (Koei Tecmo,
-2009): English text, voices and menu art, plus gameplay and display patches.
+2009): English text, voices, movies and menu art, plus gameplay and display patches.
 Players get a proxy `d3d9.dll` and a `wozmod/` folder beside the stock
 `OROCHI_Z.exe`. The installer builds `wozmod/` on the player's machine from
 their own copies of Musou Orochi Z, Warriors Orochi Xbox 360, and Warriors
@@ -27,9 +27,10 @@ copies.
 | Path | Holds |
 |---|---|
 | `runtime/` | C source of `d3d9.dll` |
-| `src/wozmod/` | build and install tooling |
+| `src/wozmod/`, `native/` | build and install tooling (Python, with Rust for the slow parts) |
 | `data/` | our authored data: translations, layout rules, art recipes, donor pointers |
 | `tools/` | developer-only tools such as the game harness |
+| `packaging/` | release zips and the release files `lettering.zip` and `d3d9.dll` |
 | `work/` | ignored: stock and donor extracts, builds, disposable game copies |
 
 ## Inputs and the game
@@ -43,18 +44,21 @@ copies.
   size, boxes) is WO2 X360 only. Music stays stock, except the mix inside
   donor movies.
 - Launch the game only with the user's permission for the current task, in a
-  disposable copy under `work/`. Touch a live installation only when the user
-  names its path and the operation.
+  disposable copy under `work/`, through `tools/run_check.py` or
+  `tools/game_harness.py run --slot` (two games at most, across all worktrees).
+  Touch a live installation only when the user names its path and the operation.
 
 ## Testing
 
 Run `uv run pytest -q`. Bugs worth naming here are a shifted offset, a dropped
 translation row, and an edit over the wrong stock bytes. Synthetic bytes in
 `tmp_path` cover formats and patch logic. Use stock or donor files only for
-what synthetic bytes cannot show, and skip when they are absent. Slow tests run only behind a `WOZMOD_<NAME>=1` skipif.
-Input paths come from `[tests]` in `work/harness.toml` (see `tests/conftest.py`).
-`tools/verify.sh` also runs the slow ones; run it before handing back a change to
-the runtime, the art or the install. Hand back a change players see with the
+what synthetic bytes cannot show, and skip when they are absent. Slow tests run
+only behind a `WOZMOD_<NAME>=1` skipif. Input paths come from `[tests]` in
+`work/harness.toml` (see `tests/conftest.py`); a linked worktree has none, so
+set `WOZMOD_HARNESS_CONFIG` to the main checkout's copy. `tools/verify.sh` also
+runs the slow ones; run it before handing back a change to the runtime, the art
+or the install. Hand back a change players see with the
 `evidence/contact-sheet.html` that `tools/run_check.py` writes: each capture beside
 its PASS/FAIL rows. The hooks in `tools/githooks/` lint each
 commit and test each push on the pushed commits alone, in `.worktrees/pre-push`

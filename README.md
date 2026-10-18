@@ -22,18 +22,23 @@ options.
   the rest.
 - **English voices** from the same games. Lines with no English recording keep
   their Japanese voice.
-- **English menu art** in the style of the original menus.
+- **English menu art** in the style of the original menus, drawn sharper on
+  large screens.
+- **English story movies** from the Xbox 360 games, where they have English
+  voices or text.
 - **A language switch.** Choose English or Japanese for text and for voices.
 - **120 FPS** in battle.
 - **A wider field of view**, up to 150%.
-- **A steady camera stick while you move.** In the original game, running
-  sideways turns the camera against the right stick, so the camera can seem
-  to invert once you move. wozmod lets the stick win.
+- **More screen sizes**, up to the size of your monitor, and a borderless
+  window mode.
 - **Xbox controller support** with the Warriors Orochi 2 controls and Xbox
-  button prompts.
+  button prompts. A new controller is set up at once, with the camera on the
+  right stick.
+- **Closing the game window quits the game** at once.
 
 wozmod does not change the game's own files. It adds a file, `d3d9.dll`, and a
-folder, `wozmod`, to the game folder.
+folder, `wozmod`, to the game folder. The `wozmod` folder takes about 3.1 GB,
+1.6 GB of it the movies.
 
 ## What you need
 
@@ -80,9 +85,12 @@ These programs have been tested to produce files that wozmod accepts:
 
 | Game file | Program |
 |---|---|
-| Warriors Orochi 2 for PSP, `EBOOT.BIN` | pspdecrypt 1.0 |
-| Warriors Orochi for Xbox 360, `default.xex` | xex2ool 0.3.0 |
-| Warriors Orochi 2 for Xbox 360, `default.xex` | xex2ool 0.3.0, or XexTool 7.0 |
+| Warriors Orochi 2 for PSP, `EBOOT.BIN` | pspdecrypt |
+| Warriors Orochi for Xbox 360, `default.xex` | xex2ool or XexTool |
+| Warriors Orochi 2 for Xbox 360, `default.xex` | xex2ool or XexTool |
+
+The installer checks the file a program produces, so any version that gives
+the right file works, and a wrong file is refused.
 
 We do not ship, provide or endorse any tool, and we make no legal claim about
 using one. wozmod only runs the program you choose, on files from your own
@@ -108,15 +116,15 @@ disc images.
    decrypted file instead of a program, open
    **Advanced: use decrypted files instead**.
 4. Click **Install**. wozmod builds the English files on your computer. This
-   takes about two minutes. The window shows the progress and the time left.
+   takes about five minutes, longer on a slow disk. The window shows the progress and the time left.
    Until wozmod starts placing files, **Cancel** stops the install and leaves
    the game folder as it was. When it is done, the window says so.
-5. On Linux, also follow [Extra steps on Linux](#extra-steps-on-linux-steam-or-proton).
+5. On Linux, also follow [Extra steps on Linux](#extra-steps-on-linux).
 
 Then start the game as usual, and choose your languages in
 [Settings](#settings). wozmod remembers your files for next time.
 
-### Extra steps on Linux (Steam or Proton)
+### Extra steps on Linux
 
 Wine ignores wozmod unless you tell it to load it. Add this line to the
 **Launch Options** of the game in Steam:
@@ -150,7 +158,13 @@ Open **Options**, then **Game Settings**. wozmod adds these rows:
 | VOICE LANGUAGE | English or Japanese. The change applies from the next line. |
 | FIELD OF VIEW | 100% (original) to 150%. |
 | FRAME RATE | 60 or 120 FPS in battle. |
-| MOVING CAMERA FIX | ON (default): the right stick turns the camera the same way whether you stand or move. OFF: the original camera. |
+
+In **Options**, then **Graphics**, wozmod changes these rows:
+
+| Row | What it does |
+|---|---|
+| RESOLUTION | Sizes from 1280x720 up to the size of the monitor the game is on. |
+| DISPLAY MODE | WINDOWED, BORDERLESS (a window without a frame that covers the monitor) or FULLSCREEN. |
 
 wozmod keeps these settings in `wozmod/settings.ini`. Your save file does not
 change.
@@ -163,7 +177,7 @@ change.
 - **The game is still in Japanese, and the new settings are missing.** The game
   did not load wozmod. Make sure that `d3d9.dll` is in the same folder as
   `OROCHI_Z.exe`. On Linux, add the launch options from
-  [Extra steps on Linux](#extra-steps-on-linux-steam-or-proton).
+  [Extra steps on Linux](#extra-steps-on-linux).
 - **`wozmod/runtime.log` says "refused: OROCHI_Z.exe is not the stock
   executable".** Your `OROCHI_Z.exe` is not the version that wozmod supports.
   If you installed a different English patch, reinstall the game. Then install
@@ -203,13 +217,13 @@ wozmod install --game "<Musou Orochi Z folder>" \
 - **Version:** `wozmod --version`.
 
 The Linux launch options in
-[Extra steps on Linux](#extra-steps-on-linux-steam-or-proton) apply here too.
+[Extra steps on Linux](#extra-steps-on-linux) apply here too.
 
 ## Build from source
 
-Install [uv](https://docs.astral.sh/uv/), [ffmpeg](https://ffmpeg.org/) and
-[Rust](https://rustup.rs). wozmod needs Python 3.14 or later, which uv
-installs if it is missing. In the repository folder:
+Install [uv](https://docs.astral.sh/uv/) and [ffmpeg](https://ffmpeg.org/),
+and [Rust](https://rustup.rs) for the faster native build. wozmod needs
+Python 3.14 or later, which uv installs if it is missing. In the repository folder:
 
 - `uv run --extra native wozmod install ...` installs, with the options
   above, plus `--lettering` and `--dll` (the two release files, which the
