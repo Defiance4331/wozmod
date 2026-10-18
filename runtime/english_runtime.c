@@ -3457,6 +3457,28 @@ static const u8 mode_slot[3] = {2, 0, 1}, slot_mode[3] = {1, 2, 0};
 static u32 display_mode = MODE_FROM_SAVE, desk_w = 1920, desk_h = 1080;
 static u32 win_w = 1920, win_h = 1080;  /* the window's client size: the output's, the desktop's when borderless */
 static RECT present_to;                 /* borderless: where the output goes on the desktop, its shape kept */
+static HMONITOR monitor_at;             /* the monitor monitor_w x monitor_h was read from; 0: read again */
+static u32 monitor_w, monitor_h;
+
+/* The desktop mode of the monitor the game window is on (the primary's before there is a window): the registry's,
+   which a full-screen mode switch leaves alone, else the current one. Read again when the window changes monitor. */
+static void monitor_mode(u32 *w, u32 *h)
+{
+    HMONITOR monitor = MonitorFromWindow(DISPLAY_WINDOW, MONITOR_DEFAULTTOPRIMARY);
+    if (monitor != monitor_at) {
+        MONITORINFOEXW info;
+        DEVMODEW mode;
+        info.cbSize = sizeof info, mode.dmSize = sizeof mode, mode.dmDriverExtra = 0;
+        monitor_w = (u32)GetSystemMetrics(SM_CXSCREEN), monitor_h = (u32)GetSystemMetrics(SM_CYSCREEN);
+        if (GetMonitorInfoW(monitor, (MONITORINFO *)&info)
+            && (EnumDisplaySettingsW(info.szDevice, ENUM_REGISTRY_SETTINGS, &mode)
+                || EnumDisplaySettingsW(info.szDevice, ENUM_CURRENT_SETTINGS, &mode)))
+            monitor_w = mode.dmPelsWidth, monitor_h = mode.dmPelsHeight;
+        monitor_at = monitor;
+        note("display: monitor mode", monitor_w << 16 | monitor_h);
+    }
+    *w = monitor_w, *h = monitor_h;
+}
 
 static long __stdcall present(void *device, const void *from, const void *to, void *window, const void *dirty)
 {
@@ -3498,6 +3520,7 @@ static long __stdcall reset(void *device, void *params)
 #endif
     hires_detach();
     result = real_reset(device, params);
+    monitor_at = 0;  /* a Reset can follow a desktop mode change */
 #ifdef ENRT_LOG
     note("reset: result", (u32)result);
     note("display: reset back buffer", ((u32 *)params)[0] << 16 | ((u32 *)params)[1]);
@@ -4460,11 +4483,12 @@ static void size_name(WCHAR *out, u32 i)
     }
 }
 
-/* settings.ini's size, else the desktop's when listed, else 1920x1080. */
+/* settings.ini's size, else the desktop's when listed, else 1920x1080; past the monitor, the largest that fits it.
+   Loading writes nothing: settings.ini keeps its size until the player changes a display setting. */
 static void display_load(void)
 {
     WCHAR name[MAX_PATH], value[16], want[16];
-    u32 i, n;
+    u32 i, n, mw, mh;
     int at;
     desk_w = (u32)GetSystemMetrics(SM_CXSCREEN), desk_h = (u32)GetSystemMetrics(SM_CYSCREEN);
     at = display_size_index(desk_w, desk_h);
@@ -4482,7 +4506,8 @@ static void display_load(void)
             ;
         size_label[i] = size_text[i];
     }
-    display_size(at < 0 ? DEFAULT_SIZE : (u32)at);
+    monitor_mode(&mw, &mh);
+    display_size(display_size_clamp(at < 0 ? DEFAULT_SIZE : (u32)at, mw, mh));
 }
 
 static void display_save(void)
@@ -4668,12 +4693,16 @@ static int display_hook(u32 id, struct frame *f, u32 *replace)
             r[1] = r[1] * (int)fit.scale + fit.y, r[3] = r[3] * (int)fit.scale + fit.y;
         }
         return 1;
-    case 96:  /* can the display take w x h: full screen asks the adapter (stock); a window only has to fit the
-                 desktop, and borderless scales any size onto it */
-        if (*(const u32 *)(f->ecx + 0x194)) {
-            f->eax = display_mode == BORDERLESS || (f->arg[0] <= desk_w && f->arg[1] <= desk_h), *replace = 1;
-        }
+    case 96: {  /* can the display take w x h: never past the desktop of the monitor the window is on; full screen also
+                   asks the adapter (stock) */
+        u32 mw, mh;
+        monitor_mode(&mw, &mh);
+        if (!display_size_fits(f->arg[0], f->arg[1], mw, mh))
+            f->eax = 0, *replace = 1;
+        else if (*(const u32 *)(f->ecx + 0x194))
+            f->eax = 1, *replace = 1;
         return 1;
+    }
     case 97:  /* the window was made at the output's size, from the same calls that stored SCREEN: the layout's */
         SCREEN_W = fit.layout_w, SCREEN_H = fit.layout_h;
         return 1;

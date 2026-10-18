@@ -1,7 +1,7 @@
 #ifndef WOZMOD_DISPLAY_FIT_H
 #define WOZMOD_DISPLAY_FIT_H
 
-/* The display sizes the Options list offers, each shown only when the monitor reports it. */
+/* The display sizes the Options list offers, each shown only when it fits the monitor the game is on. */
 static const unsigned short display_sizes[][2] = {
     {1280, 720}, {1280, 800}, {1366, 768}, {1440, 900}, {1600, 900}, {1680, 1050}, {1920, 1080}, {1920, 1200},
     {2560, 1080}, {2560, 1440}, {2560, 1600}, {3200, 1800}, {3440, 1440}, {3840, 1080}, {3840, 1600},
@@ -74,6 +74,25 @@ static inline void display_packet_shift(unsigned int *p, unsigned int qwc, int d
             break;
         }
     }
+}
+
+/* Whether w x h fits a monitor whose desktop is mw x mh: the list offers no size larger than the monitor. */
+static inline int display_size_fits(unsigned int w, unsigned int h, unsigned int mw, unsigned int mh)
+{
+    return w <= mw && h <= mh;
+}
+
+/* Size i when it fits the monitor, else the listed size with the most pixels that does (the first, when none does). */
+static inline unsigned int display_size_clamp(unsigned int i, unsigned int mw, unsigned int mh)
+{
+    unsigned int k, best = 0, most = 0;
+    if (display_size_fits(display_sizes[i][0], display_sizes[i][1], mw, mh))
+        return i;
+    for (k = 0; k < DISPLAY_SIZES; k++)
+        if (display_size_fits(display_sizes[k][0], display_sizes[k][1], mw, mh)
+            && (unsigned int)display_sizes[k][0] * display_sizes[k][1] > most)
+            best = k, most = (unsigned int)display_sizes[k][0] * display_sizes[k][1];
+    return best;
 }
 
 /* The list index of w x h, or -1. */

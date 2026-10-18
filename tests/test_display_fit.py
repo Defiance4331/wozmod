@@ -18,6 +18,8 @@ def display(c_library):
 #include "display_fit.h"
 struct display_fit fit(unsigned int w, unsigned int h) { return display_fit(w, h); }
 int size_index(unsigned int w, unsigned int h) { return display_size_index(w, h); }
+int fits(unsigned int w, unsigned int h, unsigned int mw, unsigned int mh) { return display_size_fits(w, h, mw, mh); }
+unsigned int clamp(unsigned int i, unsigned int mw, unsigned int mh) { return display_size_clamp(i, mw, mh); }
 void shift(unsigned int *p, unsigned int qwc, int d) { display_packet_shift(p, qwc, d); }
 void clip(unsigned int w, unsigned int h, unsigned int *c) { struct display_fit f = display_fit(w, h); display_clip(&f, w, h, c); }
 unsigned int sizes(unsigned short *out) { unsigned int i; for (i = 0; i < DISPLAY_SIZES; i++) {
@@ -70,6 +72,41 @@ def test_the_list_is_the_decided_one(display):
     assert listed == decided
     assert sorted(display.size_index(w, h) for w, h in decided) == list(range(len(decided)))
     assert display.size_index(1600, 1200) == -1
+
+
+# Hand-listed: what the Resolution row offers on each monitor (desktop mode), and where a saved size lands there.
+OFFERED = {
+    (1920, 1080): {(1280, 720), (1280, 800), (1366, 768), (1440, 900), (1600, 900), (1680, 1050), (1920, 1080)},
+    (2560, 1440): {(1280, 720), (1280, 800), (1366, 768), (1440, 900), (1600, 900), (1680, 1050), (1920, 1080),
+                   (1920, 1200), (2560, 1080), (2560, 1440)},
+    (1280, 720): {(1280, 720)},
+}
+LANDS = {  # (saved size, monitor): the size in use
+    ((3840, 2160), (1920, 1080)): (1920, 1080),
+    ((5120, 2160), (2560, 1440)): (2560, 1440),
+    ((3440, 1440), (2560, 1440)): (2560, 1440),
+    ((2560, 1080), (1920, 1200)): (1920, 1200),
+    ((1920, 1080), (1024, 768)): (1280, 720),
+    ((2560, 1440), (3840, 2160)): (2560, 1440),
+    ((5120, 2160), (4000, 1500)): (3440, 1440),  # 3840x1080 is listed later, with fewer pixels
+}
+
+
+def test_the_resolution_row_offers_only_sizes_the_monitor_holds(display):
+    """Bug: a < that drops the monitor's own size, width and height swapped, or a saved size past the monitor kept
+    (or swapped for the last listed size that fits rather than the largest)."""
+    out = (ctypes.c_ushort * 64)()
+    listed = [(out[2 * i], out[2 * i + 1]) for i in range(display.sizes(out))]
+    wrong = {}
+    for monitor, expected in OFFERED.items():
+        offered = {size for size in listed if display.fits(*size, *monitor)}
+        if offered != expected:
+            wrong[monitor] = offered ^ expected
+    for (saved, monitor), expected in LANDS.items():
+        landed = listed[display.clamp(listed.index(saved), *monitor)]
+        if landed != expected:
+            wrong[saved, monitor] = landed
+    assert not wrong
 
 
 #  size          clip in layout px (x0, x1, y0, y1)   in output px
