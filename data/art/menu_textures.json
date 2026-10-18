@@ -12466,6 +12466,17 @@
             670
           ],
           "left": false
+        },
+        {
+          "look": "value_dim",
+          "text": "MAX",
+          "into": [
+            0,
+            680,
+            200,
+            712
+          ],
+          "left": false
         }
       ],
       "source": "authored",
@@ -12533,6 +12544,10 @@
         [
           0,
           200
+        ],
+        [
+          30,
+          170
         ]
       ]
     },
@@ -12717,6 +12732,17 @@
             670
           ],
           "left": false
+        },
+        {
+          "look": "value_lit",
+          "text": "MAX",
+          "into": [
+            0,
+            680,
+            200,
+            712
+          ],
+          "left": false
         }
       ],
       "source": "authored",
@@ -12784,6 +12810,10 @@
         [
           0,
           200
+        ],
+        [
+          30,
+          170
         ]
       ]
     },
@@ -14804,13 +14834,73 @@
       "entry": 4080,
       "item": 40,
       "texture": 0,
-      "donor": [
-        17,
-        36,
-        0
+      "clear": true,
+      "draw": [
+        {
+          "look": "value_dim",
+          "text": "ON",
+          "into": [
+            0,
+            8,
+            99,
+            40
+          ],
+          "left": false
+        },
+        {
+          "look": "value_dim",
+          "text": "donor:38cca6bea010af8a",
+          "into": [
+            0,
+            50,
+            99,
+            82
+          ],
+          "left": false
+        }
       ],
-      "count": 2,
-      "source": "wo1-pc",
+      "source": "authored",
+      "slots": [
+        [
+          0,
+          99
+        ],
+        [
+          0,
+          99
+        ]
+      ]
+    },
+    {
+      "entry": 4080,
+      "item": 41,
+      "texture": 0,
+      "clear": true,
+      "draw": [
+        {
+          "look": "value_lit",
+          "text": "ON",
+          "into": [
+            0,
+            8,
+            99,
+            40
+          ],
+          "left": false
+        },
+        {
+          "look": "value_lit",
+          "text": "donor:38cca6bea010af8a",
+          "into": [
+            0,
+            50,
+            99,
+            82
+          ],
+          "left": false
+        }
+      ],
+      "source": "authored",
       "slots": [
         [
           0,
@@ -19005,130 +19095,6 @@
           ]
         }
       ]
-    },
-    "value_dim": {
-      "fill": "pale",
-      "least": 10,
-      "rows": [
-        {
-          "donor": [
-            501,
-            13,
-            0
-          ],
-          "texts": [
-            "ON",
-            null,
-            "LOW",
-            "MEDIUM",
-            "HIGH",
-            "CUSTOMIZE",
-            "donor:6fb8716050c19257",
-            null,
-            "MANY",
-            "donor:a9fb8458da311aee",
-            "MEDIUM",
-            null
-          ]
-        }
-      ],
-      "synth": {
-        "R": {
-          "like": "A"
-        },
-        "L": {
-          "like": "E"
-        },
-        "V": {
-          "parts": [
-            [
-              "W",
-              [
-                -4,
-                -26,
-                11,
-                6
-              ]
-            ],
-            [
-              "W",
-              [
-                23,
-                -26,
-                38,
-                6
-              ],
-              -14,
-              0
-            ]
-          ],
-          "like": "A",
-          "right": -5
-        }
-      },
-      "ink": 1000
-    },
-    "value_lit": {
-      "fill": "light",
-      "least": 40,
-      "rows": [
-        {
-          "donor": [
-            501,
-            14,
-            0
-          ],
-          "texts": [
-            "ON",
-            null,
-            "LOW",
-            "MEDIUM",
-            "HIGH",
-            "CUSTOMIZE",
-            "donor:6fb8716050c19257",
-            null,
-            "MANY",
-            "donor:a9fb8458da311aee",
-            "MEDIUM",
-            null
-          ]
-        }
-      ],
-      "synth": {
-        "R": {
-          "like": "A"
-        },
-        "L": {
-          "like": "E"
-        },
-        "V": {
-          "parts": [
-            [
-              "W",
-              [
-                -4,
-                -26,
-                11,
-                6
-              ]
-            ],
-            [
-              "W",
-              [
-                23,
-                -26,
-                38,
-                6
-              ],
-              -14,
-              0
-            ]
-          ],
-          "like": "A",
-          "right": -5
-        }
-      },
-      "ink": 1000
     },
     "sound": {
       "fill": "opaque",

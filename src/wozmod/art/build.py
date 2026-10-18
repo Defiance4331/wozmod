@@ -1339,7 +1339,8 @@ def payload(target, edit: dict, donors: dict, package) -> bytes:
                 piece, top = donors["faces"][spec["face"]].render(spec["text"], mark)
             elif "look" in spec:  # the value face at 1x
                 with tempfile.TemporaryDirectory() as tmp:
-                    piece = header_label(spec["text"], 1, Path(tmp) / "label.png", VALUE_RASTER, "--look", spec["look"])[0]
+                    piece = value_tinted(value_label(spec["text"], 1, Path(tmp) / "label.png", spec["look"])[0],
+                                         spec["look"])
             else:
                 piece = source_image(spec, donors, stock).crop(spec.get("box"))
             if "key" in spec:
@@ -1550,7 +1551,7 @@ HIRES = [(4069, 2, 2, 512, 1596, 42, 19), (4079, 43, 2, 512, 256, 35, 0), (4085,
          (4085, 5, 2, 1024, 756, 84, 0), (4085, 6, 2, 1024, 756, 84, 0), (4085, 7, 2, 1024, 756, 84, 0),
          (4085, 8, 2, 1024, 756, 84, 0),
          
-         (4069, 14, 2, 256, 672, 42, 0), (4069, 15, 2, 256, 672, 42, 0), (4077, 20, 2, 256, 256, 256, 0),
+         (4069, 14, 2, 256, 714, 42, 0), (4069, 15, 2, 256, 714, 42, 0), (4077, 20, 2, 256, 256, 256, 0),
          (4077, 21, 2, 256, 256, 256, 0), (4077, 22, 2, 256, 256, 256, 0), (4094, 6, 2, 256, 256, 256, 0),
          (4094, 7, 2, 256, 256, 256, 0), (4094, 8, 2, 256, 256, 256, 0), (4079, 20, 2, 128, 128, 128, 0),
          (4079, 21, 2, 128, 128, 128, 0), (4080, 40, 2, 128, 84, 42, 0),
@@ -1582,9 +1583,11 @@ VALUE = {(4069, 14): "value_dim", (4069, 15): "value_lit", (4077, 20): "choice_d
 VALUE_LEVELS = {"value_dim": (156, 49), "value_lit": (253, 49), "choice_dim": (201, 48), "choice_lit": (251, 53),
                 "confirm_dim": (205, 82), "confirm_lit": (254, 82)}
 VALUE_RASTER = "wozmod.fonts.valueraster"
+# The Options values are lettered in the option labels' face, white art multiplied by the quad colours the
+# runtime tints its own values with (runtime value_dim and value_lit: R, G, B, 0x80 = 1).
+VALUE_TINT = {"value_dim": (0x4E, 0x4E, 0x4E), "value_lit": (0x7F, 0x77, 0x4E)}
 VALUE_TEXTS = {(15, 9, 0): ["donor:27e88b861fa91ee1", "donor:db2cb3fe28e2c54f", "donor:0e24076baf990d55", "donor:dc1a2f9d7bd77176"], (16, 20, 0): ["donor:f9171164593756e5", "donor:23794d91c53ae875"]}
-VALUE_TEXTS |= {(17, 36, 0): ["donor:e8a01133b1351e5f", "donor:38cca6bea010af8a"], (17, 37, 0): ["donor:e8a01133b1351e5f", "donor:38cca6bea010af8a"], (15, 10, 0): VALUE_TEXTS[(15, 9, 0)],
-                (16, 21, 0): VALUE_TEXTS[(16, 20, 0)]}
+VALUE_TEXTS |= {(15, 10, 0): VALUE_TEXTS[(15, 9, 0)], (16, 21, 0): VALUE_TEXTS[(16, 20, 0)]}
 
 DARK = {**{(4080, i): "pause" for i in range(6, 34)}, **{(4060, i): "help" for i in range(2, 14)},
         (4069, 0): "help", (4069, 1): "help", (4074, 10): "help", (4069, 19): "controls"}
@@ -1641,8 +1644,7 @@ CONDENSED, CONDENSED_MIN = 0.75, 4.0
 # them, tinted, where the stock code draws no row). Labels first, then the values; every text is centred in the
 # 310 px quad the stock labels use.
 OPTION_ROWS = ["TEXT LANGUAGE", "VOICE LANGUAGE", "FIELD OF VIEW", "FRAME RATE", "MOVING CAMERA FIX", "ENGLISH",
-               "JAPANESE", "60 FPS", "120 FPS", "FULLSCREEN", "WINDOWED", "BORDERLESS",
-               *(f"< {v}% >" for v in range(100, 151, 5))]
+               "JAPANESE", "60 FPS", "120 FPS", "FULLSCREEN", "WINDOWED", "BORDERLESS"]
 OPTION_LABELS = 5
 OPTION_W, OPTION_BAND, OPTION_ROOM = 310, 42, 300
 OPTION_BASELINES = (34, 31)  # labels, and values 3 px higher as the stock values sit against the stock labels
@@ -1929,6 +1931,15 @@ def _render_header_label(text: str, scale: int, out: Path, raster: str = HEADER_
                          check=True, capture_output=True, text=True, env=font_environment())
     return Image.open(out).convert("RGBA"), json.loads(run.stdout.splitlines()[-1])
 
+def value_label(text: str, scale: int, out: Path, look: str, *ref: str) -> tuple:
+    """A value in its look's face: the Options values in the option labels' (white, tinted after any squeeze)."""
+    if look in VALUE_TINT:
+        return button_label(text, scale, out, TRACK_AUTHORED)
+    return header_label(text, scale, out, VALUE_RASTER, "--look", look, *ref)
+
+def value_tinted(label: Image.Image, look: str | None) -> Image.Image:
+    return tinted(label, [c / 0x80 for c in VALUE_TINT[look]]) if look in VALUE_TINT else label
+
 def value_cover(look: str):
 
     peak, ring = VALUE_LEVELS[look]
@@ -2029,14 +2040,6 @@ def vector_art(edit: dict, served: Image.Image, texts: list, scale: int, window=
                     wider = Image.new("RGBA", ((served.width + minimum) * scale, art.height))
                     wider.info.update(art.info)
                     art = wider
-        value_labels = {}
-        if (edit["entry"], edit["item"]) in {(4069, 14), (4069, 15)}:
-            for text in set(texts):
-                value_labels[text] = header_label(text, scale, Path(tmp) / f"value-{text}.png", VALUE_RASTER,
-                                                 "--look", edit["look"])
-            for label, metrics in value_labels.values():
-                fill = row_geometry(label, value_cover(edit["look"]))
-                metrics["fill"] = fill[:2]
         for k, ((top, bottom), text) in enumerate(zip(edit.get("bands") or [(0, served.height)], texts, strict=True)):
             band_1x = served.crop((0, top, served.width, bottom))
             if text is None:  
@@ -2064,8 +2067,7 @@ def vector_art(edit: dict, served: Image.Image, texts: list, scale: int, window=
             ref = ["--ref", "{}.{}".format(*piece["donor"][:2])] if "donor" in piece else []
             if look or style:  
                 if look:
-                    label, metrics = value_labels[text] if text in value_labels else header_label(
-                        text, scale, Path(tmp) / f"{k}.png", VALUE_RASTER, "--look", look, *ref)
+                    label, metrics = value_label(text, scale, Path(tmp) / f"{k}.png", look, *ref)
                 else:
                     options = menu_render_options(render_entry, render_item, k, piece, style,
                                                   destination=(edit["entry"], edit["item"]))
@@ -2075,8 +2077,9 @@ def vector_art(edit: dict, served: Image.Image, texts: list, scale: int, window=
                 label, metrics = squeezed_label(label, metrics, fit, scale, squeeze)
                 if "tint" in edit:
                     label = tinted(label, edit["tint"])
-                if look and (edit["entry"], edit["item"]) in {(4069, 14), (4069, 15)}:
-                    geometry = (geometry[0], geometry[1], 29)
+                label = value_tinted(label, look)
+                if look in VALUE_TINT:  # on the baseline the runtime's own values keep
+                    geometry = (geometry[0], geometry[1], OPTION_BASELINES[1])
                 if style == "attributes":
 
                     geometry = (geometry[0], geometry[1], 23)

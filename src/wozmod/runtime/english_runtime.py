@@ -126,6 +126,7 @@ ALWAYS_HOOKS = [
     (0x5CCFE0, "83ec10 8b442414", 94, None),   # 2D clip from the packets (stdcall: x0, x1, y0, y1 in layout px)
     (0x60A5C0, "83ec40 8b442444", 95, None),   # a quad in raw px (thiscall: corners, uvs, colour): movies map too
     (0x5CAAD0, "83ec10 55 8b6c241c", 96, 8),   # can the display take a size (thiscall: w, h)
+    (0x56CB7F, "53 53 83c60a", 79, None),       # Graphics resolution value, its font set (mid-function)
     (0x5CBFE4, "89442414 8d442428", 97, None),  # window made: SCREEN stored with the window's size (mid-function)
 ]
 # ENRT_LOG and ENRT_TEST builds only.

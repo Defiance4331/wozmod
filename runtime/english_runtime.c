@@ -1754,19 +1754,40 @@ static u32 fov = FOV_MIN;
 static const char *const fov_label[2] = {"FIELD OF VIEW", "\x8e\x8b\x96\xec\x8a\x70"};
 
 
+/* A stepped number's arrows beside its value at x, only toward values it can still step to. */
+static void arrows(const char *value, u32 x, u32 y, int lower, int higher)
+{
+    if (lower)
+        draw("<", x - measure("< "), y, 0);
+    if (higher)
+        draw(">", x + measure(value) + measure(" "), y, 0);
+}
+
+/* The field of view centred on centre, in a row whose 42-high band starts at y, in the plain text the stock
+   Resolution value is drawn in (a 24 cell, palette 5, no shadow). */
+static void fov_value(u32 centre, u32 y)
+{
+    u32 mode = FONT_MODE, colour = FONT_COLOUR;
+    u8 w = FONT_CELL[0], h = FONT_CELL[1], alpha = FONT_ALPHA;
+    char value[] = "100%";
+    value[0] = '0' + fov / 100, value[1] = '0' + fov / 10 % 10, value[2] = '0' + fov % 10;
+    centre -= measure(value) / 2, y += (42 - LABEL_CELL) / 2;
+    GAME_FONT(LABEL_CELL, LABEL_CELL, 5);
+    draw(value, centre, y, 0);
+    arrows(value, centre, y, fov > FOV_MIN, fov < FOV_MAX);
+    FONT_CELL[0] = w, FONT_CELL[1] = h, FONT_MODE = mode, FONT_COLOUR = colour, FONT_ALPHA = alpha;
+}
+
 static void fov_row(u32 x, u32 y, int chosen)
 {
     u32 mode = FONT_MODE, colour = FONT_COLOUR;
     u8 w = FONT_CELL[0], h = FONT_CELL[1], alpha = FONT_ALPHA;
-    char value[] = "< 100% >";
     if ((int)x < 0)
         return;
-    value[2] = '0' + fov / 100, value[3] = '0' + fov / 10 % 10, value[4] = '0' + fov % 10;
-    y += (42 - LABEL_CELL) / 2;
-    shadowed(fov_label[!english], x + LABEL_CENTRE - measure(fov_label[!english]) / 2, y, LABEL_CELL,
-             chosen ? &chosen_colour : &label_colour);
-    shadowed(value, x + VALUE_CENTRE + VALUE_STEP / 2 - measure(value) / 2, y, LABEL_CELL, &lit_colour);
+    shadowed(fov_label[!english], x + LABEL_CENTRE - measure(fov_label[!english]) / 2, y + (42 - LABEL_CELL) / 2,
+             LABEL_CELL, chosen ? &chosen_colour : &label_colour);
     FONT_CELL[0] = w, FONT_CELL[1] = h, FONT_MODE = mode, FONT_COLOUR = colour, FONT_ALPHA = alpha;
+    fov_value(x + VALUE_CENTRE + VALUE_STEP / 2, y);
 }
 
 
@@ -3635,7 +3656,7 @@ static u32 english_hook(u32 id, struct frame *f)
 /* The added Game Settings rows, drawn from the option sheet (build.OPTION_ROWS) the way the stock rows are: a 310x42
    quad per text, white art tinted by the quad colour. Bands: 0-4 labels (text, voice, field of view, frame rate,
    moving camera fix), 5-8 values (English, Japanese, 60, 120), 9-11 the display modes (fullscreen, windowed,
-   borderless), 12 on the field of view numbers from 100. ON and OFF come from the stock value sheets instead. */
+   borderless). ON and OFF come from the stock value sheets instead, and the field of view is plain text. */
 #define OPTION_W 310
 #define OPTION_BAND 42
 #define OPTION_SCALE 2
@@ -3648,7 +3669,6 @@ static u32 english_hook(u32 id, struct frame *f)
    build.VALUE_MARGIN) at its natural width. */
 #define DISPLAY_MODE_FIRST (STOCK_VALUE_W / 2)
 #define DISPLAY_MODE_PITCH 195
-#define BAND_FOV 12
 #define VALUE_NEXT_LANGUAGE 563
 #define VALUE_NEXT_FPS 557
 #define FOV_CENTRE (VALUE_CENTRE + 70)
@@ -3692,7 +3712,7 @@ static void option_row(u32 row, u32 x, u32 y)
         label = 4, chosen = !moving_fix;
     option_text(label, x + LABEL_LEFT, y, SETTINGS_CURSOR == 3 + row ? cursor_tint : idle_tint);
     if (row == rows)
-        return option_text(BAND_FOV + (fov - FOV_MIN) / FOV_STEP, x + FOV_CENTRE - OPTION_W / 2, y, value_lit);
+        return fov_value(x + FOV_CENTRE, y);
     if (row == rows + 2) {  /* the stock OFF and ON, coloured lit or dim in their sheets, as the stock rows draw them */
         if (value_sheet[0] && value_sheet[1]) {
             sheet_text(value_sheet[chosen == 1], 1, STOCK_VALUE_W, x + STOCK_VALUE_X, y, untinted);
@@ -4277,10 +4297,28 @@ static int layout_store(u32 ret)
     return ret == 0x5CB464 || ret == 0x5CB46C || ret == 0x5CB64C || ret == 0x5CB8D2 || ret == 0x5CB8DA;
 }
 
+/* Whether the display can take size i, as the stock resolution step asks before it moves to one (hook 96). */
+static int size_available(u32 i)
+{
+    return ((int (__thiscall *)(void *, u32, u32))0x5CAAD0)((void *)MAIN_DISPLAY, display_sizes[i][0],
+                                                            display_sizes[i][1]);
+}
+
 static int display_hook(u32 id, struct frame *f, u32 *replace)
 {
     float *v;
     switch (id) {
+    case 79:  /* Graphics: the resolution value (ebp), its font set, about to be drawn at the row's x + 0x126 (edi) and
+                 y + 10 (esi): its arrows beside it. The screen's size index is at [[esp+0x10]+0x40] before the font
+                 call's 12 argument bytes, so [[esp+0x1C]+0x40] here. */
+        {
+            u32 at = *(const u32 *)(*(const u32 *)(f->esp + 0x1C) + 0x40), lower = 0, higher = 0, i;
+            for (i = 0; i < DISPLAY_SIZES; i++)
+                if (i != at && size_available(i))
+                    lower |= i < at, higher |= i > at;
+            arrows((const char *)f->ebp, f->edi + 0x126, f->esi + 10, lower, higher);
+        }
+        return 1;
     case 75:  /* resolution index */
         f->eax = size_at, *replace = 1;
         return 1;
