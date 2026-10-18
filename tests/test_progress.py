@@ -8,6 +8,7 @@ import threading
 import time
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import get_context
+from pathlib import Path
 
 import pytest
 
@@ -59,10 +60,12 @@ def test_time_left_follows_the_rate_so_far(monkeypatch):
     assert progress.seconds_left() == pytest.approx(100.0 * (1 - done) / done)
 
 
-def _count_up(stage: str) -> None:
+def _report_until_seen(stage: str, seen: Path) -> None:
+    # The stage stays open until the parent shows its event: a finished stage drops later events by design.
     reporting.report(stage, "converting voice clips", 0.5, (2, 4))
-    time.sleep(0.4)
-    reporting.report(stage, "converting voice clips", 1.0, (4, 4))
+    deadline = time.monotonic() + 10
+    while not seen.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
 
 
 def _until_cancelled(stage: str) -> None:
@@ -71,21 +74,27 @@ def _until_cancelled(stage: str) -> None:
         time.sleep(0.02)
 
 
-def _pool(worker, stages):
+def _pool(worker, stages, *args):
     context = get_context("spawn")
     events, stop = context.Queue(), context.Event()
     pool = ProcessPoolExecutor(len(stages), mp_context=context, initializer=installer._worker_start,
                                initargs=(events, stop, None))
-    return pool, {pool.submit(worker, stage): stage for stage in stages}, events, stop
+    return pool, {pool.submit(worker, stage, *args): stage for stage in stages}, events, stop
 
 
-def test_events_from_worker_processes_reach_the_progress():
+def test_events_from_worker_processes_reach_the_progress(tmp_path):
     # Bug: the worker's events stay in the worker (no queue attached), so the voices line never moves.
-    progress = Progress()
-    pool, futures, events, stop = _pool(_count_up, ["voices", "art"])
+    seen = tmp_path / "seen"
+
+    def show(progress):
+        if progress.stages["voices"].text == "converting voice clips, 2 of 4":
+            seen.touch()
+
+    progress = Progress(show)
+    pool, futures, events, stop = _pool(_report_until_seen, ["voices", "art"], seen)
     with pool:
         installer._run_stages(pool, futures, events, stop, progress)
-    assert progress.stages["voices"].text == "converting voice clips, 4 of 4"
+    assert seen.exists()
     assert progress.stages["art"].finished is not None
 
 
