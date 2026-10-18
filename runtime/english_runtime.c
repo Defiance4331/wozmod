@@ -4252,6 +4252,10 @@ static void display_save(void)
 
 /* The game's window calls (its imports): borderless keeps the window frameless over the whole desktop. */
 #define POPUP_STYLE 0x90080000u  /* WS_POPUP | WS_VISIBLE | WS_SYSMENU, the stock full-screen style: Alt+F4 closes */
+/* WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE: the game makes its window with
+   WS_EX_CLIENTEDGE, a 2 px sunken frame that only an exclusive full-screen device used to strip */
+#define EDGE_STYLES 0x00020301u
+static DWORD window_ex = 0x200;  /* the extended style the game made its window with, for windowed */
 static LONG (WINAPI *real_set_long)(HWND, int, LONG);
 static BOOL (WINAPI *real_set_pos)(HWND, HWND, int, int, int, int, UINT);
 static HWND (WINAPI *real_create_window)(DWORD, LPCSTR, LPCSTR, DWORD, int, int, int, int, HWND, HMENU, HINSTANCE, LPVOID);
@@ -4260,6 +4264,8 @@ static LONG WINAPI set_long(HWND window, int index, LONG value)
 {
     if (display_mode == BORDERLESS && index == GWL_STYLE)
         value = (LONG)POPUP_STYLE;
+    if (display_mode == BORDERLESS && index == GWL_EXSTYLE)
+        value &= ~(LONG)EDGE_STYLES;
     return real_set_long(window, index, value);
 }
 
@@ -4286,8 +4292,10 @@ static BOOL WINAPI set_placement(HWND window, const WINDOWPLACEMENT *at)
 static HWND WINAPI create_window(DWORD ex, LPCSTR cls, LPCSTR title, DWORD style, int x, int y, int w, int h,
                                  HWND parent, HMENU menu, HINSTANCE instance, LPVOID param)
 {
+    if (!parent)
+        window_ex = ex;
     if (display_mode == BORDERLESS)
-        style = POPUP_STYLE, x = y = 0, w = (int)desk_w, h = (int)desk_h;
+        style = POPUP_STYLE, ex &= ~EDGE_STYLES, x = y = 0, w = (int)desk_w, h = (int)desk_h;
     return real_create_window(ex, cls, title, style, x, y, w, h, parent, menu, instance, param);
 }
 
@@ -4299,6 +4307,7 @@ static void display_restyle(u32 was)
         return;
     real_set_long(window, GWL_STYLE, display_mode == BORDERLESS ? (LONG)POPUP_STYLE
                   : *(LONG *)(MAIN_DISPLAY + 0x190));  /* the game's saved windowed style */
+    real_set_long(window, GWL_EXSTYLE, (LONG)(display_mode == BORDERLESS ? window_ex & ~EDGE_STYLES : window_ex));
     if (display_mode == BORDERLESS)
         real_set_pos(window, 0, 0, 0, (int)desk_w, (int)desk_h, SWP_NOZORDER | SWP_FRAMECHANGED);
     else  /* the game's own fit: client size and centring */
