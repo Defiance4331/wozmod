@@ -27,6 +27,10 @@ route = "game-settings"
 name = "options-graphics"
 route = "options-graphics"
 
+  # the device is windowed in windowed and borderless: needs a log build; run once per display.mode setting
+  [[screen.assert]]
+  kind = "device_matches_mode"
+
   [[screen.assert]]
   kind = "text_has_ink"
   text = { caller = "0x56cb92" }

@@ -3260,6 +3260,7 @@ static long __stdcall reset(void *device, void *params)
 #ifdef ENRT_LOG
     note("reset: result", (u32)result);
     note("display: reset back buffer", ((u32 *)params)[0] << 16 | ((u32 *)params)[1]);
+    note("display: reset windowed", ((u32 *)params)[8]);
     dump_after = 120;
 #endif
     if (result >= 0)
@@ -4370,8 +4371,10 @@ static int display_hook(u32 id, struct frame *f, u32 *replace)
     case 101:  /* the real height (stock: from the save's index byte, not the index getter) */
         f->eax = out_h, *replace = 1;
         return 1;
-    case 88:  /* full-screen row: the display mode */
-        f->eax = display_mode == MODE_FROM_SAVE ? WINDOWED_BYTE != 0 : display_mode, *replace = 1;
+    case 88:  /* the display mode: the Graphics row reads all three, but the display setup (0x5CB8DD, 0x5CBB2D) tests
+                 its windowed flag as mode == 1, so borderless (2) would make an exclusive full-screen device */
+        f->eax = display_mode == MODE_FROM_SAVE ? WINDOWED_BYTE != 0
+               : f->ret == 0x5CB8E2 || f->ret == 0x5CBB32 ? display_mode != 0 : display_mode, *replace = 1;
         return 1;
     case 89:
         if (f->ret != 0x47C981 && f->arg[0] < 3 && f->arg[0] != display_mode) {

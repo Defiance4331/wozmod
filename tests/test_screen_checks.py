@@ -356,3 +356,13 @@ def test_checks_measure_the_centred_16_9_area_of_a_wider_or_taller_capture(size,
     ImageDraw.Draw(img).rectangle((x, y, x + w - 1, y + h - 1), fill=(90, 90, 90))
     cropped = sc.layout_area(img)
     assert cropped.size == (w, h) and cropped.getextrema() == ((90, 90),) * 3
+
+
+def test_borderless_fails_when_its_device_is_full_screen():
+    """Bug: borderless reached the display setup as mode 2, read as full screen, so the device was exclusive and
+    Alt+Tab minimised the game."""
+    full_screen_device = "display: device windowed\r\ndisplay: reset windowed 0x00000001\r\n"
+    windowed_device = "display: device windowed 0x00000001\r\ndisplay: reset windowed 0x00000001\r\n"
+    assert not sc.device_matches_mode(full_screen_device, "[display]\nmode=borderless\n").ok
+    assert sc.device_matches_mode(windowed_device, "[display]\nmode=borderless\n").ok
+    assert sc.device_matches_mode("display: device windowed\r\n", "[display]\nmode=fullscreen\n").ok

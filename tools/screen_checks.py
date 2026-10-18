@@ -526,6 +526,19 @@ def text_on_one_line(screen: dict, img: Image.Image, text: dict | None, level: f
     return Check(not any(l["off"] for l in lines), {"level": level, "lines": lines})
 
 
+def device_matches_mode(log: str, settings: str) -> Check:
+    """Every D3D device the game made or reset is windowed unless settings.ini says fullscreen (a log build's
+    runtime.log). Borderless once reached the game's display setup as mode 2, which it reads as full screen."""
+    mode = re.search(r"^mode=(\w+)", settings, re.M)
+    if not mode:
+        return Check(False, {"error": "settings.ini names no display mode"})
+    want = int(mode.group(1).lower() != "fullscreen")
+    # note() leaves out a zero value
+    got = [int(v or "0", 16) for v in re.findall(r"^display: (?:device|reset) windowed(?: 0x([0-9a-f]+))?\r?$",
+                                                    log, re.M)]
+    return Check(bool(got) and all(g == want for g in got), {"mode": mode.group(1), "want": want, "windowed": got})
+
+
 # kind -> (function, needs the capture)
 ASSERTIONS: dict[str, tuple[Callable[..., Check], bool]] = {
     "text_clear_of_quad": (text_clear_of_quad, False),
@@ -542,7 +555,9 @@ ASSERTIONS: dict[str, tuple[Callable[..., Check], bool]] = {
     "stock_layout": (stock_layout, True),
     "text_stems_even": (text_stems_even, True),
     "text_on_one_line": (text_on_one_line, True),
+    "device_matches_mode": (device_matches_mode, False),
 }
+RUN_FILES = {"device_matches_mode"}  # read the run's runtime.log and settings.ini, not the screen
 INK_WIDTH = {"text_clear_of_quad", "text_clear_of_text", "text_within_edge"}  # take the capture as `img=`
 SCREEN_KEYS = {"name", "route", "fixture", "battle", "script", "keys", "notice", "wait", "assert"}
 
@@ -596,7 +611,11 @@ def run_spec(screens: list[dict], driver, seen: dict | None = None) -> list[Row]
         for a in sc.get("assert", []):
             params = {k: v for k, v in a.items() if k != "kind"}
             fn, needs_img = ASSERTIONS[a["kind"]]
-            c = fn(data, img, **params) if needs_img else fn(data, **params, **({"img": img} if a["kind"] in INK_WIDTH else {}))
+            if a["kind"] in RUN_FILES:
+                files = Path(driver.root) / "game/wozmod"
+                c = fn((files / "runtime.log").read_text(errors="replace"), (files / "settings.ini").read_text(), **params)
+            else:
+                c = fn(data, img, **params) if needs_img else fn(data, **params, **({"img": img} if a["kind"] in INK_WIDTH else {}))
             rows.append(Row(name, a["kind"], c.ok, c.numbers, png if needs_img or a["kind"] in INK_WIDTH else None))
     return rows
 
