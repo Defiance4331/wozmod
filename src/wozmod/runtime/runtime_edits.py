@@ -58,6 +58,11 @@ def scale_ends(site: int, stock: str, test: str, cave: int, top: int, leave: int
 CODE_EDITS = [
     (0x5695C5, bytes.fromhex("8b0783f802"), bytes.fromhex("e98b000000")),
 
+    # Closing the window (Alt+F4, the title bar's X) quits: the WM_CLOSE handler (0x5CBE40) asked with a Japanese
+    # MessageBoxA(window, string 0x67, MB_YESNO) that full-screen and borderless windows hide; it now takes the box's
+    # Yes. The call becomes add esp, 0x10 (its four arguments) and push 6; pop eax (IDYES), then the game's own path.
+    (0x5CBE88, bytes.fromhex("ff1590c26c00"), bytes.fromhex("83c4106a0658")),
+
     (0x560A5E, bytes.fromhex("c70554f2c20004000000"), bytes.fromhex("c70554f2c20002000000")),
 
     *widths(0x55453E, 0x554549, 0x531931, 0x53193C, 0x53C8DB, 0x53C8E6,
