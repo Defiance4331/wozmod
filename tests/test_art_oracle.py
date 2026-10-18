@@ -122,7 +122,6 @@ def test_full_art_build_does_not_drop_or_change_fixed_baseline_payloads(tmp_path
     compose_environment["WOZMOD_IMPORT_GUARD"] = str(activated)
     new_run = subprocess.run([
         sys.executable, "-m", "wozmod.art.compose", "--game", str(game),
-        "--wo1-donor", str(old_repo / "work/donors/wo1/linkdata_ens"),
         "--wo2-donor", str(old_repo / "work/donors/wo2-x360/linkdata_ens"),
         "--bundle", str(bundle), "--output-dir", str(new_output), "--oracle-full-width",
     ], cwd=tmp_path, env=compose_environment, capture_output=True, text=True)

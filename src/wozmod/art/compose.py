@@ -13,7 +13,8 @@ from .render import RECIPE, RECIPE_VERSION
 
 
 def compose(stock, donors, bundle, output_dir, squish=True, jobs=None) -> Path:
-    """Build output_dir/wozmod; donors maps wo1, wo1-x360 and x360 to archive stems.
+    """Build output_dir/wozmod; donors maps wo1-x360 and x360 to archive stems, and text to the donors
+    folder the menu words resolve from.
 
     The installer always squishes. squish=False is the developer oracle and needs a
     bundle rendered with full_width=True. jobs is the worker process count (default: CPU count).
@@ -25,8 +26,8 @@ def compose(stock, donors, bundle, output_dir, squish=True, jobs=None) -> Path:
     layers = read_bundle(Path(bundle), hashlib.sha256(recipe_bytes).hexdigest())
     if set(layers) != set(recipe["requests"]):
         raise ValueError("lettering bundle dropped or added a recipe layer")
-    arguments = ["--game", str(stock), "--wo1-donor", str(donors["wo1"]), "--wo1-x360-donor", str(donors["wo1-x360"]),
-                 "--wo2-donor", str(donors["x360"]), "--output-dir", str(output_dir),
+    arguments = ["--game", str(stock), "--wo1-x360-donor", str(donors["wo1-x360"]),
+                 "--wo2-donor", str(donors["x360"]), "--text-donors", str(donors["text"]), "--output-dir", str(output_dir),
                  "--hires", "vector", "--jobs", str(jobs or os.process_cpu_count())]
     if not squish:
         arguments.append("--no-squish")
@@ -38,15 +39,16 @@ def compose(stock, donors, bundle, output_dir, squish=True, jobs=None) -> Path:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--game", type=Path, required=True)
-    parser.add_argument("--wo1-donor", type=Path, required=True)
     parser.add_argument("--wo1-x360-donor", type=Path, required=True)
     parser.add_argument("--wo2-donor", type=Path, required=True)
+    parser.add_argument("--text-donors", type=Path, required=True)
     parser.add_argument("--bundle", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--oracle-full-width", action="store_true",
                         help="developer oracle only: full-width lettering from a --full-width bundle")
     args = parser.parse_args(argv)
-    compose(args.game, {"wo1": args.wo1_donor, "wo1-x360": args.wo1_x360_donor, "x360": args.wo2_donor}, args.bundle,
+    compose(args.game, {"wo1-x360": args.wo1_x360_donor, "x360": args.wo2_donor,
+                                "text": args.text_donors}, args.bundle,
             args.output_dir, squish=not args.oracle_full_width)
     return 0
 

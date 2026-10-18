@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 import re
 import struct
 
 import pytest
 from PIL import Image
 
-from wozmod.art import build
+from wozmod.art import build, words
 
 FILL, OUTLINE = (220, 180, 40, 255), (8, 4, 0, 255)
 
@@ -254,7 +258,7 @@ def test_officer_detail_does_not_clip_leading_glow(monkeypatch, tmp_path):
     served.paste((255, 255, 255, 255), (3, 134, 60, 158))
     texts = [None, None, None, "Alder controls"]
     monkeypatch.setattr(build, "PAUSE_BUTTON_ROWS", {
-        (4080, item, 3): ("Alder controls", 198.062306, 4.981308, 32, None, None)
+        (4080, item, 3): (words.sha256("Alder controls"), 198.062306, 4.981308, 32, None, None)
         for item in (44, 45)
     })
     for item in (44, 45):
@@ -608,7 +612,7 @@ def test_squish_condenses_an_overflowing_pause_row_to_its_official_width(monkeyp
     label.paste((200, 200, 200, 255), (4, 8, 44, 36))
     monkeypatch.setattr(build, "pause_button_label",
                         lambda *a: (label, {"ink": [4, 8, 44, 36], "baseline": 36}))
-    monkeypatch.setattr(build, "PAUSE_BUTTON_ROWS", {(4080, 99, 0): ("Menu", 12.0, 7.0, 23, None, None)})
+    monkeypatch.setattr(build, "PAUSE_BUTTON_ROWS", {(4080, 99, 0): (words.sha256("Menu"), 12.0, 7.0, 23, None, None)})
     served = Image.new("RGBA", (64, 32))
     served.paste((200, 200, 200, 255), (7, 9, 19, 23))
     edit = {"entry": 4080, "item": 99, "rows": [[{"text": "Menu"}]], "bands": [(0, 32)]}
@@ -687,3 +691,91 @@ def test_every_official_sheet_a_face_names_is_a_donor_the_recipes_pass() -> None
     faces = "".join((build.REPO / "data/art/faces" / f"{face}.py").read_text() for face in ("headervec", "valuevec"))
     named = set(re.findall(r"'[^'@]+@(\d+\.\d+)'", faces))
     assert named and named <= passed, named - passed
+
+
+def test_touching_letters_part_at_their_join():
+    # Bug: two letters whose serifs touch in the donor art (one shape) stop the row from segmenting, or are
+    # parted through a letter's body instead of at the thin join.
+    row = Image.new("RGBA", (30, 12))
+    row.paste((255, 255, 0, 255), (2, 1, 12, 11))  # a 10-wide letter
+    row.paste((255, 255, 0, 255), (12, 10, 15, 11))  # serifs meeting along the baseline
+    row.paste((255, 255, 0, 255), (15, 1, 22, 11))  # a 7-wide letter
+    first, second = build.glyph_fills(row, "AB", least=3)
+    assert max(x for x, _ in first) < min(x for x, _ in second)
+    assert {x for x, _ in first} >= set(range(2, 12)) and {x for x, _ in second} >= set(range(15, 22))
+
+
+def test_plate_room_from_its_recipe_sets_the_squeeze_not_the_1x_word(monkeypatch):
+    # Bug: a plate whose recipe gives its room still squeezes the hi-res word to the 1x word's ink, which is only a
+    # reference drawn in another face, so the word comes out narrower than the room it was given.
+    import struct
+    from wozmod.formats.textures import parse_g1t
+    served = Image.new("RGBA", (64, 16), (190, 190, 190, 255))
+    served.paste((40, 40, 40, 255), (4, 4, 14, 12))  # a short 1x reference word
+    payload = b"".join(bytes((b, g, r, a)) for r, g, b, a in served.get_flattened_data())
+    g1t = parse_g1t(struct.pack("<4s4s6I", b"GT1G", b"test", 32 + 4 + 8 + len(payload), 32, 1, 0, 0, 0)
+                    + struct.pack("<I", 4) + struct.pack("<BBHI", 1 << 4, 1, 6 | 4 << 4, 0x11111) + payload)
+    label = Image.new("RGBA", (40, 24))
+    label.paste((255, 255, 255, 255), (0, 4, 40, 20))
+    monkeypatch.setattr(build, "DARK_PLATE", {(4069, 99): "plate"})
+    monkeypatch.setattr(build, "header_label", lambda *a: (label, {"ink": [0, 4, 40, 20], "baseline": 20}))
+    edit = {"rows": [[{"text": "Word"}]], "geometry": [2, 40, 12]}
+    _, overlay, _ = build.plate_art(4069, 99, g1t, edit, "Word", 2, squeeze=True)
+    assert overlay.getchannel("A").getbbox() == (4, 8, 44, 24)
+
+
+def test_header_sheet_bands_keep_their_words_past_a_line_the_face_leaves_unread():
+    """Goes red if the bands after a sheet line lettered by an into piece take the word one line up (the
+    skipped line counted as read), or a WO2 sheet's words are looked up under its WO1 entry number."""
+    served = Image.new("RGBA", (64, 168))
+    for row in range(4):
+        served.paste((156, 156, 156, 255), (10, row * 42 + 10, 50, row * 42 + 30))
+    sheet = [7, 24, 0]
+    mapping = {"faces": {"header": {"rows": [
+        {"wo2": sheet, "texts": ["Alder", None, "Cedar", "Dogwood"]},
+        {"donor": sheet, "texts": ["Wrong", "Wrong", "Wrong", "Wrong"]}]}}}
+    edit = build.header_edit({"entry": 11, "item": 0, "draw": [
+        {"wo2": sheet, "box": [0, 0, 64, 40], "at": [0, 0]},
+        {"face": "header", "text": "Birch", "into": [0, 42, 64, 82]},
+        {"wo2": sheet, "box": [0, 84, 64, 168], "at": [0, 84]}]}, mapping, served)
+    assert build.hires_texts(edit, mapping, {}) == ["Alder", "Birch", "Cedar", "Dogwood"]
+
+
+def _wo1_pc_pointers(value, path=""):
+    """WO1 PC pointers: art donors numbered from WO1_PC_ENTRIES on, and reference crops naming the "wo1" disc."""
+    if isinstance(value, dict):
+        donor = value.get("donor")
+        if isinstance(donor, list) and donor[0] >= build.WO1_PC_ENTRIES or donor == "wo1":
+            yield f"{path}: donor {donor}"
+        for key, item in value.items():
+            yield from _wo1_pc_pointers(item, f"{path}/{key}")
+    elif isinstance(value, list):
+        for k, item in enumerate(value):
+            yield from _wo1_pc_pointers(item, f"{path}[{k}]")
+
+
+def test_art_data_names_no_warriors_orochi_pc_art():
+    """A WO1 PC pointer anywhere in the art data (a face row, a recipe, a piece, a reference crop) brings the PC disc
+    back."""
+    mapping = json.loads(build.MAPPING.read_text(encoding="utf-8"))
+    stages = mapping["stage_names"]
+    found = [*(f"{path.name}{found}" for path in sorted(build.MAPPING.parent.glob("*.json"))
+               for found in _wo1_pc_pointers(json.loads(path.read_text(encoding="utf-8")))),
+             *(f"stage {name}: {entry}" for name, entry in (("font", stages["font"][0]), ("titles", stages["titles"]["donor"]))
+               if entry >= build.WO1_PC_ENTRIES)]
+    assert found == []
+
+
+@pytest.mark.skipif(not os.environ.get("WOZMOD_ART_NO_WO1PC"), reason="set WOZMOD_ART_NO_WO1PC=1 (a full art build, minutes)")
+def test_art_build_runs_without_the_warriors_orochi_pc_disc(tmp_path):
+    """The whole build, hi-res included, from the X360 donors alone: a WO1 PC read the data check cannot see (an entry
+    the code computes) fails it."""
+    game, donors = (Path(os.environ.get(name, "")) for name in ("WOZMOD_GAME", "WOZMOD_DONORS"))
+    if not (game / "LINKDATA1.BIN").is_file() or not (donors / "wo2-x360/linkdata_ens.idx").is_file():
+        pytest.skip("set WOZMOD_GAME and WOZMOD_DONORS (the installer's donors folder)")
+    run = subprocess.run([sys.executable, "-m", "wozmod.art.build", "--game", str(game),
+                          "--wo1-x360-donor", str(donors / "wo1-x360/linkdata_ens"),
+                          "--wo2-donor", str(donors / "wo2-x360/linkdata_ens"), "--text-donors", str(donors),
+                          "--output-dir", str(tmp_path / "out"), "--hires", "vector"],
+                         capture_output=True, text=True)
+    assert run.returncode == 0, run.stdout[-2000:] + run.stderr[-4000:]

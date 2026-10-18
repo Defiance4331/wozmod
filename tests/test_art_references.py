@@ -15,13 +15,6 @@ def xbox_texture(pixel_format=6):
             + payload)
 
 
-def wo1_texture():
-    pixels = bytes(value for y in range(4) for x in range(4) for value in (3, y, x, 255))
-    return (struct.pack("<4s4s6I", b"GT1G", b"0050", 108, 32, 1, 0, 0, 0)
-            + struct.pack("<I", 4) + struct.pack("<BBHI", 0x10, 1, 0x22, 0x11111)
-            + pixels)
-
-
 @pytest.mark.parametrize("container", ["run", "package"])
 def test_x360_unsupported_member_cannot_shift_the_next_reference_ordinal(container):
     first, last = xbox_texture(0), xbox_texture()
@@ -44,14 +37,6 @@ def test_x360_damaged_run_cannot_return_a_partial_reference_bank(damage):
         data = data[:-1]
     with pytest.raises(ValueError, match="padding|exceeds"):
         references.x360_members(data)
-
-
-def test_wo1_metadata_member_cannot_shift_the_next_texture_ordinal():
-    texture = wo1_texture()
-    data = (struct.pack("<4I", 0x33B59, 2, 16, 0)
-            + struct.pack("<4I", 2, 4, 3, len(texture))
-            + b"META" + bytes(12) + texture)
-    assert list(references.wo1_members(data)) == [1]
 
 
 def test_default_catalog_cannot_pair_a_row_to_the_equal_archive_ordinal():
@@ -106,9 +91,9 @@ def test_unknown_catalog_schema_cannot_supply_recipe_rows(tmp_path, monkeypatch)
 
 
 def donor_folder(tmp_path):
-    folder = tmp_path / "wo1"
+    folder = tmp_path / "wo1-x360"
     folder.mkdir()
-    texture = wo1_texture()
+    texture = xbox_texture()
     (folder / "linkdata_ens.lnk").write_bytes(texture + bytes(2048 - len(texture)))
     (folder / "linkdata_ens.idx").write_bytes(
         struct.pack(">4s3I4I", b"SM4L", 1, 1, 0, 0, 1, len(texture), 0))
@@ -116,34 +101,21 @@ def donor_folder(tmp_path):
 
 
 def test_donor_reader_cannot_read_the_wrong_folder_or_crop_origin(tmp_path):
+    """Bug: a reference read from another disc's folder, or cropped from the wrong origin, returns other pixels."""
+    want = references.x360_members(xbox_texture())[0].textures[0]
+    whole = references.Image.frombytes("RGBA", (want.width, want.height), bytes(want.decode_rgba()))
     reader = references.DonorReader(donor_folder(tmp_path))
-    source = {"donor": "wo1", "ens": [0, 0, 0], "crop": [1, 2, 4, 4]}
-    image = reader.image(source)
-    assert (image.size, image.tobytes()) == ((3, 2), bytes(value for y in (2, 3) for x in (1, 2, 3) for value in (x, y, 3, 255)))
+    image = reader.image({"donor": "wo1-x360", "ens": [0, 0, 0], "crop": [1, 2, 4, 4]})
+    assert (image.size, image.tobytes()) == ((3, 2), whole.crop((1, 2, 4, 4)).tobytes())
 
 
 def test_native_crop_cannot_silently_pad_pixels_outside_its_texture(tmp_path):
     reader = references.DonorReader(donor_folder(tmp_path))
     with pytest.raises(ValueError, match="crop exceeds"):
-        reader.image({"donor": "wo1", "ens": [0, 0, 0], "crop": [0, 0, 5, 4]})
+        reader.image({"donor": "wo1-x360", "ens": [0, 0, 0], "crop": [0, 0, 9, 4]})
 
 
 def test_missing_counterpart_cannot_try_to_read_a_donor_archive(tmp_path):
     reader = references.DonorReader(tmp_path)
     with pytest.raises(ValueError, match="no official counterpart"):
         reader.image({"kind": "no-official-counterpart"})
-
-
-def test_donor_reader_reads_wo1_x360_references_from_their_own_disc(tmp_path):
-    """Bug: a wo1-x360 reference read from the WO1 PC folder, or with the PC member parser, returns the wrong
-    image or none."""
-    donor_folder(tmp_path)
-    folder = tmp_path / "wo1-x360"
-    folder.mkdir()
-    texture = xbox_texture()
-    (folder / "linkdata_ens.lnk").write_bytes(texture + bytes(2048 - len(texture)))
-    (folder / "linkdata_ens.idx").write_bytes(
-        struct.pack(">4s3I4I", b"SM4L", 1, 1, 0, 0, 1, len(texture), 0))
-    want = references.x360_members(texture)[0].textures[0]
-    image = references.DonorReader(tmp_path).image({"donor": "wo1-x360", "ens": [0, 0, 0]})
-    assert (image.size, image.tobytes()) == ((want.width, want.height), bytes(want.decode_rgba()))

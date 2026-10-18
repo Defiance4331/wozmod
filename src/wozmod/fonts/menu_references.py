@@ -8,10 +8,10 @@ from PIL import Image
 
 from wozmod import resources
 
-from wozmod.donors import WO1, WO1_X360, X360
+from wozmod.donors import WO1_X360, X360
 from wozmod.formats.linkdata import LZP2_SIGNATURE, WO1_LZP2_SIGNATURE, parse_lzp2, parse_wo1_index
 from wozmod.formats.textures import (
-    TextureCodecError, parse_g1t, parse_texture_package, x360_g1t,
+    TextureCodecError, x360_g1t,
 )
 
 REPO = resources.root()
@@ -19,7 +19,7 @@ CATALOG = REPO / "data/art/menu_visuals.json"
 
 @lru_cache(maxsize=1)
 def load_catalog() -> dict:
-    """Read the recipe catalog."""
+    """Read the recipe catalog. Its pc_text words stay stored forms (see wozmod.art.words)."""
     data = json.loads(CATALOG.read_text(encoding="utf-8"))
     if data.get("schema") != "moz-menu-visual-references-v1":
         raise ValueError(f"unsupported menu visual catalog: {CATALOG}")
@@ -78,25 +78,6 @@ def x360_members(data: bytes) -> dict:
                     raise
     return members
 
-def wo1_members(data: bytes) -> dict:
-    """Read native WO1 texture members, skipping metadata."""
-    if data[:4] == b"GT1G":
-        return {item.ordinal: item.g1t for item in parse_texture_package(data).items if item.g1t}
-    if len(data) < 16:
-        raise ValueError("truncated WO1 texture package")
-    magic, count, table, _ = struct.unpack_from("<4I", data)
-    if magic != 0x33B59 or table < 16 or table + count * 8 > len(data):
-        raise ValueError("invalid WO1 texture package table")
-    members = {}
-    for item in range(count):
-        offset, size = struct.unpack_from("<II", data, table + 8 * item)
-        start = offset * 16
-        if start + size > len(data):
-            raise ValueError(f"WO1 texture package member {item} exceeds input")
-        if data[start:start + 4] == b"GT1G":
-            members[item] = parse_g1t(data[start:start + size])
-    return members
-
 class DonorReader:
     """Read donor archive textures without extracting them."""
 
@@ -110,9 +91,9 @@ class DonorReader:
         key = donor, entry
         if key in self._members:
             return self._members[key]
-        if donor not in ("wo1", "wo1-x360", "x360"):
+        if donor not in ("wo1-x360", "x360"):
             raise ValueError(f"unsupported native reference donor: {donor}")
-        folder = self.root / {"wo1": WO1, "wo1-x360": WO1_X360, "x360": X360}[donor].name
+        folder = self.root / {"wo1-x360": WO1_X360, "x360": X360}[donor].name
         archive = folder / "linkdata_ens.lnk"
         if donor not in self._indices:
             self._indices[donor] = parse_wo1_index(
@@ -124,7 +105,7 @@ class DonorReader:
         if data[:4] == b"LZP2":
             signature = LZP2_SIGNATURE if donor == "x360" else WO1_LZP2_SIGNATURE
             data = parse_lzp2(data, signature).decoded
-        members = wo1_members(data) if donor == "wo1" else x360_members(data)
+        members = x360_members(data)
         self._members[key] = members
         return members
 

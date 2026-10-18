@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -14,7 +15,7 @@ import time
 
 from PIL import Image
 
-from . import build, lettering
+from . import build, lettering, words
 from .bundle import write_bundle
 
 
@@ -39,7 +40,7 @@ def _strings(value):
 
 
 def _text_index() -> dict[str, str]:
-    values = [json.loads(path.read_text(encoding="utf-8")) for path in TEXT_SOURCES]
+    values = [words.load(path) for path in TEXT_SOURCES]
     values.extend(value for name, value in vars(build).items() if name.isupper())
     return {hashlib.sha256(text.encode("utf-8")).hexdigest(): text
             for value in values for text in _strings(value)}
@@ -276,7 +277,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="developer oracle bundle: keep every full-width layer (not for release)")
     parser.add_argument("--recipe-from-trace", type=Path, nargs="+", metavar="TRACE",
                         help="rewrite data/art/lettering.json from traced builds instead of rendering")
+    parser.add_argument("--text-donors", type=Path, default=os.environ.get("WOZMOD_DONORS"),
+                        help="the installer's donors folder the menu words resolve from (see wozmod.art.words)")
     args = parser.parse_args(argv)
+    words.use(args.text_donors)
     if args.recipe_from_trace:
         print(json.dumps({"requests": write_recipe(args.recipe_from_trace)}))
         return 0

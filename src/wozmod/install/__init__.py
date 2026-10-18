@@ -37,7 +37,7 @@ STOCK_FILES = {
     "data/Sound/Voice/Voice.bin": (971_871_792, "6d30494571b62dc1f56983c7c84c0f834c6203714ccec089a288e1a38d62f630"),
 }
 # Release assets built by us; a release updates both pins with the files it ships.
-LETTERING = (12_193_440, "09a22d437c4a0af17696365108d50b33388ad344281f938c1cdaa8e62d17c7ec")
+LETTERING = (12_735_542, "4b49e403b01695b1635a004e5313b0201b702be064c91671c3da9551aed13165")
 DLL = (202_309, "78f38902dcf386bf6d5c869ce39baecf71e001f30090bd49eb9cc34faf2defad")
 
 _MOD_PATH = re.compile(r"d3d9\.dll|wozmod(/[A-Za-z0-9_][A-Za-z0-9_.-]*)+")
@@ -555,7 +555,7 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
             pool.submit(_text_table, game, donors, out / "wozmod/table.bin"): "text",
             pool.submit(_voice_banks, game, donors, out / "wozmod", jobs): "voices",
             pool.submit(compose, game, {"wo1": donors / "wo1/linkdata_ens", "wo1-x360": donors / "wo1-x360/linkdata_ens",
-                                        "x360": donors / "wo2-x360/linkdata_ens"},
+                                        "x360": donors / "wo2-x360/linkdata_ens", "text": donors},
                         inputs["lettering"], staging / "art", True, jobs): "art",
         }
         for key, text in (("text", "building the text table"), ("voices", "reading the voice banks"),

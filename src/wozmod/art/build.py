@@ -26,10 +26,10 @@ from wozmod.formats.linkdata import (
 from wozmod import native, resources
 from wozmod.progress import report as report_progress
 from wozmod.runtime.english_runtime import write_manifest
-from . import lettering
+from . import lettering, words
 from .hires import HIRES_OVERLAY, HIRES_RIGHT_GROW, hires_blob
 from wozmod.runtime.latin_font import CELL, LATIN_GLYPH
-from wozmod.donors import WO1, WO1_X360, X360, extract_donor, verify_file
+from wozmod.donors import WO1_X360, X360, extract_donor, verify_file
 from wozmod.formats.textures import (
     G1T_HEADER, G1T_TEXTURE_HEADER, PIXEL_FORMAT_BGRA8, G1tFile, parse_g1t, parse_texture_package,
 )
@@ -160,19 +160,16 @@ def donor_g1ts(data: bytes) -> dict[int, G1tFile]:
             items[item] = parse_g1t(member)
     return items
 
-# Donor art entries below WO1_PC_ENTRIES are WO1 X360 archive entries; from it on, WO1 PC entries whose X360
-# counterpart differs or is missing, kept until that art moves.
+# Donor art entries below WO1_PC_ENTRIES are WO1 X360 archive entries; from it on they would be WO1 PC ones, which
+# release 1 no longer reads.
 WO1_PC_ENTRIES = 492
 
 def wo1_donors(args, entries: set[int]) -> dict:
-    """The WO1 donor art entries, X360 ones read from --wo1-x360-donor and WO1 PC ones from --wo1-donor."""
-    donors = {}
-    for stem, read, wanted in ((args.wo1_x360_donor, x360_members, [e for e in entries if e < WO1_PC_ENTRIES]),
-                               (args.wo1_donor, donor_g1ts, [e for e in entries if e >= WO1_PC_ENTRIES])):
-        if wanted:
-            donors |= {k: read(v) for k, v in wo1_entries(stem.with_suffix(".lnk"), stem.with_suffix(".idx"),
-                                                          sorted(wanted)).items()}
-    return donors
+    """The WO1 X360 donor art entries, read from --wo1-x360-donor."""
+    if pc := sorted(e for e in entries if e >= WO1_PC_ENTRIES):
+        raise ValueError(f"art data names WO1 PC entries {pc}: the build reads no WO1 PC disc")
+    return {k: x360_members(v) for k, v in wo1_entries(args.wo1_x360_donor.with_suffix(".lnk"),
+                                                       args.wo1_x360_donor.with_suffix(".idx"), sorted(entries)).items()}
 
 def wo2_g1ts(data: bytes) -> dict[int, G1tFile]:
 
@@ -468,10 +465,25 @@ def strokes(row: Image.Image, is_fill=yellow, least: int = 3) -> list[list[tuple
             found.append(stroke)
     return sorted(found, key=lambda stroke: min(x for x, _ in stroke))
 
+def parted(found: list[list[tuple[int, int]]]) -> list[list[tuple[int, int]]]:
+    """The strokes with the widest one cut in two where it has the least fill, away from its ends."""
+    widest = max(found, key=lambda stroke: max(x for x, _ in stroke) - min(x for x, _ in stroke))
+    left, right = min(x for x, _ in widest), max(x for x, _ in widest)
+    fill = {x: 0 for x in range(left, right + 1)}
+    for x, _ in widest:
+        fill[x] += 1
+    margin = (right - left) // 5
+    cut = min(range(left + margin, right - margin + 1), key=lambda x: (fill[x], abs(2 * x - left - right)))
+    return sorted([stroke for stroke in found if stroke is not widest] + [[p for p in widest if p[0] < cut],
+                  [p for p in widest if p[0] >= cut]], key=lambda stroke: min(x for x, _ in stroke))
+
 def glyph_fills(row: Image.Image, text: str, is_fill=yellow, least: int = 3,
                 counts: dict | None = None) -> list[list[tuple[int, int]]]:
 
     found, glyphs = strokes(row, is_fill, least), []
+    wanted = sum((counts or {}).get(char, 2 if char in TWO_STROKE else 1) for char in text.replace(" ", ""))
+    while 0 < len(found) < wanted:  # letters whose serifs touch in the donor art: part the widest at its thinnest column
+        found = parted(found)
     for char in text.replace(" ", ""):
         count = (counts or {}).get(char, 2 if char in TWO_STROKE else 1)
         if len(found) < count:
@@ -793,7 +805,8 @@ def _face(name: str) -> Face:
 def faces(mapping: dict, donors: dict, jobs: int = 1) -> dict:
     """The lettering faces, one worker process each when jobs > 1 (the longest step before the worker pool)."""
     global FACE_WORK
-    names = ["stage", "title", *mapping.get("faces", {})]
+    # a words-only face lends its sheets' words (labels, hi-res rows) and letters nothing, so its art is never read
+    names = ["stage", "title", *(name for name, face in mapping.get("faces", {}).items() if not face.get("words_only"))]
     FACE_WORK = mapping, donors
     report_progress("art", "reading the lettering faces", 0.05, (0, len(names)))
     found = {}
@@ -850,6 +863,10 @@ def only_strokes(image: Image.Image, spec: dict) -> Image.Image:
             kept.putpixel(point, image.getpixel(point))
     return kept
 
+def button_1x(spec: dict) -> Image.Image:
+    with tempfile.TemporaryDirectory() as tmp:
+        return button_label(spec["text"], 1, Path(tmp) / "label.png", style=spec["button"])[0]
+
 def composed(stock: Image.Image, rows: list[list[dict]], donors: dict, align: str, gap: int,
              bands=None) -> Image.Image:
     """A row whose first piece names a window [x0, x1] (where its quad lets ink show) is centred in it
@@ -863,6 +880,8 @@ def composed(stock: Image.Image, rows: list[list[dict]], donors: dict, align: st
             image = source_image(spec, donors, stock)
             if "face" in spec:  
                 image = donors["faces"][spec["face"]].render(spec["text"])[0]
+            elif "button" in spec:  # buttonvec at 1x, in the style its hi-res rows use
+                image = button_1x(spec)
             elif "row" in spec:
                 y0, y1 = ink_rows(image)[spec["row"]]
                 image = image.crop((0, y0, image.width, y1))
@@ -952,7 +971,7 @@ def sound_menu_rows(mapping: dict, item: int) -> list[dict]:
     for k in range(70 if item == 25 else 35):
         record = reference(f"4069.{item}", k)
         if record and record.get("pc_text"):
-            rows[k] = {"text": record["pc_text"],
+            rows[k] = {"text": words.resolved(record["pc_text"]),
                        "at": [56 if item == 25 else 3, (32 if item == 25 else 31) + 42 * k]}
     for edit in mapping.get("textures", []):
         if (edit["entry"], edit.get("item")) == (4069, item):
@@ -965,7 +984,7 @@ def native_menu_text(entry: int, item: int, texture: int = 0, donors: dict | Non
 
     text = (donors or {}).get("menu_native_texts", {}).get((entry, item, texture))
     record = reference(f"{entry}.{item}", 0)
-    text = text or (record or {}).get("pc_text")
+    text = text or words.resolved((record or {}).get("pc_text"))
     if not text:
         raise ValueError(f"native menu label {entry}.{item}.{texture} has no PC wording")
     return text
@@ -1337,10 +1356,16 @@ def payload(target, edit: dict, donors: dict, package) -> bytes:
                 continue
             if "face" in spec:
                 piece, top = donors["faces"][spec["face"]].render(spec["text"], mark)
+            elif "button" in spec:
+                piece = button_1x(spec)
             elif "look" in spec:  # the value face at 1x
                 with tempfile.TemporaryDirectory() as tmp:
                     piece = value_tinted(value_label(spec["text"], 1, Path(tmp) / "label.png", spec["look"])[0],
                                          spec["look"])
+            elif "style" in spec:  # a menu style at 1x, as its hi-res row draws it
+                options = menu_render_options(edit["entry"], edit["item"], 0, spec, spec["style"])
+                with tempfile.TemporaryDirectory() as tmp:
+                    piece = header_label(spec["text"], 1, Path(tmp) / "label.png", MENU_RASTER, *options)[0]
             else:
                 piece = source_image(spec, donors, stock).crop(spec.get("box"))
             if "key" in spec:
@@ -1570,10 +1595,8 @@ HEADER_TEXTS = {(12, 0, 0): ["NEW CHARACTER", "RESULTS", "ABILITY ACQUIRED", "WE
                               "NEW SCENARIO"]}
 
 PAGE_LABEL = {(4079, 43), (4085, 16)}
-PAGE_ROWS = ["donor:5a93503c1ee64215", "donor:5ddcad9c51246326", "donor:0ec1bbbac7a32e19", "VS MODE", "donor:22b111c17b2c4be3", "donor:316a1d8733d73aba", "donor:d0b1a869600d2107"]
-
-PAGE_RIGHT = {text: 256.8 + {"donor:316a1d8733d73aba": 0.54, "donor:d0b1a869600d2107": -0.69}.get(text, 0.15) for text in PAGE_ROWS}
-MAIN_ROWS = PAGE_ROWS + ["donor:628db0c7598820b1", "QUIT GAME"]
+# The page labels are the first rows of the main menu (the art data's main_rows), right-aligned at these x.
+PAGE_RIGHT = [256.8 + 0.15] * 5 + [256.8 + 0.54, 256.8 - 0.69]
 LABEL_RASTER = "wozmod.fonts.labelraster"
 HIRES_TWIN = {(4080, 45): (4080, 44)}  
 
@@ -1586,8 +1609,6 @@ VALUE_RASTER = "wozmod.fonts.valueraster"
 # The Options values are lettered in the option labels' face, white art multiplied by the quad colours the
 # runtime tints its own values with (runtime value_dim and value_lit: R, G, B, 0x80 = 1).
 VALUE_TINT = {"value_dim": (0x4E, 0x4E, 0x4E), "value_lit": (0x7F, 0x77, 0x4E)}
-VALUE_TEXTS = {(15, 9, 0): ["donor:27e88b861fa91ee1", "donor:db2cb3fe28e2c54f", "donor:0e24076baf990d55", "donor:dc1a2f9d7bd77176"], (16, 20, 0): ["donor:f9171164593756e5", "donor:23794d91c53ae875"]}
-VALUE_TEXTS |= {(15, 10, 0): VALUE_TEXTS[(15, 9, 0)], (16, 21, 0): VALUE_TEXTS[(16, 20, 0)]}
 
 DARK = {**{(4080, i): "pause" for i in range(6, 34)}, **{(4060, i): "help" for i in range(2, 14)},
         (4069, 0): "help", (4069, 1): "help", (4074, 10): "help", (4069, 19): "controls"}
@@ -1612,20 +1633,6 @@ HELP_QUAD_WIDTH = {(4060, i): width for i, width in
                    [(2, 548), (3, 544), (4, 392), (5, 400), (6, 476),
                     (7, 420), (8, 448), (9, 528), (10, 560), (11, 632), (13, 648)]}
 HELP_QUAD_WIDTH[(4074, 10)] = 420
-DARK_TEXTS = {(17, 15, 0): ["donor:de1c575feaa275ad"], (17, 17, 0): ["donor:ec2261055bc0aec6"],  
-              (1, 2, 0): ["Please select officer to whom you wish to allot growth points."],
-              (1, 5, 0): ["Please select amount of growth points."],
-              (1, 7, 0): ["Please select fusion effects."],
-              (501, 1, 0): ["Please select the action whose effect you wish to change."],
-              (501, 2, 0): ["Please push the key or button which you wish to use."],
-              (12, 10, 0): ["donor:514cae1e06b80c80", "donor:5a3f61cf0be5899d"]}
-DARK_TEXTS |= {(508, 48 + k, 0): [t] for k, t in enumerate(["donor:3580469d06f361ee", "KEYBOARD", "GAMEPAD"])}
-DARK_TEXTS |= {(e, i, 0): [t] for e, i, t in [(12, 1, "donor:ced5103bf1a4663a"), (12, 2, "donor:7ead20bebf6532b9"),
-                (12, 3, "donor:5888675d99b95617"), (12, 5, "donor:00f2459ce855c53a"), (15, 12, "donor:5888675d99b95617"), (15, 13, "donor:ced5103bf1a4663a"),
-                (22, 8, "donor:5888675d99b95617"), (22, 9, "donor:25df06def4b63ddc"), (1, 14, "donor:e8144b1fafeed56b"), (1, 15, "donor:c57fcb9193a69cf6"),
-                (1, 16, "FUSION WEAPON"), (1, 17, "donor:f404d4ef53431418"), (1, 18, "donor:b2d86f84fddddde2"), (1, 19, "donor:2dc5bc3ce114b123")]}
-DARK_TEXTS |= {(16, 82 + k, 0): [t] for k, t in enumerate(
-               ["donor:dfb0f521ab244b54", "donor:2a1a6355ed7e30b0", "donor:ea0151c4cf78b351", "donor:f3577cb543db90ce", "donor:8c4587b0d81f3f73", "donor:795b048ba2164e50", "donor:171418c643055da9", "donor:aa42ff595bdb92d6", "donor:e7d91391c1519825", "donor:5de74a81b192304c", "donor:dea894b8304550ba", "donor:49796694dc677011", "donor:f68b032edc223044", "donor:110049cc8ca88c81"])}
 BUTTON_RASTER = "wozmod.fonts.buttonraster"
 BUTTON_CAP = 25.0  
 VECTOR_WINDOW = {(4069, 2): (101, 411), (4060, 14): (0, 288), (4064, 5): (100, 412), (4080, 0): (0, 208),
@@ -1636,7 +1643,7 @@ VECTOR_WINDOW = {(4069, 2): (101, 411), (4060, 14): (0, 288), (4064, 5): (100, 4
                  (4081, 18): (0, 400), (4082, 31): (0, 372), (4077, 168): (0, 600), (4061, 12): (0, 600),
                  (4061, 14): (0, 600), (4061, 16): (0, 600), (4099, 17): (0, 532), (4074, 0): (0, 504)}
 
-TRACK = {1: 1.070, 17: 1.894, 9: 0.0, 493: 1.070, 508: 1.894, 501: 0.0}  # WO1 X360 entries, then WO1 PC ones not moved yet
+TRACK = {1: 1.070, 17: 1.894, 9: 0.0}  # WO1 X360 entries
 TRACK_AUTHORED = 0.338  
 CONDENSED, CONDENSED_MIN = 0.75, 4.0
 
@@ -1654,34 +1661,35 @@ VALUE_MARGIN = 20
 DISPLAY_MODE_PITCH = 195
 OPTION_NARROW = {text: DISPLAY_MODE_PITCH - VALUE_MARGIN for text in ("FULLSCREEN", "WINDOWED", "BORDERLESS")}
 
+# Each pause button row: the SHA-256 of the word it letters (a pairing check), then its geometry.
 PAUSE_BUTTON_ROWS = {
-    (4080, 0, 0): ('donor:ae75b2880b5b5e40', 108.342679, 6.657321, 32, None, None),
-    (4080, 0, 1): ('donor:cf888f8318b597b5', 122.068536, 4.975078, 32, None, None),
-    (4080, 0, 2): ('TEAM INFO', 126.376947, 4.660436, 32, None, None),
-    (4080, 0, 3): ('donor:0bad33e27107687c', 128.468848, 5.537383, 32, None, None),
-    (4080, 0, 4): ('donor:10aae6592b39c03b', 124.012462, 5.993769, 32, None, None),
-    (4080, 0, 5): ('donor:1e367f240be1b68c', 74.242991, 5.993769, 32, None, None),
-    (4080, 0, 6): ('donor:23e04084df125efc', 110.210281, 5.993769, 32, None, None),
-    (4080, 0, 7): ('donor:af7300795e9ccc44', 128.082554, 4.975078, 32, None, None),
-    (4080, 0, 8): ('MAIN MENU', 127.049845, 4.993769, 32, None, None),
-    (4080, 0, 9): ('donor:0747c96a23dbfa58', 105.344237, 5.956386, 32, None, None),
-    (4080, 0, 10): ('2P QUIT', 103.228972, 3.79595, 32, None, None),
-    (4080, 44, 0): ('ABILITY ACQUISITION', 197.35514, 3.975078, 32, None, None),
-    (4080, 44, 1): ('STRATEGY INFO', 192.654206, 7.546729, 32, None, None),
-    (4080, 44, 2): ('MOVE LIST', 137.57944, 6.663551, 32, None, None),
-    (4080, 44, 3): ('GAME CONTROLS', 198.062306, 4.981308, 32, None, None),
-    (4080, 44, 4): ('donor:89dbf71048801678', 113.328661, 5.993769, 31, None, None),
-    (4080, 45, 0): ('ABILITY ACQUISITION', 197.35514, 3.975078, 32, None, None),
-    (4080, 45, 1): ('STRATEGY INFO', 192.654206, 7.546729, 32, None, None),
-    (4080, 45, 2): ('MOVE LIST', 137.57944, 6.663551, 32, None, None),
-    (4080, 45, 3): ('GAME CONTROLS', 198.062306, 4.981308, 32, None, None),
-    (4080, 45, 4): ('donor:89dbf71048801678', 113.328661, 5.993769, 31, None, None),
+    (4080, 0, 0): ("ae75b2880b5b5e401de30cd4b3fbbdcb8a4248f0c0018da2135cf7779a0974d5", 108.342679, 6.657321, 32, None, None),
+    (4080, 0, 1): ("cf888f8318b597b573b26a108bb71f0896e998299382dfbe86493046b56a25b6", 122.068536, 4.975078, 32, None, None),
+    (4080, 0, 2): ("bca41978330e868e846dfdc61d5c2fdd5b60ccba38d80acb66307c7d7a6ad80e", 126.376947, 4.660436, 32, None, None),
+    (4080, 0, 3): ("0bad33e27107687ce9ed6814354915a6e42d00483e3e6c3f3e25f5a2193f9c0c", 128.468848, 5.537383, 32, None, None),
+    (4080, 0, 4): ("10aae6592b39c03b0a584e048c3eee188998f69f1b7f28b924f3e83e74cdaa41", 124.012462, 5.993769, 32, None, None),
+    (4080, 0, 5): ("1e367f240be1b68c21cfbed3dd0026a80008facf31d7ca1db684447384f06b19", 74.242991, 5.993769, 32, None, None),
+    (4080, 0, 6): ("23e04084df125efcc954cba154e2f4c9e06e45d9a0111c8789bc7e6e723f5782", 110.210281, 5.993769, 32, None, None),
+    (4080, 0, 7): ("af7300795e9ccc44c05bffd849d532ecc3c6e0339cf316552e903d6ebe3b7cff", 128.082554, 4.975078, 32, None, None),
+    (4080, 0, 8): ("cb2a495822a6dd4c079ca88308e0164c183e8929dddb47373a52a03cd2ba0094", 127.049845, 4.993769, 32, None, None),
+    (4080, 0, 9): ("0747c96a23dbfa586507337fc4ed4bdddb7b05833243622c4e6bb357b87adb0c", 105.344237, 5.956386, 32, None, None),
+    (4080, 0, 10): ("de956cf5e135821be80428369b28aab96b246eefd7876e3b6ebdd399ef7c3e52", 103.228972, 3.79595, 32, None, None),
+    (4080, 44, 0): ("41babf76aa9ae9e26135154cafb20265a64abb0d09b0a431008f9e1849da122d", 197.35514, 3.975078, 32, None, None),
+    (4080, 44, 1): ("68b6931e23d871e990eca6819bfe5da40f7ad4163283fcd4b72f1806fb32eee6", 192.654206, 7.546729, 32, None, None),
+    (4080, 44, 2): ("bf151de81086363eb82fce98b85d9cc4f7e550d6e4d15c6be2c04d1579df538c", 137.57944, 6.663551, 32, None, None),
+    (4080, 44, 3): ("1a19b3383ce6afc33d680a4f224ac3f359559755313614834baf6bbe34ab50a9", 198.062306, 4.981308, 32, None, None),
+    (4080, 44, 4): ("89dbf71048801678ca4abfbaa3ea8f7c651aae193357a3e23d68e21512cd07f5", 113.328661, 5.993769, 31, None, None),
+    (4080, 45, 0): ("41babf76aa9ae9e26135154cafb20265a64abb0d09b0a431008f9e1849da122d", 197.35514, 3.975078, 32, None, None),
+    (4080, 45, 1): ("68b6931e23d871e990eca6819bfe5da40f7ad4163283fcd4b72f1806fb32eee6", 192.654206, 7.546729, 32, None, None),
+    (4080, 45, 2): ("bf151de81086363eb82fce98b85d9cc4f7e550d6e4d15c6be2c04d1579df538c", 137.57944, 6.663551, 32, None, None),
+    (4080, 45, 3): ("1a19b3383ce6afc33d680a4f224ac3f359559755313614834baf6bbe34ab50a9", 198.062306, 4.981308, 32, None, None),
+    (4080, 45, 4): ("89dbf71048801678ca4abfbaa3ea8f7c651aae193357a3e23d68e21512cd07f5", 113.328661, 5.993769, 31, None, None),
 
-    (4081, 0, 0): ('donor:0747c96a23dbfa58', 105.095015, 165.962617, 32, None, None),
-    (4081, 0, 1): ('RESTART', 105.132399, 165.904984, 32, None, None),
-    (4081, 0, 2): ('CHANGE CHARACTERS', 182.580996, 164.718069, 32, None, None),
-    (4081, 0, 3): ('MAIN MENU', 131.076324, 165.981308, 32, None, None),
-    (4079, 223, 0): ('TREASURE GUIDE', 199.037383, 5.0, 32, None, None),
+    (4081, 0, 0): ("0747c96a23dbfa586507337fc4ed4bdddb7b05833243622c4e6bb357b87adb0c", 105.095015, 165.962617, 32, None, None),
+    (4081, 0, 1): ("0ce770318c438ba39fa6bab8cb1ada4861faa15ee9df6449680aef202a6062ed", 105.132399, 165.904984, 32, None, None),
+    (4081, 0, 2): ("fd0823c6c01954d2b8939e58a38d804150300694d1229aa32105cf68bced80c3", 182.580996, 164.718069, 32, None, None),
+    (4081, 0, 3): ("cb2a495822a6dd4c079ca88308e0164c183e8929dddb47373a52a03cd2ba0094", 131.076324, 165.981308, 32, None, None),
+    (4079, 223, 0): ("691954b4306f9a9bc76a99e711fe48a7bdf1ba5f1aadf79ebaeb6e426a89f39b", 199.037383, 5.0, 32, None, None),
 }
 
 TRACKED_RASTER = """
@@ -1715,7 +1723,8 @@ p = fills[0].max(0)  # the fill's sub-pixel ends, measured as the 1x rows are (f
 on = (p >= 0.5).nonzero()[0]
 i, j = int(on[0]), int(on[-1])
 fill = [i - (float(p[i - 1]) if i else 0), j + 1 + (float(p[j + 1]) if j + 1 < len(p) else 0)]
-print(json.dumps(dict(baseline=label.baseline, ink=list(label.ink), fill=fill)))
+drawn = label.image.getchannel("A").point(lambda v: 255 if v > 16 else 0).getbbox()  # outline and glow too
+print(json.dumps(dict(baseline=label.baseline, ink=list(label.ink), fill=fill, drawn=list(drawn))))
 """
 
 STYLE = {(4069, 2): "501.3", (4060, 14): "493.9", (4060, 44): "493.9", (4060, 45): "493.9", (4064, 5): "493.9",
@@ -1813,6 +1822,8 @@ def _squeezed_label(label: Image.Image, metrics: dict, geometry, scale: int,
                                  for k, v in enumerate(metrics["ink"])])
     if "fill" in metrics:
         changed["fill"] = [horizontal(v) for v in metrics["fill"]]
+    if "drawn" in metrics:
+        changed["drawn"] = [horizontal(v) if k % 2 == 0 else v for k, v in enumerate(metrics["drawn"])]
     if "pen" in metrics:
         changed["pen"] = horizontal(metrics["pen"])
     if "advance" in metrics:
@@ -1834,12 +1845,12 @@ def squeezed_label(label: Image.Image, metrics: dict, geometry, scale: int,
     request = dict(kind="squish", base=metrics["_lettering"], width=width, fill=metrics.get("fill"))
     return lettering.get(request, lambda: _squeezed_label(label, metrics, geometry, scale, True))
 
-def page_label_art(scale: int, width: int = 512, served: Image.Image | None = None,
+def page_label_art(rows: list[str], scale: int, width: int = 512, served: Image.Image | None = None,
                    squeeze: bool = False) -> Image.Image:
 
     art = Image.new("RGBA", (width * scale, 256 * scale))
     with tempfile.TemporaryDirectory() as tmp:
-        for i, text in enumerate(PAGE_ROWS):
+        for i, text in enumerate(rows[:len(PAGE_RIGHT)]):
             out = Path(tmp) / f"{i}.png"
             label, metrics = header_label(text, scale, out, LABEL_RASTER)
             geometry = row_geometry(served.crop((0, 35 * i, width, 35 * (i + 1))),
@@ -1847,7 +1858,7 @@ def page_label_art(scale: int, width: int = 512, served: Image.Image | None = No
                                     if a > 204 else 0) if squeeze and served is not None else None
             label, metrics = squeezed_label(label, metrics, geometry, scale, squeeze)
             art.paste(label,
-                      (round(PAGE_RIGHT[text] * scale - metrics["ink"][2]), round((25.6 + 35 * i) * scale - metrics["baseline"])))
+                      (round(PAGE_RIGHT[i] * scale - metrics["ink"][2]), round((25.6 + 35 * i) * scale - metrics["baseline"])))
     return art
 
 def fill_edges(profile: list[float]) -> tuple[float, float]:
@@ -1898,22 +1909,29 @@ def row_offset(geometry, metrics: dict, scale: int, align: str) -> tuple[int, in
     x = scale * (left + right) / 2 - (x0 + x1) / 2 if align == "full" else scale * left - x0
     return round(x), scale * baseline - metrics["baseline"]
 
+def sheet_key(spec: dict) -> tuple:
+    """The sheet a piece names: WO1 entries as numbered, WO2 X360 ones marked apart (their numbers overlap)."""
+    return ("wo2", *spec["wo2"]) if "wo2" in spec else tuple(spec["donor"])
+
 def donor_texts(mapping: dict) -> dict:
 
-    texts = {tuple(s["donor"]): s["texts"] for f in mapping["faces"].values() for s in f["rows"] if "texts" in s and "donor" in s}
-    return texts | HEADER_TEXTS | VALUE_TEXTS | DARK_TEXTS
+    texts = {sheet_key(s): s["texts"] for f in mapping["faces"].values() for s in f["rows"]
+             if "texts" in s and ("donor" in s or "wo2" in s)}
+    labels = {tuple(s["donor"]): s["texts"] for group in mapping.get("labels", {}).values() for s in group}
+    return texts | HEADER_TEXTS | labels
 
 def hires_texts(edit: dict, mapping: dict, donors: dict) -> list[str | None]:
 
     texts, out = donor_texts(mapping), []
+    named = lambda p: "donor" in p or "wo2" in p and "row" in p  # a donor piece, or a header band of a WO2 sheet
     for row in edit.get("rows") or [edit["draw"]]:  
-        piece = next((p for p in row if "text" in p or "donor" in p), row[0])  
+        piece = next((p for p in row if "text" in p or named(p)), row[0])
         if "text" in piece:
             out.append(piece["text"])
-        elif "donor" not in piece:
+        elif not named(piece):
             out.append(None)  
         elif "row" in piece:
-            out.append(texts.get(tuple(piece["donor"]), [None] * (piece["row"] + 1))[piece["row"]])
+            out.append(texts.get(sheet_key(piece), [None] * (piece["row"] + 1))[piece["row"]])
         else:
             entry, item, index = piece["donor"]
             bands = ink_rows(rgba(donors[entry][item].textures[index]))
@@ -1921,7 +1939,7 @@ def hires_texts(edit: dict, mapping: dict, donors: dict) -> list[str | None]:
             out.append(next(t for (top, bottom), t in zip(bands, texts[tuple(piece["donor"])], strict=True) if y0 <= top and bottom <= y1))
 
     if edit.get("style") == "results":
-        out = [(reference(f"{edit['entry']}.{edit['item']}", row) or {}).get("pc_text") or text
+        out = [words.resolved((reference(f"{edit['entry']}.{edit['item']}", row) or {}).get("pc_text")) or text
                for row, text in enumerate(out)]
     return out
 
@@ -1972,15 +1990,17 @@ def rows_edit(entry: int, item: int, mapping: dict, served: Image.Image, **face)
 
 def header_edit(edit: dict, mapping: dict, served: Image.Image) -> dict:
 
-    texts = {tuple(s["donor"]): s["texts"] for s in mapping["faces"]["header"]["rows"]} | HEADER_TEXTS
+    texts = {sheet_key(s): s["texts"] for s in mapping["faces"]["header"]["rows"]} | HEADER_TEXTS
     bands = edit.get("bands") or ink_rows(served)
     if "rows" in edit:
         rows = edit["rows"]
     elif "draw" in edit:  
-        donor, rows = edit["draw"][0]["donor"], []
+        sheet, rows = {k: v for k, v in edit["draw"][0].items() if k in ("donor", "wo2")}, []
+        # the sheet's own bands, in order; a line its face leaves unread is lettered by an into piece
+        lines = [k for k, text in enumerate(texts[sheet_key(sheet)]) if text is not None]
         for top, bottom in bands:
-            into = next((p for p in edit["draw"][1:] if p["into"][1] <= top and bottom <= p["into"][3]), None)
-            rows.append([into] if into else [{"donor": donor, "row": len(rows) - sum(len(r) for r in rows if "into" in r[0])}])
+            into = next((p for p in edit["draw"] if "into" in p and p["into"][1] <= top and bottom <= p["into"][3]), None)
+            rows.append([into] if into else [dict(sheet, row=lines[sum("into" not in r[0] for r in rows)])])
     else:
         rows = [[{"donor": edit["donor"], "row": i}] for i in range(len(texts[tuple(edit["donor"])]))]
     return dict(edit, rows=rows, bands=bands, align="left", face="header")
@@ -2013,7 +2033,7 @@ def vector_art(edit: dict, served: Image.Image, texts: list, scale: int, window=
     header = edit.get("face") == "header"
     official_left = next((row_geometry(served.crop((0, top, served.width, bottom)), header_cover)[0]
                           for (top, bottom), row in zip(edit.get("bands", []), edit.get("rows", []), strict=True)
-                          if "donor" in row[0] and "box" not in row[0]), None) if header else None
+                          if ("donor" in row[0] or "wo2" in row[0]) and "box" not in row[0]), None) if header else None
     with tempfile.TemporaryDirectory() as tmp:
         help_labels = {}
         help_right = None
@@ -2048,7 +2068,7 @@ def vector_art(edit: dict, served: Image.Image, texts: list, scale: int, window=
                 continue
             row = (edit.get("rows") or [edit["draw"]])[k]
             piece, split = row[0], 0
-            if header and "donor" not in piece and "text" not in piece:  
+            if header and "donor" not in piece and "wo2" not in piece and "text" not in piece:
                 split = stock_split(band_1x, edit.get("gap", 9))
                 art.paste(band_1x.crop((0, 0, split, band_1x.height)).resize((split * scale, band_1x.height * scale),
                                                                               Image.Resampling.NEAREST), (0, top * scale))
@@ -2119,7 +2139,7 @@ def vector_art(edit: dict, served: Image.Image, texts: list, scale: int, window=
             pause = PAUSE_BUTTON_ROWS.get((edit["entry"], edit["item"], k))
             if pause:
                 expected, target, left, baseline, centre, counterpart = pause
-                if text != expected:
+                if words.sha256(text) != expected:
                     raise ValueError(f"pause row pairing changed: {edit['entry']}.{edit['item']} row {k}: {text!r}")
                 label, metrics = pause_button_label(text, scale, Path(tmp) / f"pause-{k}.png", target, counterpart)
                 label, metrics = squeezed_label(label, metrics, (left, left + target, baseline), scale, squeeze)
@@ -2144,29 +2164,36 @@ def vector_art(edit: dict, served: Image.Image, texts: list, scale: int, window=
                 track = track if solved is None else solved
             label, metrics = button_label(text, scale, Path(tmp) / f"{k}.png", track,
                                           STYLE.get((edit["entry"], edit["item"]), "501.3"))
+            quad = piece.get("window") or window
+            if quad and squeeze:  # buttonraster's ink is the glyphs' box; the drawn outline and glow, squeezed with them, stay in the quad
+                fill, drawn = metrics.get("fill") or metrics["ink"][::2], metrics["drawn"]
+                factor = min(1.0, (quad[1] - quad[0]) * scale / (drawn[2] - drawn[0]))
+                geometry = (max(geometry[0], quad[0] + (fill[0] - drawn[0]) * factor / scale),
+                            min(geometry[1], quad[1] - (drawn[2] - fill[1]) * factor / scale), geometry[2])
             label, metrics = squeezed_label(label, metrics, geometry, scale, squeeze)
             x, y = row_offset(geometry, metrics, scale, edit.get("align", "full"))
             if (edit["entry"], edit["item"]) in {(4080, 44), (4080, 45)}:
 
                 x = max(x, 0)
-            quad = piece.get("window") or window
-            if quad and (x < quad[0] * scale or x + label.width > quad[1] * scale):
-                print(f"{edit['entry']}.{edit['item']} row {k} {text}: {x}-{x + label.width} leaves the quad window "
+            drawn = [round(x + v) for v in (metrics.get("drawn") or metrics["ink"])[::2]]  # the squeezed edges, in pixels
+            if quad and (drawn[0] < quad[0] * scale or drawn[1] > quad[1] * scale):
+                print(f"{edit['entry']}.{edit['item']} row {k} {text}: ink {drawn[0]}-{drawn[1]} "
+                      f"leaves the quad window "
                       f"{quad[0] * scale}-{quad[1] * scale}", file=sys.stderr)
             band = Image.new("RGBA", (art.width, (bottom - top) * scale))
             band.paste(label, (x, y))  
             art.paste(band, (0, top * scale))
     return art
 
-def main_art(served: Image.Image, scale: int, style: str, squeeze: bool = False) -> Image.Image:
+def main_art(rows: list[str], served: Image.Image, scale: int, style: str, squeeze: bool = False) -> Image.Image:
 
     art = Image.new("RGBA", (served.width * scale, served.height * scale))
-    bands = [(k * MAIN_PITCH, (k + 1) * MAIN_PITCH) for k in range(len(MAIN_ROWS))]
+    bands = [(k * MAIN_PITCH, (k + 1) * MAIN_PITCH) for k in range(len(rows))]
     geometry = [row_geometry(served.crop((0, top, served.width, bottom)), main_cover) for top, bottom in bands]
     official_geometry = geometry.copy()
     geometry[-1] = geometry[-2]  
     with tempfile.TemporaryDirectory() as tmp:
-        for k, ((top, bottom), text, (left, right, baseline)) in enumerate(zip(bands, MAIN_ROWS, geometry, strict=True)):
+        for k, ((top, bottom), text, (left, right, baseline)) in enumerate(zip(bands, rows, geometry, strict=True)):
             out = Path(tmp) / f"{k}.png"
             label, metrics = header_label(text, scale, out, MAIN_RASTER,
                                           "--style", style, "--room", str(MAIN_STREAK_END - left))
@@ -2273,7 +2300,7 @@ def plate_art(entry: int, item: int, g1t, edit: dict, text: str, scale: int,
         served = rgba(donors[("wo2", ens)][member].textures[index])
     badge = (entry, item) == (4094, 16)
     cover = (lambda r, g, b, a: min(r, g, b) / 255 if a > 204 else 0) if badge else plate_cover
-    geometry = row_geometry(served, cover)
+    geometry = tuple(edit["geometry"]) if "geometry" in edit else row_geometry(served, cover)  # a recipe's own room
     if (entry, item) in TIME_LABEL_LAYOUT:
         _, left, baseline = TIME_LABEL_LAYOUT[(entry, item)]
         geometry = (left, left, baseline)
@@ -2428,9 +2455,9 @@ def _hires_bin(entries: Path, source: Path | None, vector: tuple | None, squeeze
             if art.width != w * scale or art.height < h * scale:
                 raise ValueError(f"{entry}.{item}.png is {art.size}, not {w * scale} x at least {h * scale}")
         elif (entry, item) in PAGE_LABEL and vector:
-            art = page_label_art(scale, w, served, squeeze)
+            art = page_label_art(vector[0]["main_rows"], scale, w, served, squeeze)
         elif (entry, item) in MAIN and vector:
-            art = main_art(served, scale, MAIN[(entry, item)], squeeze)
+            art = main_art(vector[0]["main_rows"], served, scale, MAIN[(entry, item)], squeeze)
         elif vector:
             mapping, donors = vector
             if (entry, item) in HIRES_NATIVE_MENU:
@@ -2576,10 +2603,11 @@ def donor_stem(stem: Path | None, image: Path | None, identity, destination: Pat
 def main(argv: list[str] | None = None) -> int:
     global FONT_PYTHON, LZP2_CACHE
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--wo1-donor", type=Path, default=os.environ.get("WOZMOD_WO1_DONOR"),
-                        help="WO1 PC Europe linkdata_ens path without its .lnk/.idx suffix")
     parser.add_argument("--wo1-x360-donor", type=Path, default=os.environ.get("WOZMOD_WO1_X360_DONOR"),
                         help="WO1 Xbox 360 USA linkdata_ens path without its .lnk/.idx suffix")
+    parser.add_argument("--text-donors", type=Path, default=os.environ.get("WOZMOD_DONORS"),
+                        help="the installer's donors folder, laid out as for the text table: the menu words "
+                             "the art letters resolve from its programs and archives")
     parser.add_argument("--latin-cells", type=Path, default=os.environ.get("WOZMOD_LATIN_CELLS"),
                         help="24-pixel vector Latin cells; generated when omitted")
     parser.add_argument("--wo2-donor", type=Path, default=os.environ.get("WOZMOD_X360_DONOR"),
@@ -2600,13 +2628,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-squish", action="store_true",
                         help="developer oracle only: keep full-width vector lettering")
     parser.add_argument("--game", type=Path, default=os.environ.get("WOZMOD_GAME"))
-    parser.add_argument("--wo1-iso", type=Path, default=os.environ.get("WOZMOD_WO1_ISO"))
     parser.add_argument("--wo1-x360-iso", type=Path, default=os.environ.get("WOZMOD_WO1_X360_ISO"))
     parser.add_argument("--wo2-iso", type=Path, default=os.environ.get("WOZMOD_X360_ISO"))
     parser.add_argument("--font-python", default=FONT_PYTHON)
     parser.add_argument("--cache-dir", type=Path)
     args = parser.parse_args(argv)
     FONT_PYTHON = args.font_python
+    words.use(args.text_donors)
     working = args.output_dir or args.preview_dir
     if working is not None:
         LZP2_CACHE = args.cache_dir or working / "lzp2-cache"
@@ -2625,7 +2653,6 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("give --game or WOZMOD_GAME")
     if working is not None and (not args.hires_only or args.hires == "vector"):
         try:
-            args.wo1_donor = donor_stem(args.wo1_donor, args.wo1_iso, WO1, working / "donors/wo1")
             args.wo1_x360_donor = donor_stem(args.wo1_x360_donor, args.wo1_x360_iso, WO1_X360,
                                              working / "donors/wo1-x360")
             args.wo2_donor = donor_stem(args.wo2_donor, args.wo2_iso, X360, working / "donors/wo2-x360")
@@ -2634,7 +2661,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.hires_only:
         write_hires(args)
         return 0
-    mapping = json.loads(MAPPING.read_text(encoding="utf-8"))
+    mapping = words.load(MAPPING)
     edits: dict[int, list[dict]] = {}
     for edit in mapping["textures"]:  
         for ordinal, step in expanded(edit):
@@ -2746,7 +2773,7 @@ def write_hires(args) -> None:
     source = None if args.hires in ("fixture", "vector") else Path(args.hires)
     vector = None
     if args.hires == "vector":
-        mapping = json.loads(MAPPING.read_text(encoding="utf-8"))
+        mapping = words.load(MAPPING)
         if not args.hires_only:
             cache = args.output_dir / "vector-plate-sources"
             for old in cache.glob("*.g1t"):

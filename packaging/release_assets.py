@@ -4,10 +4,11 @@ CI cannot build these two files: the DLL build reads the stock game, and the let
 FontForge, Cairo and NumPy. Run this on the developer machine, before you push the tag:
 
     uv run python packaging/release_assets.py --tag v0.1.0 --dll PATH --lettering PATH
-    uv run python packaging/release_assets.py --tag v0.1.0 --build --game "<stock Musou Orochi Z folder>"
+    uv run python packaging/release_assets.py --tag v0.1.0 --build --game "<stock Musou Orochi Z folder>" \
+        --donors "<donors folder, as the installer lays it out>"
 
 --build renders both files first (Docker or MinGW for the DLL, the system python3 with FontForge, Cairo
-and NumPy for the lettering). Both files must match the sizes and SHA-256 pinned in
+and NumPy for the lettering, which reads the menu words from the donors). Both files must match the sizes and SHA-256 pinned in
 src/wozmod/install/__init__.py; the script stops otherwise. Add --dry-run to check without uploading.
 """
 
@@ -31,10 +32,11 @@ def check(path: Path, pin: tuple[int, str]) -> None:
                          "rebuild it, or update the pin together with the release")
 
 
-def build(game: Path, folder: Path) -> tuple[Path, Path]:
+def build(game: Path, donors: Path, folder: Path) -> tuple[Path, Path]:
     """Render d3d9.dll (from the stock executable) and lettering.zip into folder."""
     subprocess.run([sys.executable, "-m", "wozmod.runtime", "--game", str(game), "--output-dir", str(folder)], check=True)
-    subprocess.run([sys.executable, "-m", "wozmod.art", "render", str(folder / "lettering.zip")], check=True)
+    subprocess.run([sys.executable, "-m", "wozmod.art", "render", str(folder / "lettering.zip"),
+                    "--text-donors", str(donors)], check=True)
     return folder / "d3d9.dll", folder / "lettering.zip"
 
 
@@ -43,15 +45,16 @@ def main() -> int:
     parser.add_argument("--tag", required=True, help="the release tag, for example v0.1.0")
     parser.add_argument("--dll", type=Path)
     parser.add_argument("--lettering", type=Path)
-    parser.add_argument("--build", action="store_true", help="render both files first (needs --game)")
+    parser.add_argument("--build", action="store_true", help="render both files first (needs --game and --donors)")
     parser.add_argument("--game", type=Path, help="the stock Musou Orochi Z folder, for --build")
+    parser.add_argument("--donors", type=Path, help="the donors folder the menu words resolve from, for --build")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="wozmod-assets-") as scratch:
         if args.build:
-            if args.game is None:
-                parser.error("--build needs --game")
-            dll, lettering = build(args.game, Path(scratch))
+            if args.game is None or args.donors is None:
+                parser.error("--build needs --game and --donors")
+            dll, lettering = build(args.game, args.donors, Path(scratch))
         elif args.dll and args.lettering:
             # gh names an asset after its file, so copy under the release names
             dll, lettering = Path(scratch, "d3d9.dll"), Path(scratch, "lettering.zip")

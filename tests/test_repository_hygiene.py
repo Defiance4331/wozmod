@@ -7,6 +7,7 @@ Japanese source string.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -137,3 +138,74 @@ def test_release_zips_carry_no_game_files_or_game_text() -> None:
                         offending.append(f"{release}!{name}")
 
     assert offending == []
+
+
+def _donor_strings(root: Path) -> set[str]:
+    """Every string the games show, case and spacing folded: their ENS archives, the PSP pool, and the program
+    strings the text table and the art data point at (a program's other bytes, such as shader code, are not text)."""
+    from wozmod.formats.linkdata import parse_wo1_index
+    from wozmod.formats.scripts import donor_text
+    from wozmod.text.resolver import DonorResolver
+
+    resolver, found = DonorResolver(root), set()
+
+    def strings(data: bytes, decode):
+        for match in re.finditer(rb"(?:(?<=\0)|^)[^\0]{2,}", data):
+            try:
+                text = decode(match.group())
+            except ValueError:
+                continue
+            if text:
+                found.add(" ".join(text.casefold().split()))
+
+    for donor, folder in (("wo1-x360", "wo1-x360"), ("x360", "wo2-x360")):
+        stem = root / folder / "linkdata_ens"
+        for ordinal in range(len(parse_wo1_index(stem.with_suffix(".idx").read_bytes(),
+                                                 data_size=stem.with_suffix(".lnk").stat().st_size))):
+            try:
+                strings(resolver.entry(donor, ordinal), donor_text)
+            except ValueError:
+                continue
+    found |= {" ".join(text.casefold().split()) for text in resolver.psp_pool() if text}
+    pointers = [*_strings(json.loads((REPO / "data/text/table.json").read_text(encoding="utf-8")), refs=True),
+                *(ref for path in sorted((REPO / "data/art").glob("*.json"))
+                  for ref in _strings(json.loads(path.read_text(encoding="utf-8")), refs=True))]
+    found |= {" ".join(resolver.resolve(ref).casefold().split()) for ref in pointers if ref[1] == "pe"}
+    return found
+
+
+@pytest.mark.skipif(not (os.environ.get("WOZMOD_ART_WORDS") and os.environ.get("WOZMOD_DONORS")),
+                    reason="set WOZMOD_ART_WORDS=1 and WOZMOD_DONORS (about a minute)")
+def test_art_data_stores_no_official_english() -> None:
+    # Bug: an official menu word is typed into the art data or the art build's constants (in any case or
+    # spacing) instead of a pointer to its donor string or a letter map of its donor image.
+    from wozmod.art import build
+
+    official = _donor_strings(Path(os.environ["WOZMOD_DONORS"]))
+    stored = [(path.name, text) for path in sorted((REPO / "data/art").glob("*.json"))
+              for text in _strings(json.loads(path.read_text(encoding="utf-8")))]
+    stored += [(f"art/build.py {name}", text) for name, value in vars(build).items() if name.isupper()
+               for text in _strings(value)]
+    # A word: three letters or more with a capital (identifiers and style names are lower case).
+    offending = sorted({f"{where}: {hashlib.sha256(text.encode()).hexdigest()[:12]}" for where, text in stored
+                        if sum(c.isalpha() for c in text) >= 3 and any(c.isupper() for c in text)
+                        and " ".join(text.casefold().split()) in official})
+
+    assert offending == []
+
+
+def _strings(value, refs: bool = False):
+    """Every string in value, or with refs every donor pointer (a "ref" list)."""
+    if isinstance(value, str) and not refs:
+        yield value
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            if refs and key == "ref" and isinstance(item, list):
+                yield item
+                continue
+            if not refs:
+                yield str(key)
+            yield from _strings(item, refs)
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        for item in value:
+            yield from _strings(item, refs)

@@ -65,22 +65,7 @@
         },
         "3": {
           "style": "button.501.3",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              3,
-              0
-            ],
-            "crop": [
-              0,
-              126,
-              512,
-              168
-            ]
-          }
+          "alignment": "full"
         },
         "4": {
           "style": "button.501.3",
@@ -439,174 +424,39 @@
         },
         "25": {
           "style": "button.501.3",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              3,
-              0
-            ],
-            "crop": [
-              0,
-              1008,
-              512,
-              1050
-            ]
-          }
+          "alignment": "full"
         },
         "26": {
           "style": "button.501.3",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              3,
-              0
-            ],
-            "crop": [
-              0,
-              1050,
-              512,
-              1092
-            ]
-          }
+          "alignment": "full"
         },
         "27": {
           "style": "button.501.3",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              3,
-              0
-            ],
-            "crop": [
-              0,
-              1092,
-              512,
-              1134
-            ]
-          }
+          "alignment": "full"
         },
         "28": {
           "style": "button.501.3",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              3,
-              0
-            ],
-            "crop": [
-              0,
-              1134,
-              512,
-              1176
-            ]
-          }
+          "alignment": "full"
         },
         "29": {
           "style": "button.501.3",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              3,
-              0
-            ],
-            "crop": [
-              0,
-              1176,
-              512,
-              1218
-            ]
-          }
+          "alignment": "full"
         },
         "30": {
           "style": "button.501.3",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              3,
-              0
-            ],
-            "crop": [
-              0,
-              1218,
-              512,
-              1260
-            ]
-          }
+          "alignment": "full"
         },
         "31": {
           "style": "button.501.3",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              3,
-              0
-            ],
-            "crop": [
-              0,
-              1260,
-              512,
-              1302
-            ]
-          }
+          "alignment": "full"
         },
         "32": {
           "style": "button.501.3",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              3,
-              0
-            ],
-            "crop": [
-              0,
-              1302,
-              512,
-              1344
-            ]
-          }
+          "alignment": "full"
         },
         "33": {
           "style": "button.501.3",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              3,
-              0
-            ],
-            "crop": [
-              0,
-              1344,
-              512,
-              1386
-            ]
-          }
+          "alignment": "full"
         },
         "34": {
           "style": "button.501.3",
@@ -618,22 +468,7 @@
         },
         "35": {
           "style": "button.501.3",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              3,
-              0
-            ],
-            "crop": [
-              0,
-              1428,
-              512,
-              1470
-            ]
-          }
+          "alignment": "full"
         },
         "36": {
           "style": "button.501.3",
@@ -2503,22 +2338,7 @@
         },
         "4": {
           "style": "header",
-          "alignment": "left",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              23,
-              0
-            ],
-            "crop": [
-              0,
-              224,
-              512,
-              280
-            ]
-          }
+          "alignment": "left"
         },
         "5": {
           "style": "header",
@@ -4211,117 +4031,27 @@
         },
         "4": {
           "style": "value.value_dim",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              13,
-              0
-            ],
-            "crop": [
-              0,
-              84,
-              256,
-              126
-            ]
-          }
+          "alignment": "full"
         },
         "5": {
           "style": "value.value_dim",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              13,
-              0
-            ],
-            "crop": [
-              0,
-              126,
-              256,
-              168
-            ]
-          }
+          "alignment": "full"
         },
         "6": {
           "style": "value.value_dim",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              13,
-              0
-            ],
-            "crop": [
-              0,
-              168,
-              256,
-              210
-            ]
-          }
+          "alignment": "full"
         },
         "7": {
           "style": "value.value_dim",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              13,
-              0
-            ],
-            "crop": [
-              0,
-              210,
-              256,
-              252
-            ]
-          }
+          "alignment": "full"
         },
         "8": {
           "style": "value.value_dim",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              13,
-              0
-            ],
-            "crop": [
-              0,
-              294,
-              256,
-              336
-            ]
-          }
+          "alignment": "full"
         },
         "9": {
           "style": "value.value_dim",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              13,
-              0
-            ],
-            "crop": [
-              0,
-              336,
-              256,
-              378
-            ]
-          }
+          "alignment": "full"
         },
         "10": {
           "style": "value.value_dim",
@@ -4333,41 +4063,11 @@
         },
         "11": {
           "style": "value.value_dim",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              13,
-              0
-            ],
-            "crop": [
-              0,
-              420,
-              256,
-              462
-            ]
-          }
+          "alignment": "full"
         },
         "12": {
           "style": "value.value_dim",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              13,
-              0
-            ],
-            "crop": [
-              0,
-              462,
-              256,
-              504
-            ]
-          }
+          "alignment": "full"
         },
         "13": {
           "style": "value.value_dim",
@@ -4500,117 +4200,27 @@
         },
         "4": {
           "style": "value.value_lit",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              14,
-              0
-            ],
-            "crop": [
-              0,
-              84,
-              256,
-              126
-            ]
-          }
+          "alignment": "full"
         },
         "5": {
           "style": "value.value_lit",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              14,
-              0
-            ],
-            "crop": [
-              0,
-              126,
-              256,
-              168
-            ]
-          }
+          "alignment": "full"
         },
         "6": {
           "style": "value.value_lit",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              14,
-              0
-            ],
-            "crop": [
-              0,
-              168,
-              256,
-              210
-            ]
-          }
+          "alignment": "full"
         },
         "7": {
           "style": "value.value_lit",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              14,
-              0
-            ],
-            "crop": [
-              0,
-              210,
-              256,
-              252
-            ]
-          }
+          "alignment": "full"
         },
         "8": {
           "style": "value.value_lit",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              14,
-              0
-            ],
-            "crop": [
-              0,
-              294,
-              256,
-              336
-            ]
-          }
+          "alignment": "full"
         },
         "9": {
           "style": "value.value_lit",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              14,
-              0
-            ],
-            "crop": [
-              0,
-              336,
-              256,
-              378
-            ]
-          }
+          "alignment": "full"
         },
         "10": {
           "style": "value.value_lit",
@@ -4622,41 +4232,11 @@
         },
         "11": {
           "style": "value.value_lit",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              14,
-              0
-            ],
-            "crop": [
-              0,
-              420,
-              256,
-              462
-            ]
-          }
+          "alignment": "full"
         },
         "12": {
           "style": "value.value_lit",
-          "alignment": "full",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              501,
-              14,
-              0
-            ],
-            "crop": [
-              0,
-              462,
-              256,
-              504
-            ]
-          }
+          "alignment": "full"
         },
         "13": {
           "style": "value.value_lit",
@@ -6701,22 +6281,7 @@
       "rows": {
         "0": {
           "style": "dark.plate",
-          "alignment": "left",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              508,
-              48,
-              0
-            ],
-            "crop": [
-              0,
-              0,
-              256,
-              32
-            ]
-          }
+          "alignment": "left"
         }
       }
     },
@@ -6727,22 +6292,7 @@
       "rows": {
         "0": {
           "style": "dark.plate",
-          "alignment": "left",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              508,
-              49,
-              0
-            ],
-            "crop": [
-              0,
-              0,
-              256,
-              32
-            ]
-          }
+          "alignment": "left"
         }
       }
     },
@@ -6753,22 +6303,7 @@
       "rows": {
         "0": {
           "style": "dark.plate",
-          "alignment": "left",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              508,
-              50,
-              0
-            ],
-            "crop": [
-              0,
-              0,
-              256,
-              32
-            ]
-          }
+          "alignment": "left"
         }
       }
     },
@@ -6779,22 +6314,7 @@
       "rows": {
         "0": {
           "style": "dark.plate",
-          "alignment": "left",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              508,
-              48,
-              0
-            ],
-            "crop": [
-              0,
-              0,
-              256,
-              32
-            ]
-          }
+          "alignment": "left"
         }
       }
     },
@@ -6805,22 +6325,7 @@
       "rows": {
         "0": {
           "style": "dark.plate",
-          "alignment": "left",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              508,
-              49,
-              0
-            ],
-            "crop": [
-              0,
-              0,
-              256,
-              32
-            ]
-          }
+          "alignment": "left"
         }
       }
     },
@@ -6831,22 +6336,7 @@
       "rows": {
         "0": {
           "style": "dark.plate",
-          "alignment": "left",
-          "original": {
-            "donor": "wo1",
-            "kind": "official",
-            "ens": [
-              508,
-              50,
-              0
-            ],
-            "crop": [
-              0,
-              0,
-              256,
-              32
-            ]
-          }
+          "alignment": "left"
         }
       }
     },
@@ -7003,7 +6493,14 @@
               32
             ]
           },
-          "pc_text": "donor:ced5103bf1a4663a"
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88444
+            ],
+            "sha256": "ced5103bf1a4663a40ade90b9e3b18923c50f22972d7b1bbdbd500e85f87aaa3"
+          }
         }
       }
     },
@@ -7030,7 +6527,14 @@
               32
             ]
           },
-          "pc_text": "donor:699e99339afb648b"
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88445
+            ],
+            "sha256": "699e99339afb648b1c815dd325598c4dc6b03f346bcf037bc039f9b417cf1dbe"
+          }
         }
       }
     },
@@ -7057,7 +6561,14 @@
               32
             ]
           },
-          "pc_text": "donor:5888675d99b95617"
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88440
+            ],
+            "sha256": "5888675d99b95617ba8cccd20dabe5554e91c71f3877c69d759bd8a5f162ae70"
+          }
         }
       }
     },
@@ -7084,7 +6595,14 @@
               32
             ]
           },
-          "pc_text": "donor:b2d86f84fddddde2"
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88442
+            ],
+            "sha256": "b2d86f84fddddde2a5008763ba17d8aed8b959c00dc7f064522e3e8dcbc1be30"
+          }
         }
       }
     },
@@ -7111,7 +6629,14 @@
               32
             ]
           },
-          "pc_text": "donor:b2d86f84fddddde2"
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88442
+            ],
+            "sha256": "b2d86f84fddddde2a5008763ba17d8aed8b959c00dc7f064522e3e8dcbc1be30"
+          }
         }
       }
     },
@@ -7138,7 +6663,14 @@
               32
             ]
           },
-          "pc_text": "donor:5888675d99b95617"
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88440
+            ],
+            "sha256": "5888675d99b95617ba8cccd20dabe5554e91c71f3877c69d759bd8a5f162ae70"
+          }
         }
       }
     },
@@ -7165,7 +6697,14 @@
               32
             ]
           },
-          "pc_text": "donor:ced5103bf1a4663a"
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88444
+            ],
+            "sha256": "ced5103bf1a4663a40ade90b9e3b18923c50f22972d7b1bbdbd500e85f87aaa3"
+          }
         }
       }
     },
@@ -8118,7 +7657,14 @@
           "style": "rounded.ability",
           "alignment": "left",
           "role_variant": "blue",
-          "pc_text": "donor:33a4c26b8a711c86",
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88530
+            ],
+            "sha256": "33a4c26b8a711c86cdc635ba4cac1f616c715c9f0e68ec7370867c790071fdd8"
+          },
           "original": {
             "donor": "x360",
             "kind": "official",
@@ -8146,7 +7692,14 @@
           "style": "rounded.ability",
           "alignment": "left",
           "role_variant": "blue",
-          "pc_text": "donor:9d3cab2b5efed4ea",
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88531
+            ],
+            "sha256": "9d3cab2b5efed4eaef42a707dbc813da2ffad53220aa713b5f3c950596fe35f5"
+          },
           "original": {
             "donor": "x360",
             "kind": "official",
@@ -8174,7 +7727,14 @@
           "style": "rounded.ability",
           "alignment": "left",
           "role_variant": "blue",
-          "pc_text": "donor:5252d07443c4ac6d",
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88532
+            ],
+            "sha256": "5252d07443c4ac6d10b904440c970a7b63cafea2e981edfce0c0406983d20d95"
+          },
           "original": {
             "donor": "x360",
             "kind": "official",
@@ -8202,7 +7762,14 @@
           "style": "rounded.ability",
           "alignment": "left",
           "role_variant": "blue",
-          "pc_text": "donor:869608639a4178f7",
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88533
+            ],
+            "sha256": "869608639a4178f7e379027b2376eaeb05739e91794ff2f3cef4b57810fa2534"
+          },
           "original": {
             "donor": "x360",
             "kind": "official",
@@ -8230,7 +7797,14 @@
           "style": "rounded.ability",
           "alignment": "left",
           "role_variant": "blue",
-          "pc_text": "donor:e8e4d4d8c81d7001",
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88534
+            ],
+            "sha256": "e8e4d4d8c81d70015e3c18610853bd87247b89bcfda2f7d8ffe8e606ae124b58"
+          },
           "original": {
             "donor": "x360",
             "kind": "official",
@@ -8258,7 +7832,14 @@
           "style": "rounded.ability",
           "alignment": "left",
           "role_variant": "blue",
-          "pc_text": "donor:6fadc20e9f710b9e",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              164128
+            ],
+            "sha256": "6fadc20e9f710b9e411f874410d367f76341ebda736d3a0b09452aa07cfa498e"
+          },
           "original": {
             "donor": "x360",
             "kind": "official",
@@ -8286,7 +7867,14 @@
           "style": "rounded.ability",
           "alignment": "left",
           "role_variant": "pink",
-          "pc_text": "donor:296e71a396fdd4cf",
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88536
+            ],
+            "sha256": "296e71a396fdd4cfff3e57262d4392cc03f8889c4b432c73e1d683f126a06e3f"
+          },
           "original": {
             "donor": "x360",
             "kind": "official",
@@ -8314,7 +7902,14 @@
           "style": "rounded.ability",
           "alignment": "left",
           "role_variant": "pink",
-          "pc_text": "donor:848e96567d6b48d5",
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88537
+            ],
+            "sha256": "848e96567d6b48d54c0b53017bd6123cefa97d6e0fab0f14c621ec3fd92178f4"
+          },
           "original": {
             "donor": "x360",
             "kind": "official",
@@ -8342,7 +7937,14 @@
           "style": "rounded.ability",
           "alignment": "left",
           "role_variant": "pink",
-          "pc_text": "donor:c372fee9b4566b85",
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88538
+            ],
+            "sha256": "c372fee9b4566b85a592ae6e98e571f3929c8e262cf2feff7acba63a65a50f14"
+          },
           "original": {
             "donor": "x360",
             "kind": "official",
@@ -8370,7 +7972,14 @@
           "style": "rounded.ability",
           "alignment": "left",
           "role_variant": "pink",
-          "pc_text": "donor:bf4043a9b3dff077",
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88539
+            ],
+            "sha256": "bf4043a9b3dff077edfe02f1f6addb18d8e03e9a73c4c04bd4579deeef375b77"
+          },
           "original": {
             "donor": "x360",
             "kind": "official",
@@ -8398,7 +8007,14 @@
           "style": "rounded.ability",
           "alignment": "left",
           "role_variant": "pink",
-          "pc_text": "donor:0d791a0a6f011001",
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88540
+            ],
+            "sha256": "0d791a0a6f01100118b48ef924ee40b6911da8348f0e7bad36cf70b4df1c4a64"
+          },
           "original": {
             "donor": "x360",
             "kind": "official",
@@ -8426,7 +8042,14 @@
           "style": "rounded.ability",
           "alignment": "left",
           "role_variant": "pink",
-          "pc_text": "donor:10988fa4836dec39",
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88541
+            ],
+            "sha256": "10988fa4836dec393a0376acf36465d51ac6e9b64e826a1e4fb70687e4ef176d"
+          },
           "original": {
             "donor": "x360",
             "kind": "official",
@@ -8454,7 +8077,14 @@
           "style": "rounded.ability",
           "alignment": "left",
           "role_variant": "yellow",
-          "pc_text": "donor:13ad63eb03a3db56",
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88542
+            ],
+            "sha256": "13ad63eb03a3db567db1a57891738f4b71b4652a750db710d34d2c69df75bc3f"
+          },
           "original": {
             "donor": "x360",
             "kind": "official",
@@ -8482,7 +8112,14 @@
           "style": "rounded.ability",
           "alignment": "left",
           "role_variant": "yellow",
-          "pc_text": "donor:f0d3e211e979e149",
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88543
+            ],
+            "sha256": "f0d3e211e979e149867472bc1227a273f998069d5fe2b2d3d3fdffa5d1bf8c04"
+          },
           "original": {
             "donor": "x360",
             "kind": "official",
@@ -8510,7 +8147,14 @@
           "style": "rounded.ability",
           "alignment": "left",
           "role_variant": "yellow",
-          "pc_text": "donor:d31babd4d60f4d9d",
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88544
+            ],
+            "sha256": "d31babd4d60f4d9d75bc3803157f6f08e03605512c0eba441faf401f065bb4e6"
+          },
           "original": {
             "donor": "x360",
             "kind": "official",
@@ -8566,7 +8210,14 @@
           "style": "rounded.ability",
           "alignment": "left",
           "role_variant": "yellow",
-          "pc_text": "donor:0c5327fd45c72552",
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88546
+            ],
+            "sha256": "0c5327fd45c725528c37b589d6198944faba2decd050086cbf89fa636c9843c7"
+          },
           "original": {
             "donor": "x360",
             "kind": "official",
@@ -8594,7 +8245,14 @@
           "style": "rounded.ability",
           "alignment": "left",
           "role_variant": "yellow",
-          "pc_text": "donor:628046757fa5340c",
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88547
+            ],
+            "sha256": "628046757fa5340cc2ba13883546f556f66a690adca802bb2f5e961cd4466476"
+          },
           "original": {
             "donor": "x360",
             "kind": "official",
@@ -8621,7 +8279,14 @@
         "0": {
           "style": "rounded.base",
           "alignment": "left",
-          "pc_text": "donor:f60d253c5994383d",
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              88548
+            ],
+            "sha256": "f60d253c5994383dcac0757d461d1c1c8209b94baae31b5deb4287dafb363090"
+          },
           "original": {
             "donor": "x360",
             "kind": "official",
@@ -23336,7 +23001,16 @@
         "23": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:328e842ff4ca870a",
+          "pc_text": {
+            "ref": [
+              "x360",
+              "ens",
+              210,
+              "cstr",
+              3108
+            ],
+            "sha256": "328e842ff4ca870a7264c9dddff9f3e88810b2c58b04e55fe5f5cfbaae52ab7d"
+          },
           "original": {
             "donor": "x360",
             "kind": "official",
@@ -23572,7 +23246,14 @@
         "0": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:a29dbdd38f71a09d",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112436
+            ],
+            "sha256": "a29dbdd38f71a09d7ecb1b6a4c65ea1d1c4a2dd046b692706531a687dd744f46"
+          },
           "original": {
             "donor": "x360",
             "kind": "official",
@@ -23961,7 +23642,14 @@
         "20": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:77d7cd99073bd654",
+          "pc_text": {
+            "ref": [
+              "x360",
+              "pe",
+              145408
+            ],
+            "sha256": "77d7cd99073bd654f4bc89d3231dcc74411ea08ce000218fda6220fd89a842fe"
+          },
           "original": {
             "donor": "x360",
             "kind": "official",
@@ -24156,7 +23844,15 @@
         "1": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:348348036267fa04",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              41532
+            ],
+            "case": "upper",
+            "sha256": "348348036267fa046df6956d6bff62c93c2f7b89c711056c6a8cdcab6dd4a8e7"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24165,7 +23861,15 @@
         "2": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:73f4db05191514c9",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              113000
+            ],
+            "case": "upper",
+            "sha256": "73f4db05191514c9349ab77059e8844e95caf7a569165222e79ca3e8c081aad1"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24174,7 +23878,15 @@
         "3": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:3e57b132a4b258aa",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112992
+            ],
+            "case": "upper",
+            "sha256": "3e57b132a4b258aa3b614d46079c96963f400d7c2d7778541b566eed299e8df1"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24183,7 +23895,15 @@
         "4": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:1879f84bfc3e6acf",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112984
+            ],
+            "case": "upper",
+            "sha256": "1879f84bfc3e6acfcf1608ef2b4b2ac54830532e82631d6fa04275119a771b9a"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24192,7 +23912,15 @@
         "5": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:de0718bf702c888b",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112972
+            ],
+            "case": "upper",
+            "sha256": "de0718bf702c888b2bf0b2560a22fcb143733ed9dec20609e4031e7c4833fb8c"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24201,7 +23929,15 @@
         "6": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:5feff714a07328cb",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112956
+            ],
+            "case": "upper",
+            "sha256": "5feff714a07328cb88b14d9b9e537874b35716569352f36db6d91db63761e504"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24210,7 +23946,15 @@
         "7": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:29cc6f0a0f6a132e",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112948
+            ],
+            "case": "upper",
+            "sha256": "29cc6f0a0f6a132e446a0b311a4650d0883d0d6881db7eb47d07b47e325bafd5"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24219,7 +23963,15 @@
         "8": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:da954bd30ea62cce",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112940
+            ],
+            "case": "upper",
+            "sha256": "da954bd30ea62cce53fe19f8c66c7549af6789e5b4a68d188b916315e89794e2"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24228,7 +23980,15 @@
         "9": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:054dda0f8dd7ba69",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112932
+            ],
+            "case": "upper",
+            "sha256": "054dda0f8dd7ba69b2b0f44f5e2563f9a117723968e4b7960b2bafa1a7b8e664"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24237,7 +23997,15 @@
         "10": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:a67d2a6c9087c1bc",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112924
+            ],
+            "case": "upper",
+            "sha256": "a67d2a6c9087c1bcb7e7cc96385d820b9264c5043aadb04c3e0efe0e6621a5ef"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24255,7 +24023,15 @@
         "12": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:d289063ab9c6c9e7",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112904
+            ],
+            "case": "upper",
+            "sha256": "d289063ab9c6c9e7df07e81badd1160027868194e78562a922284af48002cc60"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24264,7 +24040,15 @@
         "13": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:4fe5e5e868c9ed43",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112880
+            ],
+            "case": "upper",
+            "sha256": "4fe5e5e868c9ed4384fdc4d41a1b64c2b4e12b3f4a300ca8bc2f95ca425731ea"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24273,7 +24057,15 @@
         "14": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:c840c8d293983a3b",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112856
+            ],
+            "case": "upper",
+            "sha256": "c840c8d293983a3b904dda6337ebbfa9a6d8386d07c4e47c01613d04dd5aadc6"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24282,7 +24074,15 @@
         "15": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:f03a31522540bd76",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112836
+            ],
+            "case": "upper",
+            "sha256": "f03a31522540bd767a0201d525a49974f29a1e4c579abf84c25733ecb666229f"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24291,7 +24091,15 @@
         "16": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:999e6b4ff565a083",
+          "pc_text": {
+            "ref": [
+              "x360",
+              "pe",
+              145772
+            ],
+            "case": "upper",
+            "sha256": "999e6b4ff565a0831040d642d64c494cbfc0de1734d598c0ba8d7fcc35fb94fb"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24300,7 +24108,15 @@
         "17": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:a247ef067e9e798d",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112788
+            ],
+            "case": "upper",
+            "sha256": "a247ef067e9e798d97083205e6c82520b566625798b26fb45f2a49c3e0df1861"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24309,7 +24125,15 @@
         "18": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:9de421dee7dd044a",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112764
+            ],
+            "case": "upper",
+            "sha256": "9de421dee7dd044af35a281689e9e82bfa9b55fabe58cf91bf80e70ed7b30216"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24318,7 +24142,15 @@
         "19": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:6f38195e69923c90",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112744
+            ],
+            "case": "upper",
+            "sha256": "6f38195e69923c909d42da885209d892b33132f42495e8ffd111b013ecaf900b"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24327,7 +24159,15 @@
         "20": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:c85cd5d6f6bf13e7",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112720
+            ],
+            "case": "upper",
+            "sha256": "c85cd5d6f6bf13e7934ac77a6f27fe530d05233013d5f0326f94b977c2a00ef8"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24336,7 +24176,15 @@
         "21": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:a7062a0d7e4c739c",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112696
+            ],
+            "case": "upper",
+            "sha256": "a7062a0d7e4c739c4a806a6199aea741693a5054c5f06dbbd3476782dc2a53e2"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24345,7 +24193,15 @@
         "22": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:8234b435b0336a2b",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112668
+            ],
+            "case": "upper",
+            "sha256": "8234b435b0336a2b16588f752bff706dce66f1eab7c66d8a628ac637ad4ebb54"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24354,7 +24210,15 @@
         "23": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:3afea07b29305722",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112644
+            ],
+            "case": "upper",
+            "sha256": "3afea07b29305722df928f6783addcb48af35d99f0c0d61a915d9f514c428c64"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24363,7 +24227,15 @@
         "24": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:f96b46f6e94170a5",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112624
+            ],
+            "case": "upper",
+            "sha256": "f96b46f6e94170a50b05c3cf9f6f8705d909f8234dbfa7b2cbd44bd3a32f1838"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24372,7 +24244,15 @@
         "25": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:06588796d821606d",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112600
+            ],
+            "case": "upper",
+            "sha256": "06588796d821606da7275318b12f2f7edbb1a976081507419a0c34b4be699104"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24381,7 +24261,15 @@
         "26": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:5799aa454c3fd583",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112576
+            ],
+            "case": "upper",
+            "sha256": "5799aa454c3fd583cbf2862e811390b91744da96771d4edc6e7932da5a90d705"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24390,7 +24278,15 @@
         "27": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:e7540d6e337156ac",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112548
+            ],
+            "case": "upper",
+            "sha256": "e7540d6e337156ac3c37811d21eb45014be68d6943c43696d34c66f38c384eeb"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24399,7 +24295,15 @@
         "28": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:5a27574dcf84e0d1",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112520
+            ],
+            "case": "upper",
+            "sha256": "5a27574dcf84e0d16137705b74152fdf8192a9a6ff535ab1e68aef7e03dfaa5e"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24408,7 +24312,15 @@
         "29": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:55615d54e240bab2",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112504
+            ],
+            "case": "upper",
+            "sha256": "55615d54e240bab264d045af2d94b1d1771a9a4a07edae63111b78344042ac67"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24417,7 +24329,15 @@
         "30": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:06f61c4a549057ca",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112484
+            ],
+            "case": "upper",
+            "sha256": "06f61c4a549057ca8be282a24f14247c1996da874cbf78034859489c5a05fa74"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24426,7 +24346,15 @@
         "31": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:09a9516f259aaef7",
+          "pc_text": {
+            "ref": [
+              "x360",
+              "pe",
+              145484
+            ],
+            "case": "upper",
+            "sha256": "09a9516f259aaef73eef80090a82c89c45d23864ae0a559479b95bd45c19e5d1"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24435,7 +24363,15 @@
         "32": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:15b78ff24bd5243d",
+          "pc_text": {
+            "ref": [
+              "x360",
+              "pe",
+              145472
+            ],
+            "case": "upper",
+            "sha256": "15b78ff24bd5243d0ae3554d3ea117370a90671ee33f8291811dd643f0f207db"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24444,7 +24380,15 @@
         "33": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:18a6cae431710df3",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112452
+            ],
+            "case": "upper",
+            "sha256": "18a6cae431710df307195900b10e34e00ebaea425657187b5a2de8a398978dfa"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24453,7 +24397,15 @@
         "34": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:b238f962a37f10c2",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112444
+            ],
+            "case": "upper",
+            "sha256": "b238f962a37f10c2336c7d963e77ab2676cf39f29aef1d13e02a6b9e679f441a"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24462,7 +24414,15 @@
         "35": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:9604ba2b426470d7",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112436
+            ],
+            "case": "upper",
+            "sha256": "9604ba2b426470d79f8fb67535e25a21a569d3f9a5a6d5b2b0b55465e5013bd7"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24471,7 +24431,15 @@
         "36": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:1ce97cd1ab749d8e",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112420
+            ],
+            "case": "upper",
+            "sha256": "1ce97cd1ab749d8e2775d61fb80f0e6caf0ba4d05f01f1bc39fa2d543e86769c"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24480,7 +24448,15 @@
         "37": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:c6edc89e55461bc1",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112412
+            ],
+            "case": "upper",
+            "sha256": "c6edc89e55461bc1a77a53c4da4d8ce9dec9ac2946ddccd4ca4c16e28c19c273"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24498,7 +24474,15 @@
         "39": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:c47b55c48017e90d",
+          "pc_text": {
+            "ref": [
+              "x360",
+              "pe",
+              145408
+            ],
+            "case": "upper",
+            "sha256": "c47b55c48017e90d226ba858c558d7aa638caf3d4d7c136d57ff509136e46831"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24507,7 +24491,15 @@
         "40": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:9ce8e89e0b67dd2c",
+          "pc_text": {
+            "ref": [
+              "x360",
+              "pe",
+              145396
+            ],
+            "case": "upper",
+            "sha256": "9ce8e89e0b67dd2c0d32020f75fae324dcbc27bf7ed3ca7e93fbc52def9d0f01"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24525,7 +24517,15 @@
         "42": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:c1b0524dcef24dff",
+          "pc_text": {
+            "ref": [
+              "x360",
+              "pe",
+              145376
+            ],
+            "case": "upper",
+            "sha256": "c1b0524dcef24dffb92b1835a111ccf38145695b5c205172e31e76e46a384a94"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24534,7 +24534,15 @@
         "43": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:f3c128badac5acd2",
+          "pc_text": {
+            "ref": [
+              "x360",
+              "pe",
+              145356
+            ],
+            "case": "upper",
+            "sha256": "f3c128badac5acd2b85e5bad46da3abed53f0fff0aabf6165f9d9f96b8b69cc8"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24543,7 +24551,15 @@
         "44": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:869de96bbb245bb5",
+          "pc_text": {
+            "ref": [
+              "x360",
+              "pe",
+              145332
+            ],
+            "case": "upper",
+            "sha256": "869de96bbb245bb51a1f25e342f4aa8939bbc2064cd17c4fd7f102d8de15ac85"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24552,7 +24568,15 @@
         "45": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:f24ddf494d2a3b30",
+          "pc_text": {
+            "ref": [
+              "x360",
+              "pe",
+              145304
+            ],
+            "case": "upper",
+            "sha256": "f24ddf494d2a3b30be0a48e32872fb5718e2f3963fba38598bfd045f999f2c04"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24561,7 +24585,15 @@
         "46": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:fb9d214d6c2289e2",
+          "pc_text": {
+            "ref": [
+              "x360",
+              "pe",
+              145288
+            ],
+            "case": "upper",
+            "sha256": "fb9d214d6c2289e25a61ec7ed3e6e7e032e674b5f4f9cc440e314c1ef6c40027"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24570,7 +24602,15 @@
         "47": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:ac5926dbf535cd02",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              112192
+            ],
+            "case": "upper",
+            "sha256": "ac5926dbf535cd02e49461a27cf5b89791dcd41def59bf02af8adbffc47c17c1"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24579,7 +24619,15 @@
         "48": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:3028af761e15e0be",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              111844
+            ],
+            "case": "upper",
+            "sha256": "3028af761e15e0be700088582bbf54e81258ce697f34d1b22d0ebd3676e95cba"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24588,7 +24636,15 @@
         "49": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:fedd55cd62a36483",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              111544
+            ],
+            "case": "upper",
+            "sha256": "fedd55cd62a36483b5d9d4c06ee14cfd5ad5cc1f65caa62fddea6cad01a8fe9f"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24597,7 +24653,15 @@
         "50": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:053b9c5db61103ff",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              111380
+            ],
+            "case": "upper",
+            "sha256": "053b9c5db61103ffb87deef4fa4fcb5e8b3706028387cb6397e4529f72bb61ee"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24606,7 +24670,15 @@
         "51": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:07992abb7cbeef0b",
+          "pc_text": {
+            "ref": [
+              "x360",
+              "pe",
+              145192
+            ],
+            "case": "upper",
+            "sha256": "07992abb7cbeef0bf8a6bc8eb8afdbd9e01a2a81afbc229fceb286a121d44885"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24615,7 +24687,15 @@
         "52": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:971456d818a7e020",
+          "pc_text": {
+            "ref": [
+              "x360",
+              "pe",
+              145172
+            ],
+            "case": "upper",
+            "sha256": "971456d818a7e02067de1ff06bfe89c912b7742e595a4a654c6c5f7c5d715215"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24624,7 +24704,15 @@
         "53": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:51cab664b30d04ed",
+          "pc_text": {
+            "ref": [
+              "x360",
+              "pe",
+              145160
+            ],
+            "case": "upper",
+            "sha256": "51cab664b30d04eda7fd6ad3ff6c6e0dde4e6486dc8fb5364a5ace7b632330fb"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24633,7 +24721,15 @@
         "54": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:b085e7a9564d24dd",
+          "pc_text": {
+            "ref": [
+              "x360",
+              "pe",
+              145148
+            ],
+            "case": "upper",
+            "sha256": "b085e7a9564d24ddae6d46796d2b19928210a16329604cb20c4c01c43d854746"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24642,7 +24738,15 @@
         "55": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:5ff171d62e4d576f",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              872696
+            ],
+            "case": "upper",
+            "sha256": "5ff171d62e4d576f6e870020a480f1acac85e8b3f9a2950fd27c73cd632e1897"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24651,7 +24755,15 @@
         "56": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:73e7dd99a6b84170",
+          "pc_text": {
+            "ref": [
+              "x360",
+              "pe",
+              145132
+            ],
+            "case": "upper",
+            "sha256": "73e7dd99a6b84170cf49c2b41676f8e77ea2a00f9b6b6975d7231551d8b7b83b"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24660,7 +24772,15 @@
         "57": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:244310e40da63ae5",
+          "pc_text": {
+            "ref": [
+              "x360",
+              "pe",
+              145116
+            ],
+            "case": "upper",
+            "sha256": "244310e40da63ae5b29f543e97c064545128f5217ad0e393619dbb7b2d11b42d"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24669,7 +24789,15 @@
         "58": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:8e06d55eb9f5a755",
+          "pc_text": {
+            "ref": [
+              "x360",
+              "pe",
+              145092
+            ],
+            "case": "upper",
+            "sha256": "8e06d55eb9f5a7555bfc4cd83448393d8830cec0fa9a063a04536a956d5d4d42"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24696,7 +24824,15 @@
         "61": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:0c2a7091028a3541",
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              89989
+            ],
+            "case": "upper",
+            "sha256": "0c2a7091028a3541e204357f37a9a2d2194f7f6868a35398d14f04178e9c8f14"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24714,7 +24850,15 @@
         "63": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:f1c7d2357ddc9d7c",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              111816
+            ],
+            "case": "upper",
+            "sha256": "f1c7d2357ddc9d7cbd5822bd5fce46286dbc950326501b7ccbf876452637ac25"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24723,7 +24867,15 @@
         "64": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:6c0fbc715fd7eb4b",
+          "pc_text": {
+            "ref": [
+              "wo1-x360",
+              "pe",
+              111716
+            ],
+            "case": "upper",
+            "sha256": "6c0fbc715fd7eb4b0be72fc434890ef9f7092f430f6b8ee03e44613e20a49a4a"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
@@ -24732,7 +24884,15 @@
         "65": {
           "style": "sound.sound",
           "alignment": "left",
-          "pc_text": "donor:443a3d6237bcc3eb",
+          "pc_text": {
+            "ref": [
+              "psp",
+              "prx",
+              89991
+            ],
+            "case": "upper",
+            "sha256": "443a3d6237bcc3ebc304157d657fdcbbf9463187674c39f8a165088523c4d928"
+          },
           "original": {
             "donor": null,
             "kind": "no-official-counterpart"
