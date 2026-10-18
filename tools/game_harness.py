@@ -815,6 +815,24 @@ def take_slot(poll: float = 1.0) -> int:
         time.sleep(poll)
 
 
+def check_game(root: Path, game: Path) -> None:
+    """Refuse a game copy whose mod files differ from game.sha256, so a run never tests a changed build. A file with
+    the size, mtime and inode prepare_run.py staged is its unchanged reflink and is trusted unread; any other is hashed.
+    Shortcut: a file rewritten in place with its size and mtime restored passes, as in prepare_run.cached_sha256s."""
+    stamps = json.loads(local_path(root, "fixtures.json").read_text())["stamps"]
+    for line in local_path(root, "game.sha256").read_text().splitlines():
+        digest, name = line.split("  ", 1)
+        path = game / name
+        if not path.is_file():
+            raise ValueError(f"the game copy lost {name} since prepare_run.py")
+        info = path.stat()
+        if [info.st_size, info.st_mtime_ns, info.st_ino] == stamps.get(name):
+            continue
+        with path.open("rb") as stream:
+            if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
+                raise ValueError(f"the game copy changed since prepare_run.py: {name}")
+
+
 def run(root: Path, args: argparse.Namespace) -> int:
     if not args.authorize_launch:
         raise ValueError("launch needs current-task permission and --authorize-launch")
@@ -826,6 +844,8 @@ def run(root: Path, args: argparse.Namespace) -> int:
     launcher = local_path(root, "launch.sh")
     if not launcher.is_file():
         raise ValueError("prepare and review a run-local launch.sh first")
+    if args.target != XENIA:  # a MOZ run is staged by prepare_run.py; the reference emulator's are not
+        check_game(root, game)
     for name in ("tmp", "runtime", "home", "prefix", "steamrt"):
         local_path(root, name).mkdir(mode=0o700, exist_ok=True)
     # Run directories are single-use: never replay stale input after a restart.

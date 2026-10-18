@@ -22,6 +22,17 @@ harness = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(harness)
 
 
+def _staged(game: Path) -> Path:
+    """A run folder as prepare_run.py leaves it: one mod file, its game.sha256 line and its stamp."""
+    (game / "wozmod").mkdir(parents=True, exist_ok=True)
+    (game / "wozmod/table.bin").write_bytes(b"mod")
+    info = (game / "wozmod/table.bin").stat()
+    (game.parent / "game.sha256").write_text(f"{harness.hashlib.sha256(b'mod').hexdigest()}  wozmod/table.bin\n")
+    (game.parent / "fixtures.json").write_text(json.dumps(
+        {"stamps": {"wozmod/table.bin": [info.st_size, info.st_mtime_ns, info.st_ino]}}))
+    return game
+
+
 def test_control_round_trip(tmp_path, monkeypatch):
     (tmp_path / "control").mkdir()
     (tmp_path / "evidence").mkdir()
@@ -81,8 +92,7 @@ def test_control_round_trip(tmp_path, monkeypatch):
 def test_launch_boundaries_and_isolation(tmp_path, monkeypatch):
     root = tmp_path / "run"
     root.mkdir()
-    game = root / "game"
-    game.mkdir()
+    game = _staged(root / "game")
     (root / "launch.sh").write_text("exit 0\n")
     args = argparse.Namespace(authorize_launch=False, game=game, target=harness.TARGET, timeout=30, pad=False)
     with pytest.raises(ValueError, match="permission"):
@@ -122,8 +132,7 @@ def test_size_renders_and_outputs_unscaled(tmp_path, monkeypatch):
     """Bug: --size is dropped (the run renders 1080p) or still upscales with FSR, so an ultrawide capture is wrong."""
     monkeypatch.setattr(harness, "REPO", tmp_path)
     root = tmp_path / "work/runtime-tests/wide"
-    game = root / "game"
-    game.mkdir(parents=True)
+    game = _staged(root / "game")
     (root / "launch.sh").write_text("exit 0\n")
     calls = []
     monkeypatch.setattr(harness.subprocess, "Popen", lambda command, **kwargs: calls.append(command)
@@ -465,7 +474,7 @@ def test_renderer_review_refuses_rectangles_that_wrap_the_game_uv_fields():
 def test_ended_run_tells_a_crash_from_a_quit(tmp_path, monkeypatch, script, reason):
     """Bug: a game crash and a quit both end the harness with 139, so a crash reads as a clean exit."""
     root = tmp_path / "run"
-    (root / "game").mkdir(parents=True)
+    _staged(root / "game")
     (root / "launch.sh").write_text(script)
     monkeypatch.setenv("MUSOU_HARNESS_ROOT", str(root))
     monkeypatch.setenv("GAMESCOPE_WAYLAND_DISPLAY", "synthetic-test-only")
@@ -512,7 +521,7 @@ def test_server_reports_its_end_and_never_exits_into_gamescope(tmp_path, monkeyp
 def test_run_kills_the_sandbox_once_the_server_ends(tmp_path, monkeypatch):
     """Bug: the supervisor waits for gamescope to exit on its own, and gamescope segfaults on exit."""
     root = tmp_path / "run"
-    (root / "game").mkdir(parents=True)
+    _staged(root / "game")
     (root / "launch.sh").write_text("exit 0\n")
     killed, polls = [], []
 
@@ -1160,11 +1169,11 @@ def test_staged_run_sees_the_template_prefix_and_runtime_through_overlays_on_its
     prefix (or writes into the shared template) and the run plays a different Wine setup than the template's."""
     monkeypatch.setattr(harness, "REPO", tmp_path)
     root = tmp_path / "work/runtime-tests/overlay"
-    (root / "game").mkdir(parents=True)
+    _staged(root / "game")
     (root / "launch.sh").write_text("exit 0\n")
     template = tmp_path / "work/runtime-tests/_template"
     overlays = {part: str(template / part) for part in ("prefix", "steamrt")}
-    (root / "fixtures.json").write_text(json.dumps({"overlays": overlays}))
+    (root / "fixtures.json").write_text(json.dumps({**json.loads((root / "fixtures.json").read_text()), "overlays": overlays}))
     calls = []
     monkeypatch.setattr(harness.subprocess, "Popen", lambda command, **kwargs: calls.append(command) or
                         SimpleNamespace(wait=lambda: 0, poll=lambda: 0, returncode=0))
@@ -1250,3 +1259,20 @@ def test_video_pins_the_screen_stream_to_bgrx(tmp_path, monkeypatch):
     command = calls[0]
     link = command.index("!", command.index("pipewiresrc"))
     assert command[link + 1] == "video/x-raw,format=BGRx"
+
+
+def test_launch_hashes_only_mod_files_whose_stamp_moved_and_refuses_a_changed_or_missing_one(tmp_path, monkeypatch):
+    """Bug: the launch trusts a rewritten mod file because a stamp exists, refuses a file only touched, or goes back
+    to reading the whole multi-GB copy on every launch."""
+    game = _staged(tmp_path / "run/game")
+    monkeypatch.setattr(harness.hashlib, "file_digest", lambda *a: pytest.fail("an unchanged file was read"))
+    harness.check_game(tmp_path / "run", game)
+    monkeypatch.undo()
+    os.utime(game / "wozmod/table.bin")  # touched, same bytes
+    harness.check_game(tmp_path / "run", game)
+    (game / "wozmod/table.bin").write_bytes(b"mud")
+    with pytest.raises(ValueError, match="changed"):
+        harness.check_game(tmp_path / "run", game)
+    (game / "wozmod/table.bin").unlink()
+    with pytest.raises(ValueError, match="lost"):
+        harness.check_game(tmp_path / "run", game)

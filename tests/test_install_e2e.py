@@ -1,19 +1,22 @@
 """Full install and uninstall into a copy of the stock game from the real disc images (about 5 minutes).
 
-Run with WOZMOD_INSTALL_E2E=1 and the inputs below. The game copy goes in a temporary folder under work/, not
-pytest's tmp_path: /tmp is often RAM, where a 7 GB copy cannot be a reflink. WOZMOD_INSTALL_BUDGET (seconds, default
+Run with WOZMOD_INSTALL_E2E=1 and the inputs below. The game copy goes in work/install-e2e/, not pytest's tmp_path:
+/tmp is often RAM, where a 7 GB copy cannot be a reflink. It is removed when the tests end or are stopped; a copy left
+by a run killed outright (SIGKILL) is removed when the next run starts. WOZMOD_INSTALL_BUDGET (seconds, default
 300) is the time the install may take with the default WOZMOD_JOBS.
 """
 
 from __future__ import annotations
 
+import fcntl
 import filecmp
 import hashlib
 import json
 import os
+import shutil
+import signal
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -35,10 +38,18 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture(scope="module")
 def installed():
     """One install into a copy of the stock game: (game copy, install command, seconds, log lines)."""
-    work = Path(__file__).resolve().parents[1] / "work"
-    work.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="install-e2e-", dir=work) as folder:
-        yield _install(Path(folder) / "game")
+    folder = Path(__file__).resolve().parents[1] / "work/install-e2e"
+    folder.parent.mkdir(exist_ok=True)
+    with folder.with_suffix(".lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)  # held while the copy is in use, so whatever is there now is a dead run's
+        shutil.rmtree(folder, ignore_errors=True)
+        folder.mkdir()
+        stopped = signal.signal(signal.SIGTERM, signal.default_int_handler)  # a stopped run cleans up too
+        try:
+            yield _install(folder / "game")
+        finally:
+            signal.signal(signal.SIGTERM, stopped)
+            shutil.rmtree(folder)
 
 
 def _install(game: Path):

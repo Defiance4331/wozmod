@@ -3,8 +3,8 @@
 
 The run gets links to the stock backup's files, reflinks of the install's d3d9.dll and wozmod/ folder (checked
 against the installer's record), overlay folders over the template Proton prefix and Steam runtime, a seeded save
-and a game.sha256 over the mod files launch.sh must find unchanged. Machine paths come from the ignored
-work/harness.toml.
+and a game.sha256 over the mod files, which game_harness.py run finds unchanged before each launch. Machine paths
+come from the ignored work/harness.toml.
 """
 
 from __future__ import annotations
@@ -146,7 +146,7 @@ def prepare(name: str, install: Path, dll: Path | None, save: str, cache_file: P
     for sdk in ("sdk32", "sdk64"):
         (root / "home/.steam" / sdk).symlink_to((Path.home() / ".steam" / sdk).resolve(strict=True))
     # The game reads the stock files through links into the read-only backup (it only adds files of its own), so a
-    # run copies none of its 5.5 GB and launch.sh hashes only the mod's files.
+    # run copies none of its 5.5 GB and only the mod's files are checked.
     game = root / "game"
     game.mkdir()
     for entry in sorted(stock.iterdir()):
@@ -181,7 +181,9 @@ def prepare(name: str, install: Path, dll: Path | None, save: str, cache_file: P
          "extras": sorted(EXTRAS & set(files)), "settings": list(settings),
          "replaced": {listed: str(source) for listed, source in replaced.items()},
          "stock": {"path": str(stock), "sha256": stock_sha256},
-         "overlays": {part: str(template / part) for part in OVERLAID}},
+         "overlays": {part: str(template / part) for part in OVERLAID},
+         # each checked file's size, mtime and inode as staged: game_harness.py run rehashes only a file that differs
+         "stamps": {f: [(info := (game / f).stat()).st_size, info.st_mtime_ns, info.st_ino] for f in sorted(files)}},
         indent=2) + "\n")
     return root
 

@@ -108,9 +108,8 @@ def extract_donor(
                 outputs[member.source.casefold()] = stack.enter_context(path.open("wb"))
             for member in selected:
                 with disc.open(resolved[member.source]) as source:
-                    while chunk := source.read(1024 * 1024):
-                        outputs[member.source.casefold()].write(chunk)
-                        done += len(chunk)
+                    for count in source.copy_into(outputs[member.source.casefold()]):
+                        done += count
                         if on_bytes:
                             on_bytes(done, total)
         for member in selected:

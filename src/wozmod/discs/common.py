@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import bisect
+import errno
 import io
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO, Iterator
 
 
 class DiscError(ValueError):
@@ -82,6 +84,31 @@ class ExtentStream(io.RawIOBase):
             remaining -= count
             self._position += count
         return written
+
+    def copy_into(self, target: BinaryIO) -> Iterator[int]:
+        """Copy the whole file to the end of `target`, yielding each count copied. The kernel copies it where it can,
+        sharing the image's blocks where the filesystem allows (btrfs and XFS do for block-aligned ranges); reads and
+        writes take over elsewhere (another filesystem, Windows)."""
+        self._checkClosed()
+        target.flush()
+        copied = 0
+        for offset, size in self._extents:
+            while size:
+                try:
+                    count = os.copy_file_range(self._source.fileno(), target.fileno(), min(size, 1 << 30), offset)
+                except (AttributeError, OSError) as error:  # no copy_file_range here, or none between these files
+                    if copied or isinstance(error, OSError) and error.errno not in (
+                            errno.EXDEV, errno.EINVAL, errno.ENOSYS, errno.EOPNOTSUPP):
+                        raise
+                    self.seek(0)
+                    while chunk := self.read(1 << 20):
+                        target.write(chunk)
+                        yield len(chunk)
+                    return
+                if not count:
+                    raise DiscError("Truncated file extent")
+                offset, size, copied = offset + count, size - count, copied + count
+                yield count
 
     def close(self) -> None:
         if not self.closed:

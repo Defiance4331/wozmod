@@ -20,7 +20,7 @@ TOOLS = Path(__file__).resolve().parents[1] / "tools"
 def tools(monkeypatch):
     monkeypatch.syspath_prepend(str(TOOLS))
     modules = {}
-    for name in ("prepare_run", "run_check"):
+    for name in ("prepare_run", "run_check", "game_harness"):
         spec = importlib.util.spec_from_file_location(name, TOOLS / f"{name}.py")
         modules[name] = sys.modules[name] = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(modules[name])
@@ -88,6 +88,9 @@ def test_staged_game_sha256_covers_every_file_launch_checks_and_follows_a_new_dl
     listed = {line.split("  ")[1]: line.split("  ")[0] for line in (root / "game.sha256").read_text().splitlines()}
     assert listed == expected
     game = root / "game"
+    # the stamps it records let the launch check pass without reading the copy
+    monkeypatch.setattr(tools.game_harness.hashlib, "file_digest", lambda *a: pytest.fail("the launch read a file"))
+    tools.game_harness.check_game(root, game)
     assert sorted(p.name for p in game.iterdir()) == sorted({*(p.name for p in stock.iterdir()), "d3d9.dll", "wozmod"})
     assert all((game / p.name).is_symlink() and (game / p.name).resolve() == p for p in stock.iterdir())
     assert not (game / "d3d9.dll").is_symlink() and (game / "OROCHI_Z.exe").read_bytes() == b"OROCHI_Z.exe"
