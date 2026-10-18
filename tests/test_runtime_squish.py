@@ -31,17 +31,12 @@ double factor(unsigned int text, unsigned int box, unsigned int align, int enabl
 unsigned int point(unsigned int packed, double anchor, unsigned int text, unsigned int box,
     unsigned int align, int enabled, double pixels)
 {
-    return text_fit_x(packed, anchor, text_fit(text, text, box, align, enabled), pixels, anchor);
+    return text_fit_x(packed, anchor, text_fit(text, text, box, align, enabled), pixels);
 }
 unsigned int point_line(unsigned int packed, double anchor, unsigned int run, unsigned int own,
     unsigned int box, unsigned int align, double pixels)
 {
-    return text_fit_x(packed, anchor, text_fit(run, own, box, align, 1), pixels, anchor);
-}
-unsigned int point_near(unsigned int packed, double anchor, unsigned int text, unsigned int box,
-    unsigned int align, int enabled, double pixels, double pen)
-{
-    return text_fit_x(packed, anchor, text_fit(text, text, box, align, enabled), pixels, pen);
+    return text_fit_x(packed, anchor, text_fit(run, own, box, align, 1), pixels);
 }
 int latin(const char *value)
 {
@@ -54,12 +49,7 @@ int drop(const char *value, char *out, unsigned int size)
 void quad(unsigned int *data, int four, double anchor, unsigned int text, unsigned int box,
     unsigned int align, int enabled, double pixels)
 {
-    unsigned int clean = 0;
-    text_fit_quad(data, four, anchor, text_fit(text, text, box, align, enabled), pixels, anchor, &clean);
-}
-void quad_pen(unsigned int *data, double anchor, unsigned int text, unsigned int box, double pen, unsigned int *clean)
-{
-    text_fit_quad(data, 0, anchor, text_fit(text, text, box, 0, 1), 24, pen, clean);
+    text_fit_quad(data, four, anchor, text_fit(text, text, box, align, enabled), pixels);
 }
 ''')
     library = directory / "fit.so"
@@ -73,11 +63,9 @@ void quad_pen(unsigned int *data, double anchor, unsigned int text, unsigned int
     fit.point.argtypes = [ctypes.c_uint, ctypes.c_double, ctypes.c_uint, ctypes.c_uint,
                          ctypes.c_uint, ctypes.c_int, ctypes.c_double]
     fit.point.restype = ctypes.c_uint
-    fit.point_near.argtypes = fit.point.argtypes + [ctypes.c_double]
     fit.point_line.argtypes = [ctypes.c_uint, ctypes.c_double, ctypes.c_uint, ctypes.c_uint,
                               ctypes.c_uint, ctypes.c_uint, ctypes.c_double]
     fit.point_line.restype = ctypes.c_uint
-    fit.point_near.restype = ctypes.c_uint
     fit.latin.argtypes = [ctypes.c_char_p]
     fit.latin.restype = ctypes.c_int
     fit.drop.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
@@ -85,9 +73,6 @@ void quad_pen(unsigned int *data, double anchor, unsigned int text, unsigned int
     fit.quad.argtypes = [ctypes.POINTER(ctypes.c_uint), ctypes.c_int, ctypes.c_double,
                         ctypes.c_uint, ctypes.c_uint, ctypes.c_uint, ctypes.c_int, ctypes.c_double]
     fit.quad.restype = None
-    fit.quad_pen.argtypes = [ctypes.POINTER(ctypes.c_uint), ctypes.c_double, ctypes.c_uint, ctypes.c_uint,
-                            ctypes.c_double, ctypes.POINTER(ctypes.c_uint)]
-    fit.quad_pen.restype = None
     return fit
 
 
@@ -104,26 +89,24 @@ def test_condensing_keeps_the_left_centre_or_right_anchor(fit_runtime):
     original = [anchor, anchor + 24 * 16, anchor + 100 * 16]
     expected = [[200, 219.2, 280], [210, 229.2, 290], [220, 239.2, 300]]
     for align, positions in enumerate(expected):
-        observed = [fit_runtime.point(0x43210000 | x, anchor, 100, 80, align, 1, 16)
-                    for x in original]
-        assert observed == [0x43210000 | int(0x8000 + x * 16 + 0.5) for x in positions]
+        observed = [fit_runtime.point(x, anchor, 100, 80, align, 1, 16) for x in original]
+        assert observed == [int(0x8000 + x * 16 + 0.5) for x in positions]
 
 
 def test_a_shorter_caption_line_stays_centred_when_the_widest_line_sets_the_factor(fit_runtime):
     # A 900-pixel line of a caption whose widest line is 1500, in the 1200 box centred at 640.
     # The stock centres the line at x 190; at factor 0.8 it must span 280 to 1000.
     anchor = 0x8000 + 190 * 16
-    ends = [fit_runtime.point_line(0x11110000 | (0x8000 + x * 16), anchor, 1500, 900, 1200, 1, 16)
-            for x in (190, 1090)]
-    assert ends == [0x11110000 | (0x8000 + x * 16) for x in (280, 1000)]
+    ends = [fit_runtime.point_line(0x8000 + x * 16, anchor, 1500, 900, 1200, 1, 16) for x in (190, 1090)]
+    assert ends == [0x8000 + x * 16 for x in (280, 1000)]
 
 
 def test_non_native_condensing_does_not_use_native_scale_or_drop_fractional_rounding(fit_runtime):
     # Centred 101-pixel run in a 73-pixel box, with a 17-pixel advance, at 1920x1080.
     anchor = 0x8000 + 300 * 24
     source = [anchor, anchor + 24 * 24, anchor + 17 * 24, anchor + 41 * 24]
-    result = [fit_runtime.point(0x76540000 | x, anchor, 101, 73, 1, 1, 24) for x in source]
-    assert result == [0x76549D70, 0x76549F10, 0x76549E97, 0x7654A037]
+    result = [fit_runtime.point(x, anchor, 101, 73, 1, 1, 24) for x in source]
+    assert result == [0x9D70, 0x9F10, 0x9E97, 0xA037]
 
 
 def test_quad_condensing_does_not_shift_packed_stride_or_corrupt_uv_y_depth(fit_runtime):
@@ -134,22 +117,11 @@ def test_quad_condensing_does_not_shift_packed_stride_or_corrupt_uv_y_depth(fit_
         original = [0x12340000 + index * 101 for index in range(36)]
         expected = original.copy()
         for index, offset, fitted in zip(indices, offsets, condensed, strict=True):
-            upper = (index + 1) << 16
-            original[index] = upper | (anchor + offset * 16)
-            expected[index] = upper | int(anchor + fitted * 16 + 0.5)
+            original[index] = anchor + offset * 16
+            expected[index] = int(anchor + fitted * 16 + 0.5)
         packed = (ctypes.c_uint * len(original))(*original)
         fit_runtime.quad(packed, four, anchor, 100, 80, 0, 1, 16)
         assert list(packed) == expected
-
-
-def test_glyph_pen_unwrap_does_not_jump_long_runs_or_outline_vertices_to_the_text_anchor(fit_runtime):
-    # A 24-unit pixel scale gives a 576-unit quad and a 48-unit left outline.
-    for distance, expected in [(70000, [23232, 23693, 23194]),
-                               (140000, [13696, 14157, 13658])]:
-        pen = 32768 + distance
-        packed = [0x65430000 | ((pen + offset) & 0xffff) for offset in [0, 576, -48]]
-        fitted = [fit_runtime.point_near(value, 32768, 100, 80, 0, 1, 24, pen) for value in packed]
-        assert fitted == [0x65430000 | value for value in expected]
 
 
 def test_latin_eligibility_does_not_reject_safe_icons_or_squish_truncated_special_tokens(fit_runtime):
@@ -180,22 +152,19 @@ def test_icon_codes_the_stock_draw_cannot_handle_are_dropped_without_misreading_
     assert got == cases
 
 
-def test_a_glyph_placed_past_2048_pixels_gets_its_depth_back_when_squished_on_screen(fit_runtime):
-    """The game packs (x + 2048) * 16 into the low half; past 2048 px the carry lands in the depth half."""
-    depth, anchor = 0x7FFE0000, 32768 + 600 * 24
-    def word(screen):  # what the game stores: a carry past 16 bits is or-ed into the depth half
-        value = (screen + 2048) * 16
-        return depth | (value & 0xFFFF) | (value >> 16 << 16)
-    clean = ctypes.c_uint(0)
-    straddling = (ctypes.c_uint * 20)(*[0] * 20)
-    straddling[12], straddling[16] = word(2040), word(2064)
-    fit_runtime.quad_pen(straddling, anchor, 1500, 1000, (2040 + 2048) * 16, ctypes.byref(clean))
-    beyond = (ctypes.c_uint * 20)(*[0] * 20)
-    beyond[12], beyond[16] = word(2070), word(2094)
-    fit_runtime.quad_pen(beyond, anchor, 1500, 1000, (2070 + 2048) * 16, ctypes.byref(clean))
-    assert [value >> 16 for value in (straddling[12], straddling[16], beyond[12], beyond[16])] == [depth >> 16] * 4
-    # and the X is the squished position of the true (unwrapped) one
-    assert straddling[16] & 0xFFFF == int(anchor + ((2064 + 2048) * 16 - anchor) * 1000 / 1500 + 0.5) & 0xFFFF
+def test_a_squeezed_line_past_2048_pixels_stays_in_place_on_wide_screens(fit_runtime):
+    """At 2560x1440 the 2D layout is 2560 px wide. The game stores a glyph corner's X as a whole dword,
+    (x + 2048) * 16 (0x54A5A4), so past 2048 px it is just larger; a squeezed glyph there must not land
+    4096 px to the left (the cut-off names and the white streaks)."""
+    anchor = (1940 + 2048) * 16  # the line starts at 1940 px and is squeezed to two thirds
+    got, want = [], []
+    for left in range(1940, 2400, 24):  # one quad per glyph, two corners each
+        quad = (ctypes.c_uint * 20)(*[0] * 20)
+        quad[12], quad[16] = (left + 2048) * 16, (left + 24 + 2048) * 16
+        fit_runtime.quad(quad, 0, anchor, 1500, 1000, 0, 1, 16)
+        got += [quad[12], quad[16]]
+        want += [int(anchor + ((x + 2048) * 16 - anchor) * 1000 / 1500 + 0.5) for x in (left, left + 24)]
+    assert got == want
 
 
 def test_names_sharing_a_lane_with_icons_shrink_alone_and_end_inside_it(fit_runtime):

@@ -142,7 +142,6 @@ static const u32 windows[2][2] = {{720, 720}, {1224, 1224}};
 static const int squish = 1;
 static struct text_fit active_fit = {1.0, 0.0};
 static double fit_anchor;
-static u32 fit_clean;
 static u32 caption_run_width;
 static u32 banner_width;
 
@@ -675,7 +674,7 @@ static void draw_fit_at(text_draw renderer, const char *s, u32 x, u32 y, u32 lay
 {
     struct text_fit saved = active_fit;
     double anchor = fit_anchor;
-    u32 own = measure(s), clean = fit_clean;
+    u32 own = measure(s);
     int latin = squish && text_fit_latin(s);
     active_fit = text_fit(run_width ? run_width : own, own, width, align, latin);
     if (latin && width) {  /* our glyphs step by whole pixels: fit those steps, not the exact width */
@@ -684,11 +683,10 @@ static void draw_fit_at(text_draw renderer, const char *s, u32 x, u32 y, u32 lay
             active_fit.factor = factor, active_fit.shift = own * (1.0 - factor) * (align == 1 ? 0.5 : align == 2 ? 1.0 : 0.0);
     }
     fit_anchor = (double)(int)x * SCREEN_W * 16 / 1280 + 32768;
-    fit_clean = 0;
     inner++;
     renderer(s, x, y, layer, count);
     inner--;
-    active_fit = saved, fit_anchor = anchor, fit_clean = clean;
+    active_fit = saved, fit_anchor = anchor;
 }
 
 static void draw_fit(const char *s, u32 x, u32 y, u32 layer, u32 count, u32 width, u32 align)
@@ -712,10 +710,7 @@ static void glyph_fit(u32 id, const struct frame *f)
         return;
     for (i = 0; i < sizeof glyph_sites / sizeof *glyph_sites; i++)
         if (f->ret == glyph_sites[i][0]) {
-            const u32 *glyph = (const u32 *)(glyph_sites[i][1] ? f->edi : f->esi);
-            double pixels = (double)SCREEN_W * 16 / 1280;
-            double pen = (double)(int)glyph[3] * pixels + 32768;
-            text_fit_quad(quad, id == 69, fit_anchor, active_fit, pixels, pen, &fit_clean);
+            text_fit_quad(quad, id == 69, fit_anchor, active_fit, (double)SCREEN_W * 16 / 1280);
             break;
         }
 }
@@ -911,7 +906,6 @@ static void glyph_draw(u32 id, const struct frame *f)
     /* Our glyphs are drawn at output px: the layout's px times the display's scale (2 on 2160-high screens). */
     u32 ps = display_scale();
     float sx = SCREEN_W * ps / 1280.0f, sy = SCREEN_H * ps / 720.0f, factor = (float)active_fit.factor, kx, ky;
-    double base[4], expect;
     int top, h, b, pen, x0, x1;
     if (!glyph_handle)
         return;
@@ -929,13 +923,9 @@ static void glyph_draw(u32 id, const struct frame *f)
         chain->valid = 0;
         return;
     }
-    /* A corner: UV word, then X and Y in the low halves of the next two words. X past 2048 layout px carries into
-       its word's high half, as the game packs it: unwrapped near where the game put the glyph. */
-    expect = (double)(int)glyph[3] * SCREEN_W * 16 / 1280 + 32768;
+    /* A corner: UV word, then X as a whole dword (text_fit.h) and Y in the low half of the next word. */
     for (i = 0; i < n; i++) {
-        u32 xy, yy = quad[13 + i * stride] & 0xffff, uv = quad[10 + i * stride];
-        double x = text_fit_unwrap(quad[12 + i * stride], expect);
-        base[i] = (double)quad[12 + i * stride] - x, xy = (u32)x;
+        u32 xy = quad[12 + i * stride], yy = quad[13 + i * stride] & 0xffff, uv = quad[10 + i * stride];
         xlo = xy < xlo ? xy : xlo, xhi = xy > xhi ? xy : xhi;
         ylo = yy < ylo ? yy : ylo, yhi = yy > yhi ? yy : yhi;
         ulo = (uv & 0xffff) < ulo ? uv & 0xffff : ulo, uhi = (uv & 0xffff) > uhi ? uv & 0xffff : uhi;
@@ -973,10 +963,10 @@ static void glyph_draw(u32 id, const struct frame *f)
     v0 = slot->v * 16, v1 = v0 + (u32)h * 16;
     for (i = 0; i < n; i++) {  /* back in layout px: output px / ps, whole sixteenths for ps 1 or 2 */
         u32 yy = quad[13 + i * stride], uv = quad[10 + i * stride];
-        u32 xy = (u32)((double)quad[12 + i * stride] - base[i]);
+        u32 xy = quad[12 + i * stride];
         u32 x = (u32)((xy == xlo ? x0 : x1) * 16 / (int)ps + 0x8000);
         u32 y = (u32)(((yy & 0xffff) == ylo ? top : top + h) * 16 / (int)ps + 0x8000);
-        quad[12 + i * stride] = (u32)(base[i] + x);
+        quad[12 + i * stride] = x;
         quad[13 + i * stride] = (yy & 0xffff0000u) | (y & 0xffff);
         quad[10 + i * stride] = ((uv >> 16) == vlo ? v0 : v1) << 16 | (((uv & 0xffff) == ulo ? u0 : u1) & 0xffff);
     }

@@ -25,47 +25,20 @@ static inline double text_fit_names(unsigned int names, unsigned int fixed, unsi
     return (double)(room - fixed) / names;
 }
 
-/* The packed 16-bit X unwrapped around the glyph's pen (both biased by 0x800 pixels). */
-static inline double text_fit_unwrap(unsigned int packed, double pen)
+/* A corner's X is a whole dword, (x + 2048) * 16 (stock 0x54A5A4): past 2048 px it is just larger. Y and depth
+   share the next word. */
+static inline unsigned int text_fit_x(unsigned int packed, double anchor, struct text_fit fit, double pixels)
 {
-    double original = packed & 0xffffu;
-    while (original < pen - 32768)
-        original += 65536;
-    while (original >= pen + 32768)
-        original -= 65536;
-    return original;
-}
-
-static inline unsigned int text_fit_x(unsigned int packed, double anchor, struct text_fit fit, double pixels, double pen)
-{
-    double original = text_fit_unwrap(packed, pen), x;
     if (fit.factor == 1.0)
         return packed;
-    x = anchor + (original - anchor) * fit.factor + fit.shift * pixels;
-    unsigned int fixed = (unsigned int)(int)(x + 0.5);
-    return (packed & 0xffff0000u) | (fixed & 0xffffu);
+    return (unsigned int)(int)(anchor + ((int)packed - anchor) * fit.factor + fit.shift * pixels + 0.5);
 }
 
-/* A corner the game placed at 2048 physical px or more carried into the word's high half (depth);
-   the squish brings it back on screen, so that half is restored from a corner that did not carry,
-   in this quad or an earlier one of the same draw (*clean: its high half | 1, or 0 for none). */
-static inline void text_fit_quad(unsigned int *quad, int four, double anchor, struct text_fit fit, double pixels, double pen,
-                                 unsigned int *clean)
+static inline void text_fit_quad(unsigned int *quad, int four, double anchor, struct text_fit fit, double pixels)
 {
-    unsigned int i, n = four ? 4 : 2, stride = four ? 6 : 4, *x;
-    if (fit.factor == 1.0)
-        return;
+    unsigned int i, n = four ? 4 : 2, stride = four ? 6 : 4;
     for (i = 0; i < n; i++)
-        if (text_fit_unwrap(quad[12 + i * stride], pen) < 65536) {
-            *clean = (quad[12 + i * stride] & 0xffff0000u) | 1;
-            break;
-        }
-    for (i = 0; i < n; i++) {
-        x = &quad[12 + i * stride];
-        if (*clean && text_fit_unwrap(*x, pen) >= 65536)
-            *x = (*x & 0xffffu) | (*clean & 0xffff0000u);
-        *x = text_fit_x(*x, anchor, fit, pixels, pen);
-    }
+        quad[12 + i * stride] = text_fit_x(quad[12 + i * stride], anchor, fit, pixels);
 }
 
 static inline int text_fit_latin(const char *s)
