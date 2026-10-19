@@ -2,6 +2,7 @@
 # draft release of that tag. Make that draft first with packaging/release_assets.py: it holds
 # d3d9.dll and lettering.zip, which need the stock game and cannot be built here. The zip holds the
 # wozmod and wozmod-setup programs; build.py puts those two files inside their shared _internal folder.
+# Once both zips are attached, the last job takes the two files off the draft: players need only the zips.
 name: release
 
 on:
@@ -53,3 +54,14 @@ jobs:
       - name: Attach the zip to the draft release
         shell: bash
         run: gh release upload "$GITHUB_REF_NAME" build/packaging/wozmod-*.zip --clobber
+
+  tidy:
+    needs: zip
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Take d3d9.dll and lettering.zip off the draft release
+        run: |
+          gh release delete-asset "$GITHUB_REF_NAME" d3d9.dll --yes --repo "$GITHUB_REPOSITORY"
+          gh release delete-asset "$GITHUB_REF_NAME" lettering.zip --yes --repo "$GITHUB_REPOSITORY"

@@ -1,5 +1,7 @@
 """Put d3d9.dll and lettering.zip on the draft release of a tag, where the release workflow fetches them.
 
+The workflow packs both into each zip, then takes them off the draft: the published release holds only the zips.
+
 CI cannot build these two files: the DLL build reads the stock game, and the lettering render needs
 FontForge, Cairo and NumPy. Run this on the developer machine, before you push the tag:
 

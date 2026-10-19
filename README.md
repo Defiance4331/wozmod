@@ -240,7 +240,8 @@ To build the release zip for your system, run
 `packaging/release_assets.py` makes those two files and puts them on a draft
 GitHub release for the tag. Make that draft first: pushing a `v*` tag runs
 the release workflow in `.github/workflows/`, which takes the two files from
-the draft and builds the zips for Windows and Linux.
+the draft, builds the zips for Windows and Linux, and then takes the two
+files off the draft, so the release holds only the zips.
 
 ## Legal
 
