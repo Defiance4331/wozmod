@@ -27,6 +27,7 @@ wozmod-native = { path = "native" }
 dev = [
     "hypothesis>=6,<7",
     "pytest>=9.0.2,<10",
+    "pytest-xdist>=3.8,<4",
     "ruff>=0.15.12,<1",
 ]
 build = ["pyinstaller>=6.19,<7"]
@@ -35,7 +36,7 @@ build = ["pyinstaller>=6.19,<7"]
 where = ["src"]
 
 [tool.pytest.ini_options]
-addopts = "-ra"
+addopts = "-ra -n 6 --dist loadgroup"  # 6 workers: 4 to 16 all take 16-20 s, set by its slowest test; the rest is left for a game run
 testpaths = ["tests"]
 pythonpath = ["tools"]
 

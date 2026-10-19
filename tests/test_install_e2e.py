@@ -23,21 +23,27 @@ from pathlib import Path
 import pytest
 
 from wozmod.__main__ import main
+from wozmod.install import check_input
 
 INPUTS = {"wo1-x360": "WOZMOD_WO1_X360_ISO", "x360": "WOZMOD_X360_ISO", "psp": "WOZMOD_PSP_ISO",
           "x360-tool": "WOZMOD_X360_TOOL", "psp-tool": "WOZMOD_PSP_TOOL",
           "lettering": "WOZMOD_LETTERING", "dll": "WOZMOD_DLL"}
 
-pytestmark = pytest.mark.skipif(
+pytestmark = [pytest.mark.skipif(
     os.environ.get("WOZMOD_INSTALL_E2E") != "1"
     or not all(os.environ.get(v) for v in ["WOZMOD_GAME", *INPUTS.values()]),
     reason="set WOZMOD_INSTALL_E2E=1, WOZMOD_GAME and " + ", ".join(INPUTS.values()),
-)
+), pytest.mark.xdist_group("install-e2e")]  # one xdist worker, so its tests share one install in work/install-e2e
 
 
 @pytest.fixture(scope="module")
 def installed():
     """One install into a copy of the stock game: (game copy, install command, seconds, log lines)."""
+    # The installer names a wrong release file at once, but only after the game copy (6 to 60 s): check them first.
+    wrong = [f"{INPUTS[name]}: {problem}" for name in ("lettering", "dll")
+             if (problem := check_input(name, os.environ[INPUTS[name]]))]
+    if wrong:
+        pytest.fail("\n".join(wrong), pytrace=False)
     folder = Path(__file__).resolve().parents[1] / "work/install-e2e"
     folder.parent.mkdir(exist_ok=True)
     with folder.with_suffix(".lock").open("w") as lock:

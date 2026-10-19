@@ -261,9 +261,16 @@ def check_input(name: str, path: Path | str) -> str | None:
 
 
 def check_inputs(game: Path, inputs: dict[str, Path | None], log=None) -> None:
-    """Raise one InstallError naming every missing or wrong input."""
+    """Raise one InstallError naming every missing or wrong input.
+
+    The two files of the release download come first, on their own: a wrong download is named in milliseconds,
+    not after the seconds the game folder's hashes take. Every other wrong input is then named in one error.
+    """
+    if wrong := [f"{LABELS[name]}: {problem}" for name in ("lettering", "dll")
+                 if (problem := check_input(name, inputs[name]))]:
+        raise InstallError("\n".join(wrong))
     problems = {"game": check_input("game", game)}
-    for name in (*DISCS, "lettering", "dll"):
+    for name in DISCS:
         problems[name] = check_input(name, inputs[name])
     for disc, (_, tool, _) in PROGRAMS.items():
         source, found = resolve_program(disc, inputs, log)
@@ -386,11 +393,13 @@ def uninstall(game: Path, keep_settings: bool = True, log=print) -> dict[str, st
     return changed
 
 
-def _extract(flag: str, image: Path, donor, destination: Path, files, label: str, lo: float, hi: float) -> None:
+def _extract(flag: str, image: Path, donor, destination: Path, files, label: str, lo: float, hi: float,
+             failed=lambda: None) -> None:
     from wozmod.donors import extract_donor
 
     def reading(done: int, total: int) -> None:
         reporting.report("discs", label, lo + (hi - lo) * done / total)
+        failed()  # raises as soon as the input checks found a wrong input, so the read stops there
 
     try:
         extract_donor(image, donor, destination, files=files, on_bytes=reading)
@@ -503,7 +512,8 @@ def _run_stages(pool, futures: dict, events, stop, progress: Progress) -> None:
 def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progress, jobs: int, checked) -> Path:
     """Build every mod file into staging/out (as laid out in the game folder) and return it.
 
-    The input checks run while the discs are read; `checked()` waits for them and raises when an input is wrong.
+    The input checks run while the discs are read; `checked()` waits for them and raises when an input is wrong,
+    and `checked(wait=False)` raises only once they are done, so a wrong input stops the read at once.
     """
     from wozmod.art.compose import compose
     from wozmod.donors import PSP, WO1_X360, X360
@@ -525,7 +535,7 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
     try:
         for (flag, donor, folder, files, label), size in zip(plan, sizes, strict=True):
             _extract(flag, inputs[flag], donor, donors / folder, files, label,
-                     offset / sum(sizes), (offset + size) / sum(sizes))
+                     offset / sum(sizes), (offset + size) / sum(sizes), lambda: checked(wait=False))
             offset += size
     except InstallError as error:
         unread = error
@@ -599,7 +609,9 @@ def install(game: Path, inputs: dict[str, Path], force: bool = False, log=print,
         check = checker.submit(check_inputs, game, inputs, log)
         done = []
 
-        def checked() -> None:
+        def checked(wait: bool = True) -> None:
+            if not wait and not check.done():
+                return
             check.result()  # raises the InstallError for a wrong input
             if not done:
                 done.append(progress.finish("check"))

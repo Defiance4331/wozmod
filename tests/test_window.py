@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import time
 import tkinter
 from pathlib import Path
@@ -27,14 +28,20 @@ def test_the_window_and_the_command_give_the_same_verdict_on_each_input(tmp_path
     wrong.write_bytes(b"xyz")
     values = {"game": str(tmp_path), "wo1-x360": str(wrong), "x360": str(tmp_path / "none"), "psp": str(wrong),
               "lettering": str(wrong), "dll": str(wrong)}
-    with pytest.raises(InstallError) as caught:
-        installer.check_inputs(tmp_path, {name: Path(path) for name, path in values.items()})
-    lines = str(caught.value).splitlines()
 
-    for name in values:
-        problem, _ = window.check_row(name, values)
-        assert problem, name
-        assert f"{installer.LABELS[name]}: {problem}" in lines, name
+    def same_verdicts(names):
+        with pytest.raises(InstallError) as caught:
+            installer.check_inputs(tmp_path, {name: Path(path) for name, path in values.items()})
+        lines = str(caught.value).splitlines()
+        for name in names:
+            problem, _ = window.check_row(name, values)
+            assert problem, name
+            assert f"{installer.LABELS[name]}: {problem}" in lines, name
+
+    same_verdicts(("lettering", "dll"))  # the release files are checked first, on their own
+    monkeypatch.setattr(installer, "LETTERING", (3, hashlib.sha256(b"xyz").hexdigest()))
+    monkeypatch.setattr(installer, "DLL", installer.LETTERING)
+    same_verdicts(("game", "wo1-x360", "x360", "psp"))
 
 
 def test_settings_survive_a_restart_and_a_broken_file_is_ignored():

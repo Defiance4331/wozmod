@@ -55,7 +55,7 @@ def test_every_missing_or_wrong_input_is_named_and_no_right_one(game, tmp_path, 
     (game / "data/LINKDATA1.BIN").write_bytes(b"patched archive")
     inputs["wo1-x360"].write_bytes(b"not a disc image")
     inputs["lettering"].write_bytes(b"bundle")
-    inputs["dll"].write_bytes(b"other dll")
+    inputs["dll"].write_bytes(b"dll")
     monkeypatch.setattr(installer, "LETTERING", _pin(b"bundle"))
     monkeypatch.setattr(installer, "DLL", _pin(b"dll"))
 
@@ -64,9 +64,28 @@ def test_every_missing_or_wrong_input_is_named_and_no_right_one(game, tmp_path, 
 
     named = {line.split(":")[0] for line in str(caught.value).splitlines() if ": " in line}
     assert named == {"Game folder", "Warriors Orochi Xbox 360 disc image",
-                     "Warriors Orochi 2 Xbox 360 disc image", "PSP disc image", "d3d9.dll"}
+                     "Warriors Orochi 2 Xbox 360 disc image", "PSP disc image"}
     assert "data/LINKDATA1.BIN" in str(caught.value) and "OROCHI_Z.exe" not in str(caught.value)
     assert not (game / "wozmod").exists()
+
+
+def test_a_wrong_download_is_named_before_the_game_folder_is_hashed(game, tmp_path, monkeypatch):
+    # Bug: the release files are checked after the game folder's hashes (seconds on a real game), or only the
+    # first wrong one is named.
+    inputs = _inputs(tmp_path)
+    (game / "data/LINKDATA1.BIN").write_bytes(b"patched archive")
+    inputs["lettering"].write_bytes(b"other bundle")
+    monkeypatch.setattr(installer, "DLL", _pin(b"dll"))
+    hashed = []
+    monkeypatch.setattr(installer, "_sha256", lambda path, real=installer._sha256: hashed.append(path) or real(path))
+
+    with pytest.raises(InstallError) as caught:
+        install(game, inputs)
+
+    assert str(caught.value).splitlines() == [
+        "lettering.zip: Not the file that goes with this release. Download wozmod again.",
+        "d3d9.dll: File not found. Download wozmod again."]
+    assert not [path for path in hashed if path.is_relative_to(game)]
 
 
 def test_install_over_the_same_version_rebuilds_and_a_newer_one_asks_first(game, tmp_path, monkeypatch):
@@ -268,6 +287,30 @@ def test_a_wrong_input_is_named_before_a_disc_that_failed_to_read(game, tmp_path
     with pytest.raises(InstallError, match="Game folder: wrong input"):
         install(game, _inputs(tmp_path), log=lambda _: None)
     assert _tree(game) == before
+
+
+def test_a_wrong_input_stops_the_disc_read_as_soon_as_the_checks_find_it(game, tmp_path, monkeypatch):
+    # Bug: the check result is read only after every disc is read, so a wrong lettering.zip fails minutes late.
+    import time
+
+    import wozmod.donors
+    read = []
+
+    def check(game, inputs, log=None):
+        raise InstallError("lettering.zip: wrong input")
+
+    def extract_donor(image, donor, destination, files=None, on_bytes=None):
+        for done in range(1, 1001):  # a 10 s disc read, unless on_bytes stops it
+            time.sleep(0.01)
+            on_bytes(done, 1000)
+        read.append(image)
+
+    monkeypatch.setattr(installer, "_build", REAL_BUILD)
+    monkeypatch.setattr(installer, "check_inputs", check)
+    monkeypatch.setattr(wozmod.donors, "extract_donor", extract_donor)
+    with pytest.raises(InstallError, match="lettering.zip: wrong input"):
+        install(game, _inputs(tmp_path), log=lambda _: None)
+    assert read == []
 
 
 def test_the_voice_stage_lowers_its_priority_before_it_starts_ffmpeg(monkeypatch, tmp_path):
