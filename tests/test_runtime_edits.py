@@ -112,7 +112,8 @@ def test_wave4_does_not_restore_live_text_growth_or_change_other_baseline_bytes(
             for va, stock, patched in baseline["CODE_EDITS"]
             if va not in LIVE_TEXT_GROWTH_REMOVED | REPLACED_BY_X360 | REPLACED_BY_X360_PANELS
         ] + runtime_edits.MOZ_LAYOUT + runtime_edits.X360_LAYOUT + runtime_edits.X360_PANELS
-          + runtime_edits.LAYOUT_TWEAKS + runtime_edits.PAGE_ORIGIN + runtime_edits.CAPTION_LINES,
+          + runtime_edits.LAYOUT_TWEAKS + runtime_edits.PAGE_ORIGIN + runtime_edits.CAPTION_LINES
+          + runtime_edits.ATTRIBUTE_GRIDS,
         "FONT_ROUTE": baseline["FONT_ROUTE"],
         "settings_rows(1)": baseline["settings_rows"](1), "settings_rows(2)": baseline["settings_rows"](2),
     }

@@ -743,6 +743,18 @@ CAPTION_LINES = [
     (0x56A1E2, bytes.fromhex("890a"), bytes.fromhex("9090")),
 ]
 
+# The attribute cell (0x591810, widened above) is 150 wide, not 98, wherever it is drawn: each grid of them steps
+# 156 and draws its empty slots (0x5916B0) 150 wide too, on the weapon card (0x595310; its step is widened above)
+# and in the upgrade skill effects (0x526B70).
+ATTRIBUTE_GRIDS = [
+    *detour(0x59556B, bytes.fromhex("6a1c 6a62 53 52 51"), CAVE + 0x1C0, 0x595572,
+            bytes.fromhex("6a1c 6896000000 53 52 51")),
+    *detour(0x526C51, bytes.fromhex("6bc969 99 83e203"), CAVE + 0x1E0, 0x526C58,
+            bytes.fromhex("69c99c000000 99 83e203")),
+    *detour(0x526C98, bytes.fromhex("6a1c 6a62 56 52 51"), CAVE + 0x200, 0x526C9F,
+            bytes.fromhex("6a1c 6896000000 56 52 51")),
+]
+
 # Kept art and clearance edits that the X360 panels replace.
 X360_REPLACED = {
     0x595ADE, 0x595AEF, 0x595AF2, 0x595B0F, 0x527821, 0x527829, 0x527832, 0x529655, 0x52965D, 0x529666,
@@ -753,7 +765,7 @@ X360_REPLACED = {
     0x59C421, 0x59C42C, 0x59C48E, 0x59C3DF, 0x59C3E6,
 }
 CODE_EDITS = ([edit for edit in CODE_EDITS if edit[0] not in X360_REPLACED] + MOZ_LAYOUT + X360_LAYOUT + X360_PANELS
-              + LAYOUT_TWEAKS + PAGE_ORIGIN + CAPTION_LINES)
+              + LAYOUT_TWEAKS + PAGE_ORIGIN + CAPTION_LINES + ATTRIBUTE_GRIDS)
 
 LATIN_TOKEN = 0x1000
 

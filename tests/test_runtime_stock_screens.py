@@ -57,6 +57,44 @@ def test_weapon_name_starts_after_the_moz_thumbnail_and_ends_before_the_skill_sq
     assert name_x + layout.single_line_sites()[0x5950EC] <= squares
 
 
+LENGTHS = {0x6A: 2, 0x68: 5, 0x6B: 3, 0x69: 6, 0x99: 1, 0x83: 3, 0xB9: 5, **dict.fromkeys(range(0x50, 0x58), 1)}
+
+
+def edited_run(code, va: int, n: int) -> list[bytes]:
+    """The first n instructions the edited exe runs from va, through a detour's jump into the cave and back."""
+    run = []
+    while len(run) < n:
+        op = code(va, 1, True)[0]
+        if op == 0xE9:
+            va += 5 + struct.unpack("<i", code(va + 1, 4, True))[0]
+            continue
+        run.append(code(va, LENGTHS[op], True))
+        va += LENGTHS[op]
+    return run
+
+
+def immediate(ins: bytes) -> int:
+    """The immediate of push imm8/imm32 or imul r, r, imm8/imm32."""
+    return {0x6A: lambda: struct.unpack("<b", ins[1:2])[0], 0x68: lambda: struct.unpack("<i", ins[1:5])[0],
+            0x6B: lambda: struct.unpack("<b", ins[2:3])[0], 0x69: lambda: struct.unpack("<i", ins[2:6])[0]}[ins[0]]()
+
+
+def test_attribute_grids_step_past_the_filled_cell_and_draw_empty_slots_as_wide(code) -> None:
+    """The filled attribute cell (0x591810) is one width wherever it is drawn. A grid left at the stock column step
+    or empty slot width (98) shows filled cells wider than the grey empty slots (weapon card), or lets the next slot
+    cover a cell's name and level (upgrade skill effects)."""
+    assert code(0x591844, 10) == bytes.fromhex("6a04 6880000000 50 6a62")
+    cell = immediate(edited_run(code, 0x591844, 4)[3])
+    wrong = []
+    # grid, its column step's imul, and the push ... 0x1C, width that starts its empty slot's call to 0x5916B0
+    for grid, step_at, slot_at in [("weapon card", 0x595528, 0x59556B), ("upgrade skills", 0x526C51, 0x526C98)]:
+        assert code(step_at, 3) == bytes.fromhex("6bc969") and code(slot_at, 4) == bytes.fromhex("6a1c6a62")
+        step, slot = immediate(edited_run(code, step_at, 1)[0]), immediate(edited_run(code, slot_at, 2)[1])
+        if step < cell or slot != cell:
+            wrong.append(f"{grid}: cell {cell}, column step {step}, empty slot {slot}")
+    assert not wrong
+
+
 def test_page_origins_do_not_leave_a_glyph_callback_counting_from_the_stock_line_start(code) -> None:
     """The Z narration callback adds 4 px per glyph and resets only at the stock line x 0x168: at the X360
     origin it never reset, so the glyphs ran off screen while the screen data said they were drawn."""
