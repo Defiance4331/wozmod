@@ -29,6 +29,27 @@ def test_no_pointer_lands_on_a_donor_placeholder_record():
     assert placeholders - PLACEHOLDER_STOCK == set()
 
 
+@pytest.mark.skipif(not os.environ.get("WOZMOD_DONORS"), reason="set WOZMOD_DONORS to extracted donor folders")
+def test_every_string_pointer_starts_at_a_donor_string():
+    # Catches a pointer shifted into the middle of a donor string, or into another language's copy of it, which
+    # still resolves to plausible text. A string starts after the NUL that ends the one before it, or in an
+    # archive entry after the ffffffff marker that opens its record (an event line's after its id and length).
+    from wozmod.text.resolver import DonorResolver
+
+    resolver, mid = DonorResolver(Path(os.environ["WOZMOD_DONORS"])), []
+    for row in json.loads(TABLE.read_text())["rows"]:
+        match row.get("ref"):
+            case [donor, "pe", int(at)]:
+                before = resolver.program(donor)[:at][-1:]
+            case [donor, "ens" | "fns", int(entry), "cstr", int(at)]:
+                before = resolver.entry(donor, entry)[:at][-8:]
+            case _:
+                continue
+        if at and not (before.endswith(b"\0") or b"\xff" * 4 in (before[-4:], before[-8:-4])):
+            mid.append(f"{row['key'][:12]} {row['ref']}")
+    assert mid == []
+
+
 @pytest.mark.skipif(not (os.environ.get("WOZMOD_DONORS") and os.environ.get("WOZMOD_GAME")),
                     reason="set WOZMOD_DONORS and WOZMOD_GAME")
 def test_the_real_table_builds_from_the_shipped_rows(tmp_path):
