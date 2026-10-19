@@ -21,6 +21,7 @@ import time
 import uuid
 from pathlib import Path
 
+from checkout import main_checkout
 from wozmod.runtime.english_runtime import DLL_BASE, SURROGATES, encode_english
 
 
@@ -801,12 +802,6 @@ def ended(root: Path) -> str | None:
 # checkout's work/, for its whole life. `flock work/.game-run.lock run` there holds the first; `run --slot` takes
 # whichever is free.
 SLOTS = ("work/.game-run.lock", "work/.game-run.1.lock")
-
-
-def main_checkout() -> Path:
-    """The main checkout; a linked worktree's .git file names its folder in the main checkout's .git/worktrees/."""
-    git = REPO / ".git"
-    return Path(git.read_text().removeprefix("gitdir:").strip()).parents[2] if git.is_file() else REPO
 
 
 def take_slot(poll: float = 1.0) -> int:

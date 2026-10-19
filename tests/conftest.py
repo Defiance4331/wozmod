@@ -20,7 +20,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
-from game_harness import main_checkout
+from checkout import main_checkout
 
 RUNTIME = Path(__file__).resolve().parents[1] / "runtime"
 CONFIG = Path(os.environ.get("WOZMOD_HARNESS_CONFIG", main_checkout() / "work/harness.toml"))

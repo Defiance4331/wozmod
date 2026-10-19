@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+import checkout
 import pytest
 
 
@@ -1214,9 +1215,9 @@ def test_two_runs_hold_the_two_game_slots_and_a_third_waits_across_worktrees(tmp
     (main / ".git/worktrees/worktree").mkdir(parents=True)
     worktree.mkdir()
     (worktree / ".git").write_text(f"gitdir: {main / '.git/worktrees/worktree'}\n")
-    monkeypatch.setattr(harness, "REPO", main)
+    monkeypatch.setattr(checkout, "REPO", main)
     first = harness.take_slot(0.01)
-    monkeypatch.setattr(harness, "REPO", worktree)
+    monkeypatch.setattr(checkout, "REPO", worktree)
     second = harness.take_slot(0.01)
     third, got = threading.Event(), []
     thread = threading.Thread(target=lambda: got.append(harness.take_slot(0.01)) or third.set(), daemon=True)

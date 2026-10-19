@@ -46,3 +46,20 @@ def test_required_inputs_turn_unexpected_skips_into_failures(tmp_path: Path) -> 
         if run.returncode != code:
             wrong.append(f"{name}: exit {run.returncode}, expected {code}\n{run.stdout[-400:]}{run.stderr[-400:]}")
     assert wrong == []
+
+
+def test_the_test_setup_loads_without_posix_only_modules():
+    # Bug: tests/conftest.py imports a POSIX-only module (fcntl, resource), so pytest cannot start on Windows and
+    # packaging/build_windows.sh cannot check the Windows codecs.
+    script = (
+        "import importlib.abc, runpy, sys\n"
+        "class Deny(importlib.abc.MetaPathFinder):\n"
+        "    def find_spec(self, name, path=None, target=None):\n"
+        "        if name in {'fcntl', 'resource'}: raise ImportError(name + ' is POSIX-only')\n"
+        "sys.modules.pop('fcntl', None); sys.modules.pop('resource', None)\n"
+        "sys.meta_path.insert(0, Deny())\n"
+        f"sys.path.insert(0, {str(REPO / 'tools')!r})\n"
+        f"runpy.run_path({str(REPO / 'tests/conftest.py')!r})\n"
+    )
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
