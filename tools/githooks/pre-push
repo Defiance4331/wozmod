@@ -17,6 +17,9 @@ done
 [ -n "$tips" ] || exit 0
 
 top=$(git rev-parse --show-toplevel)
+# With this machine's inputs configured, a test that skips for a missing input fails the push (tests/conftest.py).
+main=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
+strict=0; [ -f "$main/work/harness.toml" ] && strict=1
 tree="$top/.worktrees/pre-push"  # kept between pushes, so its .venv and the native build are reused
 [ -d "$tree" ] || git worktree add --detach -q "$tree" HEAD || exit 1
 for sha in $tips; do
@@ -24,6 +27,6 @@ for sha in $tips; do
   (
     unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE VIRTUAL_ENV
     cd "$tree" && git checkout --detach -q --force "$sha" && git clean -fdq &&
-      WOZMOD_HARNESS_CONFIG="$top/work/harness.toml" uv run -q --extra native pytest -q -p no:cacheprovider
+      WOZMOD_HARNESS_CONFIG="$main/work/harness.toml" WOZMOD_REQUIRE_INPUTS=$strict uv run -q --extra native pytest -q -p no:cacheprovider
   ) || { echo "pre-push: tests fail on $(git log -1 --format=%h "$sha"); push refused." >&2; exit 1; }
 done
