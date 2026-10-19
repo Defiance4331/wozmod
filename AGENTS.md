@@ -55,9 +55,9 @@ translation row, and an edit over the wrong stock bytes. Synthetic bytes in
 `tmp_path` cover formats and patch logic. Use stock or donor files only for
 what synthetic bytes cannot show, and skip when they are absent. Slow tests run
 only behind a `WOZMOD_<NAME>=1` skipif. Input paths come from `[tests]` in
-`work/harness.toml` (see `tests/conftest.py`); a linked worktree has none, so
-set `WOZMOD_HARNESS_CONFIG` to the main checkout's copy. `tools/verify.sh` also
-runs the slow ones; run it before handing back a change to the runtime, the art
+the main checkout's `work/harness.toml` (see `tests/conftest.py`).
+`tools/verify.sh` also runs the slow ones, and fails when an input is missing
+instead of skipping; run it before handing back a change to the runtime, the art
 or the install. Hand back a change players see with the
 `evidence/contact-sheet.html` that `tools/run_check.py` writes: each capture beside
 its PASS/FAIL rows. The hooks in `tools/githooks/` lint each
