@@ -7,6 +7,7 @@ Japanese source string.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import io
 import json
@@ -188,28 +189,46 @@ def _donor_strings(root: Path) -> set[str]:
             except ValueError:
                 continue
     found |= {" ".join(text.casefold().split()) for text in resolver.psp_pool() if text}
-    pointers = [*_strings(json.loads((REPO / "data/text/table.json").read_text(encoding="utf-8")), refs=True),
+    table = json.loads((REPO / "data/text/table.json").read_text(encoding="utf-8"))
+    pointers = [*_strings(table, refs=True),
+                *(edit[2] for row in table["rows"] for edit in row.get("edits", []) if isinstance(edit[2], list)),
                 *(ref for path in sorted((REPO / "data/art").glob("*.json"))
                   for ref in _strings(json.loads(path.read_text(encoding="utf-8")), refs=True))]
     found |= {" ".join(resolver.resolve(ref).casefold().split()) for ref in pointers if ref[1] == "pe"}
     return found
 
 
+# Our own words that equal an official string and stay ours by decision, by SHA-256: the unused-slot label.
+OWN_WORDS = {"231aedffacea10497c1851e05277da1baa518600f56ebd2123410bc90e7a0190"}
+# Where text or lettering is stored: the data, the code that letters and resolves text, and test literals.
+TEXT_CODE = ("data/", "src/wozmod/art/", "src/wozmod/fonts/", "src/wozmod/text/", "tests/")
+FILE_NAME = re.compile(r"[\w-]+\.[A-Za-z0-9]{1,4}")
+
+
 @pytest.mark.skipif(not (os.environ.get("WOZMOD_ART_WORDS") and os.environ.get("WOZMOD_DONORS")),
                     reason="set WOZMOD_ART_WORDS=1 and WOZMOD_DONORS (about a minute)")
-def test_art_data_stores_no_official_english() -> None:
-    # Bug: an official menu word is typed into the art data or the art build's constants (in any case or
-    # spacing) instead of a pointer to its donor string or a letter map of its donor image.
+def test_tracked_text_stores_no_official_english() -> None:
+    # Bug: an official word or line is typed into the data, a font table's keys, the lettering code or a test (in
+    # any case or spacing) instead of a pointer to its donor string, a letter map of its donor image or a hash.
     from wozmod.art import build
 
     official = _donor_strings(Path(os.environ["WOZMOD_DONORS"]))
-    stored = [(path.name, text) for path in sorted((REPO / "data/art").glob("*.json"))
-              for text in _strings(json.loads(path.read_text(encoding="utf-8")))]
-    stored += [(f"art/build.py {name}", text) for name, value in vars(build).items() if name.isupper()
-               for text in _strings(value)]
-    # A word: three letters or more with a capital (identifiers and style names are lower case).
+    stored = [(f"art/build.py {name}", text) for name, value in vars(build).items() if name.isupper()
+              for text in _strings(value)]
+    for path in _files():
+        where = path.relative_to(REPO).as_posix()
+        if path.suffix == ".json" and where.startswith("data/"):
+            stored += [(where, text) for text in _strings(json.loads(path.read_text(encoding="utf-8")))]
+        elif path.suffix == ".py" and where.startswith(TEXT_CODE):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            stored += [(f"{where}:{node.lineno}", node.value) for node in ast.walk(tree)
+                       if isinstance(node, ast.Constant) and isinstance(node.value, str)]
+    # A word: three letters or more with a capital (identifiers and style names are lower case); a bare file name
+    # names a file, it is not text.
     offending = sorted({f"{where}: {hashlib.sha256(text.encode()).hexdigest()[:12]}" for where, text in stored
                         if sum(c.isalpha() for c in text) >= 3 and any(c.isupper() for c in text)
+                        and not FILE_NAME.fullmatch(text)
+                        and hashlib.sha256(text.encode()).hexdigest() not in OWN_WORDS
                         and " ".join(text.casefold().split()) in official})
 
     assert offending == []

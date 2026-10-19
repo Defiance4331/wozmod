@@ -38,16 +38,40 @@ def test_every_string_pointer_starts_at_a_donor_string():
 
     resolver, mid = DonorResolver(Path(os.environ["WOZMOD_DONORS"])), []
     for row in json.loads(TABLE.read_text())["rows"]:
-        match row.get("ref"):
-            case [donor, "pe", int(at)]:
-                before = resolver.program(donor)[:at][-1:]
-            case [donor, "ens" | "fns", int(entry), "cstr", int(at)]:
-                before = resolver.entry(donor, entry)[:at][-8:]
-            case _:
-                continue
-        if at and not (before.endswith(b"\0") or b"\xff" * 4 in (before[-4:], before[-8:-4])):
-            mid.append(f"{row['key'][:12]} {row['ref']}")
+        for ref in [row.get("ref"), *(edit[2] for edit in row.get("edits", []) if isinstance(edit[2], list))]:
+            match ref:
+                case [donor, "pe", int(at)]:
+                    before = resolver.program(donor)[:at][-1:]
+                case [donor, "ens" | "fns", int(entry), "cstr", int(at)]:
+                    before = resolver.entry(donor, entry)[:at][-8:]
+                case _:
+                    continue
+            if at and not (before.endswith(b"\0") or b"\xff" * 4 in (before[-4:], before[-8:-4])):
+                mid.append(f"{row['key'][:12]} {ref}")
     assert mid == []
+
+
+# The SHA-256 of the text each row showed before an edit pointer replaced its typed-in words.
+EDIT_POINTER_TEXT = {
+    "5c409fd1bcfef11d44442680292fe620a0597231c48aea6e10cacccadf4d69f0":
+        "b61c47aa06fbfeeb47444ee519ea51e7acffcc685752f948eb5610305b6a8ad1",
+}
+
+
+@pytest.mark.skipif(not os.environ.get("WOZMOD_DONORS"), reason="set WOZMOD_DONORS to extracted donor folders")
+def test_rows_that_insert_a_donor_string_read_as_they_did():
+    # Catches an edit pointer at the wrong string, or an insert on the wrong side of a space: the screen would show
+    # different text from the words the pointer replaced.
+    import hashlib
+
+    from wozmod.text.resolver import DonorResolver
+
+    resolver = DonorResolver(Path(os.environ["WOZMOD_DONORS"]))
+    rows = {row["key"]: row for row in json.loads(TABLE.read_text())["rows"]
+            if any(isinstance(edit[2], list) for edit in row.get("edits", []))}
+    assert set(rows) == set(EDIT_POINTER_TEXT)
+    built = {key: hashlib.sha256(resolver.resolve_row(row).encode()).hexdigest() for key, row in rows.items()}
+    assert built == EDIT_POINTER_TEXT
 
 
 @pytest.mark.skipif(not (os.environ.get("WOZMOD_DONORS") and os.environ.get("WOZMOD_GAME")),

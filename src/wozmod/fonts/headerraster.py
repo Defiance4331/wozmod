@@ -11,6 +11,7 @@ from PIL import Image
 
 from . import headervec as V
 from .buttonraster import Label, coverage
+from .word_key import word_key
 
 FILL = ((0.00, (255.3, 254.0, 235.2)), (0.10, (250.1, 246.0, 220.5)), (0.19, (247.1, 242.2, 212.8)),
         (0.30, (242.8, 236.4, 201.0)), (0.41, (238.9, 230.3, 188.4)), (0.51, (233.5, 221.5, 175.4)),
@@ -25,9 +26,9 @@ EDGE_Y = 3.025
 def glyphs(text=None):
 
 
-    if text is not None and text not in V.ROW_PARAMS:
+    if text is not None and word_key(text) not in V.ROW_PARAMS:
         return glyphs()
-    params = V.ROW_PARAMS.get(text, {})
+    params = V.ROW_PARAMS.get(word_key(text), {}) if text is not None else {}
     out = {}
     for ch in V.BUILD:
         p = params.get(ch)
@@ -46,7 +47,7 @@ def layout(text, ref=None):
     for ch in letters:
         if ch not in g:
             raise KeyError(f"headervec has no glyph for {ch!r} in {text!r}")
-    ink = V.SETS.get(f"{text}@{ref}", V.SETS.get(text))
+    ink = V.SETS.get(f"{word_key(text)}@{ref}", V.SETS.get(word_key(text)))
     if ink is None:
         ink, pen, prev = [], 0.0, None
         for ch in text:

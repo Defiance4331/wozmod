@@ -166,3 +166,14 @@ def test_program_prompt_glyph_does_not_swallow_the_following_single_byte_letter(
 def test_program_decoder_cannot_accept_a_non_prompt_cp932_pair_as_donor_english():
     with pytest.raises(ValueError, match="donor program text"):
         program_text(b"Lead \x82\xa0 tail")
+
+
+def test_edit_can_insert_a_whole_donor_string_by_pointer(donors):
+    # Bug: a pointer in an edit is pasted as its list, or skipped, instead of the donor string it names, so a
+    # name moved by an edit drops out of the line.
+    row = {
+        "source": "edited", "ref": ["wo1-x360", "ens", 5, "cstr", 6],
+        "edits": [[7, 12, ["wo1-x360", "ens", 5, "cstr", 19]], [12, 12, " and"]],
+    }
+
+    assert donors.resolve_row(row) == "Prefix beta gamma and beta gamma"

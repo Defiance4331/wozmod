@@ -424,7 +424,7 @@ def test_tour_checks_screens_and_diff(tmp_path):
 
     seen = {"texts": [
         {"x": 100, "y": 100, "width": 200, "text": "Larch", "caller": "0x1"},
-        {"x": 250, "y": 110, "width": 100, "text": "Sound", "caller": "0x2"},  # overlaps Options
+        {"x": 250, "y": 110, "width": 100, "text": "Sound", "caller": "0x2"},  # overlaps Larch
         {"x": 1200, "y": 300, "width": 120, "text": "Too wide", "caller": "0x3"},
         {"x": 100, "y": 400, "width": 48, "text": "\u8a2d\u5b9a", "caller": "0x3"},
     ], "windows": [{"text": "\u672a\u7ffb\u8a33"}], "textures": [{"texture": "4085.6"}, {"texture": "4080.0"}]}

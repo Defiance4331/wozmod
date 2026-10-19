@@ -12,7 +12,8 @@ event (line id), captions (list of cue slots, whitespace joined), cstr
 (byte offset), slice (byte offset, byte length). Offsets address decoded
 archive entries. A slice can select a name part inside a donor record.
 Edits are ascending [start, end, replacement] character spans in the
-unmodified resolved string; only replacement text is authored data.
+unmodified resolved string; only replacement text is authored data. A
+replacement that is a pointer (the form above) inserts that donor string.
 Program strings may include CP932 private glyphs. Official prompt controls
 use the same spans under "controls", replacing text with numeric codepoints.
 """
@@ -179,6 +180,10 @@ class DonorResolver:
         for start, stop, replacement in edits:
             if not end <= start <= stop <= len(text):
                 raise ValueError("Edit spans overlap or exceed donor string")
+            if isinstance(replacement, list):
+                replacement = self.resolve(replacement)
+            elif not isinstance(replacement, str):
+                raise ValueError("An edit replaces with text or a donor pointer")
             chunks.extend((text[end:start], replacement))
             end = stop
         return "".join((*chunks, text[end:]))

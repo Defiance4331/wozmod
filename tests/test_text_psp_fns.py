@@ -14,8 +14,6 @@ from wozmod.text import DonorResolver
 
 
 def test_fns_pointer_keeps_its_archive_member_and_notice_slot(tmp_path, monkeypatch):
-    from wozmod.text import resolver
-
     records = [b"32Authored first", b"11Authored second"]
     notices = struct.pack("<3I", 2, 12, 12 + len(records[0]) + 1) + b"\0".join(records) + b"\0"
     notices += bytes(-len(notices) % 4)

@@ -11,6 +11,7 @@ from PIL import Image
 
 from . import buttonvec as V
 from .menu_effects import blur, coverage, path
+from .word_key import word_key
 
 NAVY = (33, 32, 49)
 OUTLINE = 3.05
@@ -28,6 +29,7 @@ FILL_BANDS = [(2, (255, 255, 247)), (4, (255, 255, 239)), (6, (255, 255, 231)), 
               (13, (255, 255, 239)), (14, (255, 255, 247))]
 
 STYLE_WIDTH = {'501.3': 1.0, '493.9': 1.06, '508.0': 1.07}
+# Keyed by word_key(word), the word's SHA-256, so the official word is not stored.
 ROW_PLACES = {('493.9', "9982d716901b7d64b9b3840bca988930db6758b5519520111769bcc16b13cd29"): (0.0,
                                  16.187,
                                  30.9161,
@@ -262,6 +264,7 @@ ROW_PLACES = {('493.9', "9982d716901b7d64b9b3840bca988930db6758b5519520111769bcc
  ('508.0', "d0b1a869600d21076a3fa8b5f52546e55920588ce73dfb7e56ca9dc08bdcaf3e"): (0.0, 18.0155, 31.1856, 45.596, 51.3677, 68.9966, 85.0127),
  ('508.0', "0747c96a23dbfa586507337fc4ed4bdddb7b05833243622c4e6bb357b87adb0c"): (0.0, 15.0329, 28.0496, 43.2881, 59.2315, 78.22),
  ('508.0', "ae75b2880b5b5e401de30cd4b3fbbdcb8a4248f0c0018da2135cf7779a0974d5"): (0.0, 21.9508, 34.0296, 51.7554, 65.7907, 83.7784)}
+# Keyed by word_key(word), the word's SHA-256, so the official word is not stored.
 ROW_PHASE = {('493.9', "9982d716901b7d64b9b3840bca988930db6758b5519520111769bcc16b13cd29"): (0.25, 0.0),
  ('493.9', "2ca05767d5dce89655e2811605a51c3937f8786901f81571c6f4eea90e073a94"): (0.4927, 0.4763),
  ('493.9', "7a66eabf637f6a4c162d331966b5966e2656f4051ae52acbcb1af0a3ab2eff10"): (0.6264000000000001, 0.06559999999999999),
@@ -323,6 +326,7 @@ class Label:
     advance: float
 
 
+# Each variant's places and phases are keyed by word_key(word), the word's SHA-256, so the official word is not stored.
 REF_STYLES = {'493.9': {'bands': [[1, [255.0, 255.0, 247.0]],
                      [2, [255.0, 255.0, 247.0]],
                      [3, [255.0, 255.0, 247.0]],
@@ -983,7 +987,8 @@ def render(text, scale=1.0, cap=V.DESIGN_CAP, style="501.3", hscale=1.0,
     g = glyphs(cap, style, ref)
     placed, advance = layout(text, cap)
     natural, _ = _natural_layout(text, cap)
-    places = variant['places'].get(text) if variant is not None else ROW_PLACES.get((style, text))
+    key = word_key(text)
+    places = variant['places'].get(key) if variant is not None else ROW_PLACES.get((style, key))
     if places is not None:
         if variant is not None:
 
@@ -1036,7 +1041,7 @@ def render(text, scale=1.0, cap=V.DESIGN_CAP, style="501.3", hscale=1.0,
         xmin = xmax = ymin = ymax = 0.0
 
 
-    phases = variant['phases'].get(text, (0.25, 0.035)) if variant is not None else ROW_PHASE.get((style, text), (0.25, 0.035))
+    phases = variant['phases'].get(key, (0.25, 0.035)) if variant is not None else ROW_PHASE.get((style, key), (0.25, 0.035))
     phase_x, phase_y = (phases
                         if layout is not _natural_layout else (0.0, 0.0))
     ox = pad - xmin * sx + bold + phase_x * s

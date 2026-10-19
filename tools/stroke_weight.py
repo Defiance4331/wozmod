@@ -122,7 +122,7 @@ def faces() -> dict[str, dict[str, np.ndarray]]:
         upright[ch] = H.contours(layer), (x0 / H.U, H.CAP - y1 / H.U, x1 / H.U, H.CAP - y0 / H.U)
     found["headervec upright"] = outline_cells(upright, 0)
     for face in ("BOLD", "REGULAR", "CONFIRM_FACE", "LIGHT"):
-        found[f"valuevec {face.lower()}"] = outline_cells(valueraster.glyphs(face), getattr(valuevec, face).CAP)
+        found[f"valuevec {face.removesuffix('_FACE').lower()}"] = outline_cells(valueraster.glyphs(face), getattr(valuevec, face).CAP)
     return found
 
 

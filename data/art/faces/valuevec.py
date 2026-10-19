@@ -12,7 +12,7 @@ def _face(name, metrics, params, tune, bearings, space, sets):
         params["V"] = dict(xl=w["x1"], wl=w["w1"], xr=w["x4"] - w["v2"] + w["v1"], wr=w["w4"], xv=w["v1"],
                            wv=w["wv"])
     m.__dict__.update(metrics, SLANT=0.0, PARAMS=params, TUNE=dict(tune), BEARINGS=bearings, SPACE=space,
-                      SETS=sets, CONDENSE={})
+                      SETS=sets)
     m.BUILD = {ch: m.BUILD[ch] for ch in params}
     m.BUILD_SET = "".join(sorted(m.BUILD))
     base_layer = m.layer
@@ -121,6 +121,7 @@ BOLD_BEARINGS = {
     "Z": (3.17, 2.36),
 }
 BOLD_SPACE = 12.02
+# Keyed by word_key(word), the word's SHA-256, so the official word is not stored.
 BOLD_SETS = {
     "e8a01133b1351e5fa434167135400d1998d3daa8ce74e3dd9bb57582fa4d7b97": (0.0, 32.27),
     "38cca6bea010af8adaf4be7d270456fa9adef8c0252db91f2767c607d077319b": (0.0, 30.6, 53.6),
@@ -168,6 +169,7 @@ LIGHT_BEARINGS = {
     "W": (0.73, 0.0),
 }
 LIGHT_SPACE = 12.02
+# Keyed by word_key(word), the word's SHA-256, so the official word is not stored.
 LIGHT_SETS = {
     "5fbdda1b8c72e849493a8534652682ed35b5bde51896cd1f457278883b0c5cf4": (0.0, 20.46, 44.22),
     "b43e72eed0488d784f1e3092b48320e2355e9d6313f7ac401542018eec20d8a3": (0.0, 29.34, 43.71, 72.0),
@@ -272,6 +274,7 @@ REGULAR_BEARINGS = {
     "Y": (0.33, -0.03),
 }
 REGULAR_SPACE = 12.24
+# Keyed by word_key(word), the word's SHA-256, so the official word is not stored.
 REGULAR_SETS = {
     "27e88b861fa91ee1c64bbc3be6868fda14f45e1ad84b0da7caf7a7d3f7d7bce1": (0.0, 22.13, 47.4, 65.47),
     "db2cb3fe28e2c54fce50bd9c03fd2b131091229c0ceda79289527aaba47226ad": (0.0, 24.25, 48.46, 70.08, 97.18, 120.4),
@@ -331,6 +334,7 @@ CONFIRM_BEARINGS = {
     "Y": (0.0, -0.46),
 }
 CONFIRM_SPACE = 12.22
+# Keyed by word_key(word), the word's SHA-256, so the official word is not stored.
 CONFIRM_SETS = {
     "f9171164593756e56fb197327b529a4955590566560dbe62d586bff41be9d297": (0.0, 23.67, 46.59),
     "23794d91c53ae875c8e247d72561e35d9d06ee07c70c9e0dbcc977a6d161504a": (0.0, 28.4),
@@ -865,6 +869,7 @@ HARD_50610_TUNE = {
 HARD_50610 = _face("hard_50610", REGULAR_METRICS, HARD_50610_PARAMS, HARD_50610_TUNE,
                     REGULAR_BEARINGS, REGULAR_SPACE, dict(REGULAR_SETS))
 
+# Keyed by word_key(word)@ref, with the word's SHA-256, so the official word is not stored.
 REF_FACES = {"db2cb3fe28e2c54fce50bd9c03fd2b131091229c0ceda79289527aaba47226ad@15.9": 'NORMAL_5069', "db2cb3fe28e2c54fce50bd9c03fd2b131091229c0ceda79289527aaba47226ad@15.10": 'NORMAL_50610', "0e24076baf990d55aa1511d1af1d6741b19c9a2e9e9911f9ec7b5d5dbe5a5e9f@15.9": 'HARD_5069', "0e24076baf990d55aa1511d1af1d6741b19c9a2e9e9911f9ec7b5d5dbe5a5e9f@15.10": 'HARD_50610'}
 
 

@@ -692,7 +692,7 @@ def test_every_official_sheet_a_face_names_is_a_donor_the_recipes_pass() -> None
     passed = {sheet for edit in json.loads(build.MAPPING.read_text())["textures"]
               for _, step in build.expanded(edit) for sheet in donors(step)}
     faces = "".join((build.REPO / "data/art/faces" / f"{face}.py").read_text() for face in ("headervec", "valuevec"))
-    named = set(re.findall(r"'[^'@]+@(\d+\.\d+)'", faces))
+    named = set(re.findall(r"""['"][^'"@]+@(\d+\.\d+)['"]""", faces))
     assert named and named <= passed, named - passed
 
 

@@ -11,20 +11,34 @@ from PIL import Image
 
 from . import valuevec
 from .buttonraster import Label, coverage
+from .word_key import word_key
 
 
+# texts picks a face per drawn word, keyed by word_key(word), the word's SHA-256, so the official word is not stored.
 LOOKS = {
     "value_dim": dict(face="BOLD", fill=(156, 156, 156), grow=0.0,
                    baseline_faces=("BOLD", "LIGHT"),
-                   texts={"5fbdda1b8c72e849493a8534652682ed35b5bde51896cd1f457278883b0c5cf4": "LIGHT", "b43e72eed0488d784f1e3092b48320e2355e9d6313f7ac401542018eec20d8a3": "LIGHT", "7c48dd672a68098c3a9dac57805004a146db39c8d60c81d091537ee9c4a76054": "BOLD_MEDIUM", "db2cb3fe28e2c54fce50bd9c03fd2b131091229c0ceda79289527aaba47226ad": "BOLD_NORMAL", "5b6728469b192620a47d6e12723f3180553bffc934d5ab62ebb1a0ea9cb4d8aa": "BOLD_CUSTOMIZE"}, rings=((3.5, (49, 52, 49), 1.0),)),
+                   texts={"5fbdda1b8c72e849493a8534652682ed35b5bde51896cd1f457278883b0c5cf4": "LIGHT",
+                          "b43e72eed0488d784f1e3092b48320e2355e9d6313f7ac401542018eec20d8a3": "LIGHT",
+                          "7c48dd672a68098c3a9dac57805004a146db39c8d60c81d091537ee9c4a76054": "BOLD_MEDIUM",
+                          "db2cb3fe28e2c54fce50bd9c03fd2b131091229c0ceda79289527aaba47226ad": "BOLD_NORMAL",
+                          "5b6728469b192620a47d6e12723f3180553bffc934d5ab62ebb1a0ea9cb4d8aa": "BOLD_CUSTOMIZE"}, rings=((3.5, (49, 52, 49), 1.0),)),
     "value_lit": dict(face="BOLD", fill=(253, 238, 156), grow=0.0,
                    baseline_faces=("BOLD", "LIGHT"),
-                   texts={"5fbdda1b8c72e849493a8534652682ed35b5bde51896cd1f457278883b0c5cf4": "LIGHT", "b43e72eed0488d784f1e3092b48320e2355e9d6313f7ac401542018eec20d8a3": "LIGHT", "7c48dd672a68098c3a9dac57805004a146db39c8d60c81d091537ee9c4a76054": "BOLD_MEDIUM", "db2cb3fe28e2c54fce50bd9c03fd2b131091229c0ceda79289527aaba47226ad": "BOLD_NORMAL", "5b6728469b192620a47d6e12723f3180553bffc934d5ab62ebb1a0ea9cb4d8aa": "BOLD_CUSTOMIZE"}, rings=((3.5, (49, 52, 49), 1.0),)),
+                   texts={"5fbdda1b8c72e849493a8534652682ed35b5bde51896cd1f457278883b0c5cf4": "LIGHT",
+                          "b43e72eed0488d784f1e3092b48320e2355e9d6313f7ac401542018eec20d8a3": "LIGHT",
+                          "7c48dd672a68098c3a9dac57805004a146db39c8d60c81d091537ee9c4a76054": "BOLD_MEDIUM",
+                          "db2cb3fe28e2c54fce50bd9c03fd2b131091229c0ceda79289527aaba47226ad": "BOLD_NORMAL",
+                          "5b6728469b192620a47d6e12723f3180553bffc934d5ab62ebb1a0ea9cb4d8aa": "BOLD_CUSTOMIZE"}, rings=((3.5, (49, 52, 49), 1.0),)),
     "choice_dim": dict(face="REGULAR", fill=(201, 201, 201), grow=0.0,
-                   baseline_faces=("REGULAR",), texts={"0e24076baf990d55aa1511d1af1d6741b19c9a2e9e9911f9ec7b5d5dbe5a5e9f": "HARD_FACE", "db2cb3fe28e2c54fce50bd9c03fd2b131091229c0ceda79289527aaba47226ad": "DIFFICULTY_FACE", "dc1a2f9d7bd77176adf5cfec6d2efaddd343e7562000ee31f8f986f037d33ddf": "CHAOS_DIM"},
+                   baseline_faces=("REGULAR",), texts={"0e24076baf990d55aa1511d1af1d6741b19c9a2e9e9911f9ec7b5d5dbe5a5e9f": "HARD_FACE",
+                                                       "db2cb3fe28e2c54fce50bd9c03fd2b131091229c0ceda79289527aaba47226ad": "DIFFICULTY_FACE",
+                                                       "dc1a2f9d7bd77176adf5cfec6d2efaddd343e7562000ee31f8f986f037d33ddf": "CHAOS_DIM"},
                    rings=((3.71, (79, 78, 79), 1.0), (1.93, (48, 51, 48), 0.97),)),
     "choice_lit": dict(face="REGULAR", fill=(251, 250, 251), grow=-0.03,
-                   baseline_faces=("REGULAR",), texts={"0e24076baf990d55aa1511d1af1d6741b19c9a2e9e9911f9ec7b5d5dbe5a5e9f": "HARD_FACE", "db2cb3fe28e2c54fce50bd9c03fd2b131091229c0ceda79289527aaba47226ad": "DIFFICULTY_FACE", "dc1a2f9d7bd77176adf5cfec6d2efaddd343e7562000ee31f8f986f037d33ddf": "CHAOS_LIT"},
+                   baseline_faces=("REGULAR",), texts={"0e24076baf990d55aa1511d1af1d6741b19c9a2e9e9911f9ec7b5d5dbe5a5e9f": "HARD_FACE",
+                                                       "db2cb3fe28e2c54fce50bd9c03fd2b131091229c0ceda79289527aaba47226ad": "DIFFICULTY_FACE",
+                                                       "dc1a2f9d7bd77176adf5cfec6d2efaddd343e7562000ee31f8f986f037d33ddf": "CHAOS_LIT"},
                    rings=((4.45, (79, 79, 79), 1.0), (2.04, (53, 52, 53), 0.85),)),
     "confirm_dim": dict(face="CONFIRM_FACE", fill=(205, 204, 205), grow=0.0, rings=((2.53, (82, 81, 82), 1.0),)),
     "confirm_lit": dict(face="CONFIRM_FACE", fill=(254, 254, 254), grow=0.0, rings=((2.53, (82, 81, 82), 1.0),)),
@@ -51,7 +65,7 @@ def layout(face, text):
     for ch in letters:
         if ch not in g:
             raise KeyError(f"valuevec.{face} has no glyph for {ch!r} in {text!r}")
-    ink = V.SETS.get(text)
+    ink = V.SETS.get(word_key(text))
     if ink is None:
         ink, pen, prev = [], 0.0, None
         for ch in text:
@@ -101,10 +115,10 @@ def face_for(text: str, look: str, ref: str | None = None) -> str:
 
     L = LOOKS[look]
     if look.startswith("choice_") and ref is not None:
-        variant = valuevec.REF_FACES.get(f"{text}@{ref}")
+        variant = valuevec.REF_FACES.get(f"{word_key(text)}@{ref}")
         if variant is not None:
             return variant
-    return L.get("texts", {}).get(text, L["face"])
+    return L.get("texts", {}).get(word_key(text), L["face"])
 
 
 def render(text, scale=1.0, hscale=1.0, look="value_dim", ref=None):

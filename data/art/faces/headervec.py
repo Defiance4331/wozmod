@@ -69,6 +69,7 @@ BEARINGS = {
     "V": (-1.83, -1.58), "W": (-0.72, -0.72), "Y": (-1.56, 0.69), "Z": (3.05, 3.05),
 }
 SPACE = 16.7
+# Keyed by word_key(word), the word's SHA-256, so the official word is not stored.
 SETS = {
     "1879f84bfc3e6acfcf1608ef2b4b2ac54830532e82631d6fa04275119a771b9a": (0.0, 30.26, 66.26, 110.07),
     "ae75b2880b5b5e401de30cd4b3fbbdcb8a4248f0c0018da2135cf7779a0974d5": (0.0, 46.82, 76.01, 111.82, 144.62, 179.98),
@@ -108,7 +109,6 @@ SETS = {
     "a5b2ea78f89d49f98411b265da8125f27115e4df5e772c9d1ffb5946d5da229e": (0.0, 33.46, 70.17, 106.4, 139.02, 176.23, 210.57, 241.65, 273.62, 326.47, 355.59, 386.73,
         417.06, 449.18, 483.52),
 }
-CONDENSE = {"1b114dce35022c6738402f25fa82a3a89814a0e0d331b815aed4139c3ba26aee": 0.87, "24f9313b7431f581892a5dc9e6868f1e8ed3c4f1d5ed2137d7f184713308f777": 0.83, "2ca05767d5dce89655e2811605a51c3937f8786901f81571c6f4eea90e073a94": 0.801, "a5b2ea78f89d49f98411b265da8125f27115e4df5e772c9d1ffb5946d5da229e": 0.61}
 
 
 TUNE = {
@@ -919,6 +919,7 @@ BACKGROUND_PARAMS = {
         0.20625, -0.37126, -0.138, 0.125, -0.212, 0.22001, -0.14708, 0.08427, -0.13601, 0.00887,
         0.31875, -0.087)),
 }
+# Keyed by word_key(word), the word's SHA-256, so the official word is not stored.
 ROW_PARAMS = {"222a857ddb780ba0422608f9245352d4d247acdbe8922c542b015ac7c9d6a56c": SCENARIO_PARAMS, "586f188b0eddc1210dd8493be2723edfc810de36ac3c68fcdc1a5ef0e76a2528": BACKGROUND_PARAMS}
 
 

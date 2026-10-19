@@ -12,6 +12,7 @@ from PIL import Image
 from . import menusans
 from .menu_effects import coverage, paint, path
 from .menu_styles import STYLES, style_for
+from .word_key import word_key
 
 __all__ = ["render"]
 
@@ -182,7 +183,7 @@ def _draw_line(ctx, glyphs, placed, sx, sy, ox, baseline, slant=0):
 def _render(text, style, *, origin=None, canvas=None):
     st = _style(style)
     glyphs = menusans.glyphs(st["axes"])
-    track = st.get("tracking_overrides", {}).get(text, st.get("track", 0.0))
+    track = st.get("tracking_overrides", {}).get(word_key(text), st.get("track", 0.0))
     placed, advance = _layout(text, glyphs, track, st.get("space", 7.0),
                               st.get("layout"))
     scale = st.get("scale", 1.0)
