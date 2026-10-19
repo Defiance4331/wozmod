@@ -251,7 +251,8 @@ the games leaves your computer or comes with wozmod.
 
 The English menu lettering is original artwork: vector letters drawn for
 wozmod to match the look of the official menus, which the release ships
-rendered. It contains no font files or images from any game, and it is
-covered by the same licence as the rest of wozmod.
+rendered, together with the outlines of wozmod's own in-game text face. It
+contains no font files or images from any game, and it is covered by the same
+licence as the rest of wozmod.
 
 wozmod is free software under the [GNU General Public License v3.0 or later](LICENSE).

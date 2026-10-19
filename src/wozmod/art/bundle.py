@@ -1,4 +1,4 @@
-"""Read and write the rendered lettering layer bundle."""
+"""Read and write the rendered lettering layer bundle, with the glyph outlines the runtime draws game text from."""
 
 from __future__ import annotations
 
@@ -12,10 +12,11 @@ from pathlib import Path
 from PIL import Image
 from PIL._util import DeferredError
 
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
+OUTLINES = "glyph-outlines.json"
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _MODES = {"L", "LA", "RGB", "RGBA"}
-_INDEX_FIELDS = {"format_version", "recipe_sha256", "layers"}
+_INDEX_FIELDS = {"format_version", "recipe_sha256", "outlines_sha256", "layers"}
 _LAYER_FIELDS = {"key", "path", "sha256", "mode", "size", "metrics"}
 
 
@@ -78,9 +79,11 @@ def _zip_member(name: str) -> zipfile.ZipInfo:
 
 
 def write_bundle(path: str | Path, layers: dict[str, tuple[Image.Image, dict]],
-                 recipe_sha256: str, metrics_only: frozenset[str] = frozenset()) -> None:
-    """Write deterministic PNG layers and their checked index; metrics_only keys get no PNG."""
+                 recipe_sha256: str, metrics_only: frozenset[str] = frozenset(), *, outlines: bytes) -> None:
+    """Write deterministic PNG layers, the glyph outlines and their checked index; metrics_only keys get no PNG."""
     _digest(recipe_sha256, "recipe")
+    if not isinstance(outlines, bytes) or not outlines:
+        raise ValueError("the bundle needs the glyph outlines")
     if not isinstance(layers, dict) or any(not isinstance(key, str) or not key for key in layers):
         raise ValueError("layer keys must be nonempty strings")
     rows = []
@@ -102,11 +105,13 @@ def write_bundle(path: str | Path, layers: dict[str, tuple[Image.Image, dict]],
             payloads.append((row["path"], payload))
         rows.append(row)
     index = _json_bytes({"format_version": FORMAT_VERSION,
-                         "recipe_sha256": recipe_sha256, "layers": rows})
+                         "recipe_sha256": recipe_sha256,
+                         "outlines_sha256": hashlib.sha256(outlines).hexdigest(), "layers": rows})
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr(_zip_member("index.json"), index)
         for name, payload in payloads:
             archive.writestr(_zip_member(name), payload)
+        archive.writestr(_zip_member(OUTLINES), outlines)
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict:
@@ -128,14 +133,15 @@ def _read_index(payload: bytes) -> dict:
     if type(index["format_version"]) is not int or index["format_version"] != FORMAT_VERSION:
         raise ValueError("unsupported bundle format version")
     _digest(index["recipe_sha256"], "recipe")
+    _digest(index["outlines_sha256"], "outlines")
     if not isinstance(index["layers"], list):
         raise ValueError("bundle layers must be an array")
     return index
 
 
 def read_bundle(path: str | Path, expected_recipe_sha256: str | None = None
-                ) -> dict[str, tuple[Image.Image, dict]]:
-    """Read a bundle after validating all names, hashes and image declarations."""
+                ) -> tuple[dict[str, tuple[Image.Image, dict]], bytes]:
+    """(layers, glyph outlines) of a bundle, after validating all names, hashes and image declarations."""
     if expected_recipe_sha256 is not None:
         _digest(expected_recipe_sha256, "expected recipe")
     try:
@@ -149,7 +155,7 @@ def read_bundle(path: str | Path, expected_recipe_sha256: str | None = None
             if (expected_recipe_sha256 is not None
                     and index["recipe_sha256"] != expected_recipe_sha256):
                 raise ValueError("bundle recipe SHA-256 mismatch")
-            declared = {"index.json"}
+            declared = {"index.json", OUTLINES}
             rows = {}
             for row in index["layers"]:
                 if not isinstance(row, dict) or set(row) != _LAYER_FIELDS:
@@ -175,6 +181,9 @@ def read_bundle(path: str | Path, expected_recipe_sha256: str | None = None
                     declared.add(row["path"])
             if set(names) != declared:
                 raise ValueError("bundle members do not match declared layers")
+            outlines = archive.read(OUTLINES)
+            if hashlib.sha256(outlines).hexdigest() != index["outlines_sha256"]:
+                raise ValueError("glyph outlines SHA-256 mismatch")
             result = {}
             for key, row in rows.items():
                 if row["path"] is None:
@@ -190,6 +199,6 @@ def read_bundle(path: str | Path, expected_recipe_sha256: str | None = None
                     if opened.mode != row["mode"] or list(opened.size) != row["size"]:
                         raise ValueError(f"layer mode or size mismatch: {key}")
                     result[key] = opened.copy(), row["metrics"]
-            return result
+            return result, outlines
     except (zipfile.BadZipFile, RuntimeError, OSError) as error:
         raise ValueError("invalid lettering bundle") from error

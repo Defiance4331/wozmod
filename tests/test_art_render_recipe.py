@@ -54,9 +54,11 @@ def test_render_cannot_drop_recipe_key_text_or_squish_with_raw_ink_instead_of_me
         }
 
     monkeypatch.setattr(build, "_render_header_label", synthetic)
+    monkeypatch.setattr(build, "glyph_outlines", lambda folder: b"outlines")  # the real one needs FontForge
     path = tmp_path / "letters.zip"
     result = renderer.render(path, jobs=2)
-    layers = read_bundle(path, hashlib.sha256(recipe.read_bytes()).hexdigest())
+    layers, outlines = read_bundle(path, hashlib.sha256(recipe.read_bytes()).hexdigest())
+    assert outlines == b"outlines"
     squish_key = lettering.key({"kind": "squish", "base": identity, "width": 3, "fill": [2, 6]})
     actual = {key: (image.size, metrics) for key, (image, metrics) in layers.items()}
     assert observed == [request]
@@ -75,7 +77,7 @@ def test_render_cannot_drop_recipe_key_text_or_squish_with_raw_ink_instead_of_me
     ]
     assert isinstance(layers[identity][0], MetricsOnly)
     renderer.render(tmp_path / "full.zip", full_width=True)
-    full = read_bundle(tmp_path / "full.zip", hashlib.sha256(recipe.read_bytes()).hexdigest())
+    full, _ = read_bundle(tmp_path / "full.zip", hashlib.sha256(recipe.read_bytes()).hexdigest())
     assert list(full[identity][0].get_flattened_data()) == [(30 * x, 0, 0, 255) for _ in range(2) for x in range(8)]
 
 

@@ -23,7 +23,7 @@ def compose(stock, donors, bundle, output_dir, squish=True, jobs=None) -> Path:
     recipe = json.loads(recipe_bytes)
     if recipe.get("format_version") != RECIPE_VERSION or not isinstance(recipe.get("requests"), dict):
         raise ValueError("unsupported lettering recipe")
-    layers = read_bundle(Path(bundle), hashlib.sha256(recipe_bytes).hexdigest())
+    layers, outlines = read_bundle(Path(bundle), hashlib.sha256(recipe_bytes).hexdigest())
     if set(layers) != set(recipe["requests"]):
         raise ValueError("lettering bundle dropped or added a recipe layer")
     arguments = ["--game", str(stock), "--wo1-x360-donor", str(donors["wo1-x360"]),
@@ -31,7 +31,7 @@ def compose(stock, donors, bundle, output_dir, squish=True, jobs=None) -> Path:
                  "--hires", "vector", "--jobs", str(jobs or os.process_cpu_count())]
     if not squish:
         arguments.append("--no-squish")
-    with lettering.using(layers):
+    with lettering.using(layers, outlines):
         build.main(arguments)
     return Path(output_dir) / "wozmod"
 

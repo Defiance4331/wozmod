@@ -6,13 +6,15 @@ and the sides of round letters, as left/right x pairs), the horizontal bars (bot
 letters' tops and bottoms among them) and the flattened contours. Heights the renderer fits: the
 baseline, x-height and cap height, each with the overshoot of round letters, and the deepest and tallest ink.
 
-All lengths are font units: 1200 to the 24-unit cell, y up from the baseline. `encode` needs no fontforge;
-`extract` (fontforge) runs under the font Python:
-    PYTHONPATH=src $WOZMOD_FONT_PYTHON -m wozmod.fonts.glyph_outlines OUT
+All lengths are font units: 1200 to the 24-unit cell, y up from the baseline. `extract` (fontforge) runs under
+the font Python and writes the outlines as JSON, which lettering.zip carries to the installer; `from_json` and
+`encode` need no fontforge:
+    PYTHONPATH=src $WOZMOD_FONT_PYTHON -m wozmod.fonts.glyph_outlines OUT.json
 """
 
 from __future__ import annotations
 
+import json
 import struct
 import sys
 from pathlib import Path
@@ -171,8 +173,8 @@ def encode(glyphs: dict[int, dict], zone: dict[str, int], base: int) -> bytes:
 
 
 def extract() -> bytes:
-    """The face as glyphs.bin data, each glyph placed in its advance as the game's width table spaces it
-    (side_spacing: room for each side by the side's shape)."""
+    """The face as JSON for `from_json`, each glyph placed in its advance as the game's width table spaces it
+    (side_spacing: room for each side by the side's shape). Lengths are rounded as `encode` stores them."""
     from . import raster, side_spacing, wo1vec
 
     spacing = side_spacing.font_spacing()
@@ -190,7 +192,17 @@ def extract() -> bytes:
                           "ymin": round(min(ys)), "ymax": round(max(ys))}
     even_stems(glyphs)
     zone = zones({g["ch"]: g for g in glyphs.values()})
-    return encode(glyphs, zone, round(wo1vec.BASE * CELL / 24))
+    stored = {number: {"offset": round(g["offset"]), "stems": g["stems"], "bars": g["bars"],
+                       "contours": [[[round(v) for v in p] for p in c] for c in g["contours"]]}
+              for number, g in glyphs.items()}
+    return json.dumps({"zone": zone, "base": round(wo1vec.BASE * CELL / 24), "glyphs": stored},
+                      sort_keys=True, separators=(",", ":")).encode("ascii")
+
+
+def from_json(data: bytes) -> bytes:
+    """glyphs.bin outline data from `extract`'s JSON."""
+    face = json.loads(data)
+    return encode({int(number): g for number, g in face["glyphs"].items()}, face["zone"], face["base"])
 
 
 if __name__ == "__main__":

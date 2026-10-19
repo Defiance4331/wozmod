@@ -261,7 +261,8 @@ def render(bundle: str | Path, jobs: int = 4, font_python: str | None = None,
                       for identity, (image, metrics) in layers.items()}
             if set(layers) != set(requests):
                 raise ValueError("rendered lettering layers do not match the recipe")
-            write_bundle(output, layers, recipe_sha256, frozenset() if full_width else metrics_only)
+            write_bundle(output, layers, recipe_sha256, frozenset() if full_width else metrics_only,
+                         outlines=build.glyph_outlines(folder))
     finally:
         build.FONT_PYTHON = previous_python
     return {"layers": len(requests), "bytes": output.stat().st_size,

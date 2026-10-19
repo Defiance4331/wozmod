@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import ctypes
+import json
 import struct
 
 import pytest
 
 from wozmod.art.build import glyph_sheet_header
-from wozmod.fonts.glyph_outlines import bars, encode, even_stems, stems
+from wozmod.fonts.glyph_outlines import bars, encode, even_stems, from_json, stems
 from wozmod.formats.textures import G1T_HEADER, G1T_TEXTURE_HEADER, PIXEL_FORMAT_BGRA8, parse_g1t
 
 ZONE = {"desc": -250, "base_over": -36, "xh": 655, "xh_over": 669, "cap": 860, "cap_over": 865, "asc": 880}
@@ -107,3 +108,13 @@ def test_stem_widths_a_unit_apart_become_one_width_and_design_widths_stay_apart(
     even_stems(glyphs)
     widths = {g: [r - l for l, r in glyphs[g]["stems"]] for g in glyphs}
     assert widths[0] == [123, 123] and widths[1] == [123] and widths[2] == [115]
+
+
+def test_outlines_shipped_as_json_keep_the_glyphs_in_number_order():
+    # Bug: glyph numbers come back from JSON as strings, so glyph 10 sorts before glyph 3 and the runtime's table,
+    # which it searches in number order, misses glyphs.
+    square = {"offset": 5, "stems": [[0, 100]], "bars": [[0, 100]], "contours": [[[0, 0], [100, 0], [100, 100]]]}
+    data = from_json(json.dumps({"zone": ZONE, "base": 950, "glyphs": {"10": square, "3": square}}).encode())
+    head = struct.calcsize("<4sI7hHH")
+    assert struct.unpack_from("<4sI7hHH", data)[-1] == 2
+    assert [struct.unpack_from("<H", data, head + 14 * row)[0] for row in range(2)] == [3, 10]

@@ -10,6 +10,7 @@ from pathlib import Path
 from PIL import Image
 
 ACTIVE = None
+OUTLINES = None  # the active bundle's glyph outlines
 TRACE = os.environ.get("WOZMOD_ART_TRACE")
 _UNTRACKED = 0
 
@@ -79,11 +80,11 @@ def untracked():
 
 
 @contextmanager
-def using(layers):
-    global ACTIVE
-    previous = ACTIVE
-    ACTIVE = layers
+def using(layers, outlines):
+    global ACTIVE, OUTLINES
+    previous = ACTIVE, OUTLINES
+    ACTIVE, OUTLINES = layers, outlines
     try:
         yield
     finally:
-        ACTIVE = previous
+        ACTIVE, OUTLINES = previous

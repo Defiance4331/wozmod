@@ -13,6 +13,7 @@ from wozmod.art.bundle import read_bundle, write_bundle
 
 
 RECIPE_SHA256 = "1" * 64
+OUTLINES = b'{"glyphs":{}}'
 
 
 def layers():
@@ -26,8 +27,9 @@ def layers():
 
 def test_bundle_round_trip_cannot_drop_edge_pixels_or_layer_metrics(tmp_path):
     first = tmp_path / "bundle.zip"
-    write_bundle(first, layers(), RECIPE_SHA256)
-    restored = read_bundle(first, RECIPE_SHA256)
+    write_bundle(first, layers(), RECIPE_SHA256, outlines=OUTLINES)
+    restored, outlines = read_bundle(first, RECIPE_SHA256)
+    assert outlines == OUTLINES
     actual = {key: (image.mode, image.size, list(image.get_flattened_data()), metrics)
               for key, (image, metrics) in restored.items()}
     assert actual == {
@@ -37,7 +39,7 @@ def test_bundle_round_trip_cannot_drop_edge_pixels_or_layer_metrics(tmp_path):
     }
     with zipfile.ZipFile(first) as archive:
         assert set(archive.namelist()) == {
-            "index.json",
+            "index.json", "glyph-outlines.json",
             "layers/" + hashlib.sha256(b"mask/full").hexdigest() + ".png",
             "layers/" + hashlib.sha256(b"label/squish").hexdigest() + ".png",
         }
@@ -46,8 +48,8 @@ def test_bundle_round_trip_cannot_drop_edge_pixels_or_layer_metrics(tmp_path):
 def test_bundle_bytes_cannot_change_with_layer_input_order(tmp_path):
     first, second = tmp_path / "first.zip", tmp_path / "second.zip"
     original = layers()
-    write_bundle(first, original, RECIPE_SHA256)
-    write_bundle(second, dict(reversed(list(original.items()))), RECIPE_SHA256)
+    write_bundle(first, original, RECIPE_SHA256, outlines=OUTLINES)
+    write_bundle(second, dict(reversed(list(original.items()))), RECIPE_SHA256, outlines=OUTLINES)
     assert first.read_bytes() == second.read_bytes()
 
 
@@ -67,10 +69,12 @@ def test_bundle_bytes_cannot_change_with_layer_input_order(tmp_path):
     ("duplicate_json_field", "duplicate JSON key"),
     ("boolean_format_version", "format version"),
     ("nonfinite_metric", "finite JSON values"),
+    ("dropped_outlines", "members do not match"),
+    ("wrong_outlines", "glyph outlines SHA-256 mismatch"),
 ])
 def test_bundle_corruption_cannot_silently_ship_a_dropped_or_wrong_layer(tmp_path, bug, message):
     path = tmp_path / "bundle.zip"
-    write_bundle(path, layers(), RECIPE_SHA256)
+    write_bundle(path, layers(), RECIPE_SHA256, outlines=OUTLINES)
     with zipfile.ZipFile(path) as archive:
         members = [(member.filename, archive.read(member)) for member in archive.infolist()]
     index = json.loads(members[0][1])
@@ -110,6 +114,10 @@ def test_bundle_corruption_cannot_silently_ship_a_dropped_or_wrong_layer(tmp_pat
         index["format_version"] = True
     elif bug == "nonfinite_metric":
         row["metrics"] = {"advance": float("nan")}
+    elif bug == "dropped_outlines":
+        members = [(name, data) for name, data in members if name != "glyph-outlines.json"]
+    elif bug == "wrong_outlines":
+        members = [(name, data + b" " if name == "glyph-outlines.json" else data) for name, data in members]
     payload = json.dumps(index).encode()
     if bug == "duplicate_json_field":
         payload = b'{"format_version":1,' + payload[1:]
@@ -125,12 +133,12 @@ def test_bundle_corruption_cannot_silently_ship_a_dropped_or_wrong_layer(tmp_pat
 def test_metrics_only_layer_cannot_be_drawn_as_blank_pixels(tmp_path):
     # Bug: a layer shipped without pixels composes silently as a transparent image.
     path = tmp_path / "bundle.zip"
-    write_bundle(path, layers(), RECIPE_SHA256, frozenset({"mask/full"}))
-    restored = read_bundle(path, RECIPE_SHA256)
+    write_bundle(path, layers(), RECIPE_SHA256, frozenset({"mask/full"}), outlines=OUTLINES)
+    restored, _ = read_bundle(path, RECIPE_SHA256)
     stub, metrics = restored["mask/full"]
     assert (stub.mode, stub.size, metrics) == ("L", (3, 2), {"advance": 4.25, "origin": [-2, 3]})
     with zipfile.ZipFile(path) as archive:
-        assert len(archive.namelist()) == 2
+        assert len(archive.namelist()) == 3  # the index, one PNG and the outlines
     for read in (stub.getbbox, stub.tobytes, lambda: Image.new("L", (4, 4)).paste(stub, (0, 0))):
         with pytest.raises(ValueError, match="shipped without pixels"):
             read()

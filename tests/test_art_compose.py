@@ -23,7 +23,7 @@ def test_compose_cannot_accept_a_layer_dropped_from_bundle_and_index(tmp_path, m
     bundle = tmp_path / "layers.zip"
     write_bundle(bundle, {"layer/a": (Image.new("L", (1, 1), 17), {}),
                           "layer/b": (Image.new("L", (1, 1), 31), {})},
-                 hashlib.sha256(recipe_bytes).hexdigest())
+                 hashlib.sha256(recipe_bytes).hexdigest(), outlines=b"outlines")
     with zipfile.ZipFile(bundle) as archive:
         index = json.loads(archive.read("index.json"))
         dropped = next(row for row in index["layers"] if row["key"] == "layer/b")

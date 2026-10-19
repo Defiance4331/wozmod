@@ -37,6 +37,7 @@ from wozmod.formats.textures import (
 REPO = resources.root()
 from wozmod.fonts.menu_plates import X360_PLATES, X360_PLATE_ENTRIES, clean_substrate
 from wozmod.fonts.menu_references import reference, x360_members
+from wozmod.fonts.glyph_outlines import from_json
 MAPPING = REPO / "data/art/menu_textures.json"
 FONT_PYTHON = os.environ.get("WOZMOD_FONT_PYTHON", "/usr/bin/python3")
 PACKAGE_MAGIC = 0x33B59
@@ -2573,6 +2574,13 @@ def font_environment() -> dict[str, str]:
     environment["PYTHONPATH"] = os.pathsep.join(filter(None, (package_root, environment.get("PYTHONPATH"))))
     return environment
 
+def glyph_outlines(folder: Path) -> bytes:
+    """The runtime's glyph outlines as JSON (wozmod.fonts.glyph_outlines), made with FontForge in folder."""
+    path = folder / "glyph-outlines.json"
+    subprocess.run([FONT_PYTHON, "-m", "wozmod.fonts.glyph_outlines", str(path)], check=True,
+                   env=font_environment(), stdout=subprocess.PIPE, text=True)
+    return path.read_bytes()
+
 def donor_stem(stem: Path | None, image: Path | None, identity, destination: Path) -> Path:
     if stem is not None:
         stem = Path(stem)
@@ -2744,12 +2752,11 @@ def main(argv: list[str] | None = None) -> int:
         prompts = read_entry(stream, index.entries[PROMPT_ENTRY])[0]
     wo2_prompts = wo1_entries(args.wo2_donor.with_suffix(".lnk"), args.wo2_donor.with_suffix(".idx"), [13])[13]
     (args.output_dir / "wozmod/prompts-xbox.bin").write_bytes(xbox_prompts(prompts, wo2_g1ts(wo2_prompts)))
-    outlines = working / "glyph-outlines.bin"
-    subprocess.run([FONT_PYTHON, "-m", "wozmod.fonts.glyph_outlines", str(outlines)], check=True,
-                   env=font_environment(), stdout=subprocess.PIPE, text=True)
+    # an install takes the outlines from the lettering bundle: players have no FontForge
+    outlines = lettering.OUTLINES if lettering.ACTIVE is not None else glyph_outlines(working)
     with base_bin.open("rb") as stream:
         atlas = b"".join(parse_lzp2(m).decoded for m in read_members(stream, index.entries[FONT_ENTRY]))
-    (args.output_dir / "wozmod/glyphs.bin").write_bytes(glyphs_bin(atlas, outlines.read_bytes()))
+    (args.output_dir / "wozmod/glyphs.bin").write_bytes(glyphs_bin(atlas, from_json(outlines)))
     if args.hires:
         write_hires(args)
     write_manifest(args.output_dir)
