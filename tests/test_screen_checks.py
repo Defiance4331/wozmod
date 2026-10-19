@@ -222,6 +222,21 @@ def test_runner_reports_each_screen_and_a_failed_route_does_not_stop_the_rest(tm
     assert rows[0].capture is None and rows[1].capture == str(tmp_path / "cap.png")
 
 
+def test_spawn_row_passes_only_when_that_many_more_troops_stand_near_the_player(tmp_path):
+    """Bug: the row compares the near count itself to the troops asked, so troops already fighting near the player
+    pass a spawn that put none there, or it trusts the runtime's own spawned count."""
+    replies = iter([
+        {"asked": 50, "spawned": 52, "near_before": 20, "near_after": 72},  # placed where asked
+        {"asked": 50, "spawned": 52, "near_before": 60, "near_after": 62},  # reported, but not near the player
+        {"asked": 50, "spawned": 26, "near_before": 0, "near_after": 60},  # the stage ran out of squads
+    ])
+    d = Driver(tmp_path)
+    d.spawn = lambda count: next(replies)
+    spec = [{"name": f"s{i}", "route": "battle", "spawn": 50} for i in range(3)]
+    assert [(r.screen, r.assertion, r.ok) for r in sc.run_spec(spec, d)] == [
+        ("s0", "spawn", True), ("s1", "spawn", False), ("s2", "spawn", False)]
+
+
 def test_runner_skips_the_capture_when_no_assertion_reads_pixels_and_stops_on_wait_timeout(tmp_path):
     """Bug: capturing for every screen slows a tour; running assertions on a screen that never appeared reports false numbers."""
     d = Driver(tmp_path)

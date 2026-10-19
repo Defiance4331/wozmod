@@ -559,7 +559,7 @@ ASSERTIONS: dict[str, tuple[Callable[..., Check], bool]] = {
 }
 RUN_FILES = {"device_matches_mode"}  # read the run's runtime.log and settings.ini, not the screen
 INK_WIDTH = {"text_clear_of_quad", "text_clear_of_text", "text_within_edge"}  # take the capture as `img=`
-SCREEN_KEYS = {"name", "route", "fixture", "battle", "script", "keys", "notice", "wait", "assert"}
+SCREEN_KEYS = {"name", "route", "fixture", "battle", "script", "spawn", "keys", "notice", "wait", "assert"}
 
 
 # ---- spec and runner -------------------------------------------------------
@@ -586,12 +586,16 @@ def run_spec(screens: list[dict], driver, seen: dict | None = None) -> list[Row]
     """Reach each screen through the driver, capture it, run its assertions; `seen` collects each screen's JSON
     and capture by screen name.
     Driver: route(name, fixture=None, battle=None, script=None), keys(names), notice(text),
-    wait(cond: dict) -> bool, screen() -> dict, capture() -> path."""
+    wait(cond: dict) -> bool, screen() -> dict, capture() -> path, spawn(count) -> dict (the harness's spawn reply)."""
     rows: list[Row] = []
     for sc in screens:
         name = sc["name"]
         try:
             driver.route(sc["route"], fixture=sc.get("fixture"), battle=sc.get("battle"), script=sc.get("script"))
+            if sc.get("spawn"):  # enemy troops around the player; the row passes when that many more stand near
+                got = driver.spawn(sc["spawn"])
+                rows.append(Row(name, "spawn", got["spawned"] >= got["asked"]
+                                and got["near_after"] - got["near_before"] >= got["asked"], got, None))
             if sc.get("keys"):  # pressed after the route, from wherever the screen's cursor was left
                 driver.keys(sc["keys"])
             if sc.get("notice"):  # a battle notice of the check's own text, drawn as the game draws its notices

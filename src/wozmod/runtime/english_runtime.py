@@ -256,7 +256,7 @@ def compile_dll(output: Path, header: str, defines: tuple[str, ...] = ()) -> Non
              "-o", "d3d9.dll", "english_runtime.c"]
     with tempfile.TemporaryDirectory() as tmp:
         shutil.copyfile(C_SOURCE, Path(tmp, "english_runtime.c"))
-        for name in ("text_fit.h", "glyph_raster.h", "display_fit.h"):
+        for name in ("text_fit.h", "glyph_raster.h", "display_fit.h", "troop_ring.h"):
             shutil.copyfile(C_SOURCE.with_name(name), Path(tmp, name))
         Path(tmp, "enrt_data.h").write_text(header, encoding="utf-8")
         if shutil.which("i686-w64-mingw32-gcc"):

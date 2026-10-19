@@ -303,6 +303,34 @@ def test_memory_actions_peek_poke_and_find_across_chunks(tmp_path, monkeypatch):
         harness.perform(tmp_path, {"action": "peek", "address": (1 << 32) - 2, "length": 4})
 
 
+def test_troops_near_counts_used_units_by_their_actors_x_and_z_around_the_player(tmp_path):
+    """Bug: a wrong unit stride, the player or a free unit counted, height counted as distance, or the last unit
+    dropped: the spawn row would pass or fail on the wrong number."""
+    import os
+    import struct
+
+    actors = 0x100000
+    me = (5000.0, 0.0, 5000.0)
+    units = {0: me, 1: (5900.0, 300.0, 4100.0), 2: (6100.0, 0.0, 5000.0), 3: me, 4: (4000.0, 0.0, 6000.0),
+             5: (5000.0, 9000.0, 5000.0), 254: (5500.0, 0.0, 5500.0)}
+    free = {3}  # stands on the player, but its slot is free
+    memory = tmp_path / "memory"
+    with memory.open("wb") as f:
+        for i, at in units.items():
+            f.seek(harness.UNITS + i * harness.UNIT_SIZE + 0x14)
+            f.write(struct.pack("<I", actors + i * 0x100))
+            f.seek(harness.UNITS + i * harness.UNIT_SIZE + 0xBC)
+            f.write(struct.pack("<I", 0 if i in free else 1))
+            f.seek(actors + i * 0x100 + harness.ACTOR_AT)
+            f.write(struct.pack("<3f", *at))
+        f.truncate(harness.UNITS + harness.UNIT_COUNT * harness.UNIT_SIZE)
+    fd = os.open(memory, os.O_RDONLY)
+    try:
+        assert harness.troops_near(fd, 1000) == 4  # units 1, 4 (on the edge), 5 and 254
+    finally:
+        os.close(fd)
+
+
 def test_test_mailbox_screen_wait_and_say(tmp_path, monkeypatch):
     import ctypes
     import mmap

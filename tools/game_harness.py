@@ -48,6 +48,16 @@ RELOAD_SECONDS = 5  # the runtime looks at table.bin about once a second
 TEST_COMMAND_SECONDS = 5  # the game runs a command at its next frame
 # Battle state the stock exe keeps at fixed addresses; see english_runtime.c.
 STAGE, STAGE_DATA, SCRIPT_TABLE, SCRIPT_EVENTS = 0x801AA0, 0x9C8FD4, 0x9C919C, 0x9C91B0
+# the game's units (stride 0xD0, used bit +0xBC & 1, actor pointer +0x14) and the actor's x, y (up), z at +0x40;
+# unit 0 is the player (work/crowdperf/re-spawn.md)
+UNITS, UNIT_SIZE, UNIT_COUNT, ACTOR_AT = 0x7DDC30, 0xD0, 255, 0x40
+SPAWN_MAX = 220  # the general unit pool
+SPAWN_INNER = 600  # the default nearest ring, in world units: in view, well inside the 7500 far cull
+SPAWN_SPACING = 120  # runtime/troop_ring.h TROOP_SPACING
+SPAWN_SQUAD = 13  # the game spawns whole squads: a spawn may place up to 12 troops more than asked
+# shortcut: measured, not derived: in its first frames the game pushed freshly placed soldiers up to about 400 units
+# from their ring spots (run crowd-check1, 2026-10-19); find the push in the unit update if a stage scatters farther
+SPAWN_SCATTER = 500
 UNSURROGATES = {ord(v): k for k, v in SURROGATES.items()}
 # The virtual pad (run --pad): a uinput Xbox 360 pad, the device Steam Input and xpad present to
 # Wine. Evdev codes: buttons, then (axis, value) presses for the triggers, D-pad and sticks.
@@ -366,6 +376,41 @@ def test_command(memory: int, block: int, op: int, arg: int = 0, data: bytes = b
         }.get(result, f"result {result}"))
 
 
+def troops_near(memory: int, radius: float) -> int:
+    """Units in use, the player aside, whose actor stands within radius of the player's (x and z, the larger)."""
+    table = os.pread(memory, UNIT_SIZE * UNIT_COUNT, UNITS)
+    at = []
+    for i in range(UNIT_COUNT):
+        flags, = struct.unpack_from("<I", table, i * UNIT_SIZE + 0xBC)
+        actor, = struct.unpack_from("<I", table, i * UNIT_SIZE + 0x14)
+        at.append(struct.unpack("<3f", os.pread(memory, 12, actor + ACTOR_AT)) if flags & 1 and actor else None)
+    me = at[0]
+    if me is None:
+        raise RuntimeError("the player has no unit; is a battle loaded?")
+    return sum(1 for p in at[1:] if p and max(abs(p[0] - me[0]), abs(p[2] - me[2])) <= radius)
+
+
+def ring_reach(count: int, inner: int) -> int:
+    """How far out (x or z, the larger) the runtime's square rings (troop_ring.h) place count troops, plus a spacing
+    for float rounding."""
+    half = inner
+    while count > (ring := int(8 * half / SPAWN_SPACING)):
+        count, half = count - ring, half + SPAWN_SPACING
+    return half + SPAWN_SPACING
+
+
+def spawn(memory: int, block: int, count: int, inner: int) -> dict:
+    """Spawn enemy squads around the player (test op 9), and count the troops near the player before and after."""
+    if not 0 < count <= SPAWN_MAX or not 0 < inner < 0x10000:
+        raise ValueError(f"spawn takes 1 to {SPAWN_MAX} troops and a nearest ring from 1 to 65535 units")
+    reach = ring_reach(count + SPAWN_SQUAD - 1, inner) + SPAWN_SCATTER
+    before = troops_near(memory, reach)
+    test_command(memory, block, 9, count | inner << 16, busy=10)
+    spawned, despawned = struct.unpack("<2I", os.pread(memory, 8, block + 48))
+    return {"asked": count, "spawned": spawned, "despawned": despawned, "near_before": before,
+            "near_after": troops_near(memory, reach), "within": reach}
+
+
 def stage_scripts(memory: int) -> dict:
     """The loaded stage's event scripts and the dialog and notice records each shows."""
     def u32s(address: int, count: int = 1) -> tuple:
@@ -492,7 +537,7 @@ def perform(root: Path, request: dict) -> dict:
     if action == "scripts":
         with open(f"/proc/{game_pid()}/mem", "rb", buffering=0) as memory:
             return stage_scripts(memory.fileno())
-    if action in ("screen", "wait", "say", "notice", "win", "lose", "script", "scene", "unlock", "review"):
+    if action in ("screen", "wait", "say", "notice", "win", "lose", "script", "scene", "unlock", "review", "spawn"):
         with open(f"/proc/{game_pid()}/mem", "r+b", buffering=0) as memory:
             block = test_block(memory.fileno())
             if action == "screen":
@@ -508,6 +553,8 @@ def perform(root: Path, request: dict) -> dict:
                 # waits out a script or scene already playing; a scene is the stage's own sub-scene (0: its opening)
                 test_command(memory.fileno(), block, 4 if action == "script" else 8, number, busy=10)
                 return {"queued": number} if action == "script" else {"scene": number}
+            if action == "spawn":
+                return spawn(memory.fileno(), block, request["count"], request.get("inner", SPAWN_INNER))
             if action == "unlock":
                 test_command(memory.fileno(), block, 5)
                 return {"officers": "level 99, four weapons each"}
@@ -1714,6 +1761,12 @@ class CheckDriver:
     def notice(self, text: str) -> None:
         ask(self.root, {"action": "notice", "text": text})
 
+    def spawn(self, count: int) -> dict:
+        """Enemy troops around the player, in the battle the route reached; the rest of the run keeps them."""
+        self.used = sorted(set(self.used) | {f"spawn {count}"})
+        self.shortcuts[self.name] = self.used
+        return ask(self.root, {"action": "spawn", "count": count})
+
     def keys(self, names: list[str]) -> None:
         """Keys within a screen (a cursor); the route position holds while the screen still shows."""
         at = route_position(self.root)
@@ -1866,7 +1919,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="action", required=True)
     for action in ("run", "status", "key", "click", "pad", "plug", "capture", "record", "video", "peek", "poke",
-                   "find", "screen", "wait", "say", "notice", "win", "lose", "scripts", "script", "scene", "unlock",
+                   "find", "screen", "wait", "say", "notice", "win", "lose", "scripts", "script", "scene", "spawn", "unlock",
                    "reload", "review", "tour", "route", "check", "stop", "_audio", "_serve"):
         command = commands.add_parser(action)
         command.add_argument("--root", required=True, type=Path)
@@ -1927,6 +1980,9 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("number", type=int, help="script index from scripts")
         if action == "scene":
             command.add_argument("number", type=int, help="sub-scene of the current stage's event scene (0: its opening)")
+        if action == "spawn":
+            command.add_argument("count", type=int, help=f"enemy troops to put around the player (whole squads; at most {SPAWN_MAX})")
+            command.add_argument("--inner", type=int, default=SPAWN_INNER, help="the nearest ring, in world units")
         if action == "review":
             command.add_argument("texture", help="key.member, or off; needs the test-only review.bin")
             command.add_argument("--rect", type=int, nargs=4, default=[0, 0, 512, 32], metavar=("X", "Y", "W", "H"))
@@ -2023,6 +2079,8 @@ def main(argv: list[str] | None = None) -> int:
             request["text"] = args.text
         if args.action in ("script", "scene"):
             request["number"] = args.number
+        if args.action == "spawn":
+            request.update(count=args.count, inner=args.inner)
         if args.action == "reload":
             request["table"] = str(args.table.resolve(strict=True))
             timeout += RELOAD_SECONDS

@@ -357,6 +357,96 @@ static u32 texture(u32 handle)
 #define OFFICER_MODEL(id) (*(const volatile u32 *)(0x8B6B8C + (id) * 0xBC))
 #define CAST_TABLE (*(const u8 *const volatile *)0x9C8FD0)
 
+/* The crowd spawner (op 9; work/crowdperf/re-spawn.md). The game spawns whole squads, a leader and up to 12 soldiers,
+   with 0x440850, which takes a unit for every member from the general pool (units 2-221) or spawns none. */
+#include "troop_ring.h"
+#define SQUADS 388
+#define SQUAD(i) ((u8 *)0x7CDED0 + 0x88 * (i))
+#define SQUAD_FLAGS(s) (*(volatile u32 *)((s) + 0x80))
+#define SQUAD_ARMY(s) ((s)[0x77])  /* 0 the player's side, 1 the enemy, 2 an ally (the player's side) */
+#define SQUAD_ON_FIELD 0x20000
+#define SQUAD_NOT_READY (0xC40002 | SQUAD_ON_FIELD | 0x4000 | 0x80000 | 0x100000)  /* dead, mount-only, reserve, waiting */
+#define SQUAD_GENERIC(s) ((*(const u8 *const *)((s) + 8))[6] >= 0x67)  /* a generic leader: no named officer's events */
+#define UNIT(i) ((u8 *)0x7DDC30 + 0xD0 * (i))
+#define UNIT_USED(u) (*(const volatile u32 *)((u) + 0xBC) & 1)
+#define UNIT_AT(u) ((const float *)(*(const u8 *const *)((u) + 0x14) + 0x40))  /* its actor's x, y (up), z */
+#define POOL_FIRST 2
+#define POOL_END 222
+#define SPAWN_SQUAD ((void (*)(u8 *))0x440850)
+#define DESPAWN_SQUAD ((void (*)(u8 *))0x43EA70)
+#define PLACE_UNIT ((void (*)(u8 *, float *, float))0x43F660)
+
+static u32 free_units(void)
+{
+    u32 i, n = 0;
+    for (i = POOL_FIRST; i < POOL_END; i++)
+        n += !UNIT_USED(UNIT(i));
+    return n;
+}
+
+static float far2(const u8 *squad, const float *me)
+{
+    const u8 *u = UNIT(*(const u32 *)(squad + 0x14) & 0xFF);
+    float dx = UNIT_AT(u)[0] - me[0], dz = UNIT_AT(u)[2] - me[2];
+    return dx * dx + dz * dz;
+}
+
+/* Spawn enemy squads until `want` troops stand on square rings from `inner` out around the player; returns how many.
+   Room comes from despawning the on-field squads farthest from the player (more than TROOP_KEEP past the nearest
+   ring), as the game's squad manager does when a squad leaves the area. Generic-led squads only, so no officer's
+   stage event fires. Within its first frames the game pushes a placed soldier up to about 400 units from its spot. */
+static u32 spawn_troops(u32 want, float inner, u32 *despawned)
+{
+    const float *me = UNIT_AT(UNIT(0));
+    float keep = (inner + TROOP_KEEP) * (inner + TROOP_KEEP);
+    u32 i, placed = 0;
+    u8 *spawned[SQUADS / 8];
+    u32 count = 0;
+    *despawned = 0;
+    for (i = POOL_FIRST; i < SQUADS && placed < want && count < sizeof spawned / sizeof *spawned; i++) {
+        u8 *s = SQUAD(i), *u;
+        u32 need, k;
+        if (!*(const u32 *)(s + 8) || SQUAD_ARMY(s) != 1 || !(SQUAD_FLAGS(s) & 1) || SQUAD_FLAGS(s) & SQUAD_NOT_READY
+            || !SQUAD_GENERIC(s))
+            continue;
+        need = s[0x74] + 1u;
+        while (free_units() < need) {  /* the farthest on-field squad goes, never one just spawned */
+            u8 *gone = 0;
+            float most = keep;
+            u32 j;
+            for (j = POOL_FIRST; j < SQUADS; j++) {
+                u8 *t = SQUAD(j);
+                float d;
+                for (k = 0; k < count && spawned[k] != t; k++)
+                    ;
+                if (k == count && SQUAD_FLAGS(t) & SQUAD_ON_FIELD && *(const u32 *)(t + 8) && SQUAD_GENERIC(t)
+                    && (d = far2(t, me)) > most)
+                    gone = t, most = d;
+            }
+            if (!gone)
+                return placed;
+            DESPAWN_SQUAD(gone);
+            ++*despawned;
+        }
+        /* home and last position at the player, so the squad manager counts it in the area */
+        ((float *)(s + 0x28))[0] = ((float *)(s + 0x30))[0] = me[0];
+        ((float *)(s + 0x28))[1] = ((float *)(s + 0x30))[1] = me[2];
+        SPAWN_SQUAD(s);
+        if (!(SQUAD_FLAGS(s) & SQUAD_ON_FIELD))
+            return placed;
+        spawned[count++] = s;
+        for (u = UNIT(*(const u32 *)(s + 0x14) & 0xFF); u; u = *(u8 **)(u + 4)) {
+            float xz[2];
+            troop_spot(placed++, inner, &xz[0], &xz[1]);
+            xz[0] += me[0], xz[1] += me[2];
+            PLACE_UNIT(u, xz, 0);
+        }
+        *(u32 *)(s + 0x1C) = (u32)SQUAD(0);  /* the AI target: the player's squad */
+        *(u32 *)(s + 0x84) |= 0x10;
+    }
+    return placed;
+}
+
 
 struct test_text {
     u32 hook, caller, x, y, width;
@@ -567,6 +657,19 @@ static void test_frame(void)
             RUNNING[0] |= 0x10;  /* stage scripts wait for the scene, as after a category-39 command */
             b->result = 0;
         }
+        break;
+    }
+    case 9: {
+        /* Spawn arg & 0xFFFF enemy troops around the player, the nearest (arg >> 16) units out; input: spawned, despawned. */
+        u32 *out = (u32 *)b->input;
+        b->result = 3;
+        if (!STAGE_DATA || BATTLE_FLAGS & 0x2000000)
+            break;
+        b->result = 4;
+        if (BATTLE_FLAGS & SCENE_BUSY || BATTLE_STEP != 1)
+            break;
+        out[0] = spawn_troops(b->arg & 0xFFFF, (float)(b->arg >> 16), &out[1]);
+        b->result = 0;  /* fewer than asked when the stage runs out of enemy squads or of far squads to despawn */
         break;
     }
     default:
@@ -3030,11 +3133,36 @@ static void trace(u32 type, u32 a, u32 b, u32 c, u32 d, u32 e, u32 g, const void
 static void trace_start(void);
 static void trace_present(void);
 static void trace_hooks(void *device);
+/* Per-tick timestamps (microseconds) for the crowd profiler, work/crowdperf: 0 the frame hook, 1 the battle draw,
+   2 the in-between frame drawn, 3 its present entered, 4 its pacing spin done, 5 left, 6 the tick's frame drawn,
+   7 its present entered, 8 spin done, 9 left. uploads: the in-between frame's bone uploads. knobs: 1 skips the
+   matcher, 2 skips the in-between frame. pair_cycles: the matcher's time
+   in TSC cycles (a timer call per upload costs about a microsecond under Wine); tsc: the TSC's low word at 0. */
+#include <x86intrin.h>
+#define PROF_TICKS 1024
+static struct {
+    char magic[16];
+    volatile u32 knobs, next;
+    struct { u32 tick, uploads, pair_cycles, gaps, at[10], tsc; } tick[PROF_TICKS];
+} hfr_prof = {"ENRT-HFR-PROF"};
+static u32 prof_gaps;
+
+static u32 prof_us(void)
+{
+    static LARGE_INTEGER rate;
+    LARGE_INTEGER now;
+    if (!rate.QuadPart)
+        QueryPerformanceFrequency(&rate);
+    QueryPerformanceCounter(&now);
+    return (u32)(now.QuadPart * 1000000 / rate.QuadPart);
+}
+#define PROF(i) (hfr_prof.tick[hfr_prof.next % PROF_TICKS].at[i] = prof_us())
 #else
 #define trace(...) ((void)0)
 #define trace_start() ((void)0)
 #define trace_present() ((void)0)
 #define trace_hooks(device) ((void)0)
+#define PROF(i) ((void)0)
 #endif
 static const char *const fps_label[2] = {"FRAME RATE", "\x83\x74\x83\x8c\x81\x5b\x83\x80\x83\x8c\x81\x5b\x83\x67"};
 static const char *const fps_value[2][2] = {{"60 FPS", "120 FPS"}, {"60FPS", "120FPS"}};
@@ -3108,6 +3236,11 @@ static u32 hfr_draw(void)
     u8 fades[FADES_BYTES], hud[HUD_STEP_BYTES], *h;
     if (fps != 120 || hfr_busy || SCENE != 2)
         return 0;
+#ifdef ENRT_TEST
+    if (hfr_prof.knobs & 2)
+        return 0;
+#endif
+    PROF(1);
     for (i = 0; i < 8; i++)
         cam_cur[i] = cam[i];
     hfr_busy = 1;
@@ -3136,6 +3269,10 @@ static u32 hfr_draw(void)
     WINDOWS_DRAW();
     NOTICES_DRAW();
     CopyMemory(fades, FADES, FADES_BYTES);
+    PROF(2);
+#ifdef ENRT_TEST
+    hfr_prof.tick[hfr_prof.next % PROF_TICKS].uploads = upload_index;
+#endif
     FRAME_END_FROM_FADES();
     CopyMemory(FADES, fades, FADES_BYTES);
     if (PACKET_INDEX != parity) {
@@ -3170,6 +3307,7 @@ static u32 hfr_draw(void)
     trail_put_back();
     for (i = 0; i < TRAILS; i++)
         trail_newest[i] = TRAIL(i)[0xB];
+    PROF(6);
     for (i = 0; i < CHARACTERS; i++)
         CopyMemory(character_prev[i], CHARACTER_AT(i), sizeof *character_prev);
     upload_count = upload_index < UPLOADS ? upload_index : UPLOADS;
@@ -3217,6 +3355,9 @@ static u32 pair(u32 n, u32 reg, const float *data, u32 count)
             m = k ? n - d : n + d;
             if (m < upload_count && upload_key[m] == key && (gap = palette_gap(uploads[m], data, count, least)) < least)
                 best = m, least = gap;
+#ifdef ENRT_TEST
+            prof_gaps += m < upload_count && upload_key[m] == key;
+#endif
         }
     return best;
 }
@@ -3260,8 +3401,16 @@ static void marker_point(float *point)
 static long __stdcall vs_const(void *device, u32 reg, const float *data, u32 count)
 {
     u32 n = upload_index, m = UPLOADS, i;
+#ifdef ENRT_TEST
+    if (hfr_busy && count <= 256 && extra && have_prev && count % 3 == 0 && !(hfr_prof.knobs & 1)) {
+        u32 t = (u32)__rdtsc();
+        m = pair(n, reg, data, count);
+        hfr_prof.tick[hfr_prof.next % PROF_TICKS].pair_cycles += (u32)__rdtsc() - t;
+    }
+#else
     if (hfr_busy && count <= 256 && extra && have_prev && count % 3 == 0)
         m = pair(n, reg, data, count);
+#endif
     trace(1, reg, count, extra, (u32)__builtin_return_address(0), m, 0, data, count * 16);
     if (!hfr_busy || count > 256)
         return real_vs_const(device, reg, data, count);
@@ -3585,6 +3734,8 @@ static long __stdcall present(void *device, const void *from, const void *to, vo
     if (dump_after && !--dump_after)
         state_dump(device, "after reset: states");
 #endif
+    long result;
+    PROF(extra ? 3 : 7);
     QueryPerformanceCounter(&now);
     if (!rate.QuadPart)
         QueryPerformanceFrequency(&rate);
@@ -3592,6 +3743,7 @@ static long __stdcall present(void *device, const void *from, const void *to, vo
         if (*(const u8 *)(FPS_LIMITER + 1) == 120)
             while (now.QuadPart - last.QuadPart < rate.QuadPart / 120)
                 Sleep(0), QueryPerformanceCounter(&now);
+        PROF(extra ? 4 : 8);
         LONGLONG half_ms = (now.QuadPart - last.QuadPart) * 2000 / rate.QuadPart;
         hfr_stats.interval[half_ms < 39 ? half_ms : 39]++;
     }
@@ -3600,7 +3752,9 @@ static long __stdcall present(void *device, const void *from, const void *to, vo
     trace_present();
     if (display_mode == BORDERLESS && !to)  /* the output scaled onto the desktop, its shape kept */
         to = &present_to;
-    return real_present(device, from, to, window, dirty);
+    result = real_present(device, from, to, window, dirty);
+    PROF(extra ? 5 : 9);
+    return result;
 }
 
 /* A display Reset (resolution, full screen, a lost device) after a battle left every menu sprite a grey box. Before
@@ -4184,6 +4338,12 @@ static int always(u32 id, struct frame *f, u32 *replace)
             hfr_drawn = 0;
         }
 #ifdef ENRT_TEST
+        hfr_prof.tick[hfr_prof.next % PROF_TICKS].gaps = prof_gaps;
+        hfr_prof.next++, prof_gaps = 0;
+        ZeroMemory(&hfr_prof.tick[hfr_prof.next % PROF_TICKS], sizeof *hfr_prof.tick);
+        hfr_prof.tick[hfr_prof.next % PROF_TICKS].tick = hfr_stats.frames;
+        hfr_prof.tick[hfr_prof.next % PROF_TICKS].tsc = (u32)__rdtsc();
+        PROF(0);
         enrt_test.reloads = reloads;
         test_frame();
 #endif
