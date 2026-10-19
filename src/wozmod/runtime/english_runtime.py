@@ -69,6 +69,8 @@ ALWAYS_HOOKS = [
     (0x5D7CE0, "53 8b5c2408", 36, 8),           # voice offset (thiscall): English voices
     (0x5D7D30, "8b442404 85c0", 37, 8),         # voice size (thiscall)
     (0x4A1710, "8b442404 f60010", 71, None),    # lip block handed to a slot (cdecl: state, slot, block)
+    (0x5D7BF0, "8b542404 83fa01 56", 109, None),  # voice play (thiscall): kept while its clip waits to load
+    (0x5D8590, "83ec44 53 55 56 57", 110, None),  # voice frame (thiscall): a kept play made after its load
     (0x5D5990, "8b442404 83f87d", 38, 4),       # SE bank header offset (thiscall): English attack voices
     (0x5D59C0, "8b442404 83f87d", 39, 4),       # SE bank header size (thiscall)
     (0x5D59F0, "8b542404 83fa7d", 40, 4),       # SE bank data offset (thiscall)
@@ -256,7 +258,7 @@ def compile_dll(output: Path, header: str, defines: tuple[str, ...] = ()) -> Non
              "-o", "d3d9.dll", "english_runtime.c"]
     with tempfile.TemporaryDirectory() as tmp:
         shutil.copyfile(C_SOURCE, Path(tmp, "english_runtime.c"))
-        for name in ("text_fit.h", "glyph_raster.h", "display_fit.h", "troop_ring.h", "hfr_pair.h"):
+        for name in ("text_fit.h", "glyph_raster.h", "display_fit.h", "troop_ring.h", "hfr_pair.h", "voice_play.h"):
             shutil.copyfile(C_SOURCE.with_name(name), Path(tmp, name))
         Path(tmp, "enrt_data.h").write_text(header, encoding="utf-8")
         if shutil.which("i686-w64-mingw32-gcc"):

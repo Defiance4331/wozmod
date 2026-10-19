@@ -19,6 +19,7 @@
 #include "text_fit.h"
 #include "glyph_raster.h"
 #include "display_fit.h"
+#include "voice_play.h"
 
 typedef unsigned int u32;
 typedef unsigned short u16;
@@ -1644,8 +1645,11 @@ static struct loose *served(u32 key)
 #define VOICE_TAG 0x80000000u
 #define VOICE_MODE (*(volatile u32 *)0x801F24)
 #define VOICE_STAGE (*(volatile u8 *)0x801AA0)
+#define VOICE_PLAY ((void (__attribute__((thiscall)) *)(const u8 *, u32, u32, u32, u32))0x5D7BF0)
 static HANDLE voice_bank = INVALID_HANDLE_VALUE;
 static u32 *voice_table, voice_ids;
+#define READER_IDLE ((u32 (*)(void))0x5D0D20)  /* reaps a finished archive read; true when the reader is free */
+static struct voice_play kept_play = {VOICE_NONE, 0, {0}, VOICE_NONE};
 
 
 
@@ -1709,6 +1713,11 @@ static const u8 *english_lips(u32 index)
         return 0;
     e = (const u32 *)(lips + 4) + 2 * id;
     return e[1] >= 0x20 && e[0] <= lips_size && e[1] <= lips_size - e[0] ? lips + e[0] : 0;
+}
+
+static int reader_idle(void)
+{
+    return READER_IDLE() != 0;
 }
 
 static u32 read_voice(struct frame *f, HANDLE bank)
@@ -4519,6 +4528,18 @@ static int always(u32 id, struct frame *f, u32 *replace)
             note(line, *(const u32 *)(f->arg[2] + 12));
         }
 #endif
+        return 1;
+    case 109:  /* play (thiscall: slot and three arguments): one whose clip waits to be loaded is kept (voice_play.h) */
+        voice_keep(&kept_play, (u8 *)f->ecx, f->arg[0], f->arg + 1);
+        return 1;
+    case 110:  /* the voice frame starts (thiscall): a waiting load waits for a free reader, a kept play is made */
+        if (voice_frame(&kept_play, (u8 *)f->ecx, reader_idle)) {
+#ifdef ENRT_LOG
+            note("voice play made after its load, id:", kept_play.id);
+#endif
+            VOICE_PLAY((const u8 *)f->ecx, kept_play.slot, kept_play.arg[0], kept_play.arg[1], kept_play.arg[2]);
+            kept_play.slot = VOICE_NONE;
+        }
         return 1;
     case 38:
     case 39:
