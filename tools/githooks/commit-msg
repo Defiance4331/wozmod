@@ -12,4 +12,6 @@ printf '%s\n' "$msg" | grep -qiE '[0-9]+ (passed|failed|skipped)|^- *open:|\bpha
   fail "it has test counts, to-dos, phases or migrations, or a file list; those belong in the hand-back."
 printf '%s\n' "$msg" | grep -qE '\bADR[ -]?[0-9]+|private/|\.agent-outputs|\bvault\b' &&
   fail "it names the private notes (an ADR, private/, the vault); say what changed for players instead."
+printf '%s\n' "$msg" | LC_ALL=C.UTF-8 grep -qP '[\x{3000}-\x{30ff}\x{3400}-\x{4dbf}\x{4e00}-\x{9fff}\x{ff01}-\x{ff9f}\x{ffe0}-\x{ffe6}]' &&
+  fail "it has Japanese text; name game text by its id or pointer, never quote it."
 exit 0

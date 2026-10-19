@@ -30,12 +30,13 @@ CASES = [
     ("a private ADR", _message(extra=" See ADR 0026."), False),
     ("the private folder", _message(extra=" Notes in private/layout-decisions.md."), False),
     ("the vault", _message(extra=" Filed in the vault."), False),
+    ("Japanese text", _message(extra=" Quote \u30a2."), False),
 ]
 
 
 def test_commit_msg_hook_accepts_the_changelog_format_and_refuses_the_rest(tmp_path: Path) -> None:
-    # Bug: a regex typo lets a file list, a test count or a private ADR number into a public commit
-    # message, or the hook starts refusing the format AGENTS.md documents.
+    # Bug: a regex typo lets a file list, a test count, a private ADR number or quoted Japanese into a public
+    # commit message, or the hook starts refusing the format AGENTS.md documents.
     wrong = []
     for name, message, accepted in CASES:
         path = tmp_path / "COMMIT_EDITMSG"
