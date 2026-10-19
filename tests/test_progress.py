@@ -214,10 +214,10 @@ def _start_a_child_and_hang(stage: str) -> None:
 def test_a_worker_that_does_not_stop_is_killed_together_with_what_it_started(monkeypatch):
     # Bug: only the worker is killed, so its ffmpeg (or its own pool) keeps running after Cancel.
     monkeypatch.setattr(installer, "GRACE", 1)
-    progress = Progress()
+    # Cancel once the worker has reported its child: a timer could fire before a slow worker starts one.
+    progress = Progress(lambda progress: progress.stages["voices"].text and progress.cancel.set())
     pool, futures, events, stop = _pool(_start_a_child_and_hang, ["voices"])
     with pool:
-        threading.Timer(1.5, progress.cancel.set).start()
         with pytest.raises(Cancelled):
             installer._run_stages(pool, futures, events, stop, progress)
         child = progress.stages["voices"].text.split(" ")[-3].strip(",")

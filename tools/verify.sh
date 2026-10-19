@@ -10,4 +10,8 @@ for flag in ART_NO_WO1PC ART_WORDS AUDIO FONT_FACE_SOURCE FONT_GEOMETRY INSTALL_
   export "WOZMOD_$flag=1"
 done
 export WOZMOD_REQUIRE_INPUTS=1
-exec uv run --extra native pytest -q -rs "$@"
+[ $# -gt 0 ] && exec uv run --extra native pytest -q -rs "$@"
+# The install has a time budget, so it runs last with the machine to itself, not beside the other workers.
+uv run --extra native pytest -q -rs --ignore=tests/test_install_e2e.py || status=1
+uv run --extra native pytest -q -rs -n0 tests/test_install_e2e.py || status=1
+exit ${status:-0}

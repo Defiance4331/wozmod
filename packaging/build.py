@@ -27,6 +27,8 @@ WINDOWS = sys.platform == "win32"
 PLATFORM = "windows" if WINDOWS else "linux"
 EXE = "wozmod.exe" if WINDOWS else "wozmod"
 SETUP = "wozmod-setup.exe" if WINDOWS else "wozmod-setup"
+# Each platform builds in its own folder: Wine cannot delete the symlinks a Linux build leaves.
+BUILD = OUT / PLATFORM
 
 
 def sha256(path: Path) -> str:
@@ -48,9 +50,9 @@ def pinned_download(pin: dict) -> Path:
 
 
 def prepare_ffmpeg() -> Path:
-    """Unpack the pinned LGPL ffmpeg into OUT/ffmpeg as bin/ (program and DLLs, or program) and lib/."""
+    """Unpack the pinned LGPL ffmpeg into BUILD/ffmpeg as bin/ (program and DLLs, or program) and lib/."""
     archive = pinned_download(json.loads((ROOT / "packaging/ffmpeg.json").read_text())[PLATFORM])
-    target, unpacked = OUT / "ffmpeg", OUT / "ffmpeg-unpacked"
+    target, unpacked = BUILD / "ffmpeg", BUILD / "ffmpeg-unpacked"
     shutil.rmtree(target, ignore_errors=True)
     shutil.rmtree(unpacked, ignore_errors=True)
     if archive.suffix == ".zip":
@@ -71,7 +73,7 @@ def prepare_ffmpeg() -> Path:
         for path in (source / "lib").glob("lib*.so.[0-9]*"):  # the soname links; copy2 follows them
             if path.name.count(".") == 2:
                 shutil.copy2(path, target / "lib" / path.name)
-    shutil.copy2(source / "LICENSE.txt", OUT / "ffmpeg-LICENSE.txt")
+    shutil.copy2(source / "LICENSE.txt", BUILD / "ffmpeg-LICENSE.txt")
     shutil.rmtree(unpacked)
     program = target / "bin" / ("ffmpeg.exe" if WINDOWS else "ffmpeg")
     for flag, wanted in (("-decoders", " xma2 "), ("-encoders", " libvorbis ")):
@@ -103,19 +105,19 @@ def main() -> int:
     import wozmod_native  # noqa: F401  the release must carry the Rust codecs (uv sync --extra native)
 
     prepare_ffmpeg()
-    subprocess.run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--distpath", str(OUT / "dist"),
-                    "--workpath", str(OUT / "work"), str(ROOT / "packaging/wozmod.spec")], check=True)
+    subprocess.run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--distpath", str(BUILD / "dist"),
+                    "--workpath", str(BUILD / "work"), str(ROOT / "packaging/wozmod.spec")], check=True)
 
     name = f"wozmod-{version}-{PLATFORM}"
-    stage = OUT / "stage" / name
-    shutil.rmtree(OUT / "stage", ignore_errors=True)
-    shutil.copytree(OUT / "dist/wozmod", stage, symlinks=True)
-    shutil.copytree(OUT / "ffmpeg", stage / "_internal/ffmpeg")
+    stage = BUILD / "stage" / name
+    shutil.rmtree(BUILD / "stage", ignore_errors=True)
+    shutil.copytree(BUILD / "dist/wozmod", stage, symlinks=True)
+    shutil.copytree(BUILD / "ffmpeg", stage / "_internal/ffmpeg")
     for file in (args.assets / "d3d9.dll", args.assets / "lettering.zip"):
         shutil.copy2(file, stage / "_internal")  # players see only the programs and the licences
     shutil.copy2(ROOT / "LICENSE", stage)
     (stage / "licenses").mkdir()
-    shutil.copy2(OUT / "ffmpeg-LICENSE.txt", stage / "licenses")
+    shutil.copy2(BUILD / "ffmpeg-LICENSE.txt", stage / "licenses")
     shutil.copy2(ROOT / "packaging/FFMPEG-NOTICE.txt", stage / "licenses")
 
     codecs = list((stage / "_internal").rglob("wozmod_native*"))
