@@ -3191,9 +3191,13 @@ static void fps_input(u32 repeat)
     GAME_SOUND(1, 0, 0x2CDC, 0x2CDC, 0x1000);
 }
 
+#include "hfr_pair.h"
 #define UPLOADS 1024
-static float uploads[UPLOADS][256 * 4];
+static float uploads[UPLOADS][PAIR_FLOATS];
 static u32 upload_key[UPLOADS], upload_count, upload_index;
+static struct pair_entry pair_by_x[UPLOADS];
+static u32 pair_loose[UPLOADS];
+static struct pair_prev pair_prev = {0, upload_key, (const float (*)[PAIR_FLOATS])uploads, pair_by_x, pair_loose};
 
 
 
@@ -3311,6 +3315,8 @@ static u32 hfr_draw(void)
     for (i = 0; i < CHARACTERS; i++)
         CopyMemory(character_prev[i], CHARACTER_AT(i), sizeof *character_prev);
     upload_count = upload_index < UPLOADS ? upload_index : UPLOADS;
+    pair_prev.count = upload_count;
+    pair_index(&pair_prev);
     hfr_stats.frames++;
     hfr_busy = 0, hfr_drawn = 1;
     return 1;
@@ -3336,31 +3342,6 @@ static float lerped[256 * 4];
 
 
 
-static float palette_gap(const float *a, const float *b, u32 count, float least)
-{
-    float gap = 0, g;
-    u32 i;
-    for (i = 0; i < count * 4 && gap < least; i++)
-        if ((g = a[i] > b[i] ? a[i] - b[i] : b[i] - a[i]) > gap)
-            gap = g;
-    return gap;
-}
-
-static u32 pair(u32 n, u32 reg, const float *data, u32 count)
-{
-    u32 d, k, m, key = reg << 16 | count, best = upload_count;
-    float gap, least = PALETTE_STEP;
-    for (d = 0; d < upload_count && least > 0; d++)
-        for (k = 0; k <= (d != 0); k++) {
-            m = k ? n - d : n + d;
-            if (m < upload_count && upload_key[m] == key && (gap = palette_gap(uploads[m], data, count, least)) < least)
-                best = m, least = gap;
-#ifdef ENRT_TEST
-            prof_gaps += m < upload_count && upload_key[m] == key;
-#endif
-        }
-    return best;
-}
 
 
 static void halfway(float *point, const float *prev, const float *now)
@@ -3404,12 +3385,14 @@ static long __stdcall vs_const(void *device, u32 reg, const float *data, u32 cou
 #ifdef ENRT_TEST
     if (hfr_busy && count <= 256 && extra && have_prev && count % 3 == 0 && !(hfr_prof.knobs & 1)) {
         u32 t = (u32)__rdtsc();
-        m = pair(n, reg, data, count);
+        m = pair_find(&pair_prev, n, reg << 16 | count, data, count, &prof_gaps);
         hfr_prof.tick[hfr_prof.next % PROF_TICKS].pair_cycles += (u32)__rdtsc() - t;
     }
 #else
-    if (hfr_busy && count <= 256 && extra && have_prev && count % 3 == 0)
-        m = pair(n, reg, data, count);
+    if (hfr_busy && count <= 256 && extra && have_prev && count % 3 == 0) {
+        u32 gaps = 0;
+        m = pair_find(&pair_prev, n, reg << 16 | count, data, count, &gaps);
+    }
 #endif
     trace(1, reg, count, extra, (u32)__builtin_return_address(0), m, 0, data, count * 16);
     if (!hfr_busy || count > 256)
