@@ -37,6 +37,15 @@ int drop(const char *value, char *out, unsigned int size)
 {
     return text_drop_bad_icons(value, out, size) == value;
 }
+int carries(unsigned int draw, unsigned int last_draw, unsigned int y, unsigned int last_y, unsigned int x,
+    unsigned int last_end)
+{
+    return text_fit_carries(draw, last_draw, y, last_y, 24, 24, 24, 24, x, last_end);
+}
+double centre(double box, double size, double room, double first, double last, double *factor)
+{
+    return text_fit_centre(box, size, room, first, last, factor);
+}
 void quad(unsigned int *data, int four, double anchor, unsigned int text, unsigned int box,
     unsigned int align, int enabled, double pixels)
 {
@@ -164,3 +173,33 @@ def test_names_sharing_a_lane_with_icons_shrink_alone_and_end_inside_it(fit_runt
         drawn = sum(int(w * f) for w in names) + sum(fixed)
         assert f == 1 if sum(names) + sum(fixed) <= room else room - len(names) <= drawn <= room
     assert fit_runtime.names(300, room, room) == 1     # nothing left to shrink into: drawn as is
+
+
+def test_a_glyph_of_another_draw_starts_where_the_game_put_it_even_on_the_same_row(fit_runtime):
+    """Three skill tags drawn side by side, 8 px apart: the name after a condensed one carried on its pen and sat
+    off its plate. Within one draw a glyph past a space still carries on."""
+    fit_runtime.carries.restype = ctypes.c_int
+    assert fit_runtime.carries(7, 7, 380, 380, 1115, 1107) == 1  # the same draw, a word gap on
+    assert fit_runtime.carries(8, 7, 380, 380, 1115, 1107) == 0  # the next draw on the same row
+    assert fit_runtime.carries(7, 7, 380, 380, 1115 + 4 * 24 + 1, 1115) == 0  # too far on to be a gap
+
+
+def test_a_name_sits_centred_by_its_ink_and_condenses_only_past_its_room(fit_runtime):
+    """A name centred by its advance width sits off centre by the difference of its first and last glyphs' side
+    room; by its ink, the visible space either side is equal, and only ink wider than the room condenses, to fill it."""
+    fit_runtime.centre.restype = ctypes.c_double
+    fit_runtime.centre.argtypes = [ctypes.c_double] * 5 + [ctypes.POINTER(ctypes.c_double)]
+    wrong = []
+    # plate x, plate width, room, ink first and last from the pen
+    # skill tags: a 138 px plate with 8 px kept clear at each end, so 122 px of ink; and a cap band down a 28 px plate
+    for row in [(1103, 138, 122, 3.7, 107.2), (958, 138, 122, 0.4, 143.1), (813, 138, 122, 1.6, 99.0),
+                (574, 138, 122, 0.0, 122.0), (835, 138, 122, 0.5, 129.5), (100, 28, 28, 2.0, 19.2)]:
+        box, size, room, first, last = row
+        factor = ctypes.c_double()
+        pen = fit_runtime.centre(box, size, room, first, last, ctypes.byref(factor))
+        left, right = pen + first * factor.value - box, box + size - (pen + last * factor.value)
+        ink = (last - first) * factor.value
+        if abs(left - right) > 1e-9 or ink > room + 1e-9 or (factor.value < 1 and abs(ink - room) > 1e-9) \
+                or (last - first <= room and factor.value != 1):
+            wrong.append((row, round(left, 3), round(right, 3), factor.value))
+    assert not wrong

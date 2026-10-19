@@ -735,7 +735,7 @@ static const int glyph_soften[3] = {0, 38, 64};  /* gr_soften's share per neighb
 #define TEXTURE_RECORDS ((const u8 *)0xCB9310)
 
 struct glyph_slot { u32 number, kx, ky; int b, h; u16 u, v, w; short left; };
-struct glyph_pen { u32 x, y, w, h, adv; int pen, step, valid; };
+struct glyph_pen { u32 x, y, w, h, adv, draw; int pen, step, valid; };
 static struct gr_font glyph_font;
 static struct gr_outline glyph_outline[128];
 static u8 glyph_has[128];
@@ -747,6 +747,7 @@ static float glyph_acc[(GLYPH_MAX + 2) * GLYPH_MAX];
 static u8 glyph_cover[GLYPH_MAX * GLYPH_MAX];
 static struct glyph_pen glyph_chain[GLYPH_PASSES];
 static u32 glyph_pass, glyph_last_x = ~0u, glyph_last_y = ~0u;
+static u32 text_draws;  /* text draws (0x54B7D0) begun: a pen chains only within one */
 
 /* The IDirect3DTexture9 behind our sheet's handle, once made: the game's texture record, its resource, and the
    resource's wrapper list at +0x10, whose first entry starts with the texture (as the draw at 0x5CD241 reads it). */
@@ -896,10 +897,21 @@ static int round_even(double v)
 }
 
 /* Point a Latin glyph's quad (two corners for id 68, four for 69) at its glyph drawn for this size. */
+/* A colour (0xAABBGGRR) a share t of the way from a to b, each byte rounded; t outside 0..1 is held at the ends. */
+static u32 colour_at(u32 a, u32 b, float t)
+{
+    u32 out = 0, k;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    for (k = 0; k < 32; k += 8)
+        out |= (u32)((int)(a >> k & 0xff) + (float)((int)(b >> k & 0xff) - (int)(a >> k & 0xff)) * t + 0.5f) << k;
+    return out;
+}
+
 static void glyph_draw(u32 id, const struct frame *f)
 {
     u32 i, *quad = (u32 *)f->arg[0], n = id == 69 ? 4 : 2, stride = id == 69 ? 6 : 4, number;
     u32 xlo = ~0u, xhi = 0, ylo = ~0u, yhi = 0, ulo = ~0u, uhi = 0, vlo = ~0u, vhi = 0, u0, u1, v0, v1;
+    u32 c_top = 0, c_bottom = 0;
     const u32 *glyph = 0;
     const struct glyph_slot *slot;
     struct glyph_pen *chain;
@@ -941,8 +953,8 @@ static void glyph_draw(u32 id, const struct frame *f)
     /* The next letter of the line: right after the last, or after a gap the game left for spaces, which keeps its
        own exact width so every word gap is the same. Anything else (a line, a pass or a draw of its own) starts
        where the game put it. */
-    if (chain->valid && glyph[4] == chain->y && glyph[5] == chain->w && glyph[6] == chain->h
-        && glyph[3] >= chain->x + chain->adv && glyph[3] - chain->x - chain->adv <= 4 * glyph[5])
+    if (chain->valid && text_fit_carries(text_draws, chain->draw, glyph[4], chain->y, glyph[5], chain->w, glyph[6],
+                                         chain->h, glyph[3], chain->x + chain->adv))
         pen = chain->pen + chain->step + round_even((glyph[3] - chain->x - chain->adv) * sx * factor);
     else
         pen = gr_round((float)((int)xlo - 0x8000) * ps / 16.0f);
@@ -950,7 +962,7 @@ static void glyph_draw(u32 id, const struct frame *f)
     chain->x = glyph[3], chain->y = glyph[4], chain->w = glyph[5], chain->h = glyph[6];
     chain->adv = enrt_widths[glyph[2]] * glyph[5] / 24;
     chain->pen = pen, chain->step = gr_step((int)chain->adv, sx * factor);
-    chain->valid = 1;
+    chain->valid = 1, chain->draw = text_draws;
     if (!slot)
         return;
     glyph_flush();
@@ -961,6 +973,11 @@ static void glyph_draw(u32 id, const struct frame *f)
        pixel between two texels (each edge half covered). */
     u0 = slot->u * 16, u1 = u0 + slot->w * 16;
     v0 = slot->v * 16, v1 = v0 + (u32)h * 16;
+    for (i = 0; i < n && n == 4; i++)  /* a four-corner glyph's colour at its cell's top and bottom (0x54C380) */
+        if ((quad[13 + i * stride] & 0xffff) == ylo)
+            c_top = quad[8 + i * stride];
+        else
+            c_bottom = quad[8 + i * stride];
     for (i = 0; i < n; i++) {  /* back in layout px: output px / ps, whole sixteenths for ps 1 or 2 */
         u32 yy = quad[13 + i * stride], uv = quad[10 + i * stride];
         u32 xy = quad[12 + i * stride];
@@ -968,6 +985,8 @@ static void glyph_draw(u32 id, const struct frame *f)
         u32 y = (u32)(((yy & 0xffff) == ylo ? top : top + h) * 16 / (int)ps + 0x8000);
         quad[12 + i * stride] = x;
         quad[13 + i * stride] = (yy & 0xffff0000u) | (y & 0xffff);
+        if (n == 4 && c_top != c_bottom)  /* the corner moved within its cell: its colour where the cell had it */
+            quad[8 + i * stride] = colour_at(c_top, c_bottom, (float)((int)(y & 0xffff) - (int)ylo) / (yhi - ylo));
         quad[10 + i * stride] = ((uv >> 16) == vlo ? v0 : v1) << 16 | (((uv & 0xffff) == ulo ? u0 : u1) & 0xffff);
     }
     quad[6] = (u32)glyph_handle, quad[7] = (u32)(glyph_handle >> 32);
@@ -1706,6 +1725,72 @@ static void shadowed(const char *s, u32 x, u32 y, u32 cell, const u32 *colour)
     draw(s, x + SHADOW, y + SHADOW, 0);
     GAME_FONT(cell, cell, PALETTE_INDEX(*colour));
     draw(s, x, y, 0);
+}
+
+
+/* Skill tags (0x593CE0: tag, x, y, layer, selected). The Xbox 360 tags are names baked into 70 px plates, squeezed or
+   cut short; ours are a blank plate TAG_WIDTH wide (4079.213, or 4079.198 green when selected, both widened in the
+   art) with the full name drawn on it in the game font at the stock text cell, condensed only past the plate's room.
+   The name's ink is centred on the plate across, and its cap height (cap line to baseline) down, so every tag in a
+   row shares one baseline. The letters shade from the cap line down as the official ones do, in the game's own
+   gradient text (0x54C380: the top corners' colour, then the bottom's). The colours put the drawn letters' cores on a
+   line through the official letters' row fills (official row 8's thin dark line aside): our anti-aliased cores keep
+   about 0.85 of their colour over the plate, so each end is set past its target, clamped to 0..255. Tag 0xF is an
+   empty slot: the blank alone. */
+#define TAG_WIDTH 0x8A
+#define TAG_PAD 8  /* the plate kept clear at each end: a name wider than TAG_WIDTH - 2 * TAG_PAD condenses */
+#define TAG_NAMES ((const char *const *)0x6FD310)
+#define TAG_TEXTURE ((unsigned long long (*)(u32))0x58E180)
+#define TAG_QUAD ((void (*)(unsigned long long, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32))0x5DDAB0)
+#define FONT_COLOURS ((volatile u32 *)0xC2ADEC)  /* palette indices: top left, top right, bottom left, bottom right */
+static const u32 tag_top[2] = {0x80fffbb5, 0x80000000}, tag_bottom[2] = {0x80ed6a75, 0x80003300};  /* 0xAABBGGRR */
+
+/* The ink of Latin text s at the current cell, in layout px from its pen: from the first glyph's left edge to the
+   last one's right edge (our outlines' extremes, stepped by the advances the draw steps by). */
+static void ink_span(const char *s, double *left, double *right)
+{
+    double pen = 0, unit = FONT_CELL[0] / 1200.0;
+    const u8 *p;
+    u32 i;
+    *left = 1e9, *right = -1e9;
+    for (p = (const u8 *)s; *p >= 0x20 && *p < 0x7E; p++) {
+        const struct gr_outline *o = &glyph_outline[*p - 0x20];
+        for (i = 0; glyph_has[*p - 0x20] && i < o->points; i++) {
+            double x = pen + (o->offset + o->point[2 * i]) * unit;
+            *left = x < *left ? x : *left, *right = x > *right ? x : *right;
+        }
+        pen += enrt_widths[GLYPH_LATIN + *p - 0x20] * FONT_CELL[0] / 24.0;
+    }
+    if (*left > *right)
+        *left = *right = 0;
+}
+
+static void skill_tag(u32 tag, u32 x, u32 y, u32 layer, u32 selected)
+{
+    u32 mode = FONT_MODE, colours[4] = {FONT_COLOURS[0], FONT_COLOURS[1], FONT_COLOURS[2], FONT_COLOURS[3]}, i;
+    u8 w = FONT_CELL[0], h = FONT_CELL[1], alpha = FONT_ALPHA;
+    double left, right, factor, none, pen, top, unit = 24 / 1200.0;
+    u32 room;
+    const char *name;
+    selected = selected && tag < 0xF;
+    TAG_QUAD(TAG_TEXTURE(selected ? 0x84 : 0x93), x, y, layer, TAG_WIDTH, 0x1C, 0, 0, TAG_WIDTH, 0x1C, 0x80, 3);
+    if (tag >= 0xF || !glyph_handle)
+        return;
+    name = enrt_translate(TAG_NAMES[tag]);
+    FONT_CELL[0] = FONT_CELL[1] = 24, FONT_MODE = 0, FONT_ALPHA = 0x80;
+    FONT_COLOURS[0] = FONT_COLOURS[1] = PALETTE_INDEX(tag_top[selected]);
+    FONT_COLOURS[2] = FONT_COLOURS[3] = PALETTE_INDEX(tag_bottom[selected]);
+    ink_span(name, &left, &right);
+    text_fit_centre(x, TAG_WIDTH, TAG_WIDTH - 2 * TAG_PAD, left, right, &factor);
+    room = (u32)(measure(name) * factor + 0.5);
+    if (factor < 1)  /* the draw steps its glyphs by whole pixels and may condense a little more: centre what it draws */
+        factor = glyph_line_fit(name, room, (float)factor);
+    pen = x + (TAG_WIDTH - (right - left) * factor) / 2 - left * factor;
+    top = text_fit_centre(y, 0x1C, 0x1C, (glyph_font.base - glyph_font.zones.cap) * unit, glyph_font.base * unit, &none);
+    draw_fit(name, (u32)(pen + 0.5), (u32)(top + 0.5), layer, 0, room, 0);
+    FONT_CELL[0] = w, FONT_CELL[1] = h, FONT_MODE = mode, FONT_ALPHA = alpha;
+    for (i = 0; i < 4; i++)
+        FONT_COLOURS[i] = colours[i];
 }
 
 
@@ -3626,6 +3711,7 @@ static u32 english_hook(u32 id, struct frame *f)
 #endif
         if (f->ret == WEAPON_READING_DRAW || f->ret == WEAPON_INFO_READING_DRAW)
             return 1;
+        text_draws += id == 1;
         f->arg[0] = before = text(f->arg[0], id, f);
         if (id == 1)
             row_columns(f);
@@ -3896,6 +3982,9 @@ static u32 english_hook(u32 id, struct frame *f)
                        + ((int)f->esi - (1280 - stock[s])) * (int)(room + inset[s]) / stock[s]);
         break;
     }
+    case 108:
+        skill_tag(f->arg[0], f->arg[1], f->arg[2], f->arg[3], f->arg[4]);
+        return 1;
     case 42:
     case 43:
         box_drawn(id, f);

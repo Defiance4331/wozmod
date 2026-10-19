@@ -51,6 +51,7 @@ HOOKS = [
     (0x54FD40, "8bfe 8d5650", 35, None),        # banner x, rest 1077 (mid-function)
     (0x590D40, "83ec20 53 8b5c2428", 42, None),  # box: text inside wraps to it, the box grows to fit
     (0x5949E0, "83ec1c 837c243800", 43, None),  # framed box, the same
+    (0x593CE0, "83ec48 a1e4057c00", 108, 0),  # skill tag: a wider blank plate and its name in the game font
     (0x591430, "51535556 8b742420", 66, None),  # battle label and its plate: width from the vector sheet
     (0x5915C0, "535556 8b74241c", 67, None),    # the alternate battle label plate
     (0x5DCA30, "8b442408 8b4c2404", 68, None),  # two-corner glyph finalizer

@@ -223,7 +223,7 @@ def keyed(image: Image.Image, column: int, threshold: int, solid: bool = False) 
 def plated(source: Image.Image, width: int, column: int, right: int) -> Image.Image:
 
     x1 = ink(source)[2]
-    out = Image.new("RGBA", source.size)
+    out = Image.new("RGBA", (max(width, source.width), source.height))
     out.paste(source.crop((0, 0, 1, source.height)), (0, 0))
     out.paste(source.crop((column, 0, column + 1, source.height)).resize((width - right - 1, source.height)), (1, 0))
     out.paste(source.crop((x1 - right, 0, x1, source.height)), (width - right, 0))

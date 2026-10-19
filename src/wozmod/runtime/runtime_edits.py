@@ -755,6 +755,27 @@ ATTRIBUTE_GRIDS = [
             bytes.fromhex("6a1c 6896000000 56 52 51")),
 ]
 
+# Skill tags are TAG_WIDTH wide (runtime hook 108 draws them on 0x593CE0's calls), so every row of three
+# on a weapon card steps TAG_STEP: the card itself (0x595310), the fusion overlay over it (0x52E940, both paths) and
+# the upgrade's tag rows over it (0x528E40, modes 6 and 7/9, which end at the third tag and frame the chosen one).
+TAG_WIDTH = 138
+TAG_STEP = TAG_WIDTH + 7
+SKILL_TAGS = [
+    *detour(0x5954B9, bytes.fromhex("83c601 83c414 83c54d"), CAVE + 0x220, 0x5954C2,
+            bytes.fromhex("83c601 83c414 81c5") + p32(TAG_STEP)),
+    *detour(0x52EA97, bytes.fromhex("83c34d 83fd03"), CAVE + 0x240, 0x52EA9D,
+            bytes.fromhex("81c3") + p32(TAG_STEP) + bytes.fromhex("83fd03")),
+    *detour(0x52EBC1, bytes.fromhex("83c704 83c64d"), CAVE + 0x260, 0x52EBC7,
+            bytes.fromhex("83c704 81c6") + p32(TAG_STEP)),
+    *detour(0x52913C, bytes.fromhex("6a1c 6a46 6a00"), CAVE + 0x280, 0x529142,
+            bytes.fromhex("6a1c 68") + p32(TAG_WIDTH) + bytes.fromhex("6a00")),
+    *detour(0x529150, bytes.fromhex("83c74d 83c501"), CAVE + 0x2A0, 0x529156,
+            bytes.fromhex("81c7") + p32(TAG_STEP) + bytes.fromhex("83c501")),
+    *detour(0x5291EB, bytes.fromhex("83c74d 83c414"), CAVE + 0x2C0, 0x5291F1,
+            bytes.fromhex("81c7") + p32(TAG_STEP) + bytes.fromhex("83c414")),
+    *[(va, bytes.fromhex("81ff2a040000"), b"\x81\xff" + p32(0x343 + 3 * TAG_STEP)) for va in (0x529156, 0x5291F4)],
+]
+
 # Kept art and clearance edits that the X360 panels replace.
 X360_REPLACED = {
     0x595ADE, 0x595AEF, 0x595AF2, 0x595B0F, 0x527821, 0x527829, 0x527832, 0x529655, 0x52965D, 0x529666,
@@ -765,7 +786,7 @@ X360_REPLACED = {
     0x59C421, 0x59C42C, 0x59C48E, 0x59C3DF, 0x59C3E6,
 }
 CODE_EDITS = ([edit for edit in CODE_EDITS if edit[0] not in X360_REPLACED] + MOZ_LAYOUT + X360_LAYOUT + X360_PANELS
-              + LAYOUT_TWEAKS + PAGE_ORIGIN + CAPTION_LINES + ATTRIBUTE_GRIDS)
+              + LAYOUT_TWEAKS + PAGE_ORIGIN + CAPTION_LINES + ATTRIBUTE_GRIDS + SKILL_TAGS)
 
 LATIN_TOKEN = 0x1000
 

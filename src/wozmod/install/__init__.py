@@ -38,7 +38,7 @@ STOCK_FILES = {
 }
 # Release assets built by us; a release updates both pins with the files it ships.
 LETTERING = (18_339_807, "f6f2b8d055a40583ff7e39380ee780a72ac606d6833af40389047407f701278a")
-DLL = (208_529, "96df68ecc0e0dd269c184e87304acced82f008cd007bb4aa32ff6cebc1999193")
+DLL = (211_686, "0168ba78954efc89490941a3950cef913386be4c4d56080108018f15b3de93c3")
 
 _MOD_PATH = re.compile(r"d3d9\.dll|wozmod(/[A-Za-z0-9_][A-Za-z0-9_.-]*)+")
 

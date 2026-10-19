@@ -16732,12 +16732,23 @@
       "entry": 4079,
       "item": 198,
       "texture": 0,
-      "wo2": [
-        13,
-        198,
-        0
+      "size": [
+        256,
+        32
       ],
-      "source": "wo2-x360"
+      "clear": true,
+      "plate": {
+        "wo2": [
+          13,
+          198,
+          0
+        ],
+        "width": 138,
+        "column": 3,
+        "right": 2
+      },
+      "draw": [],
+      "source": "edited"
     },
     {
       "entry": 4079,
@@ -16897,12 +16908,23 @@
       "entry": 4079,
       "item": 213,
       "texture": 0,
-      "wo2": [
-        13,
-        213,
-        0
+      "size": [
+        256,
+        32
       ],
-      "source": "wo2-x360"
+      "clear": true,
+      "plate": {
+        "wo2": [
+          13,
+          213,
+          0
+        ],
+        "width": 138,
+        "column": 35,
+        "right": 2
+      },
+      "draw": [],
+      "source": "edited"
     },
     {
       "entry": 4060,

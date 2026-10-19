@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import struct
@@ -57,7 +58,7 @@ def test_weapon_name_starts_after_the_moz_thumbnail_and_ends_before_the_skill_sq
     assert name_x + layout.single_line_sites()[0x5950EC] <= squares
 
 
-LENGTHS = {0x6A: 2, 0x68: 5, 0x6B: 3, 0x69: 6, 0x99: 1, 0x83: 3, 0xB9: 5, **dict.fromkeys(range(0x50, 0x58), 1)}
+LENGTHS = {0x6A: 2, 0x68: 5, 0x6B: 3, 0x69: 6, 0x99: 1, 0x83: 3, 0x81: 6, 0xB9: 5, **dict.fromkeys(range(0x50, 0x58), 1)}
 
 
 def edited_run(code, va: int, n: int) -> list[bytes]:
@@ -74,9 +75,10 @@ def edited_run(code, va: int, n: int) -> list[bytes]:
 
 
 def immediate(ins: bytes) -> int:
-    """The immediate of push imm8/imm32 or imul r, r, imm8/imm32."""
+    """The immediate of push imm8/imm32, imul r, r, imm8/imm32, or an add or cmp of a register and imm8/imm32."""
     return {0x6A: lambda: struct.unpack("<b", ins[1:2])[0], 0x68: lambda: struct.unpack("<i", ins[1:5])[0],
-            0x6B: lambda: struct.unpack("<b", ins[2:3])[0], 0x69: lambda: struct.unpack("<i", ins[2:6])[0]}[ins[0]]()
+            0x6B: lambda: struct.unpack("<b", ins[2:3])[0], 0x69: lambda: struct.unpack("<i", ins[2:6])[0],
+            0x83: lambda: struct.unpack("<b", ins[2:3])[0], 0x81: lambda: struct.unpack("<i", ins[2:6])[0]}[ins[0]]()
 
 
 def test_attribute_grids_step_past_the_filled_cell_and_draw_empty_slots_as_wide(code) -> None:
@@ -92,6 +94,34 @@ def test_attribute_grids_step_past_the_filled_cell_and_draw_empty_slots_as_wide(
         step, slot = immediate(edited_run(code, step_at, 1)[0]), immediate(edited_run(code, slot_at, 2)[1])
         if step < cell or slot != cell:
             wrong.append(f"{grid}: cell {cell}, column step {step}, empty slot {slot}")
+    assert not wrong
+
+
+def test_skill_tag_rows_step_one_tag_and_stay_on_the_weapon_card(code) -> None:
+    """Every row of three skill tags on a weapon card (the card, both fusion overlay paths and the upgrade's two tag
+    rows drawn over it) steps past one tag, by the same amount, and ends inside the card's attribute grid. A site left
+    at the stock 77 px step overlaps the wider tags or misses the card's own tags under it; a tag too wide for three
+    runs off the 650-wide card; a plate, outline or drawer at another width leaves a gap or a sliver."""
+    tag = layout.DEFINES["TAG_WIDTH"]
+    # each row's step: the n-th instruction run from a stock instruction boundary before it
+    steps = {"card": (0x5954B9, 2), "fusion overlay": (0x52EA97, 0), "fusion overlay, weapon B": (0x52EBC1, 1),
+             "upgrade tag row": (0x529150, 0), "upgrade chosen tag": (0x5291EB, 0)}
+    step = {row: immediate(edited_run(code, va, n + 1)[n]) for row, (va, n) in steps.items()}
+    ends = {struct.unpack("<i", code(va + 2, 4, True))[0] for va in (0x529156, 0x5291F4)}  # cmp edi, end of row
+    outline = immediate(edited_run(code, 0x52913C, 2)[1])  # the frame on the chosen slot
+    cell, column = immediate(edited_run(code, 0x591844, 4)[3]), immediate(edited_run(code, 0x595528, 1)[0])
+    grid_right = 0x13 + 3 * column + cell  # the card's attribute grid, from the card's left edge
+    plates = {e["item"]: e["plate"]["width"] for e in json.loads(Path("data/art/menu_textures.json").read_text())[
+        "textures"] if e["entry"] == 4079 and e.get("item") in (198, 213)}
+    wrong = [f"{row} steps {s}, not past the {tag} px tag" for row, s in step.items() if s <= tag]
+    if len(set(step.values())) != 1:
+        wrong.append(f"the rows step differently: {step}")
+    if ends != {0x343 + 3 * step["card"]}:
+        wrong.append(f"the upgrade rows end at {sorted(ends)}, not after three steps of {step['card']}")
+    if 0xD0 + 2 * step["card"] + tag > grid_right:
+        wrong.append(f"three tags end at card x {0xD0 + 2 * step['card'] + tag}, past the grid at {grid_right}")
+    if {outline, *plates.values()} != {tag}:
+        wrong.append(f"outline {outline} and blank plates {plates} are not the {tag} px tag")
     assert not wrong
 
 

@@ -145,6 +145,16 @@ def test_composed_row_does_not_drop_prefix_strokes():
     assert [alpha.getpixel((x, 12)) for x in (14, 18, 22, 26, 29, 38)] == [255, 0, 255, 0, 255, 255]
 
 
+def test_a_plate_widened_past_its_source_texture_keeps_its_right_end():
+    """A skill tag's blank (70 px art in a 128 px texture) widened to 138: the plate was cut at the source's width."""
+    source = Image.new("RGBA", (128, 32))
+    source.paste((40, 40, 90, 255), (0, 0, 70, 28))
+    source.putpixel((69, 5), (200, 0, 0, 255))  # the plate's right end
+    plate = build.plated(source, 138, 35, 2)
+    assert plate.getchannel("A").getbbox() == (0, 0, 138, 28)
+    assert plate.getpixel((137, 5)) == (200, 0, 0, 255)
+
+
 def test_native_plate_does_not_requantize_surrounding_pixels():
     import struct
     from wozmod.formats.textures import G1T_HEADER, G1T_TEXTURE_HEADER

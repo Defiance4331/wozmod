@@ -16,6 +16,25 @@ static inline struct text_fit text_fit(unsigned int run, unsigned int own, unsig
     return fit;
 }
 
+/* Whether a glyph carries on the pen of the glyph before it: in the same text draw, on its row at its cell, at or past
+   its end and no more than four cells on (a gap the game left for spaces). A glyph of another draw starts where the
+   game put it, even on the same row: carried on, it would start where the last draw's (perhaps condensed) text ended. */
+static inline int text_fit_carries(unsigned int draw, unsigned int last_draw, unsigned int y, unsigned int last_y,
+                                   unsigned int w, unsigned int last_w, unsigned int h, unsigned int last_h,
+                                   unsigned int x, unsigned int last_end)
+{
+    return draw == last_draw && y == last_y && w == last_w && h == last_h && x >= last_end && x - last_end <= 4 * w;
+}
+
+/* Where to put a pen so the ink it draws sits centred in a box: the ink runs from first to last (from the pen, along
+   one axis); past room it condenses by *factor about the pen until it fills room. */
+static inline double text_fit_centre(double box, double size, double room, double first, double last, double *factor)
+{
+    double ink = last - first;
+    *factor = ink > room ? room / ink : 1.0;
+    return box + (size - ink * *factor) / 2 - first * *factor;
+}
+
 /* The factor for names that share a lane with parts of fixed width (gaps, icons, names that cannot be
    condensed): only the names shrink, so the whole line ends inside room. */
 static inline double text_fit_names(unsigned int names, unsigned int fixed, unsigned int room)
