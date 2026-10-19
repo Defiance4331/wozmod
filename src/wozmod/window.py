@@ -85,8 +85,21 @@ class SetupWindow:
         self.status_row: dict[str, int] = {}
         self.make_styles()
 
-        frame = ttk.Frame(root, padding=(20, 16, 20, 12))
-        frame.pack(fill="both", expand=True)
+        # The content scrolls when the window is shorter than it: a small screen, a long error, a window shrunk by hand.
+        self.canvas = tkinter.Canvas(root, highlightthickness=0, borderwidth=0, yscrollincrement=1)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.scrollbar = ttk.Scrollbar(root, command=self.canvas.yview)
+        self.scrollbar.grid(row=0, column=1, sticky="ns")
+        self.scrollbar.grid_remove()
+        self.canvas.configure(yscrollcommand=self.scrolled)
+        root.rowconfigure(0, weight=1)
+        root.columnconfigure(0, weight=1)
+        self.holder = ttk.Frame(self.canvas)  # at least the canvas's size, so a larger window still stretches the content
+        self.holder.rowconfigure(0, weight=1)
+        self.holder.columnconfigure(0, weight=1)
+        self.canvas.create_window(0, 0, window=self.holder, anchor="nw")
+        frame = ttk.Frame(self.holder, padding=(20, 16, 20, 12))
+        frame.grid(sticky="nsew")
         frame.columnconfigure(1, weight=1)
         self.frame = frame
         ttk.Label(frame, text="Install English text, voices and menus into Musou Orochi Z.",
@@ -166,8 +179,15 @@ class SetupWindow:
         self.refresh_buttons()
         for name in self.vars:
             self.changed(name, run=True)
-        root.update_idletasks()
-        root.minsize(frame.winfo_reqwidth(), frame.winfo_reqheight())  # sized to its content; still resizable
+        for widget in (self.holder, self.canvas):
+            widget.bind("<Configure>", self.fit)
+        for event in ("<MouseWheel>", "<Button-4>", "<Button-5>"):  # buttons 4 and 5 are the wheel on X11 before Tk 9
+            root.bind(event, self.wheel)
+        try:
+            root.bind("<TouchpadScroll>", self.touchpad)
+        except tkinter.TclError:  # Tk 8.6 has no such event; its touchpads send the wheel events
+            pass
+        root.bind("<FocusIn>", self.see)
         self.pump_id = root.after(100, self.pump)
 
     def make_styles(self) -> None:
@@ -227,6 +247,54 @@ class SetupWindow:
         """Keep two lines of height under a path box. A hidden row must give it back, or it leaves a gap."""
         lines = 2 * tkfont.nametofont("TkDefaultFont").metrics("linespace") + 2 if on else 0
         self.frame.rowconfigure(self.status_row[name], minsize=lines)
+
+    # --- scrolling
+
+    def fit(self, _=None) -> None:
+        """Ask for the content's size, as the window did before scrolling, and fill a window larger than the content.
+
+        The canvas asks for no more than the screen's height.
+        """
+        width, height = self.frame.winfo_reqwidth(), self.frame.winfo_reqheight()
+        # shortcut: plain Tk cannot read the taskbar's height, so an inch is left for it and the title bar
+        screen = self.root.winfo_screenheight() - self.root.winfo_pixels("1i")
+        self.canvas.configure(width=width, height=min(height, screen),
+                              scrollregion=(0, 0, self.holder.winfo_reqwidth(), self.holder.winfo_reqheight()))
+        # only a canvas larger than the content holds the holder open, so a shrinking content still shrinks the window
+        shown_w, shown_h = self.canvas.winfo_width(), self.canvas.winfo_height()
+        self.holder.columnconfigure(0, minsize=shown_w if shown_w > width else 0)
+        self.holder.rowconfigure(0, minsize=shown_h if shown_h > height else 0)
+
+    def scrolled(self, first: str, last: str) -> None:
+        """Show the scroll bar only while the content is taller than the window, which keeps the content's width."""
+        self.scrollbar.set(first, last)
+        needed = float(first) > 0 or float(last) < 1
+        (self.scrollbar.grid if needed else self.scrollbar.grid_remove)()
+        self.root.minsize(self.frame.winfo_reqwidth() + (self.scrollbar.winfo_reqwidth() if needed else 0), 1)
+
+    def wheel(self, event) -> None:
+        if event.widget in (self.details, self.scrollbar):  # they scroll themselves
+            return
+        delta = event.delta or (120 if event.num == 4 else -120)  # one notch is 120; a touchpad sends less
+        lines = 3 * tkfont.nametofont("TkDefaultFont").metrics("linespace")
+        self.canvas.yview_scroll(-round(delta / 120 * lines), "units")
+
+    def touchpad(self, event) -> None:
+        if event.widget in (self.details, self.scrollbar):
+            return
+        low = event.delta & 0xFFFF  # Tk packs the pixel deltas into one number, vertical in the low half
+        self.canvas.yview_scroll(-(low - 0x10000 if low >= 0x8000 else low), "units")
+
+    def see(self, event) -> None:
+        """Scroll a control that takes the keyboard focus into view."""
+        widget = event.widget
+        if not isinstance(widget, tkinter.Misc) or not str(widget).startswith(str(self.holder) + "."):
+            return
+        top = widget.winfo_rooty() - self.holder.winfo_rooty()
+        bottom, shown = top + widget.winfo_height(), self.canvas.winfo_height()
+        start = self.canvas.canvasy(0)
+        if top < start or bottom > start + shown:
+            self.canvas.yview_moveto((top if top < start else bottom - shown) / self.holder.winfo_height())
 
     def open_help(self) -> None:
         webbrowser.open(HELP_URL)

@@ -77,7 +77,7 @@ def test_a_fresh_window_cannot_install_and_says_where_the_files_come_from(shown)
     # Bug: Install is clickable with nothing picked, or the own-copies notice is missing.
     win, root = shown
     assert "disabled" in win.install_button.state() and "disabled" in win.uninstall_button.state()
-    assert [w.cget("text") for w in root.winfo_children()[0].winfo_children() if w.winfo_class() == "TLabel"
+    assert [w.cget("text") for w in win.frame.winfo_children() if w.winfo_class() == "TLabel"
             ].count(window.NOTICE) == 1
 
 
@@ -87,7 +87,7 @@ def test_the_window_shows_the_released_version(shown):
     import tomllib
     win, root = shown
     version = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())["project"]["version"]
-    labels = [w.cget("text") for w in root.winfo_children()[0].winfo_children() if w.winfo_class() == "TLabel"]
+    labels = [w.cget("text") for w in win.frame.winfo_children() if w.winfo_class() == "TLabel"]
     assert f"wozmod {version}" in labels
 
 @pytest.mark.parametrize("outcome, expected", [
@@ -331,3 +331,57 @@ def test_the_help_link_opens_the_list_of_tested_programs(shown, monkeypatch):
     monkeypatch.setattr(window.webbrowser, "open", opened.append)
     win.help_link.event_generate("<Button-1>")
     assert opened == ["https://github.com/Defiance4331/wozmod#tested-decryption-programs"]
+
+
+def _edges_in_view(root, widget) -> set[str]:
+    """Which of a widget's top and bottom edges show in the window; a long message may never show both at once."""
+    if not widget.winfo_viewable():
+        return set()
+    top, bottom = root.winfo_rooty(), root.winfo_rooty() + root.winfo_height()
+    edges = {"top": widget.winfo_rooty(), "bottom": widget.winfo_rooty() + widget.winfo_height()}
+    return {edge for edge, y in edges.items() if top <= y <= bottom}
+
+
+@pytest.mark.parametrize("how", ["wheel", "tab"])
+def test_every_control_and_message_can_be_brought_into_view_in_a_short_window(shown, monkeypatch, how):
+    # Bug: content taller than the window is cut off at the bottom (Install, the error, the version) with no way to reach
+    # it, as on a 768-pixel screen or after the window was resized and then grew (Advanced open, a long error).
+    win, root = shown
+    root.deiconify()
+    _wait(root, root.winfo_viewable)
+    monkeypatch.setattr(window, "install", lambda *a, **k: 1 / 0)  # a long traceback in the result
+    win.vars["game"].set("/g")
+    win.set_advanced(True)
+    win.run("install")
+    _wait(root, lambda: not win.busy)
+    win.toggle_details()
+    root.geometry(f"{root.winfo_reqwidth()}x300")
+    _wait(root, lambda: root.winfo_height() == 300)
+    version = next(w for w in win.frame.winfo_children() if w.winfo_class() == "TLabel"
+                   and w.cget("text").startswith("wozmod "))
+    targets = {"title": win.frame.winfo_children()[0], "install": win.install_button, "uninstall": win.uninstall_button,
+               "result": win.result, "details": win.details, "version": version}
+    if how == "tab":  # the keyboard reaches each control by focus; a label is shown by focusing its neighbour
+        targets = {"install": win.install_button, "uninstall": win.uninstall_button, "details": win.toggle}
+    seen, focus = set(), win.frame
+    for _ in range(120):
+        seen |= {(name, edge) for name, widget in targets.items() for edge in _edges_in_view(root, widget)}
+        if how == "wheel":
+            win.frame.event_generate("<MouseWheel>", delta=-120, when="now")
+        else:
+            focus = focus.tk_focusNext()
+            focus.focus_force()
+        root.update()
+    assert seen == {(name, edge) for name in targets for edge in ("top", "bottom")}
+
+
+def test_the_scroll_bar_shows_only_while_the_content_does_not_fit(shown):
+    # Bug: a scroll bar that never hides changes the window's look, or one that never shows leaves no way down.
+    win, root = shown
+    root.deiconify()
+    _wait(root, lambda: root.winfo_height() == win.frame.winfo_reqheight())
+    assert not win.scrollbar.winfo_manager()
+    root.geometry(f"{root.winfo_width()}x300")
+    _wait(root, lambda: win.scrollbar.winfo_manager() == "grid")
+    root.geometry(f"{root.winfo_width()}x{win.frame.winfo_reqheight() + 50}")
+    _wait(root, lambda: not win.scrollbar.winfo_manager())
