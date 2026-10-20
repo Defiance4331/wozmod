@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
 
-from wozmod import resources
+from wozmod import process, resources
 from wozmod.progress import report
 
 KOVS_HEADER_BYTES = 32
@@ -342,7 +342,7 @@ def _ffmpeg_each(jobs: list[tuple[list[str], bytes, list[str]]], workers: int | 
                 command += [*before, "-i", str(Path(folder, f"{k}.in"))]
             for k, (_, _, after) in enumerate(part):
                 command += ["-map", f"{k}:a", *after, str(Path(folder, f"{k}.out"))]
-            subprocess.run(command, capture_output=True, check=True, stdin=subprocess.DEVNULL)  # never read the terminal
+            process.run(command, capture_output=True, check=True, stdin=subprocess.DEVNULL)  # never read the terminal
             outputs = [Path(folder, f"{k}.out").read_bytes() for k in range(len(part))]
         with lock:  # report() raises Cancelled when the player cancelled, which stops the other batches too
             finished[0] += len(part)

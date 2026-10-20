@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from wozmod import process
+
 
 class ProgramError(ValueError):
     """A program input or external tool output does not meet its identity."""
@@ -118,8 +120,8 @@ def run_tool(
             command = [str(tool), *arguments(str(source), str(output))]
             try:
                 with log.open("wb") as stream:
-                    code = subprocess.run(command, cwd=folder, stdin=subprocess.DEVNULL, stdout=stream,
-                                          stderr=subprocess.STDOUT, timeout=timeout, check=False).returncode
+                    code = process.run(command, cwd=folder, stdin=subprocess.DEVNULL, stdout=stream,
+                                       stderr=subprocess.STDOUT, timeout=timeout, check=False).returncode
                 result = f"exit code {code}"
             except subprocess.TimeoutExpired:
                 result = f"stopped after {timeout:g} seconds"

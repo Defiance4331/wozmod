@@ -9,7 +9,6 @@ import queue
 import re
 import shutil
 import signal
-import subprocess
 import sys
 import tempfile
 import threading
@@ -20,7 +19,7 @@ from pathlib import Path
 
 from wozmod import __version__ as VERSION
 from wozmod import progress as reporting
-from wozmod import remembered, resources
+from wozmod import process, remembered, resources
 from wozmod.progress import Cancelled, Progress
 
 MANIFEST = "wozmod/install.json"
@@ -470,16 +469,16 @@ VOICE_NICE = 10  # how much lower than the art stage the voice stage runs (Unix)
 GRACE = 10  # seconds the build workers get to stop by themselves before they are killed
 
 
-def _kill_tree(process) -> None:
+def _kill_tree(worker) -> None:
     """Kill a build worker and everything it started."""
     if hasattr(os, "killpg"):
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            os.killpg(worker.pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             pass
     elif os.name == "nt":
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], capture_output=True, check=False)
-    process.kill()
+        process.run(["taskkill", "/F", "/T", "/PID", str(worker.pid)], capture_output=True, check=False)
+    worker.kill()
 
 
 def _stop_workers(pool, futures, stop) -> None:
@@ -488,10 +487,10 @@ def _stop_workers(pool, futures, stop) -> None:
     wait(futures, timeout=GRACE)
     processes = list((getattr(pool, "_processes", None) or {}).values())  # shortcut: no public way to kill a pool
     pool.shutdown(wait=False, cancel_futures=True)
-    for process in processes:
-        _kill_tree(process)
-    for process in processes:
-        process.join(5)
+    for worker in processes:
+        _kill_tree(worker)
+    for worker in processes:
+        worker.join(5)
 
 
 def _run_stages(pool, futures: dict, events, stop, progress: Progress) -> None:
