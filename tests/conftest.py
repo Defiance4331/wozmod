@@ -4,7 +4,7 @@ The paths live in the `[tests]` table of the main checkout's `work/harness.toml`
 worktree reads the main checkout's; `WOZMOD_HARNESS_CONFIG` names another file). A variable already set in the
 environment wins.
 
-With WOZMOD_REQUIRE_INPUTS=1 (verify.sh, pre-push) the run refuses to start without the config or one of its
+With WOZMOD_REQUIRE_INPUTS=1 (verify.sh) the run refuses to start without the config or one of its
 inputs, and a skip fails unless its reason names a WOZMOD_ switch that is unset: a slow test left off is fine,
 a test that skipped although everything it asks for is set is a missing input.
 """

@@ -64,8 +64,7 @@ it last passed; run `tools/verify.sh --full` before a release. Hand back a
 change players see with the
 `evidence/contact-sheet.html` that `tools/run_check.py` writes: each capture beside
 its PASS/FAIL rows. The hooks in `tools/githooks/` lint each
-commit and test each push on the pushed commits alone, in `.worktrees/pre-push`
-(`git config core.hooksPath tools/githooks` on a new clone).
+commit (`git config core.hooksPath tools/githooks` on a new clone).
 
 ## Commits
 

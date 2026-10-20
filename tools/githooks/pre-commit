@@ -1,6 +1,6 @@
 #!/bin/sh
 # Fast checks before every commit: lint the staged Python as staged, and keep game text and private notes
-# out of the repo. Other sessions' unstaged edits do not block it; the full suite runs at push (pre-push).
+# out of the repo. Other sessions' unstaged edits do not block it.
 for file in $(git diff --cached --name-only --diff-filter=ACMR -- '*.py'); do
   git show ":$file" | uv run -q ruff check -q --stdin-filename "$file" - || exit 1
 done
