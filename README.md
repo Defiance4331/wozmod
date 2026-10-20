@@ -18,8 +18,8 @@ options.
 ## What you get
 
 - **English text** in menus, battles and story scenes. Most lines are the
-  official English from Warriors Orochi and Warriors Orochi 2. We translated
-  the rest.
+  official English from Warriors Orochi and Warriors Orochi 2. The rest was
+  translated for wozmod.
 - **English voices** from the same games. Lines with no English recording keep
   their Japanese voice.
 - **English menu art** in the style of the original menus, drawn sharper on
@@ -49,7 +49,7 @@ options.
    - **Warriors Orochi 2 for PSP** (the US release), as a disc image (`.iso`).
 
    wozmod reads the official English text, art and voices from these games
-   when you install it. We cannot include them, because they belong to Koei
+   when you install it. They cannot be included, because they belong to Koei
    Tecmo. You need all three.
 3. **A decryption program for the Xbox 360 files, and one for the PSP
    file.** The program files of the three games are encrypted on the disc,
@@ -63,7 +63,7 @@ options.
    | Warriors Orochi 2 for Xbox 360 | `default.xex` |
    | Warriors Orochi 2 for PSP | `PSP_GAME/SYSDIR/EBOOT.BIN` |
 
-   We tested wozmod with the programs listed under
+   wozmod was tested with the programs listed under
    [Tested decryption programs](#tested-decryption-programs). Other programs
    may not work.
 
@@ -88,8 +88,8 @@ These programs have been tested to produce files that wozmod accepts:
 The installer checks the file a program produces, so any version that gives
 the right file works, and a wrong file is refused.
 
-We do not ship, provide or endorse any tool, and we make no legal claim about
-using one. wozmod only runs the program you choose, on files from your own
+No tool is shipped, provided or endorsed with wozmod, and no legal claim is made
+about using one. wozmod only runs the program you choose, on files from your own
 disc images.
 
 ## Install
