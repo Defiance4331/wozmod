@@ -22,6 +22,7 @@ def build_dll(
     output: Path,
     *,
     log: bool = False,
+    bootlog: bool = False,
     preview: bool = False,
     test: bool = False,
     cell: int = 24,
@@ -42,6 +43,7 @@ def build_dll(
     }
     defines = (
         ("ENRT_LOG",) * log
+        + ("ENRT_BOOTLOG",) * bootlog
         + ("ENRT_TAG_PREVIEW",) * preview
         + ("ENRT_TEST",) * test
         + ("ENRT_RENDER_DISTANCE",) * render_distance

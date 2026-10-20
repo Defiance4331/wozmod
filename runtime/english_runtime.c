@@ -20,6 +20,7 @@
 #include "glyph_raster.h"
 #include "display_fit.h"
 #include "voice_play.h"
+#include "device_hooks.h"
 
 typedef unsigned int u32;
 typedef unsigned short u16;
@@ -2189,7 +2190,15 @@ static struct {
     void *stand_in, *texture;        /* the engine's 4x4 MANAGED texture, and ours while it is in the cell */
 } hires_sheet[HIRES_SHEETS];
 static u32 hires_sheets;
-static void *hires_device;
+static void *hires_device;  /* the device our hi-res textures are made on: the game's at the time */
+
+/* The device the game draws with: its renderer's ([0x140D644]) at +0xC8, as the mode set 0x5CB570 reads it. The game
+   makes two at start (behaviour flags 0x80, then 0x84) and keeps the second. */
+static void *game_device(void)
+{
+    const u8 *renderer = *(const u8 *const volatile *)0x140D644;
+    return renderer ? *(void *const volatile *)(renderer + 0xC8) : 0;
+}
 static u32 area_h;  /* the 16:9 area's height in output px, set with the display size below */
 /* The row after the last stock one, entry 0: the sheet of the Game Settings rows wozmod adds (1-based, 0 = none). */
 static u32 option_sheet;
@@ -2309,6 +2318,10 @@ static void hires_attach(void)
         r->scale = (r->scale & ~HIRES_SCALE_MASK) | (hires_bank_shape[bank] & 0xFF);
         r->sheet = hires_place[bank][i][0], r->origin = hires_place[bank][i][1];
     }
+    hires_device = game_device();
+#ifdef ENRT_BOOTLOG
+    note("boot: hi-res sheets go on device", (u32)hires_device);
+#endif
     if (!hires_device || (file = hires_open()) == INVALID_HANDLE_VALUE)
         return;
     for (s = 0; s < hires_sheets; s++)
@@ -3340,9 +3353,16 @@ static u32 hfr_draw(void)
 typedef long (__stdcall *vs_const_fn)(void *, u32, const float *, u32);
 typedef long (__stdcall *create_device_fn)(void *, u32, u32, void *, u32, void *, void **);
 typedef long (__stdcall *present_fn)(void *, const void *, const void *, void *, const void *);
-static vs_const_fn real_vs_const;
-static present_fn real_present;
-static create_device_fn real_create_device;
+typedef long (__stdcall *reset_fn)(void *, void *);
+typedef long (__stdcall *test_fn)(void *);
+static struct hooks hooks;
+/* A hooked method's original in the object's own vtable */
+#define REAL(type, object, slot) ((type)hook_real(&hooks, (object), (slot)))
+#define SLOT_CREATE_DEVICE 16  /* IDirect3D9 */
+#define SLOT_TEST 3            /* IDirect3DDevice9 from here */
+#define SLOT_RESET 16
+#define SLOT_PRESENT 17
+#define SLOT_VS_CONST 94
 static float lerped[256 * 4];
 
 
@@ -3405,7 +3425,7 @@ static long __stdcall vs_const(void *device, u32 reg, const float *data, u32 cou
 #endif
     trace(1, reg, count, extra, (u32)__builtin_return_address(0), m, 0, data, count * 16);
     if (!hfr_busy || count > 256)
-        return real_vs_const(device, reg, data, count);
+        return REAL(vs_const_fn, device, SLOT_VS_CONST)(device, reg, data, count);
     upload_index++;
     if (!extra) {
         if (n < UPLOADS) {
@@ -3422,18 +3442,24 @@ static long __stdcall vs_const(void *device, u32 reg, const float *data, u32 cou
         } else
             hfr_stats.mismatched++;
     }
-    return real_vs_const(device, reg, data, count);
+    return REAL(vs_const_fn, device, SLOT_VS_CONST)(device, reg, data, count);
 }
 
-static void hook_slot(void *object, u32 slot, void *fn, void *real)
+static int vtable_write(void **at, void *value)
 {
-    void **vtable = *(void ***)object;
     DWORD old;
-    *(void **)real = vtable[slot];
-    if (VirtualProtect(vtable + slot, 4, PAGE_READWRITE, &old)) {
-        vtable[slot] = fn;
-        VirtualProtect(vtable + slot, 4, old, &old);
-    }
+    if (!VirtualProtect(at, 4, PAGE_READWRITE, &old))
+        return 0;
+    *at = value;
+    VirtualProtect(at, 4, old, &old);
+    return 1;
+}
+
+/* fn into the slot of the object's vtable, once per vtable (device_hooks.h) */
+static void hook_slot(void *object, u32 slot, void *fn)
+{
+    if (!hook_put(&hooks, object, slot, fn, vtable_write))
+        note("refused: could not hook vtable slot", slot);
 }
 
 #ifdef ENRT_TEST
@@ -3501,31 +3527,25 @@ static u32 prim_vertices(u32 type, u32 count)
     return type == 1 ? count : type == 2 ? 2 * count : type == 3 ? count + 1 : type == 4 ? 3 * count : count + 2;
 }
 
+typedef long (__stdcall *fn1)(void *);
 typedef long (__stdcall *fn2)(void *, u32);
 typedef long (__stdcall *fn3)(void *, u32, u32);
 typedef long (__stdcall *fn4)(void *, u32, u32, u32);
 typedef long (__stdcall *fn5)(void *, u32, u32, u32, u32);
 typedef long (__stdcall *fn7)(void *, u32, u32, u32, u32, u32, u32);
 typedef long (__stdcall *fn9)(void *, u32, u32, u32, u32, u32, u32, u32, u32);
-static fn2 real_set_vs, real_set_ps, real_set_indices, real_set_decl, real_set_fvf, real_set_viewport;
-static fn3 real_set_texture, real_set_transform, real_set_target;
-static fn4 real_draw;
-static fn5 real_draw_up, real_set_stream;
-static fn7 real_draw_indexed;
-static fn9 real_draw_indexed_up;
-static long (__stdcall *real_vb_lock)(void *, u32, u32, void **, u32);
-static long (__stdcall *real_vb_unlock)(void *);
+typedef long (__stdcall *vb_lock_fn)(void *, u32, u32, void **, u32);
 static struct { void *vb, *data; u32 offset, size, flags, caller; } locks[64];
 
-static long __stdcall t_set_vs(void *d, u32 a) { trace(7, a, 0, 0, 0, 0, 0, 0, 0); return real_set_vs(d, a); }
-static long __stdcall t_set_ps(void *d, u32 a) { trace(15, a, 0, 0, 0, 0, 0, 0, 0); return real_set_ps(d, a); }
-static long __stdcall t_set_indices(void *d, u32 a) { trace(16, a, 0, 0, 0, 0, 0, 0, 0); return real_set_indices(d, a); }
-static long __stdcall t_set_decl(void *d, u32 a) { trace(14, a, 0, 0, 0, 0, 0, 0, 0); return real_set_decl(d, a); }
-static long __stdcall t_set_fvf(void *d, u32 a) { trace(17, a, 0, 0, 0, 0, 0, 0, 0); return real_set_fvf(d, a); }
-static long __stdcall t_set_viewport(void *d, u32 a) { trace(18, 0, 0, 0, 0, 0, 0, (void *)a, 24); return real_set_viewport(d, a); }
-static long __stdcall t_set_texture(void *d, u32 a, u32 b) { trace(9, a, b, 0, 0, 0, 0, 0, 0); return real_set_texture(d, a, b); }
-static long __stdcall t_set_transform(void *d, u32 a, u32 b) { trace(6, a, 0, 0, 0, 0, 0, (void *)b, 64); return real_set_transform(d, a, b); }
-static long __stdcall t_set_target(void *d, u32 a, u32 b) { trace(13, a, b, 0, 0, 0, 0, 0, 0); return real_set_target(d, a, b); }
+static long __stdcall t_set_vs(void *d, u32 a) { trace(7, a, 0, 0, 0, 0, 0, 0, 0); return REAL(fn2, d, 92)(d, a); }
+static long __stdcall t_set_ps(void *d, u32 a) { trace(15, a, 0, 0, 0, 0, 0, 0, 0); return REAL(fn2, d, 107)(d, a); }
+static long __stdcall t_set_indices(void *d, u32 a) { trace(16, a, 0, 0, 0, 0, 0, 0, 0); return REAL(fn2, d, 104)(d, a); }
+static long __stdcall t_set_decl(void *d, u32 a) { trace(14, a, 0, 0, 0, 0, 0, 0, 0); return REAL(fn2, d, 87)(d, a); }
+static long __stdcall t_set_fvf(void *d, u32 a) { trace(17, a, 0, 0, 0, 0, 0, 0, 0); return REAL(fn2, d, 89)(d, a); }
+static long __stdcall t_set_viewport(void *d, u32 a) { trace(18, 0, 0, 0, 0, 0, 0, (void *)a, 24); return REAL(fn2, d, 47)(d, a); }
+static long __stdcall t_set_texture(void *d, u32 a, u32 b) { trace(9, a, b, 0, 0, 0, 0, 0, 0); return REAL(fn3, d, 65)(d, a, b); }
+static long __stdcall t_set_transform(void *d, u32 a, u32 b) { trace(6, a, 0, 0, 0, 0, 0, (void *)b, 64); return REAL(fn3, d, 44)(d, a, b); }
+static long __stdcall t_set_target(void *d, u32 a, u32 b) { trace(13, a, b, 0, 0, 0, 0, 0, 0); return REAL(fn3, d, 37)(d, a, b); }
 
 static u32 stack_calls(const u32 *sp, u32 *out)
 {
@@ -3541,27 +3561,27 @@ static long __stdcall t_draw(void *d, u32 a, u32 b, u32 c)
 {
     u32 calls[16];
     trace(2, a, b, c, 0, 0, 0, calls, 4 * stack_calls((const u32 *)&d, calls));
-    return real_draw(d, a, b, c);
+    return REAL(fn4, d, 81)(d, a, b, c);
 }
 static long __stdcall t_draw_up(void *d, u32 a, u32 b, u32 c, u32 e)
 {
     trace(4, a, b, e, 0, 0, 0, (void *)c, prim_vertices(a, b) * e);
-    return real_draw_up(d, a, b, c, e);
+    return REAL(fn5, d, 83)(d, a, b, c, e);
 }
 static long __stdcall t_draw_indexed(void *d, u32 a, u32 b, u32 c, u32 e, u32 g, u32 h)
 {
     u32 calls[16];
     trace(3, a, b, c, e, g, h, calls, 4 * stack_calls((const u32 *)&d, calls));
-    return real_draw_indexed(d, a, b, c, e, g, h);
+    return REAL(fn7, d, 82)(d, a, b, c, e, g, h);
 }
 static long __stdcall t_draw_indexed_up(void *d, u32 a, u32 b, u32 c, u32 e, u32 g, u32 h, u32 i, u32 j)
 {
     trace(5, a, b, c, e, h, j, (const u8 *)i + b * j, c * j);
-    return real_draw_indexed_up(d, a, b, c, e, g, h, i, j);
+    return REAL(fn9, d, 84)(d, a, b, c, e, g, h, i, j);
 }
 static long __stdcall t_vb_lock(void *vb, u32 offset, u32 size, void **data, u32 flags)
 {
-    long r = real_vb_lock(vb, offset, size, data, flags);
+    long r = REAL(vb_lock_fn, vb, 11)(vb, offset, size, data, flags);
     u32 i, desc[6];
     if (trace_on && r >= 0 && !size && ((long (__stdcall *)(void *, u32 *))(*(void ***)vb)[13])(vb, desc) >= 0)
         size = desc[4] - offset;
@@ -3583,32 +3603,32 @@ static long __stdcall t_vb_unlock(void *vb)
             locks[i].vb = 0;
             break;
         }
-    return real_vb_unlock(vb);
+    return REAL(fn1, vb, 12)(vb);
 }
 static long __stdcall t_set_stream(void *d, u32 a, u32 b, u32 c, u32 e)
 {
     trace(8, a, b, c, e, 0, 0, 0, 0);
-    if (b && !real_vb_lock)
-        hook_slot((void *)b, 11, (void *)t_vb_lock, &real_vb_lock), hook_slot((void *)b, 12, (void *)t_vb_unlock, &real_vb_unlock);
-    return real_set_stream(d, a, b, c, e);
+    if (b)
+        hook_slot((void *)b, 11, (void *)t_vb_lock), hook_slot((void *)b, 12, (void *)t_vb_unlock);
+    return REAL(fn5, d, 100)(d, a, b, c, e);
 }
 
 static void trace_hooks(void *device)
 {
-    hook_slot(device, 92, (void *)t_set_vs, &real_set_vs);
-    hook_slot(device, 107, (void *)t_set_ps, &real_set_ps);
-    hook_slot(device, 104, (void *)t_set_indices, &real_set_indices);
-    hook_slot(device, 87, (void *)t_set_decl, &real_set_decl);
-    hook_slot(device, 89, (void *)t_set_fvf, &real_set_fvf);
-    hook_slot(device, 47, (void *)t_set_viewport, &real_set_viewport);
-    hook_slot(device, 65, (void *)t_set_texture, &real_set_texture);
-    hook_slot(device, 44, (void *)t_set_transform, &real_set_transform);
-    hook_slot(device, 37, (void *)t_set_target, &real_set_target);
-    hook_slot(device, 81, (void *)t_draw, &real_draw);
-    hook_slot(device, 83, (void *)t_draw_up, &real_draw_up);
-    hook_slot(device, 82, (void *)t_draw_indexed, &real_draw_indexed);
-    hook_slot(device, 84, (void *)t_draw_indexed_up, &real_draw_indexed_up);
-    hook_slot(device, 100, (void *)t_set_stream, &real_set_stream);
+    hook_slot(device, 92, (void *)t_set_vs);
+    hook_slot(device, 107, (void *)t_set_ps);
+    hook_slot(device, 104, (void *)t_set_indices);
+    hook_slot(device, 87, (void *)t_set_decl);
+    hook_slot(device, 89, (void *)t_set_fvf);
+    hook_slot(device, 47, (void *)t_set_viewport);
+    hook_slot(device, 65, (void *)t_set_texture);
+    hook_slot(device, 44, (void *)t_set_transform);
+    hook_slot(device, 37, (void *)t_set_target);
+    hook_slot(device, 81, (void *)t_draw);
+    hook_slot(device, 83, (void *)t_draw_up);
+    hook_slot(device, 82, (void *)t_draw_indexed);
+    hook_slot(device, 84, (void *)t_draw_indexed_up);
+    hook_slot(device, 100, (void *)t_set_stream);
 }
 #endif
 
@@ -3719,8 +3739,63 @@ static void monitor_mode(u32 *w, u32 *h)
     *w = monitor_w, *h = monitor_h;
 }
 
+/* Borderless shows the output at present_to on the desktop, its shape kept, through a destination rectangle where
+   Present takes one (DXVK, on any swap chain). D3D9 itself takes it only on a COPY swap chain, which the engine's setup
+   cannot use (it reads back each of its two back buffers, 0x5C980C), and refuses every Present with it. From the first
+   refusal the picture goes into a child window at present_to, over a black child filling the frameless window (the
+   bars), through Present's window override with no rectangles. Presenting into a child window halves the
+   frame rate under Proton, so it is not used where the rectangle works. Both children pass the mouse through, so the
+   game's window gets every cursor message as before (the game never reads its mouse device). */
+#define D3DERR_INVALIDCALL ((long)0x8876086C)
+static HWND bars_window, picture_window;
+static int rect_refused;
+
+static LRESULT CALLBACK view_proc(HWND window, UINT message, WPARAM w, LPARAM l)
+{
+    return message == WM_NCHITTEST ? HTTRANSPARENT : DefWindowProcW(window, message, w, l);
+}
+
+/* The window Present draws into: the picture's while borderless (made, or moved to present_to), else the game's. */
+static HWND present_window(HWND game)
+{
+    static RECT bars_at, picture_at;
+    RECT bars;
+    if (display_mode != BORDERLESS || !game) {
+        if (bars_window)
+            DestroyWindow(bars_window), bars_window = picture_window = 0;  /* the picture goes with its parent */
+        return 0;
+    }
+    if (!bars_window) {
+        WNDCLASSW c = {0, view_proc, 0, 0, GetModuleHandleW(0), 0, 0, 0, 0, L"wozmod-bars"};
+        c.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+        RegisterClassW(&c);  /* fails harmlessly once registered */
+        c.hbrBackground = 0, c.lpszClassName = L"wozmod-picture";
+        RegisterClassW(&c);
+        bars_window = CreateWindowExW(0, L"wozmod-bars", 0, WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, 0, 0, 0, 0, game, 0,
+                                      GetModuleHandleW(0), 0);
+        picture_window = bars_window ? CreateWindowExW(0, L"wozmod-picture", 0, WS_CHILD | WS_VISIBLE, 0, 0, 0, 0,
+                                                       bars_window, 0, GetModuleHandleW(0), 0) : 0;
+        SetRectEmpty(&bars_at), SetRectEmpty(&picture_at);
+        if (!picture_window) {
+            note("refused: borderless picture window", GetLastError());
+            if (bars_window)
+                DestroyWindow(bars_window), bars_window = 0;
+            return 0;
+        }
+    }
+    GetClientRect(game, &bars);
+    if (!EqualRect(&bars, &bars_at))
+        bars_at = bars, SetWindowPos(bars_window, HWND_TOP, 0, 0, bars.right, bars.bottom, SWP_NOACTIVATE);
+    if (!EqualRect(&present_to, &picture_at))
+        picture_at = present_to, SetWindowPos(picture_window, 0, present_to.left, present_to.top,
+                                              present_to.right - present_to.left, present_to.bottom - present_to.top,
+                                              SWP_NOACTIVATE | SWP_NOZORDER);
+    return picture_window;
+}
+
 static long __stdcall present(void *device, const void *from, const void *to, void *window, const void *dirty)
 {
+    HWND view;
     static LARGE_INTEGER last, now, rate;
 #ifdef ENRT_LOG
     if (dump_after && !--dump_after)
@@ -3742,9 +3817,21 @@ static long __stdcall present(void *device, const void *from, const void *to, vo
     last = now;
     hfr_stats.presents++;
     trace_present();
-    if (display_mode == BORDERLESS && !to)  /* the output scaled onto the desktop, its shape kept */
-        to = &present_to;
-    result = real_present(device, from, to, window, dirty);
+    view = rect_refused ? present_window(DISPLAY_WINDOW) : 0;
+    if (display_mode == BORDERLESS && !to && !window)  /* the output scaled onto the desktop, its shape kept */
+        to = view ? 0 : &present_to, window = view;
+    result = REAL(present_fn, device, SLOT_PRESENT)(device, from, to, window, dirty);
+    if (result == D3DERR_INVALIDCALL && to == &present_to && (view = (rect_refused = 1, present_window(DISPLAY_WINDOW)))) {
+        note("display: Present refuses a destination rectangle; borderless presents into a child window", 0);
+        result = REAL(present_fn, device, SLOT_PRESENT)(device, from, 0, view, dirty);  /* this frame again */
+    }
+#ifdef ENRT_BOOTLOG
+    {
+        static long failed = 1;
+        if (result < 0 && result != failed)
+            failed = result, note("boot: Present failed", (u32)result);
+    }
+#endif
     PROF(extra ? 5 : 9);
     return result;
 }
@@ -3753,8 +3840,50 @@ static long __stdcall present(void *device, const void *from, const void *to, vo
  * the Reset the engine forgets its current shaders (0x605BE0, from 0x5C9120) and trusts the Reset to unbind them,
  * as D3D9 says it does; DXVK keeps them bound, so the menus, which unbind only what the engine thinks is bound,
  * drew through the battle's shaders. Unbinding both after the Reset matches what the engine expects. */
-typedef long (__stdcall *reset_fn)(void *, void *);
-static reset_fn real_reset;
+
+#ifdef ENRT_BOOTLOG
+/* A one-off build for a start-up hang on native d3d9: the device's creation, its Resets and lost-device tests, and a
+   heartbeat from the message pump, so a log from a frozen boot shows which loop spins. A value of 0 prints bare. */
+static u32 boot_resets, boot_tests;
+static long boot_test_last = 1;
+
+static void boot_params(const char *what, long result, const u32 *p)
+{
+    HWND window = p[7] ? (HWND)p[7] : DISPLAY_WINDOW;
+    RECT client = {0};
+    GetClientRect(window, &client);
+    note(what, (u32)result);
+    note("  window style", (u32)GetWindowLongA(window, GWL_STYLE)), note("  window ex style", (u32)GetWindowLongA(window, GWL_EXSTYLE));
+    note("  window client w << 16 | h", (u32)client.right << 16 | (u32)client.bottom);
+    note("  back buffer w << 16 | h", p[0] << 16 | p[1]), note("  format, count", p[2] << 8 | p[3]);
+    note("  multisample type << 16 | quality", p[4] << 16 | p[5]), note("  swap effect", p[6]);
+    note("  windowed", p[8]), note("  auto depth << 16 | its format", p[9] << 16 | p[10]);
+    note("  flags", p[11]), note("  refresh", p[12]), note("  interval", p[13]);
+}
+
+static long __stdcall boot_test(void *device)
+{
+    long r = REAL(test_fn, device, SLOT_TEST)(device);
+    boot_tests++;
+    if (r != boot_test_last)
+        boot_test_last = r, note("boot: TestCooperativeLevel now", (u32)r), note("boot: at test", boot_tests);
+    return r;
+}
+
+static void boot_beat(void)
+{
+    static DWORD last;
+    HWND window = DISPLAY_WINDOW;
+    const u8 *save = *(const u8 *const volatile *)0xC5DE48;  /* the save state machine (0x5ACF70) */
+    if (GetTickCount() - last < 5000)
+        return;
+    last = GetTickCount();
+    note("boot: beat, Resets tried", boot_resets), note("boot: beat, lost-device tests", boot_tests);
+    note("boot: beat, presents", hfr_stats.presents);
+    note("boot: beat, save state", save ? *(const u32 *)(save + 4) : 0xFFFFFFFF);
+    note("boot: beat, foreground << 1 | minimized", (GetForegroundWindow() == window) << 1 | !!IsIconic(window));
+}
+#endif
 
 static long __stdcall reset(void *device, void *params)
 {
@@ -3762,8 +3891,13 @@ static long __stdcall reset(void *device, void *params)
 #ifdef ENRT_LOG
     state_dump(device, "reset: states before");
 #endif
-    hires_detach();
-    result = real_reset(device, params);
+    if (device == hires_device)  /* no DEFAULT-pool texture of ours may outlive the Reset */
+        hires_detach();
+    result = REAL(reset_fn, device, SLOT_RESET)(device, params);
+#ifdef ENRT_BOOTLOG
+    if (++boot_resets <= 5 || boot_resets % 500 == 0 || result >= 0)
+        boot_params("boot: Reset result", result, params), note("boot: Reset try", boot_resets);
+#endif
     monitor_at = 0;  /* a Reset can follow a desktop mode change */
 #ifdef ENRT_LOG
     note("reset: result", (u32)result);
@@ -3781,48 +3915,63 @@ static long __stdcall reset(void *device, void *params)
 #ifdef ENRT_LOG
 /* The sizes of the game's render targets and depth surfaces, and of its back buffer (w << 16 | h). */
 typedef long (__stdcall *create_fn)(void *, u32, u32, u32, u32, u32, u32, void **, void *);
-static create_fn real_create_texture, real_create_target, real_create_depth;
 
 static long __stdcall create_texture(void *d, u32 w, u32 h, u32 levels, u32 usage, u32 format, u32 pool, void **out,
                                      void *share)
 {
     if (usage & 3)
         note(usage & 1 ? "display: render target texture" : "display: depth texture", w << 16 | h);
-    return real_create_texture(d, w, h, levels, usage, format, pool, out, share);
+    return REAL(create_fn, d, 23)(d, w, h, levels, usage, format, pool, out, share);
 }
 
 static long __stdcall create_target(void *d, u32 w, u32 h, u32 format, u32 ms, u32 q, u32 lock, void **out, void *share)
 {
     note("display: render target", w << 16 | h);
-    return real_create_target(d, w, h, format, ms, q, lock, out, share);
+    return REAL(create_fn, d, 28)(d, w, h, format, ms, q, lock, out, share);
 }
 
 static long __stdcall create_depth(void *d, u32 w, u32 h, u32 format, u32 ms, u32 q, u32 discard, void **out, void *share)
 {
     note("display: depth surface", w << 16 | h);
-    return real_create_depth(d, w, h, format, ms, q, discard, out, share);
+    return REAL(create_fn, d, 29)(d, w, h, format, ms, q, discard, out, share);
 }
 #endif
 
 static long __stdcall create_device(void *d3d, u32 adapter, u32 type, void *window, u32 flags, void *params, void **device)
 {
-    long result = real_create_device(d3d, adapter, type, window, flags, params, device);
-    if (result >= 0)
-        hires_device = *device;
+    long result = REAL(create_device_fn, d3d, SLOT_CREATE_DEVICE)(d3d, adapter, type, window, flags, params, device);
+#ifdef ENRT_BOOTLOG
+    {
+        u32 mode[4] = {0};  /* D3DDISPLAYMODE: width, height, refresh, format */
+        boot_params("boot: CreateDevice result", result, params);
+        note("boot: device type << 16 | adapter", type << 16 | adapter), note("boot: behaviour flags", flags);
+        note("boot: focus window is foreground", GetForegroundWindow() == (HWND)window);
+        if (COM(d3d, 0x20, 3)(d3d, adapter, (u32)mode) >= 0)
+            note("boot: adapter mode w << 16 | h", mode[0] << 16 | mode[1]),
+                note("boot: adapter refresh", mode[2]), note("boot: adapter format", mode[3]);
+        if (result >= 0)
+            hook_slot(*device, SLOT_TEST, (void *)boot_test);
+    }
+#endif
 #ifdef ENRT_LOG
     note("display: device back buffer", ((u32 *)params)[0] << 16 | ((u32 *)params)[1]);
     note("display: device windowed", ((u32 *)params)[8]);
-    if (result >= 0 && !real_create_texture)
-        hook_slot(*device, 23, (void *)create_texture, &real_create_texture),
-            hook_slot(*device, 28, (void *)create_target, &real_create_target),
-            hook_slot(*device, 29, (void *)create_depth, &real_create_depth);
+    if (result >= 0)
+        hook_slot(*device, 23, (void *)create_texture), hook_slot(*device, 28, (void *)create_target),
+            hook_slot(*device, 29, (void *)create_depth);
 #endif
-    if (result >= 0 && !real_reset)
-        hook_slot(*device, 16, (void *)reset, &real_reset);
-    if (result >= 0 && !real_present)
-        hook_slot(*device, 17, (void *)present, &real_present);
-    if (result >= 0 && fps_ok && !real_vs_const)
-        hook_slot(*device, 94, (void *)vs_const, &real_vs_const), trace_hooks(*device);
+    if (result >= 0)  /* every device: each may bring its own vtable */
+        hook_slot(*device, SLOT_RESET, (void *)reset), hook_slot(*device, SLOT_PRESENT, (void *)present);
+    if (result >= 0 && fps_ok)
+        hook_slot(*device, SLOT_VS_CONST, (void *)vs_const), trace_hooks(*device);
+#ifdef ENRT_BOOTLOG
+    if (result >= 0) {  /* the hooks go into the first device's vtable only: does this device share it? */
+        void **vtable = *(void ***)*device;
+        note("boot: device", (u32)*device), note("boot: its vtable", (u32)vtable);
+        note("boot: its Reset << 2 | Present << 1 | TestCooperativeLevel are ours",
+             (vtable[16] == (void *)reset) << 2 | (vtable[17] == (void *)present) << 1 | (vtable[3] == (void *)boot_test));
+    }
+#endif
     return result;
 }
 
@@ -4317,6 +4466,9 @@ static int always(u32 id, struct frame *f, u32 *replace)
         glyph_draw(id, f);
         return 1;
     case 24:
+#ifdef ENRT_BOOTLOG
+        boot_beat();
+#endif
         reload();
         keys_read();
         pads_rescan();
@@ -4948,8 +5100,19 @@ static int display_hook(u32 id, struct frame *f, u32 *replace)
                  its windowed flag as mode == 1, so borderless (2) would make an exclusive full-screen device */
         f->eax = display_mode == MODE_FROM_SAVE ? WINDOWED_BYTE != 0
                : f->ret == 0x5CB8E2 || f->ret == 0x5CBB32 ? display_mode != 0 : display_mode, *replace = 1;
+#ifdef ENRT_BOOTLOG
+        {
+            static u32 asked;
+            if (asked++ < 12)
+                note("boot: display mode asked from", f->ret), note("boot: display mode answer", f->eax);
+        }
+#endif
         return 1;
     case 89:
+#ifdef ENRT_BOOTLOG
+        if (f->ret == 0x47C981)
+            note("boot: first-run display mode default skipped", f->arg[0]);
+#endif
         if (f->ret != 0x47C981 && f->arg[0] < 3 && f->arg[0] != display_mode) {
             u32 was = display_mode == MODE_FROM_SAVE ? WINDOWED_BYTE != 0 : display_mode;
             display_mode = f->arg[0], WINDOWED_BYTE = display_mode != 0;
@@ -5374,8 +5537,8 @@ __declspec(dllexport) void *WINAPI Direct3DCreate9(UINT version)
     }
     {
         void *d3d = real(version);
-        if (d3d && !real_create_device)
-            hook_slot(d3d, 16, (void *)create_device, &real_create_device);
+        if (d3d)
+            hook_slot(d3d, SLOT_CREATE_DEVICE, (void *)create_device);
         return d3d;
     }
 }

@@ -255,10 +255,11 @@ def compile_dll(output: Path, header: str, defines: tuple[str, ...] = ()) -> Non
     flags = ["-std=c11", "-O2", "-Wall", "-Werror", "-shared", "-static-libgcc",
              "-fno-asynchronous-unwind-tables", *(f"-D{d}" for d in defines),
              f"-Wl,--no-insert-timestamp,--kill-at,--disable-dynamicbase,--image-base,{DLL_BASE:#x}",
-             "-o", "d3d9.dll", "english_runtime.c"]
+             "-o", "d3d9.dll", "english_runtime.c", "-lgdi32"]  # gdi32: the borderless bars' black brush
     with tempfile.TemporaryDirectory() as tmp:
         shutil.copyfile(C_SOURCE, Path(tmp, "english_runtime.c"))
-        for name in ("text_fit.h", "glyph_raster.h", "display_fit.h", "troop_ring.h", "hfr_pair.h", "voice_play.h"):
+        for name in ("text_fit.h", "glyph_raster.h", "display_fit.h", "troop_ring.h", "hfr_pair.h", "voice_play.h",
+                     "device_hooks.h"):
             shutil.copyfile(C_SOURCE.with_name(name), Path(tmp, name))
         Path(tmp, "enrt_data.h").write_text(header, encoding="utf-8")
         if shutil.which("i686-w64-mingw32-gcc"):

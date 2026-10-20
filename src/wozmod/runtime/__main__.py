@@ -17,6 +17,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--test", action="store_true",
                         help="ENRT_TEST: the harness screen, wait, route and tour commands")
     parser.add_argument("--log", action="store_true", help="ENRT_LOG: text and quad log")
+    parser.add_argument("--bootlog", action="store_true",
+                        help="ENRT_BOOTLOG: device creation, Resets, lost-device tests and a heartbeat")
     parser.add_argument("--preview", action="store_true",
                         help="ENRT_TAG_PREVIEW: also nops five unlock jumps; not a layout build")
     parser.add_argument("--with-render-distance", action="store_true",
@@ -30,7 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.game is None:
         parser.error("pass --game or set WOZMOD_GAME")
     dll = build_dll(Path(args.game) / "OROCHI_Z.exe", args.output_dir / "d3d9.dll",
-                    log=args.log, preview=args.preview, test=args.test, cell=args.cell,
+                    log=args.log, bootlog=args.bootlog, preview=args.preview, test=args.test, cell=args.cell,
                     render_distance=args.with_render_distance, moving_fix=args.with_moving_camera_fix)
     print(f"{dll} sha256 {hashlib.sha256(dll.read_bytes()).hexdigest()}")
     return 0
