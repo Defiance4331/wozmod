@@ -36,10 +36,6 @@ options.
   right stick.
 - **Closing the game window quits the game** at once.
 
-wozmod does not change the game's own files. It adds a file, `d3d9.dll`, and a
-folder, `wozmod`, to the game folder. The `wozmod` folder takes about 3.1 GB,
-1.6 GB of it the movies.
-
 ## What you need
 
 1. **Musou Orochi Z for Windows** (the Japanese release), a copy you own,
