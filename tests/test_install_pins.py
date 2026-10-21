@@ -16,7 +16,8 @@ from wozmod.runtime.build import build_dll
                     reason="set WOZMOD_RUNTIME_COMPILE=1 and WOZMOD_GAME")
 def test_pinned_dll_is_the_release_build_of_this_runtime(tmp_path: Path) -> None:
     """Bug: the runtime changed after the last pin refresh, so every install from this checkout ships the old
-    d3d9.dll without the change (the camera fix and lip sync were missing this way). Refresh: build with
+    d3d9.dll without the change (the camera fix and lip sync were missing this way). A compiler update also changes
+    the bytes; treat it like a runtime change and play-test the new DLL before releasing it. Refresh: build with
     `python -m wozmod.runtime --game <stock> --output-dir DIR` and put its size and SHA-256 in wozmod.install.DLL."""
     built = build_dll(Path(os.environ["WOZMOD_GAME"]) / "OROCHI_Z.exe", tmp_path / "d3d9.dll").read_bytes()
     assert (len(built), hashlib.sha256(built).hexdigest()) == DLL
