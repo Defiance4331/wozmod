@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import shutil
+import subprocess
+import sys
 import time
 import tkinter
 from pathlib import Path
@@ -52,10 +56,34 @@ def test_settings_survive_a_restart_and_a_broken_file_is_ignored():
     assert remembered.load_settings() == {}
 
 
-@pytest.fixture
-def shown(monkeypatch):
+@pytest.fixture(scope="session")
+def screen():
+    """The display the window tests draw on. On Linux it is a private Xvfb, so the scroll and keyboard tests, which
+    must show the window, never open it on the developer's desktop; elsewhere it is the usual one."""
+    if sys.platform != "linux":
+        yield None
+        return
+    if not shutil.which("Xvfb"):
+        pytest.skip("install Xvfb (Fedora: xorg-x11-server-Xvfb) to run the window tests off the desktop")
+    read, write = os.pipe()
+    xvfb = subprocess.Popen(["Xvfb", "-displayfd", str(write), "-screen", "0", "1920x1080x24", "-nolisten", "tcp"],
+                            pass_fds=(write,), stderr=subprocess.DEVNULL)
+    os.close(write)
+    with os.fdopen(read) as ready:
+        number = ready.readline().strip()  # Xvfb writes its display number once it accepts clients
     try:
-        root = tkinter.Tk()
+        if not number:
+            pytest.skip("Xvfb did not start")
+        yield f":{number}"
+    finally:
+        xvfb.terminate()
+        xvfb.wait()
+
+
+@pytest.fixture
+def shown(monkeypatch, screen):
+    try:
+        root = tkinter.Tk(screenName=screen)
     except tkinter.TclError:
         pytest.skip("no display for Tk")
     root.withdraw()
@@ -241,7 +269,7 @@ def test_advanced_is_collapsed_by_default_and_opens_when_a_value_was_saved(shown
     win.toggle_advanced()
     assert win.advanced_open and win.advanced_widgets[0].winfo_manager()
     remembered.save_settings({"psp-file": "/some/EBOOT.BIN"})
-    again = tkinter.Tk()
+    again = tkinter.Tk(screenName=root.winfo_screen())
     again.withdraw()
     try:
         saved = window.SetupWindow(again)
