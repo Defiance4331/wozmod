@@ -202,8 +202,9 @@ wozmod install --game "<Musou Orochi Z folder>" \
 ```
 
 - **Already decrypted files:** use `--wo1-x360-file`, `--x360-file` or
-  `--psp-file` in place of `--x360-tool` or `--psp-tool`. If you give both,
-  wozmod uses the file and does not run the program.
+  `--psp-file` in place of `--x360-tool` or `--psp-tool`. Give one or the
+  other: if you give a file and the program it stands in for, or a file your
+  disc image already holds, wozmod says so and stops.
 - **Update:** run the same command with the new release. To reinstall the
   same version, or go back to an older one, add `--force`.
 - **Uninstall:** run `wozmod uninstall --game "<Musou Orochi Z folder>"`. Add

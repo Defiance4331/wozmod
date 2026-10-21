@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 from itertools import pairwise
 import json
@@ -13,7 +14,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import checkout
+import prepare_run
 import pytest
+from synthetic import pe_image
 
 
 SPEC = importlib.util.spec_from_file_location(
@@ -24,13 +27,10 @@ SPEC.loader.exec_module(harness)
 
 
 def _staged(game: Path) -> Path:
-    """A run folder as prepare_run.py leaves it: one mod file, its game.sha256 line and its stamp."""
+    """A run folder as prepare_run.py leaves it: one mod file and its record."""
     (game / "wozmod").mkdir(parents=True, exist_ok=True)
     (game / "wozmod/table.bin").write_bytes(b"mod")
-    info = (game / "wozmod/table.bin").stat()
-    (game.parent / "game.sha256").write_text(f"{harness.hashlib.sha256(b'mod').hexdigest()}  wozmod/table.bin\n")
-    (game.parent / "fixtures.json").write_text(json.dumps(
-        {"stamps": {"wozmod/table.bin": [info.st_size, info.st_mtime_ns, info.st_ino]}}))
+    prepare_run.write_record(game.parent, {"wozmod/table.bin": hashlib.sha256(b"mod").hexdigest()}, {})
     return game
 
 
@@ -90,11 +90,17 @@ def test_control_round_trip(tmp_path, monkeypatch):
     assert harness.exit_record(tmp_path, 139, False)["reason"] == "stopped"
 
 
-def test_launch_boundaries_and_isolation(tmp_path, monkeypatch):
-    monkeypatch.setattr(checkout, "REPO", tmp_path)  # the game slot's Steam runtime, never the machine's template
+def _slot_runtime(tmp_path: Path, monkeypatch) -> Path:
+    """A main checkout in tmp_path with the first game slot's Steam runtime, so a launch never reads the machine's."""
+    monkeypatch.setattr(checkout, "REPO", tmp_path)
     steamrt = tmp_path / "work/runtime-tests/_template/steamrt"
     steamrt.mkdir(parents=True)
     (steamrt / "run").write_text("")
+    return steamrt
+
+
+def test_launch_boundaries_and_isolation(tmp_path, monkeypatch):
+    steamrt = _slot_runtime(tmp_path, monkeypatch)
     root = tmp_path / "run"
     root.mkdir()
     game = _staged(root / "game")
@@ -111,6 +117,10 @@ def test_launch_boundaries_and_isolation(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="symlinks"):
         harness.run(root, args)
     (root / "prefix").unlink()
+    (game / "wozmod/table.bin").write_bytes(b"mud")  # a build changed since staging is never launched
+    with pytest.raises(ValueError, match="changed since"):
+        harness.run(root, args)
+    (game / "wozmod/table.bin").write_bytes(b"mod")
     calls = []
 
     def launch(command, **kwargs):
@@ -135,7 +145,7 @@ def test_launch_boundaries_and_isolation(tmp_path, monkeypatch):
 
 def test_size_renders_and_outputs_unscaled(tmp_path, monkeypatch):
     """Bug: --size is dropped (the run renders 1080p) or still upscales with FSR, so an ultrawide capture is wrong."""
-    monkeypatch.setattr(harness, "REPO", tmp_path)
+    _slot_runtime(tmp_path, monkeypatch)
     root = tmp_path / "work/runtime-tests/wide"
     game = _staged(root / "game")
     (root / "launch.sh").write_text("exit 0\n")
@@ -154,7 +164,7 @@ def test_size_renders_and_outputs_unscaled(tmp_path, monkeypatch):
 
 def test_xenia_launch_keeps_native_frame_and_save_inside_its_storage(tmp_path, monkeypatch):
     """Bug: the reference emulator inherits MOZ scaling/save edits or accepts another run store."""
-    monkeypatch.setattr(harness, "REPO", tmp_path)
+    monkeypatch.setattr(checkout, "REPO", tmp_path)
     monkeypatch.setenv("MUSOU_HARNESS_HZ", "120")
     root = tmp_path / "work/xenia/runs/reference"
     game = root / "game"
@@ -217,7 +227,7 @@ def test_click_rejects_points_outside_the_run_frame_before_delivery(tmp_path, mo
     monkeypatch.delenv("GAMESCOPE_WAYLAND_DISPLAY", raising=False)
     with pytest.raises(ValueError, match="isolated"):
         harness.click_point(100, 200)
-    monkeypatch.setattr(harness, "REPO", tmp_path)
+    monkeypatch.setattr(checkout, "REPO", tmp_path)
     root = tmp_path / "work/xenia/runs/click-test"
     (root / "evidence").mkdir(parents=True)
     harness.write_json(root / "evidence/session.json", {"render_size": [1280, 720]})
@@ -238,7 +248,7 @@ def test_click_rejects_points_outside_the_run_frame_before_delivery(tmp_path, mo
 def test_key_command_keeps_one_key_request_and_times_sequences(tmp_path, monkeypatch):
     root = tmp_path / "work/runtime-tests/run"
     root.mkdir(parents=True)
-    monkeypatch.setattr(harness, "REPO", tmp_path)
+    monkeypatch.setattr(checkout, "REPO", tmp_path)
     sent = []
     monkeypatch.setattr(harness, "send", lambda root, request, timeout: sent.append((request, timeout)) or {"ok": True})
     assert harness.main(["key", "--root", str(root), "Return"]) == 0
@@ -345,10 +355,7 @@ def test_test_mailbox_screen_wait_and_say(tmp_path, monkeypatch):
     image = mmap.mmap(-1, 0x1000 + harness.TEST_SIZE + 0x20)  # the DLL's header page, then its .data section
     base = ctypes.addressof(ctypes.c_char.from_buffer(image))
     monkeypatch.setattr(harness, "DLL_BASE", base)
-    image[:2] = b"MZ"
-    struct.pack_into("<I", image, 0x3C, 0x40)
-    struct.pack_into("<4sHH12xH", image, 0x40, b"PE\0\0", 0x14C, 1, 0)
-    struct.pack_into("<8sII", image, 0x40 + 24, b".data", harness.TEST_SIZE + 0x20, 0x1000)
+    image[:0x1000] = pe_image(0x1000, (b".data", harness.TEST_SIZE + 0x20, 0x1000, 0, 0))
     block = 0x1010
     image[block:block + 24] = struct.pack("<16s2I", harness.TEST_MAGIC, harness.TEST_VERSION, harness.TEST_SIZE)
 
@@ -506,6 +513,7 @@ def test_renderer_review_refuses_rectangles_that_wrap_the_game_uv_fields():
 @pytest.mark.parametrize("script, reason", [("exit 0\n", "quit"), ("exit 5\n", "crash")])
 def test_ended_run_tells_a_crash_from_a_quit(tmp_path, monkeypatch, script, reason):
     """Bug: a game crash and a quit both end the harness with 139, so a crash reads as a clean exit."""
+    _slot_runtime(tmp_path, monkeypatch)
     root = tmp_path / "run"
     _staged(root / "game")
     (root / "launch.sh").write_text(script)
@@ -523,15 +531,15 @@ def test_ended_run_tells_a_crash_from_a_quit(tmp_path, monkeypatch, script, reas
     monkeypatch.setattr(harness.subprocess, "Popen", launch)
     args = argparse.Namespace(authorize_launch=True, game=root / "game", target=harness.TARGET, timeout=30, pad=False)
     assert harness.run(root, args) == 139
-    record = json.loads((root / "evidence/exit.json").read_text())
+    record = harness.exit_info(root)
     assert record["reason"] == reason and record["game_returncode"] == int(script.split()[1])
-    with pytest.raises(ValueError, match=f"the run has ended: {reason}"):
+    with pytest.raises(ValueError, match=rf"the run has ended: {reason} \(game exit status {script.split()[1]}\)"):
         harness.send(root, {"action": "status"}, 1)
 
 
 def test_server_reports_its_end_and_never_exits_into_gamescope(tmp_path, monkeypatch):
     """Bug: the server exits after a start failure, so gamescope runs its exit path and segfaults."""
-    monkeypatch.setattr(harness, "REPO", tmp_path)
+    monkeypatch.setattr(checkout, "REPO", tmp_path)
     root = tmp_path / "work/runtime-tests/serve-test"
     (root / "control").mkdir(parents=True)
 
@@ -553,6 +561,7 @@ def test_server_reports_its_end_and_never_exits_into_gamescope(tmp_path, monkeyp
 
 def test_run_kills_the_sandbox_once_the_server_ends(tmp_path, monkeypatch):
     """Bug: the supervisor waits for gamescope to exit on its own, and gamescope segfaults on exit."""
+    _slot_runtime(tmp_path, monkeypatch)
     root = tmp_path / "run"
     _staged(root / "game")
     (root / "launch.sh").write_text("exit 0\n")
@@ -573,7 +582,7 @@ def test_run_kills_the_sandbox_once_the_server_ends(tmp_path, monkeypatch):
     args = argparse.Namespace(authorize_launch=True, game=root / "game", target=harness.TARGET, timeout=30, pad=False)
     assert harness.run(root, args) == 0
     assert killed == [(4242, harness.signal.SIGKILL)]
-    assert json.loads((root / "evidence/exit.json").read_text())["reason"] == "stopped"
+    assert harness.exit_info(root)["reason"] == "stopped"
 
 
 def test_route_library_reaches_every_screen_and_back_to_the_menu():
@@ -645,17 +654,18 @@ def test_route_resumes_where_it_left_and_stops_after_outside_input(tmp_path, mon
     assert len(sent) == before
 
 
-def test_run_root_is_this_repository_work_runtime_tests(tmp_path, monkeypatch):
-    """Bug: a harness that still points at another checkout accepts its runs and refuses wozmod's own."""
-    assert harness.REPO == Path(__file__).resolve().parents[1]
-    monkeypatch.setattr(harness, "REPO", tmp_path)
+def test_run_root_is_the_main_checkouts_work_from_any_worktree(tmp_path, monkeypatch, linked_worktree):
+    """Bugs: a harness started from a linked worktree refuses the runs prepare_run.py staged in the main checkout's
+    work/, or accepts runs under the worktree's own work/ or another checkout's."""
+    main, worktree = linked_worktree
+    monkeypatch.setattr(checkout, "REPO", worktree)
     sent = []
     monkeypatch.setattr(harness, "send", lambda root, request, timeout: sent.append(root) or {"ok": True})
-    mine, xenia = tmp_path / "work/runtime-tests/run", tmp_path / "work/xenia/runs/run"
-    refused = [tmp_path / "work/runtime-tests", tmp_path / "old/work/runtime-tests/run"]
+    mine, xenia = main / "work/runtime-tests/run", main / "work/xenia/runs/run"
+    refused = [main / "work/runtime-tests", worktree / "work/runtime-tests/run", tmp_path / "old/work/runtime-tests/run"]
     for root in [mine, xenia, *refused]:
         root.mkdir(parents=True, exist_ok=True)
-    assert [harness.main(["status", "--root", str(root)]) for root in (mine, xenia, *refused)] == [0, 0, 1, 1]
+    assert [harness.main(["status", "--root", str(root)]) for root in (mine, xenia, *refused)] == [0, 0, 1, 1, 1]
     assert sent == [mine.resolve(), xenia.resolve()]
 
 
@@ -671,10 +681,7 @@ def fake_game(monkeypatch, quad_visible):
     image = mmap.mmap(-1, 0x1000 + harness.TEST_SIZE + 0x20)
     base = ctypes.addressof(ctypes.c_char.from_buffer(image))
     monkeypatch.setattr(harness, "DLL_BASE", base)
-    image[:2] = b"MZ"
-    struct.pack_into("<I", image, 0x3C, 0x40)
-    struct.pack_into("<4sHH12xH", image, 0x40, b"PE\0\0", 0x14C, 1, 0)
-    struct.pack_into("<8sII", image, 0x40 + 24, b".data", harness.TEST_SIZE + 0x20, 0x1000)
+    image[:0x1000] = pe_image(0x1000, (b".data", harness.TEST_SIZE + 0x20, 0x1000, 0, 0))
     block = 0x1010
     image[block:block + 24] = struct.pack("<16s2I", harness.TEST_MAGIC, harness.TEST_VERSION, harness.TEST_SIZE)
     quads = block + harness.TEST_SNAPSHOT + 12 + harness.TEST_TEXTS * harness.TEST_TEXT.size
@@ -751,7 +758,7 @@ def test_wait_command_sends_capture_and_allows_time_for_the_screenshot(tmp_path,
     """Bug: the --capture flag is dropped before the request, or the client gives up before the shot."""
     root = tmp_path / "work/runtime-tests/run"
     root.mkdir(parents=True)
-    monkeypatch.setattr(harness, "REPO", tmp_path)
+    monkeypatch.setattr(checkout, "REPO", tmp_path)
     sent = []
     monkeypatch.setattr(harness, "send", lambda root, request, timeout: sent.append((request, timeout)) or {"ok": True})
     assert harness.main(["wait", "--root", str(root), "--text", "x", "--timeout", "60"]) == 0
@@ -1200,7 +1207,6 @@ def test_stage_keys_land_on_every_stage_by_the_games_own_cursor_rules():
 def test_staged_run_sees_the_template_prefix_through_an_overlay_on_its_own_folder(tmp_path, monkeypatch):
     """Bug: the overlay is missing, or mounted before the run's own bind hides it, so Proton finds an empty
     prefix (or writes into the shared template) and the run plays a different Wine setup than the template's."""
-    monkeypatch.setattr(harness, "REPO", tmp_path)
     monkeypatch.setattr(checkout, "REPO", tmp_path)
     root = tmp_path / "work/runtime-tests/overlay"
     _staged(root / "game")
@@ -1242,14 +1248,11 @@ def test_check_report_names_the_shortcuts_behind_each_capture(tmp_path, monkeypa
     assert driver.shortcuts == {"save-prompt": ["win"], "customize-fusion-weapons": ["unlock"], "options": ["unlock"]}
 
 
-def test_two_runs_hold_the_two_game_slots_and_a_third_waits_across_worktrees(tmp_path, monkeypatch):
+def test_two_runs_hold_the_two_game_slots_and_a_third_waits_across_worktrees(monkeypatch, linked_worktree):
     """Bugs: two runs lock the same slot file (one waits for nothing, or both slots go to one run), a third run
     starts while two games are up, or a linked worktree locks slots of its own and starts a third game."""
-    main, worktree = tmp_path / "main", tmp_path / "worktree"
-    (main / "work").mkdir(parents=True)
-    (main / ".git/worktrees/worktree").mkdir(parents=True)
-    worktree.mkdir()
-    (worktree / ".git").write_text(f"gitdir: {main / '.git/worktrees/worktree'}\n")
+    main, worktree = linked_worktree
+    (main / "work").mkdir()
     monkeypatch.setattr(checkout, "REPO", main)
     first, _ = harness.take_slot(0.01)
     monkeypatch.setattr(checkout, "REPO", worktree)
@@ -1267,7 +1270,6 @@ def test_two_runs_hold_the_two_game_slots_and_a_third_waits_across_worktrees(tmp
 def test_two_games_at_once_each_run_their_own_writable_steam_runtime(tmp_path, monkeypatch):
     """Bug: both game slots launch the same Steam runtime, so two games share pressure-vessel's var/; or the runtime
     is left read-only (or bound as two mounts), so pressure-vessel cannot hard-link it into var/."""
-    monkeypatch.setattr(harness, "REPO", tmp_path)
     monkeypatch.setattr(checkout, "REPO", tmp_path)
     template = tmp_path / "work/runtime-tests/_template"
     for runtime in harness.RUNTIMES:
@@ -1328,20 +1330,3 @@ def test_video_pins_the_screen_stream_to_bgrx(tmp_path, monkeypatch):
     command = calls[0]
     link = command.index("!", command.index("pipewiresrc"))
     assert command[link + 1] == "video/x-raw,format=BGRx"
-
-
-def test_launch_hashes_only_mod_files_whose_stamp_moved_and_refuses_a_changed_or_missing_one(tmp_path, monkeypatch):
-    """Bug: the launch trusts a rewritten mod file because a stamp exists, refuses a file only touched, or goes back
-    to reading the whole multi-GB copy on every launch."""
-    game = _staged(tmp_path / "run/game")
-    monkeypatch.setattr(harness.hashlib, "file_digest", lambda *a: pytest.fail("an unchanged file was read"))
-    harness.check_game(tmp_path / "run", game)
-    monkeypatch.undo()
-    os.utime(game / "wozmod/table.bin")  # touched, same bytes
-    harness.check_game(tmp_path / "run", game)
-    (game / "wozmod/table.bin").write_bytes(b"mud")
-    with pytest.raises(ValueError, match="changed"):
-        harness.check_game(tmp_path / "run", game)
-    (game / "wozmod/table.bin").unlink()
-    with pytest.raises(ValueError, match="lost"):
-        harness.check_game(tmp_path / "run", game)

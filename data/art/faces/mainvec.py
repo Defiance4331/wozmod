@@ -66,7 +66,6 @@ BEARINGS = {"A": (-3.02, -3.23), "C": (1.77, 1.77), "D": (1.37, 1.84), "E": (1.1
             "O": (2.14, 2.2), "P": (0.63, 2.84), "Q": (2.14, -6.93), "R": (1.45, -1.15), "S": (2.96, 3.38),
             "T": (-0.66, 0.25), "U": (0.15, -0.41), "V": (-2.92, -1.99), "Y": (-2.13, -2.93)}
 SPACE = 19.39
-KERN = {}
 # Keyed by word_key(word), the word's SHA-256, so the official word is not stored.
 SETS = {
     "5a93503c1ee64215de74d5196e20c8da883582fea73bffde05b9aab9c85b034a": (0.0, 34.24, 72.99, 116.94, 154.14, 211.3, 264.0, 307.95, 349.91),
@@ -412,21 +411,3 @@ PARAMS["Q"] = dict(n=[[24.0, 44.8, 196, 23, 0, 5], [36.5, 49.57, 13, 13, 5, 5], 
 def layer(ch, p=None):
     s = Skeleton(CAP, (1.0, 1.0), 1.0, U)
     return merge(BUILD[ch](s, PARAMS[ch] if p is None else p))
-
-
-def contours(l):
-    out = []
-    for c in l:
-        pts = list(c)
-        k = next(i for i, q in enumerate(pts) if q.on_curve)
-        pts = pts[k:] + pts[:k] + [pts[k]]
-        g = lambda q: (q.x / U, CAP - q.y / U)
-        segs, ctl = [g(pts[0])], []
-        for q in pts[1:]:
-            if q.on_curve:
-                segs.append(("C", *ctl, g(q)) if ctl else ("L", g(q)))
-                ctl = []
-            else:
-                ctl.append(g(q))
-        out.append(segs)
-    return out

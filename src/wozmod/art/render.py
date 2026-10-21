@@ -9,13 +9,12 @@ import json
 import math
 import os
 from pathlib import Path
-import subprocess
 import tempfile
 import time
 
 from PIL import Image
 
-from . import build, lettering, words
+from . import build, faces, lettering, vector, words
 from .bundle import write_bundle
 
 
@@ -23,8 +22,8 @@ RECIPE = build.REPO / "data/art/lettering.json"
 RECIPE_VERSION = 2
 TEXT_SOURCES = (build.REPO / "data/art/menu_textures.json",
                 build.REPO / "data/art/menu_visuals.json")
-_RASTERS = {build.HEADER_RASTER, build.VALUE_RASTER, build.MAIN_RASTER,
-            build.LABEL_RASTER, build.MENU_RASTER}
+_RASTERS = {vector.HEADER_RASTER, vector.VALUE_RASTER, vector.MAIN_RASTER,
+            vector.LABEL_RASTER, vector.MENU_RASTER}
 
 
 def _strings(value):
@@ -41,7 +40,9 @@ def _strings(value):
 
 def _text_index() -> dict[str, str]:
     values = [words.load(path) for path in TEXT_SOURCES]
-    values.extend(value for name, value in vars(build).items() if name.isupper())
+    # the words the build's own tables letter, wherever the art build keeps them
+    values.extend(value for module in (build, faces, vector) for name, value in vars(module).items()
+                  if name.isupper())
     return {hashlib.sha256(text.encode("utf-8")).hexdigest(): text
             for value in values for text in _strings(value)}
 
@@ -179,46 +180,20 @@ def write_recipe(traces: list[Path]) -> int:
     return len(requests)
 
 
-def _render_full(identity: str, request: dict, folder: Path) -> tuple[Image.Image, dict]:
-    kind = request["kind"]
-    output = folder / f"{identity}.png"
-    if kind == "header":
-        return build._render_header_label(request["text"], request["scale"], output,
-                                          request["raster"], *request["options"])
-    if kind == "button":
-        return build._render_button_label(request["text"], request["scale"], output,
-                                          request["track"], request["style"])
-    if kind == "pause":
-        return build._render_pause_button_label(request["text"], request["scale"], output,
-                                                request["target"], request["counterpart"])
-    if kind == "latin":
-        subprocess.run([build.FONT_PYTHON, "-m", "wozmod.fonts.raster", str(output),
-                        "--px", "24", "--spacing", "legacy"],
-                       check=True, capture_output=True, text=True, encoding="utf-8", env=build.font_environment())
-        with Image.open(output) as image:
-            return image.convert("L"), {}
-    raise ValueError(f"unsupported full-width lettering request: {kind}")
+def _render_full(producer, request: dict, folder: Path) -> tuple[Image.Image, dict]:
+    if request["kind"] != "latin":
+        return producer.produce(request)
+    output = folder / "latin.png"
+    producer.latin(output)
+    with Image.open(output) as image:
+        return image.convert("L"), {}
 
 
-def _render_native(requests: dict[str, dict], folder: Path) -> dict[str, tuple]:
+def _render_native(producer, requests: dict[str, dict]) -> dict[str, tuple]:
     ordered = [(identity, {name: value for name, value in request.items() if name != "kind"})
                for identity, request in sorted(requests.items()) if request["kind"] == "native"]
-    if not ordered:
-        return {}
-    path, output = folder / "native-requests.json", folder / "native"
-    path.write_text(json.dumps([request for _, request in ordered], ensure_ascii=False), encoding="utf-8")
-    subprocess.run([build.FONT_PYTHON, "-m", build.MENU_BATCH, str(path), str(output)],
-                   check=True, capture_output=True, text=True, encoding="utf-8", env=build.font_environment())
-    manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
-    if len(manifest) != len(ordered):
-        raise ValueError("native lettering render dropped a requested layer")
-    layers = {}
-    for index, (record, (identity, request)) in enumerate(zip(manifest, ordered, strict=True)):
-        if record["index"] != index or record["request"] != request:
-            raise ValueError("native lettering render changed a requested layer")
-        with Image.open(output / record["file"]) as image:
-            layers[identity] = image.convert("RGBA"), record["metrics"]
-    return layers
+    drawn = producer.native([request for _, request in ordered])
+    return {identity: layer for (identity, _), layer in zip(ordered, drawn, strict=True)}
 
 
 def render(bundle: str | Path, jobs: int = 4, font_python: str | None = None,
@@ -234,37 +209,32 @@ def render(bundle: str | Path, jobs: int = 4, font_python: str | None = None,
     requests, recipe_sha256, metrics_only = _load_requests()
     output = Path(bundle)
     output.parent.mkdir(parents=True, exist_ok=True)
-    previous_python = build.FONT_PYTHON
-    if font_python is not None:
-        build.FONT_PYTHON = font_python
-    try:
-        with tempfile.TemporaryDirectory(prefix="lettering-render-", dir=output.parent) as temporary:
-            folder, layers = Path(temporary), {}
-            with ThreadPoolExecutor(max_workers=jobs) as pool:
-                futures = {pool.submit(_render_full, identity, request, folder): identity
-                           for identity, request in requests.items()
-                           if request["kind"] not in {"squish", "native"}}
-                native = pool.submit(_render_native, requests, folder)
-                for future in as_completed(futures):
-                    layers[futures[future]] = future.result()
-                layers.update(native.result())
-            for identity, request in requests.items():
-                if request["kind"] != "squish":
-                    continue
-                image, metrics = layers[request["base"]]
-                metrics = {name: value for name, value in metrics.items() if name != "_lettering"}
-                if request["fill"] is not None:
-                    metrics["fill"] = request["fill"]
-                layers[identity] = build._squeezed_label(image, metrics, (0, request["width"], 0), 1, True)
-            layers = {identity: (image, {name: value for name, value in metrics.items()
-                                        if name not in {"_lettering", "counterpart"}})
-                      for identity, (image, metrics) in layers.items()}
-            if set(layers) != set(requests):
-                raise ValueError("rendered lettering layers do not match the recipe")
-            write_bundle(output, layers, recipe_sha256, frozenset() if full_width else metrics_only,
-                         outlines=build.glyph_outlines(folder))
-    finally:
-        build.FONT_PYTHON = previous_python
+    producer = lettering.PRODUCER if font_python is None else lettering.FontProcess(font_python)
+    with tempfile.TemporaryDirectory(prefix="lettering-render-", dir=output.parent) as temporary:
+        folder, layers = Path(temporary), {}
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            futures = {pool.submit(_render_full, producer, request, folder): identity
+                       for identity, request in requests.items()
+                       if request["kind"] not in {"squish", "native"}}
+            native = pool.submit(_render_native, producer, requests)
+            for future in as_completed(futures):
+                layers[futures[future]] = future.result()
+            layers.update(native.result())
+        for identity, request in requests.items():
+            if request["kind"] != "squish":
+                continue
+            image, metrics = layers[request["base"]]
+            metrics = {name: value for name, value in metrics.items() if name != "_lettering"}
+            if request["fill"] is not None:
+                metrics["fill"] = request["fill"]
+            layers[identity] = lettering.condense(image, metrics, request["width"])
+        layers = {identity: (image, {name: value for name, value in metrics.items()
+                                    if name not in {"_lettering", "counterpart"}})
+                  for identity, (image, metrics) in layers.items()}
+        if set(layers) != set(requests):
+            raise ValueError("rendered lettering layers do not match the recipe")
+        write_bundle(output, layers, recipe_sha256, frozenset() if full_width else metrics_only,
+                     outlines=producer.outlines(folder))
     return {"layers": len(requests), "bytes": output.stat().st_size,
             "seconds": time.perf_counter() - started}
 
@@ -273,7 +243,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output_bundle", type=Path, nargs="?")
     parser.add_argument("--jobs", type=int, default=4)
-    parser.add_argument("--font-python", default=build.FONT_PYTHON)
+    parser.add_argument("--font-python", default=lettering.FONT_PYTHON)
     parser.add_argument("--full-width", action="store_true",
                         help="developer oracle bundle: keep every full-width layer (not for release)")
     parser.add_argument("--recipe-from-trace", type=Path, nargs="+", metavar="TRACE",

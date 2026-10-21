@@ -11,7 +11,8 @@ from pathlib import Path
 import pytest
 
 from wozmod.text.build import TableBuildError, _load_data, build_table, name_parts, table_index, table_pairs
-from wozmod.text.stock import resolve_stock_ref, stock_strings
+from synthetic import pe_image
+from wozmod.text.stock import resolve_stock_ref, stock_key, stock_strings
 
 TABLE = Path(__file__).resolve().parents[1] / "data/text/table.json"
 # The shipped table's rows: their count and the SHA-256 of their sorted keys, one per line.
@@ -63,13 +64,7 @@ def _archive(directory: Path, number: int, payloads: dict[int, bytes]) -> None:
 
 
 def _stock_pe(common: bytes, missing: bytes, message: bytes) -> bytes:
-    image = bytearray(0x1A200)
-    struct.pack_into("<I", image, 0x3C, 0x80)
-    image[0x80:0x84] = b"PE\0\0"
-    struct.pack_into("<HH", image, 0x84, 0x14C, 1)
-    struct.pack_into("<H", image, 0x94, 0x60)
-    struct.pack_into("<I", image, 0xB4, 0x400000)
-    struct.pack_into("<8sIIII", image, 0xF8, b".text", 0x1A000, 0x2DE000, 0x1A000, 0x200)
+    image = pe_image(0x1A200, (b".text", 0x1A000, 0x2DE000, 0x1A000, 0x200), optional_size=0x60)
     cursor = 0x1600
     pointers = []
     for value in (common, missing, message, _token("scanner")):
@@ -263,6 +258,14 @@ def test_stock_substring_reference_cannot_use_a_shifted_offset_or_length(tmp_pat
             resolve_stock_ref(tmp_path, reference, key)
 
 
+
+def test_stock_key_joins_both_cp932_spellings_and_skips_bytes_that_are_not_cp932() -> None:
+    """Bug: the key hashes raw bytes, so the IBM spelling of a character misses its row, or a stray non-CP932 run
+    (most program-string matches in the stock exe) aborts the stock catalog instead of being skipped."""
+    nec = bytes((0xED, 0x40))
+    assert [stock_key(nec), stock_key(bytes((0xFA, 0x5C))), stock_key(b"\x81")] == [
+        (hashlib.sha256(nec).hexdigest(), nec), (hashlib.sha256(nec).hexdigest(), nec), None]
+
 # Inventory sources the player reads as subtitles: event and movie captions, spoken battle lines, narration, stills.
 SUBTITLES = ("events", "captions", "spoken", "mesc 4071", "mesc 4073", "mesc 4103", "mesc 4105")
 
@@ -275,5 +278,5 @@ def test_every_stock_subtitle_line_has_a_translation_row() -> None:
     keys = {row["key"] for row in json.loads(TABLE.read_text())["rows"]}
     found = inventory(Path(os.environ["WOZMOD_GAME"]))
     missing = [(source, key) for source in SUBTITLES for text in found.get(source, ())
-               if (key := hashlib.sha256(text.decode("cp932").encode("cp932")).hexdigest()) not in keys]
+               if (key := stock_key(text)[0]) not in keys]
     assert missing == []

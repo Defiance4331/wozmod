@@ -97,21 +97,18 @@ SERIES_OFFSET = {"Dynasty Warriors": 1, "Samurai Warriors": 0}
 def test_series_titles_use_the_western_number():
     # Catches a title that carries the Japanese series number into English, such as an edit that renumbers
     # the official title down by one or a pointer paired to the title with the same digit.
-    import hashlib
     import unicodedata
 
     from wozmod.text.psp_exe import EXE_STRING
     from wozmod.text.resolver import DonorResolver
+    from wozmod.text.stock import stock_key
 
     resolver = DonorResolver(Path(os.environ["WOZMOD_DONORS"]))
     # The gallery titles are program strings; scanning only the program keeps this test fast.
     stock = {}
     for match in EXE_STRING.finditer((Path(os.environ["WOZMOD_GAME"]) / "OROCHI_Z.exe").read_bytes()):
-        try:
-            text = match.group().decode("cp932")
-        except UnicodeDecodeError:
-            continue
-        stock[hashlib.sha256(text.encode("cp932")).hexdigest()] = text
+        if keyed := stock_key(match.group()):
+            stock[keyed[0]] = keyed[1].decode("cp932")
     wrong, checked = [], 0
     for row in json.loads(TABLE.read_text())["rows"]:
         title = re.match(rf"({'|'.join(SERIES_OFFSET)})(?: (\d))?\b", resolver.resolve_row(row))

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import tkinter
 from pathlib import Path
@@ -14,7 +16,7 @@ from pathlib import Path
 import pytest
 
 import wozmod.install as installer
-from wozmod import remembered, window
+from wozmod import __main__ as cli, remembered, window
 from wozmod.install import InstallError
 
 
@@ -40,7 +42,7 @@ def test_the_window_and_the_command_give_the_same_verdict_on_each_input(tmp_path
         for name in names:
             problem, _ = window.check_row(name, values)
             assert problem, name
-            assert f"{installer.LABELS[name]}: {problem}" in lines, name
+            assert f"{installer.INPUTS[name].label}: {problem}" in lines, name
 
     same_verdicts(("lettering", "dll"))  # the release files are checked first, on their own
     monkeypatch.setattr(installer, "LETTERING", (3, hashlib.sha256(b"xyz").hexdigest()))
@@ -99,6 +101,110 @@ def _wait(root, until):
         root.update()
         time.sleep(0.01)
     assert until()
+
+
+def _row_label(win, name: str) -> str:
+    """The name the window shows on the left of an input's path box."""
+    box = win.frame.grid_slaves(row=int(win.entries[name].grid_info()["row"]), column=0)[0]
+    return box.winfo_children()[0].cget("text")
+
+
+def test_every_input_has_a_command_line_option_a_window_row_and_an_install_key(shown, tmp_path, monkeypatch):
+    """Bug: an input added to the window but not to the command line (or the reverse), or a front end that never
+    hands a path the player gave to the install, so the install refuses an input the player did give."""
+    win, root = shown
+    paths = {name: tmp_path / name for name in installer.INPUTS}
+    given = {}
+
+    def install(game, inputs, **kwargs):
+        given[front] = {"game": Path(game), **inputs}
+        return {}
+
+    monkeypatch.setattr(cli, "install", install)
+    monkeypatch.setattr(window, "install", install)
+    front = "command line"
+    assert cli.main(["install", *(f"--{name}={path}" for name, path in paths.items())]) == 0
+    front = "window"
+    rows = {name for name in paths if name in win.entries}
+    win.work("install", {name: str(paths[name]) for name in rows}, threading.Event())
+    failures = [f"{name}: the command line hands the install {given['command line'].get(name)}"
+                for name, path in paths.items() if given["command line"].get(name) != path]
+    for name, path in paths.items():
+        if name in ("lettering", "dll"):  # the window takes the release files from beside itself
+            if name not in given["window"]:
+                failures.append(f"{name}: the window never hands it to the install")
+        elif name not in rows:
+            failures.append(f"{name}: no window row")
+        elif given["window"].get(name) != path:
+            failures.append(f"{name}: the window hands the install {given['window'].get(name)}")
+    assert not failures, "\n".join(failures)
+
+
+def test_every_place_names_each_disc_the_same_way(shown, tmp_path, monkeypatch, capsys):
+    """Bug: one place keeps an old or mistyped disc name, or names the other disc, so the error line, the progress,
+    --help and the window call one disc by different names."""
+    import wozmod.donors
+    from wozmod.progress import Progress
+
+    win, root = shown
+    titles = {"wo1-x360": "Warriors Orochi (Xbox 360, USA)", "x360": "Warriors Orochi 2 (Xbox 360, USA)",
+              "psp": "Warriors Orochi 2 (PSP, USA)"}
+    files = {"wo1-x360": ("wo1-x360-file", "x360-tool", "program file", "program file"),
+             "x360": ("x360-file", "x360-tool", "program file", "program file"),
+             "psp": ("psp-file", "psp-tool", "EBOOT", "EBOOT.BIN")}
+    monkeypatch.setenv("COLUMNS", "200")
+    with pytest.raises(SystemExit):
+        cli.main(["install", "--help"])
+    help_text = capsys.readouterr().out
+
+    wrong = tmp_path / "wrong"
+    wrong.write_bytes(b"xyz")
+    monkeypatch.setattr(installer, "LETTERING", (3, hashlib.sha256(b"xyz").hexdigest()))
+    monkeypatch.setattr(installer, "DLL", installer.LETTERING)
+    with pytest.raises(InstallError) as caught:
+        installer.check_inputs(tmp_path, {name: wrong for name in installer.INPUTS})
+    error_lines = str(caught.value).splitlines()
+
+    shown_lines = set()
+    monkeypatch.setattr(installer, "check_inputs", lambda *args: None)
+
+    def extract_donor(*args, on_bytes, **kwargs):
+        time.sleep(0.11)  # the progress takes at most ten reports a second
+        on_bytes(1, 2)
+
+    monkeypatch.setattr(wozmod.donors, "extract_donor", extract_donor)
+
+    def stop(*args):
+        raise InstallError("stop")
+
+    monkeypatch.setattr(installer, "_place_programs", stop)
+    (tmp_path / "game").mkdir()
+    with pytest.raises(InstallError, match="^stop$"):
+        installer.install(tmp_path / "game", {name: wrong for name in installer.INPUTS}, log=lambda _: None,
+                          progress=Progress(lambda p: shown_lines.update(text for *_, text in p.lines())))
+
+    win.set_advanced(True)
+    failures = []
+    for disc, title in titles.items():
+        file, tool, what, help_what = files[disc]
+        rows = [
+            ("error line", f"{title} disc image: Not the {title} disc image. Pick the .iso made from that disc.",
+             error_lines),
+            ("progress", f"reading the {title} disc", shown_lines),
+            ("--help", f"{title} disc image", _help(help_text, disc)),
+            ("--help", f"advanced: in place of --{tool}, the {title} {help_what} already decrypted", _help(help_text, file)),
+            ("window row", title, [_row_label(win, disc)]),
+            ("Advanced row", f"Already decrypted {title} {what}", [_row_label(win, file)]),
+        ]
+        failures += [f"{disc} {place}: {expected!r} not in {list(found)}" for place, expected, found in rows
+                     if expected not in found]
+    assert not failures, "\n".join(failures)
+
+
+def _help(text: str, name: str) -> list[str]:
+    """The --help text of one option, on one line."""
+    found = re.search(rf"^  --{name} \S+\s+(.+)$", text, re.MULTILINE)
+    return [found[1]] if found else []
 
 
 def test_a_fresh_window_cannot_install_and_says_where_the_files_come_from(shown):
@@ -244,21 +350,14 @@ def test_a_typed_program_path_runs_only_when_finished(shown, monkeypatch):
 @pytest.fixture
 def program_pins(monkeypatch):
     """Pin synthetic Xbox 360 programs, and let every row except the Xbox 360 program and its files pass."""
-    import hashlib
+    from test_install_programs import DECRYPTED, ENCRYPTED, _xbox_image, pin_synthetic_programs
 
-    import wozmod.donors as donors
-    from test_install_programs import DECRYPTED, ENCRYPTED, _xbox_image
-    from wozmod.donors import ProgramIdentity
-
-    installer._TOOL_RUNS.clear()
-    for attribute, content in (("X360_PROGRAM", DECRYPTED), ("X360_ENCRYPTED_PROGRAM", ENCRYPTED),
-                               ("WO1_X360_PROGRAM", DECRYPTED), ("WO1_X360_ENCRYPTED_PROGRAM", ENCRYPTED)):
-        monkeypatch.setattr(donors, attribute, ProgramIdentity(
-            attribute, len(content), hashlib.sha256(content).hexdigest(), "x360"))
+    pin_synthetic_programs(monkeypatch)
     real = window.check_row
     monkeypatch.setattr(window, "check_row", lambda name, values: real(name, values) if name in (
         "x360-tool", "x360-file", "wo1-x360-file") else (None, "OK"))
-    monkeypatch.setattr(installer, "check_input", lambda name, path: None)  # the disc image check is not under test
+    check = installer.check_input  # the disc image check is not under test; the decrypted file check is
+    monkeypatch.setattr(installer, "check_input", lambda name, path: None if name in installer.DISCS else check(name, path))
     return DECRYPTED, ENCRYPTED, _xbox_image
 
 
@@ -302,14 +401,45 @@ def test_a_good_advanced_file_makes_its_program_row_not_required_and_a_bad_one_d
     _wait(root, lambda: "disabled" not in win.install_button.state())  # psp-file is empty and not needed
 
 
-def test_a_decrypted_copy_in_the_disc_image_says_so_in_the_program_row(shown, program_pins, tmp_path):
-    # Bug: the image's copy is found at install but the window still demands a program.
-    plain, _, xbox_image = program_pins
+def test_a_red_decrypted_file_row_keeps_install_disabled_and_counts_as_missing(shown, program_pins, tmp_path):
+    # Bug: the decrypted-file rows never count, so a red one beside a ticked program row enables Install, and the
+    # install then refuses the file; or the file row keeps the wording it had before the program was given.
+    from test_donors_programs import fake
+
+    plain, encrypted, xbox_image = program_pins
     win, root = shown
+    wrong = tmp_path / "wrong"
+    wrong.write_bytes(b"x")
+    for name in ("game", "psp", "psp-tool"):
+        win.vars[name].set(str(tmp_path))
     for name in ("x360", "wo1-x360"):
-        win.vars[name].set(str(xbox_image(tmp_path, b"default.xex", plain)))
-    _wait(root, lambda: win.status["x360-tool"].cget("text") == "Not needed: your disc image already has the decrypted file")
-    assert win.good["x360-tool"]
+        win.vars[name].set(str(xbox_image(tmp_path, b"default.xex", encrypted)))
+    win.vars["wo1-x360-file"].set(str(wrong))  # refused beside the program, which still runs on the other disc
+    win.vars["x360-tool"].set(str(fake(tmp_path / "xextool", "xextool")))
+    win.check_program("x360-tool")
+    win.check_program("psp-tool")
+    _wait(root, lambda: win.status["x360-tool"].cget("text") == "✔ OK. It made the files wozmod needs."
+          and win.status["wo1-x360-file"].cget("text") == installer.FILE_AND_PROGRAM and win.good["psp-tool"])
+    assert "disabled" in win.install_button.state()
+    assert win.reason.cget("text") == "Pick the missing item above to enable Install."
+    win.vars["wo1-x360-file"].set("")
+    _wait(root, lambda: "disabled" not in win.install_button.state() and win.reason.cget("text") == "")
+
+
+def test_a_decrypted_file_turns_red_when_its_disc_image_turns_out_to_hold_one(shown, program_pins, tmp_path):
+    # Bug: changing the disc image rechecks only the image and the program rows, so the file row keeps its old tick
+    # though the file is now a second source.
+    plain, encrypted, xbox_image = program_pins
+    win, root = shown
+    (tmp_path / "encrypted").mkdir()
+    (tmp_path / "held").mkdir()
+    good = tmp_path / "plain.pe"
+    good.write_bytes(plain)
+    win.vars["x360"].set(str(xbox_image(tmp_path / "encrypted", b"default.xex", encrypted)))
+    win.vars["x360-file"].set(str(good))
+    _wait(root, lambda: win.good["x360-file"])
+    win.vars["x360"].set(str(xbox_image(tmp_path / "held", b"default.xex", plain)))
+    _wait(root, lambda: win.status["x360-file"].cget("text") == installer.FILE_IN_IMAGE)
 
 
 def test_the_install_reason_counts_the_rows_still_missing(shown):

@@ -8,7 +8,7 @@ from PIL import Image
 
 from wozmod import resources
 
-from wozmod.donors import WO1_X360, X360
+from wozmod.donors import DonorsFolder
 from wozmod.formats.linkdata import LZP2_SIGNATURE, WO1_LZP2_SIGNATURE, parse_lzp2, parse_wo1_index
 from wozmod.formats.textures import (
     TextureCodecError, x360_g1t,
@@ -93,7 +93,7 @@ class DonorReader:
             return self._members[key]
         if donor not in ("wo1-x360", "x360"):
             raise ValueError(f"unsupported native reference donor: {donor}")
-        folder = self.root / {"wo1-x360": WO1_X360, "x360": X360}[donor].name
+        folder = DonorsFolder(self.root).folder(donor)
         archive = folder / "linkdata_ens.lnk"
         if donor not in self._indices:
             self._indices[donor] = parse_wo1_index(

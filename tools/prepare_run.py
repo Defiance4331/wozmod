@@ -3,8 +3,9 @@
 
 The run gets links to the stock backup's files, reflinks of the install's d3d9.dll and wozmod/ folder (checked
 against the installer's record), an overlay folder over the template Proton prefix, a seeded save
-and a game.sha256 over the mod files, which game_harness.py run finds unchanged before each launch. Machine paths
-come from the ignored work/harness.toml.
+and a record of the mod files (game.sha256, and their stamps in fixtures.json), which game_harness.py run checks with
+verify_copy before each launch. Runs, caches and saves live in the main checkout's work/, from any worktree; machine
+paths come from its ignored work/harness.toml.
 """
 
 from __future__ import annotations
@@ -12,7 +13,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -22,25 +22,28 @@ import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import checkout
+from wozmod import install as installer
+from wozmod.runtime.layout import c_array
+
 REPO = Path(__file__).resolve().parents[1]
-WORK = REPO / "work"
-CONFIG = Path(os.environ.get("WOZMOD_HARNESS_CONFIG", WORK / "harness.toml"))
+WORK = checkout.work()
+CONFIG = checkout.config()
 SAVE = "prefix/pfx/drive_c/users/steamuser/Documents/KOEI/Musou OROCHI Z/Savedata/save.dat"
 STOCK_HASHED = ["OROCHI_Z.exe", *(f"LINKDATA{n}.{ext}" for n in "123" for ext in ("BIN", "IDX")),
                 "data/Sound/Voice/Voice.bin"]
 
 
 HASH_CACHE = WORK / "hash-cache.json"
-MANIFEST = "wozmod/install.json"  # the installer's record of every file it wrote, with its SHA-256
+MANIFEST = installer.MANIFEST  # the installer's record of every file it wrote, with its SHA-256
 # the mod's own settings, as its Settings menu writes them to wozmod/settings.ini: section.key -> allowed values
 SETTINGS = {"language.text": ("english", "japanese"), "language.voice": ("english", "japanese"),
             "camera.fov": None, "camera.moving_fix": ("on", "off"), "display.fps": ("60", "120"),
             "display.distance": ("on", "off"),
             "display.mode": ("fullscreen", "windowed", "borderless"),
             # the runtime's display size list, read from its one source
-            "display.size": tuple(f"{w}x{h}" for w, h in re.findall(
-                r"\{(\d+), (\d+)\}", (REPO / "runtime/display_fit.h").read_text().split("display_sizes[][2] = {")[1]
-                .split("};")[0]))}
+            "display.size": tuple(f"{w}x{h}" for w, h in c_array(
+                "display_sizes", (REPO / "runtime/display_fit.h").read_text(encoding="utf-8")))}
 OVERLAID = ("prefix",)  # template parts a run sees through an overlay instead of a copy (the Steam runtime is its
 # game slot's own: game_harness.RUNTIMES)
 EXTRAS = {"wozmod/review.bin"}  # test-only files a run may hold beyond the record: the `review` reference
@@ -54,16 +57,19 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def file_stamp(path: Path) -> list[int]:
+    """A file's size, mtime and inode: equal stamps mean the same unchanged file, which need not be read again."""
+    info = path.stat()
+    return [info.st_size, info.st_mtime_ns, info.st_ino]
+
+
 def cached_sha256s(paths: list[Path], cache_file: Path = HASH_CACHE) -> list[str]:
     """sha256 of each file, remembered by path, size, mtime and inode; any change rehashes. The misses are hashed in
     threads and the cache is written once.
     Shortcut: a file edited in place with its size and mtime restored is not noticed; keep the stock backup and
     installs read-only."""
     cache = json.loads(cache_file.read_text()) if cache_file.is_file() else {}
-    keys = []
-    for path in paths:
-        info = path.stat()
-        keys.append((str(path.resolve()), [info.st_size, info.st_mtime_ns, info.st_ino]))
+    keys = [(str(path.resolve()), file_stamp(path)) for path in paths]
     missing = [(key, stamp) for key, stamp in keys if (cache.get(key) or {}).get("stamp") != stamp]
     if missing:
         with ThreadPoolExecutor() as pool:
@@ -94,9 +100,10 @@ def installed_files(install: Path, cache_file: Path = HASH_CACHE) -> dict[str, s
     """The install's files and their SHA-256, each matching the installer's own record, so a run plays what a
     player's install holds and nothing else (EXTRAS aside)."""
     try:
-        listed = json.loads((install / MANIFEST).read_text())["files"]
-    except (OSError, ValueError, KeyError, TypeError) as exc:
-        raise ValueError(f"{install} has no installer record {MANIFEST}; stage a folder `wozmod install` wrote") from exc
+        listed = installer.read_manifest(install)
+    except installer.InstallError as exc:
+        raise ValueError(f"{install} has no installer record {MANIFEST}; stage a folder `wozmod install` wrote "
+                         f"({exc})") from exc
     names = sorted(p.relative_to(install).as_posix() for p in [install / "d3d9.dll", *(install / "wozmod").rglob("*")]
                    if p.is_file())
     found = dict(zip(names, cached_sha256s([install / f for f in names], cache_file), strict=True))
@@ -106,6 +113,44 @@ def installed_files(install: Path, cache_file: Path = HASH_CACHE) -> dict[str, s
     if wrong:
         raise ValueError(f"{install} differs from its installer record at: {', '.join(wrong[:8])}")
     return found
+
+
+def write_record(root: Path, files: dict[str, str], fixtures: dict) -> None:
+    """Record the staged copy root/game: game.sha256 lists each checked file's SHA-256 by its name in game/, and
+    fixtures.json keeps the fixtures with each file's stamp as staged, so verify_copy rehashes only a file that moved."""
+    (root / "game.sha256").write_text("".join(f"{files[f]}  {f}\n" for f in sorted(files)))
+    (root / "fixtures.json").write_text(json.dumps(
+        fixtures | {"stamps": {f: file_stamp(root / "game" / f) for f in sorted(files)}}, indent=2) + "\n")
+
+
+def recorded(root: Path) -> dict[str, str]:
+    """game.sha256 of a staged run: each checked file's SHA-256 by its name in game/."""
+    lines = local_path(root, "game.sha256").read_text().splitlines()
+    return {name: digest for digest, name in (line.split("  ", 1) for line in lines)}
+
+
+def verify_copy(root: Path, game: Path) -> None:
+    """Refuse a game copy whose mod files differ from the record write_record left, so a run never tests a changed
+    build. A file with the stamp it was staged with is its unchanged reflink and is trusted unread; any other is hashed.
+    Shortcut: a file rewritten in place with its size and mtime restored passes, as in cached_sha256s."""
+    stamps = json.loads(local_path(root, "fixtures.json").read_text())["stamps"]
+    for name, digest in recorded(root).items():
+        path = game / name
+        if not path.is_file():
+            raise ValueError(f"the game copy lost {name} since prepare_run.py")
+        if file_stamp(path) == stamps.get(name):
+            continue
+        with path.open("rb") as stream:
+            if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
+                raise ValueError(f"the game copy changed since prepare_run.py: {name}")
+
+
+def local_path(root: Path, name: str) -> Path:
+    """root/name, refused when it leads out of the run or through a symlink."""
+    path = root / name
+    if path.resolve() != path or not path.is_relative_to(root):
+        raise ValueError(f"run path must not contain symlinks: {path}")
+    return path
 
 
 def settings_ini(settings: list[str]) -> str:
@@ -192,21 +237,17 @@ def prepare(name: str, install: Path, dll: Path | None, save: str, cache_file: P
     link.symlink_to(game)
     shutil.copyfile(template / "launch.sh", root / "launch.sh")
     shutil.copymode(template / "launch.sh", root / "launch.sh")
-    (root / "game.sha256").write_text("".join(f"{files[f]}  {f}\n" for f in sorted(files)))
     target = root / SAVE
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(data)
     stock_sha256 = dict(zip(STOCK_HASHED, cached_sha256s([stock / f for f in STOCK_HASHED], cache_file), strict=True))
-    (root / "fixtures.json").write_text(json.dumps(
-        {"save": {"name": save, "sha256": meta["save_sha256"]}, "dll": str(dll), "install": str(install),
-         "version": json.loads((install / MANIFEST).read_text()).get("version"),
-         "extras": sorted(EXTRAS & set(files)), "settings": list(settings),
-         "replaced": {listed: str(source) for listed, source in replaced.items()},
-         "stock": {"path": str(stock), "sha256": stock_sha256},
-         "overlays": {part: str(template / part) for part in OVERLAID},
-         # each checked file's size, mtime and inode as staged: game_harness.py run rehashes only a file that differs
-         "stamps": {f: [(info := (game / f).stat()).st_size, info.st_mtime_ns, info.st_ino] for f in sorted(files)}},
-        indent=2) + "\n")
+    write_record(root, files, {
+        "save": {"name": save, "sha256": meta["save_sha256"]}, "dll": str(dll), "install": str(install),
+        "version": installer.installed_version(install),
+        "extras": sorted(EXTRAS & set(files)), "settings": list(settings),
+        "replaced": {listed: str(source) for listed, source in replaced.items()},
+        "stock": {"path": str(stock), "sha256": stock_sha256},
+        "overlays": {part: str(template / part) for part in OVERLAID}})
     return root
 
 

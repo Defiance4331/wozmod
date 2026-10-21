@@ -3,7 +3,7 @@ import math
 import fontforge
 import psMat
 
-from .buttonvec import contours as _contours, line_seg, rounded
+from .buttonvec import line_seg, rounded
 from .skeleton import Skeleton, _layer, merge
 
 U = 50
@@ -790,10 +790,6 @@ def unfold(l, short=0.5 * U, spike=120.0, kink=(1.5, 45.0), stub=1.0 * U, tiny=1
         nc.closed = True
         out += nc
     return out
-
-
-def contours(l):
-    return _contours(l, CAP)
 
 
 SCENARIO_PARAMS = {

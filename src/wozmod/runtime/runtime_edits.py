@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import struct
 
+from .latin_font import (
+    LATIN_COUNT, LATIN_FIRST, LATIN_GLYPH, SURROGATE_CODE, SURROGATE_GLYPH, SURROGATE_LETTERS,
+)
+
 CAVE = 0x5F5100
 PAD_PROMPTS = 0x1413FEC
 
@@ -798,11 +802,14 @@ FONT_ROUTE = [
     (0x549A49, bytes.fromhex("752a"), bytes.fromhex("9090")),
     (0x549A4B, bytes.fromhex("8b35bcba7900 8b0db8ba7900 33c0 85f6 7665 8a54240c 3a140874 61 83c001 3bf0 77f4"
                              " 5f b808000000 5e c3 3c02 7549"),
-     bytes.fromhex("0fb744240c 2d00100000 83f85d 7707 058c0a0000 eb66 2d40740000 83f804 770e 05ea0a0000 eb55"
-                   + " 90" * 7)),
+     # movzx eax, word [esp+0Ch]; a Latin token or a surrogate code becomes its glyph number, else the stock lookup
+     bytes.fromhex("0fb744240c 2d") + p32(LATIN_TOKEN) + bytes.fromhex(f"83f8{LATIN_COUNT - 1:02x} 7707 05")
+     + p32(LATIN_GLYPH) + bytes.fromhex("eb66 2d") + p32(SURROGATE_CODE - LATIN_TOKEN)
+     + bytes.fromhex(f"83f8{len(SURROGATE_LETTERS) - 1:02x} 770e 05") + p32(SURROGATE_GLYPH)
+     + bytes.fromhex("eb55" + " 90" * 7)),
 
-    *[(0x79BA98 + 2 * b, struct.pack("<H", _fullwidth(b)), struct.pack("<H", LATIN_TOKEN + b - 0x20))
-      for b in range(0x20, 0x7E) if b not in b"\\`{|}"],
+    *[(0x79BA98 + 2 * b, struct.pack("<H", _fullwidth(b)), struct.pack("<H", LATIN_TOKEN + b - LATIN_FIRST))
+      for b in range(LATIN_FIRST, LATIN_FIRST + LATIN_COUNT) if b not in b"\\`{|}"],
 ]
 
 def settings_rows(rows: int, distance: bool = False, moving_fix: bool = False) -> list:

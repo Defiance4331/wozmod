@@ -7,7 +7,7 @@ import cairo
 import numpy as np
 import fontforge
 
-from wozmod.runtime.latin_font import ADVANCES
+from wozmod.runtime.latin_font import ADVANCES, LATIN_CHARS, LATIN_COUNT, LATIN_FIRST
 
 
 def outlines(font):
@@ -71,14 +71,14 @@ def load(path):
         f.close()
 
 
-CHARS = [chr(c) for c in range(0x20, 0x7E)] + list('ŌōŪūï')
+CHARS = list(LATIN_CHARS)
 
 
 GAP = 3.5
 SPACE = 8
 
 
-PREFERRED_ADVANCES = ADVANCES[:94]
+PREFERRED_ADVANCES = ADVANCES[:LATIN_COUNT]
 
 
 def spacing(font, mode="baseline"):
@@ -92,8 +92,8 @@ def spacing(font, mode="baseline"):
             continue
         x0, _, x1, _ = (v / 50 for v in g.boundingBox())
         ink, c = x1 - x0, g.unicode
-        advance = (min(max(PREFERRED_ADVANCES[c - 0x20], math.ceil(ink + 2)), math.floor(ink + 5))
-                   if mode == "baseline" and c < 0x7E else round(ink + GAP))
+        advance = (min(max(PREFERRED_ADVANCES[c - LATIN_FIRST], math.ceil(ink + 2)), math.floor(ink + 5))
+                   if mode == "baseline" and c < LATIN_FIRST + LATIN_COUNT else round(ink + GAP))
         out[chr(g.unicode)] = ((advance - (x1 - x0)) / 2 - x0, advance)
     return out
 

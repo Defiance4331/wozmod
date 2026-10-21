@@ -21,11 +21,13 @@ import time
 import uuid
 from pathlib import Path
 
-from checkout import main_checkout
-from wozmod.runtime.english_runtime import DLL_BASE, SURROGATES, encode_english
+from checkout import work
+from prepare_run import local_path, verify_copy
+from wozmod.formats import pe
+from wozmod.runtime.english_runtime import DLL_BASE, decode_english, encode_english
+from wozmod.runtime.layout import DEFINES
 
 
-REPO = Path(__file__).resolve().parents[1]
 TARGET = "musou-orochi-z-pc-jp"
 XENIA = "warriors-orochi-2-x360-usa"  # official X360 menu references, using a disposable emulator
 MAX_KEYS = 100  # keys in one sequence
@@ -35,10 +37,10 @@ MAX_PEEK, MAX_POKE, MAX_PATTERN, MAX_HITS = 65536, 4096, 256, 64
 FIND_CHUNK = 1 << 24  # bytes read at a time by find
 # save.dat holds the game's state from 0x7FB650 at offset 8, so the resolution index (0x80152D, into
 # the table at 0x6FDE2C) sits at 0x5EE5. At 0x25F24 is the file's byte sum, taken with that 20-byte field zeroed.
-# The mailbox of a --test runtime build; english_runtime.c struct test_block.
-TEST_MAGIC, TEST_VERSION = b"ENRT-TEST-BLOCK\0", 2
-TEST_TEXTS, TEST_QUADS, TEST_SETS, TEST_INPUT = 256, 2048, 16, 1024
-TEST_TEXT = struct.Struct("<2I3i124s")  # hook, caller, x, y, width, text
+# The mailbox of a --test runtime build; english_runtime.c struct test_block (TEST_INPUT: its input[1024]).
+TEST_MAGIC, TEST_VERSION = b"ENRT-TEST-BLOCK\0", DEFINES["TEST_VERSION"]
+TEST_TEXTS, TEST_QUADS, TEST_SETS, TEST_INPUT = DEFINES["TEST_TEXTS"], DEFINES["TEST_QUADS"], DEFINES["TEST_SETS"], 1024
+TEST_TEXT = struct.Struct(f"<2I3i{DEFINES['TEST_CHARS']}s")  # hook, caller, x, y, width, text
 TEST_QUAD = struct.Struct("<4I4i")  # hook, caller, handle, name, x, y, width, height
 TEST_HEADER = struct.Struct(f"<16s8I{TEST_INPUT}sI")  # magic ... result, input, sets
 TEST_SNAPSHOT = TEST_HEADER.size + TEST_SETS * TEST_TEXT.size
@@ -58,7 +60,6 @@ SPAWN_SQUAD = 13  # the game spawns whole squads: a spawn may place up to 12 tro
 # shortcut: measured, not derived: in its first frames the game pushed freshly placed soldiers up to about 400 units
 # from their ring spots (run crowd-check1, 2026-10-19); find the push in the unit update if a stage scatters farther
 SPAWN_SCATTER = 500
-UNSURROGATES = {ord(v): k for k, v in SURROGATES.items()}
 # The virtual pad (run --pad): a uinput Xbox 360 pad, the device Steam Input and xpad present to
 # Wine. Evdev codes: buttons, then (axis, value) presses for the triggers, D-pad and sticks.
 PAD_BUTTONS = {"A": 0x130, "B": 0x131, "X": 0x133, "Y": 0x134, "LB": 0x136, "RB": 0x137,
@@ -88,13 +89,6 @@ def render_size_arg(value: str) -> tuple[int, int]:
     if not match or not (640 <= int(match[1]) <= 5120 and 480 <= int(match[2]) <= 2160):
         raise argparse.ArgumentTypeError("use WxH, at most 5120x2160")
     return int(match[1]), int(match[2])
-
-
-def local_path(root: Path, name: str) -> Path:
-    path = root / name
-    if path.resolve() != path or not path.is_relative_to(root):
-        raise ValueError(f"run path must not contain symlinks: {path}")
-    return path
 
 
 def write_json(path: Path, value: dict) -> None:
@@ -329,13 +323,10 @@ def test_block(memory: int) -> int:
         header = b""
     if header[:2] != b"MZ":
         raise ValueError("no English runtime d3d9.dll at its base; is WINEDLLOVERRIDES=d3d9=n,b set?")
-    pe = struct.unpack_from("<I", header, 0x3C)[0]
-    table = pe + 24 + struct.unpack_from("<H", header, pe + 20)[0]
-    for i in range(struct.unpack_from("<H", header, pe + 6)[0]):
-        _, size, rva = struct.unpack_from("<8sII", header, table + 40 * i)
-        at = os.pread(memory, size, DLL_BASE + rva).find(TEST_MAGIC)
+    for section in pe.sections(header):  # loaded, so each section spans its vsize at its rva
+        at = os.pread(memory, section["vsize"], DLL_BASE + section["rva"]).find(TEST_MAGIC)
         if at >= 0:
-            block = DLL_BASE + rva + at
+            block = DLL_BASE + section["rva"] + at
             layout = struct.unpack("<2I", os.pread(memory, 8, block + 16))
             if layout != (TEST_VERSION, TEST_SIZE):
                 raise ValueError(f"test mailbox version/size {layout} does not match this harness")
@@ -431,7 +422,7 @@ def stage_scripts(memory: int) -> dict:
 
 
 def english(raw: bytes) -> str:
-    return raw.split(b"\0")[0].decode("cp932", "replace").translate(UNSURROGATES)
+    return decode_english(raw.split(b"\0")[0], "replace")
 
 
 def screen(memory: int, block: int) -> dict:
@@ -831,24 +822,33 @@ def exit_record(root: Path, returncode: int | None, interrupted: bool) -> dict:
     return record
 
 
+def exit_info(root: Path) -> dict | None:
+    """The exit_record the supervisor wrote as it ended, or None before then."""
+    path = root / "evidence/exit.json"
+    return json.loads(path.read_text()) if path.is_file() else None
+
+
+def describe_exit(record: dict) -> str:
+    """An exit record's reason, with the game's own exit status when it has one."""
+    code = f" (game exit status {record['game_returncode']})" if "game_returncode" in record else ""
+    return f"{record.get('reason', 'unknown')}{code}"
+
+
 def ended(root: Path) -> str | None:
     """A one-line account of a finished run, or None while it has not ended."""
-    path = root / "evidence/exit.json"
-    if path.is_file():
-        record = json.loads(path.read_text())
-    elif (root / "evidence/game-exit.json").is_file():  # the game is gone; the compositor is closing
+    record = exit_info(root)
+    if record is None and (root / "evidence/game-exit.json").is_file():  # the game is gone; the compositor is closing
         record = exit_record(root, None, False)
-    else:
+    if record is None:
         return None
-    code = f" (game exit status {record['game_returncode']})" if "game_returncode" in record else ""
     last = "; ".join(record.get("last_actions", [])) or "none"
-    return f"the run has ended: {record.get('reason', 'unknown')}{code}; last actions: {last}"
+    return f"the run has ended: {describe_exit(record)}; last actions: {last}"
 
 
 # Two games may run at once across the checkout and all its worktrees: a run holds one of these, in the main
 # checkout's work/, for its whole life. `flock work/.game-run.lock run` there holds the first; `run --slot` takes
 # whichever is free.
-SLOTS = ("work/.game-run.lock", "work/.game-run.1.lock")
+SLOTS = (".game-run.lock", ".game-run.1.lock")
 # Each slot's own Steam runtime in the main checkout's template, so two games never share one. A run binds its slot's
 # writable: pressure-vessel hard-links the runtime into its var/, which through an overlay copied 16k files into every
 # run. Make one with cp -a --reflink=always _template/steamrt _template/steamrt-1.
@@ -860,31 +860,13 @@ def take_slot(poll: float = 1.0) -> tuple[int, int]:
     until the process ends."""
     while True:
         for index, slot in enumerate(SLOTS):
-            fd = os.open(main_checkout() / slot, os.O_RDWR | os.O_CREAT, 0o600)
+            fd = os.open(work() / slot, os.O_RDWR | os.O_CREAT, 0o600)
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 return fd, index
             except BlockingIOError:
                 os.close(fd)
         time.sleep(poll)
-
-
-def check_game(root: Path, game: Path) -> None:
-    """Refuse a game copy whose mod files differ from game.sha256, so a run never tests a changed build. A file with
-    the size, mtime and inode prepare_run.py staged is its unchanged reflink and is trusted unread; any other is hashed.
-    Shortcut: a file rewritten in place with its size and mtime restored passes, as in prepare_run.cached_sha256s."""
-    stamps = json.loads(local_path(root, "fixtures.json").read_text())["stamps"]
-    for line in local_path(root, "game.sha256").read_text().splitlines():
-        digest, name = line.split("  ", 1)
-        path = game / name
-        if not path.is_file():
-            raise ValueError(f"the game copy lost {name} since prepare_run.py")
-        info = path.stat()
-        if [info.st_size, info.st_mtime_ns, info.st_ino] == stamps.get(name):
-            continue
-        with path.open("rb") as stream:
-            if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
-                raise ValueError(f"the game copy changed since prepare_run.py: {name}")
 
 
 def run(root: Path, args: argparse.Namespace) -> int:
@@ -897,9 +879,9 @@ def run(root: Path, args: argparse.Namespace) -> int:
     launcher = local_path(root, "launch.sh")
     if not launcher.is_file():
         raise ValueError("prepare and review a run-local launch.sh first")
-    steamrt = (main_checkout() / "work/runtime-tests/_template" / RUNTIMES[slot]).resolve()
+    steamrt = (work() / "runtime-tests/_template" / RUNTIMES[slot]).resolve()
     if args.target != XENIA:  # a MOZ run is staged by prepare_run.py; the reference emulator's are not
-        check_game(root, game)
+        verify_copy(root, game)
         if not (steamrt / "run").is_file():
             raise ValueError(f"no Steam runtime for game slot {slot}: cp -a --reflink=always "
                              f"{steamrt.parent / RUNTIMES[0]} {steamrt}")
@@ -1895,7 +1877,7 @@ def tour(root: Path, stages: range | None = None, dialog: float = 25) -> int:
                          for check in ("cjk", "overflow", "overlap")}
     write_json(local_path(root, "evidence/tour-report.json"), report)
     if log.is_file():
-        corpus = REPO / "work/enrt-log-corpus"
+        corpus = work() / "enrt-log-corpus"
         corpus.mkdir(exist_ok=True)
         shutil.copyfile(log, corpus / f"{root.name}.txt")
     print(json.dumps({"stops": len(report["stops"]), "failed": report["failed"], **report["summary"]}))
@@ -2019,13 +2001,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         root = args.root.resolve(strict=True)
-        storage = (REPO / "work/runtime-tests").resolve()
-        xenia_storage = (REPO / "work/xenia/runs").resolve()
+        storage = (work() / "runtime-tests").resolve()
+        xenia_storage = (work() / "xenia/runs").resolve()
         permitted = (storage, xenia_storage)
         if args.action == "run":
             permitted = (xenia_storage,) if args.target == XENIA else (storage,)
         if not any(root != base and root.is_relative_to(base) for base in permitted):
-            locations = " or ".join(str(base.relative_to(REPO)) for base in permitted)
+            locations = " or ".join(str(base) for base in permitted)
             raise ValueError(f"--root must be a run directory inside {locations}")
         if args.action == "run":
             return run(root, args)

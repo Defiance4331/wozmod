@@ -15,7 +15,8 @@ from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 from wozmod import resources
 from wozmod import __version__
-from wozmod.install import FILES, PROGRAMS, TOOLS, InstallError, check_input, install, install_state, resolve_program, uninstall
+from wozmod.install import (FILE_PROGRAMS, FILES, INPUTS, PROGRAMS, TOOLS, InstallError, check_input, file_problem, install,
+                            install_state, program_status, uninstall)
 from wozmod.progress import DONE, Cancelled, Progress, duration, minutes_left
 from wozmod.remembered import load_settings, save_settings
 
@@ -25,26 +26,11 @@ TOOLS_HELP = "Programs you already have."
 HELP_TEXT = "Which programs we tested"
 HELP_URL = "https://github.com/Defiance4331/wozmod#tested-decryption-programs"
 # name, label, kind of picker, what to pick
-ROWS = (
-    ("game", "Musou Orochi Z folder", "folder",
-     "The folder that contains the game's .exe (the Japanese PC release)."),
-    ("wo1-x360", "Warriors Orochi (Xbox 360, US)", "image", "The .iso file made from this disc."),
-    ("x360", "Warriors Orochi 2 (Xbox 360, US)", "image", "The .iso file made from this disc."),
-    ("psp", "Warriors Orochi 2 (PSP, US)", "image", "The .iso file made from this disc."),
-    ("x360-tool", "Xbox 360 decryption program", "file",
-     "A decryption program you already have for default.xex, the encrypted file on both Xbox 360 discs."),
-    ("psp-tool", "PSP decryption program", "file", "A decryption program you already have for EBOOT.BIN, the PSP game's encrypted file."),
-)
-# Hidden until "Advanced" is opened. A good one replaces its program row.
-ADVANCED = (
-    ("x360-file", "Already decrypted Warriors Orochi 2 Xbox 360 program file", "file",
-     "The decrypted program inside its default.xex (about 18 MB). Use it instead of the program above."),
-    ("wo1-x360-file", "Already decrypted Warriors Orochi Xbox 360 program file", "file",
-     "The decrypted program inside its default.xex (about 17 MB). Use it instead of the program above."),
-    ("psp-file", "Already decrypted PSP EBOOT", "file",
-     "The decrypted PSP_GAME/SYSDIR/EBOOT.BIN. Use it instead of the program above."),
-)
-SECTIONS = {"game": "1. Your game", "wo1-x360": "2. Your disc images", "x360-tool": "3. Your decryption programs"}
+ROWS = tuple((name, each.row or each.label, each.kind, each.note) for name, each in INPUTS.items()
+             if each.kind and not each.tool)
+# Hidden until "Advanced" is opened: the already decrypted files. A good one replaces its program row.
+ADVANCED = tuple((name, each.label, each.kind, each.note) for name, each in INPUTS.items() if each.tool)
+SECTIONS = {"folder": "1. Your game", "image": "2. Your disc images", "file": "3. Your decryption programs"}
 NOT_NEEDED = {"disc": "Not needed: your disc image already has the decrypted file",
               "file": "Not needed: using the decrypted file under Advanced"}
 GOOD, BAD, QUIET, ACCENT = "#1a7f37", "#b42318", "#595959", "#0b5cad"
@@ -53,16 +39,17 @@ GOOD, BAD, QUIET, ACCENT = "#1a7f37", "#b42318", "#595959", "#0b5cad"
 def check_row(name: str, values: dict[str, str]) -> tuple[str | None, str]:
     """(plain reason or None, tick text) for one row, from the installer's own checks."""
     try:
-        if name in TOOLS:  # per disc: the disc image's copy, else the decrypted file, else run the program
-            found = [resolve_program(disc, values) for disc in TOOLS[name]]
-            for source, result in found:
-                if isinstance(result, str):
-                    if source != name or not values[name]:  # a bad decrypted file is shown on its own row
-                        return None, ""
-                    return result, ""
-            if any(source == name for source, _ in found):
-                return None, "OK. It made the files wozmod needs." if len(found) > 1 else "OK. It made the file wozmod needs."
-            return None, NOT_NEEDED["disc" if all(source in PROGRAMS for source, _ in found) else "file"]
+        if name in TOOLS:
+            status = program_status(name, values)
+            if not values[name]:  # covered, or still needed: then the row counts as missing, and a bad decrypted file
+                return None, NOT_NEEDED.get(status.covered, "")  # shows on its own row
+            if problem := status.verdict(name):
+                return problem, ""
+            if status.made:
+                return None, "OK. It made the files wozmod needs." if len(TOOLS[name]) > 1 else "OK. It made the file wozmod needs."
+            return None, ""
+        if name in FILE_PROGRAMS:
+            return file_problem(name, values), "OK"
         return check_input(name, values[name]), "OK"
     except Exception as error:  # a check must never leave a row on "Checking..."
         return f"Could not check this ({error}).", ""
@@ -107,13 +94,13 @@ class SetupWindow:
         ttk.Label(frame, text=NOTICE, style="Quiet.TLabel").grid(row=1, column=0, columnspan=3, sticky="w", pady=(2, 0))
         saved = load_settings()
         self.advanced_widgets: list = []
-        row = 2
+        row, sections = 2, dict(SECTIONS)
         for name, label, kind, note in ROWS:
-            if name in SECTIONS:
-                ttk.Label(frame, text=SECTIONS[name], style="Heading.TLabel").grid(
+            if kind in sections:  # a heading above the first row of each kind
+                ttk.Label(frame, text=sections.pop(kind), style="Heading.TLabel").grid(
                     row=row, column=0, columnspan=3, sticky="w", pady=(18, 4))
                 row += 1
-                if name == "x360-tool":
+                if kind == "file":
                     help_line = ttk.Frame(frame)
                     help_line.grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 2))
                     ttk.Label(help_line, text=TOOLS_HELP + " ", style="Quiet.TLabel").pack(side="left")
@@ -342,6 +329,9 @@ class SetupWindow:
     def changed(self, name: str, run: bool = False) -> None:
         self.root.after_idle(self.show_end, self.entries[name])  # after a load or a pick, show the file name
         save_settings(self.inputs())
+        for file in (FILES[disc] for disc in TOOLS.get(name, ())):  # whether a program is given changes their wording
+            if self.vars[file].get().strip():
+                self.check_later(file)
         if name in TOOLS and not run:  # typing a program path: wait for Enter, focus-out or Browse
             self.ticket[name] += 1
             self.good[name] = False
@@ -349,8 +339,9 @@ class SetupWindow:
                                         foreground=QUIET)
             self.refresh_buttons()
             return
-        for other in dict.fromkeys([name, *(tool for disc, (_, tool, file) in PROGRAMS.items() if name in (disc, file))]):
-            self.check_later(other)  # a disc image changes what its program makes
+        for other in dict.fromkeys([name, *(each for disc, (_, tool, file) in PROGRAMS.items() if name in (disc, file)
+                                            for each in (tool, file))]):
+            self.check_later(other)  # a disc image changes what its program makes, and whether its file is needed
 
     def check_program(self, name: str) -> None:
         if not self.good[name]:
@@ -392,7 +383,8 @@ class SetupWindow:
             return "none", None
 
     def refresh_buttons(self) -> None:
-        unmet = [name for name, good in self.good.items() if not good and name not in FILES.values()]  # the program rows carry the file rows
+        unmet = [name for name, good in self.good.items()  # an empty decrypted-file row is optional: its program row stands
+                 if not good and (name not in FILES.values() or self.vars[name].get().strip())]
         ready = not unmet
         state, found = self.install_state()
         self.install_button.configure(text={

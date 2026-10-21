@@ -7,7 +7,7 @@ import json
 import pytest
 from PIL import Image
 
-from wozmod.art import build, lettering
+from wozmod.art import lettering, vector
 from wozmod.art.bundle import MetricsOnly, read_bundle
 
 
@@ -25,7 +25,7 @@ def _recipe(tmp_path, monkeypatch):
     recipe = tmp_path / "recipe.json"
     monkeypatch.setattr(renderer, "RECIPE", recipe)
     request = {"kind": "header", "text": "ALPHA", "scale": 2,
-               "raster": build.VALUE_RASTER, "options": ["--look", "value_dim"]}
+               "raster": vector.VALUE_RASTER, "options": ["--look", "value_dim"]}
     identity = lettering.key(request)
     encoded = dict(request, text={"text_sha256": _digest("ALPHA")})
     squish = {"kind": "squish", "base": identity, "width": 3, "fill": [2, 6]}
@@ -33,7 +33,7 @@ def _recipe(tmp_path, monkeypatch):
                                      "requests": {identity: encoded, lettering.key(squish): squish}}
 
 
-def test_render_cannot_drop_recipe_key_text_or_squish_with_raw_ink_instead_of_measured_fill(tmp_path, monkeypatch):
+def test_render_cannot_drop_recipe_key_text_or_squish_with_raw_ink_instead_of_measured_fill(tmp_path, monkeypatch, letters):
     # Also: the release bundle ships pixels compose only measures, or the full-width
     # oracle bundle drops them.
     recipe, identity, request, document = _recipe(tmp_path, monkeypatch)
@@ -43,9 +43,8 @@ def test_render_cannot_drop_recipe_key_text_or_squish_with_raw_ink_instead_of_me
     recipe.write_text(json.dumps(document))
     observed = []
 
-    def synthetic(text, scale, output, raster, *options):
-        observed.append({"kind": "header", "text": text, "scale": scale,
-                         "raster": raster, "options": list(options)})
+    def synthetic(request):
+        observed.append(request)
         image = Image.new("RGBA", (8, 2))
         image.putdata([(30 * x, 0, 0, 255) for _ in range(2) for x in range(8)])
         return image, {
@@ -53,8 +52,7 @@ def test_render_cannot_drop_recipe_key_text_or_squish_with_raw_ink_instead_of_me
             "pen": 1, "advance": 8, "size": [8, 2], "_lettering": identity, "counterpart": "BETA",
         }
 
-    monkeypatch.setattr(build, "_render_header_label", synthetic)
-    monkeypatch.setattr(build, "glyph_outlines", lambda folder: b"outlines")  # the real one needs FontForge
+    letters(synthetic, native=lambda requests: [], outlines=lambda folder: b"outlines")  # no FontForge here
     path = tmp_path / "letters.zip"
     result = renderer.render(path, jobs=2)
     layers, outlines = read_bundle(path, hashlib.sha256(recipe.read_bytes()).hexdigest())
@@ -88,10 +86,10 @@ def test_render_cannot_drop_recipe_key_text_or_squish_with_raw_ink_instead_of_me
     ("missing_full_width_base", "no full-width base"),
     ("duplicate_request_key", "duplicate lettering recipe key"),
 ])
-def test_render_cannot_ship_a_changed_or_unresolvable_recipe(tmp_path, monkeypatch, bug, message):
+def test_render_cannot_ship_a_changed_or_unresolvable_recipe(tmp_path, monkeypatch, letters, bug, message):
     recipe, identity, _, document = _recipe(tmp_path, monkeypatch)
-    monkeypatch.setattr(build, "_render_header_label", lambda *args: (
-        Image.new("RGBA", (8, 2)), {"baseline": 2, "ink": [1, 0, 7, 2], "fill": [1, 7]}))
+    letters(lambda request: (Image.new("RGBA", (8, 2)), {"baseline": 2, "ink": [1, 0, 7, 2], "fill": [1, 7]}),
+            native=lambda requests: [], outlines=lambda folder: b"outlines")
     if bug == "unresolved_text":
         document["requests"][identity]["text"] = {"text_sha256": "0" * 64}
     elif bug == "changed_request":
@@ -133,7 +131,7 @@ def test_recipe_from_trace_cannot_keep_raw_label_text_or_change_a_request(tmp_pa
     assert metrics_only == {lettering.key(pause)}
 
 
-def test_traced_build_cannot_ship_a_full_width_label_it_draws_without_pixels(tmp_path, monkeypatch):
+def test_traced_build_cannot_ship_a_full_width_label_it_draws_without_pixels(tmp_path, monkeypatch, letters):
     # Bug: a label drawn at full width is recorded as measured only (compose then fails),
     # or reading a base inside its squish keeps that base's pixels in the release bundle.
     source = tmp_path / "text.json"
@@ -141,14 +139,18 @@ def test_traced_build_cannot_ship_a_full_width_label_it_draws_without_pixels(tmp
     monkeypatch.setattr(renderer, "TEXT_SOURCES", (source,))
     monkeypatch.setattr(renderer, "RECIPE", tmp_path / "recipe.json")
     monkeypatch.setattr(lettering, "TRACE", str(tmp_path / "trace"))
-    bases = {}
-    for text in ("FITS", "OVERFLOWS"):
-        request = {"kind": "header", "text": text, "scale": 1, "raster": build.HEADER_RASTER, "options": []}
+    def drawn(request):
         image = Image.new("RGBA", (12, 4))
         image.paste((255, 255, 255, 255), (1, 0, 11, 4))
-        bases[text] = lettering.key(request)
-        label, metrics = lettering.get(request, lambda image=image: (image, {"ink": [1, 0, 11, 4], "baseline": 4}))
-        label, metrics = build.squeezed_label(label, metrics, (0, 20 if text == "FITS" else 5, 4), 1, True)
+        return image, {"ink": [1, 0, 11, 4], "baseline": 4}
+
+    letters(drawn)
+    bases = {}
+    for text in ("FITS", "OVERFLOWS"):
+        bases[text] = lettering.key({"kind": "header", "text": text, "scale": 1, "raster": vector.HEADER_RASTER,
+                                     "options": []})
+        label, metrics = lettering.header(text, 1, vector.HEADER_RASTER)
+        label, metrics = lettering.squeezed(label, metrics, (0, 20 if text == "FITS" else 5, 4), 1, True)
         Image.new("RGBA", (40, 8)).paste(label, (2, 2))
     renderer.write_recipe([tmp_path / "trace"])
     _, _, metrics_only = renderer._load_requests()

@@ -14,12 +14,14 @@ import tempfile
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, wait
+from dataclasses import dataclass
 from multiprocessing import get_context
 from pathlib import Path
 
 from wozmod import __version__ as VERSION
 from wozmod import progress as reporting
 from wozmod import process, remembered, resources
+from wozmod.donors.discs import DISCS, DonorsFolder
 from wozmod.progress import Cancelled, Progress
 
 MANIFEST = "wozmod/install.json"
@@ -107,59 +109,67 @@ def _pinned(path: Path, pin: tuple[int, str]) -> str | None:
     return None
 
 
-# The plain names the command line and the setup window both show.
-LABELS = {
-    "game": "Game folder",
-    "wo1-x360": "Warriors Orochi Xbox 360 disc image",
-    "x360": "Warriors Orochi 2 Xbox 360 disc image",
-    "psp": "PSP disc image",
-    "x360-tool": "Xbox 360 decryption program",
-    "psp-tool": "PSP decryption program",
-    "x360-file": "Already decrypted Warriors Orochi 2 Xbox 360 program file",
-    "wo1-x360-file": "Already decrypted Warriors Orochi Xbox 360 program file",
-    "psp-file": "Already decrypted PSP EBOOT",
-    "lettering": "lettering.zip",
-    "dll": "d3d9.dll",
-}
-DISCS = {  # input name: (donor, the disc to give)
-    "wo1-x360": ("wo1-x360", "the Warriors Orochi (USA) Xbox 360 disc image"),
-    "x360": ("wo2-x360", "the Warriors Orochi 2 (USA) Xbox 360 disc image"),
-    "psp": ("wo2-psp", "the Warriors Orochi 2 (USA) PSP disc image"),
+@dataclass(frozen=True)
+class Input:
+    """A path the player gives, and how the command line, the setup window and the install name it."""
+    label: str  # error lines, the terminal's prompts and the window's row
+    help: str | None  # --help; None hides the option
+    kind: str | None = None  # the window's picker: folder, image or file; None keeps it out of the window
+    note: str = ""  # the window's line under the row: what to pick
+    row: str | None = None  # the window's row, where it differs from label
+    disc: str | None = None  # an already decrypted program file: its disc, and the program input it stands in for
+    tool: str | None = None
+
+
+def _decrypted(disc: str, tool: str, what: str, help_what: str, note: str) -> Input:
+    title = DISCS[disc].title
+    return Input(f"Already decrypted {title} {what}", f"advanced: in place of --{tool}, the {title} {help_what} already "
+                 "decrypted", "file", note, disc=disc, tool=tool)
+
+
+# Every input, once, in the order the command line, the terminal and the window list them.
+INPUTS = {
+    "game": Input("Game folder", "the stock Musou Orochi Z folder", "folder",
+                  "The folder that contains the game's .exe (the Japanese PC release).", "Musou Orochi Z folder"),
+    **{name: Input(f"{disc.title} disc image", f"{disc.title} disc image", "image", "The .iso file made from this disc.",
+                   disc.title) for name, disc in DISCS.items()},
+    "x360-tool": Input("Xbox 360 decryption program",
+                       "a decryption program you already have, for the default.xex on both Xbox 360 discs", "file",
+                       "A decryption program you already have for default.xex, the encrypted file on both Xbox 360 discs."),
+    "psp-tool": Input("PSP decryption program", "a decryption program you already have, for the PSP EBOOT.BIN", "file",
+                      "A decryption program you already have for EBOOT.BIN, the PSP game's encrypted file."),
+    "x360-file": _decrypted("x360", "x360-tool", "program file", "program file",
+                            "The decrypted program inside its default.xex (about 18 MB). Use it instead of the program above."),
+    "wo1-x360-file": _decrypted("wo1-x360", "x360-tool", "program file", "program file",
+                                "The decrypted program inside its default.xex (about 17 MB). Use it instead of the program above."),
+    "psp-file": _decrypted("psp", "psp-tool", "EBOOT", "EBOOT.BIN",
+                           "The decrypted PSP_GAME/SYSDIR/EBOOT.BIN. Use it instead of the program above."),
+    "lettering": Input("lettering.zip", None),  # for development: the release lettering bundle
+    "dll": Input("d3d9.dll", None),  # for development: the release d3d9.dll
 }
 # disc image input: (the encrypted file inside the image, the decryption program input the player has for it,
 # the alternative input: that file already decrypted, checked against the pin and never run). One program serves
 # both Xbox 360 discs.
-PROGRAMS = {
-    "wo1-x360": ("default.xex", "x360-tool", "wo1-x360-file"),
-    "x360": ("default.xex", "x360-tool", "x360-file"),
-    "psp": ("PSP_GAME/SYSDIR/EBOOT.BIN", "psp-tool", "psp-file"),
-}
+FILES = {disc: file for disc in DISCS for file, each in INPUTS.items() if each.disc == disc}
+PROGRAMS = {disc: (DISCS[disc].program.member, INPUTS[file].tool, file) for disc, file in FILES.items()}
 TOOLS = {tool: tuple(disc for disc, (_, each, _) in PROGRAMS.items() if each == tool) for _, tool, _ in PROGRAMS.values()}
-FILES = {disc: file for disc, (_, _, file) in PROGRAMS.items()}
 FILE_PROGRAMS = {file: disc for disc, file in FILES.items()}
 NEITHER = "Pick a decryption program, or a decrypted file under Advanced."
-WRONG_FILE = "This is not the decrypted file wozmod needs. Pick the file your decryption program made."
+WRONG_FILE = ("This is not the decrypted file wozmod needs. Pick the file your decryption program made, "
+              "or give wozmod the program instead.")
+FILE_IN_IMAGE = "Not needed: your disc image already has the decrypted file. Clear this box."
+FILE_AND_PROGRAM = "You also gave the decryption program. Give one or the other: clear this box or the program."
+IMAGE_FIRST = "Pick the right disc image first."
 _TOOL_RUNS: dict[tuple, tuple[bytes | None, str]] = {}  # one run per program and image, whoever asks (window, check, build)
 _TOOL_LOCK = threading.Lock()
 
 
-def _pins(disc: str):
-    """(decrypted, encrypted) identities of the program file on a disc image input, read at call time."""
-    from wozmod import donors
-
-    return {"x360": (donors.X360_PROGRAM, donors.X360_ENCRYPTED_PROGRAM),
-            "wo1-x360": (donors.WO1_X360_PROGRAM, donors.WO1_X360_ENCRYPTED_PROGRAM),
-            "psp": (donors.PSP_PROGRAM, donors.PSP_ENCRYPTED_PROGRAM)}[disc]
-
-
 def _trimmed(disc: str, path: Path | str) -> bytes | None:
     """The pinned decrypted program when this file is it (extra trailing bytes allowed); else None. Nothing runs."""
-    from wozmod.donors.programs import MAX_EXTRA_BYTES, trim_program
+    from wozmod.donors import read_pinned
 
-    identity = _pins(disc)[0]
     try:
-        with Path(path).open("rb") as stream:
-            return trim_program(stream.read(identity.size + MAX_EXTRA_BYTES + 1), identity)
+        return read_pinned(path, DISCS[disc].program.plain)
     except OSError:
         return None
 
@@ -169,24 +179,29 @@ def program_in_image(disc: str, image: Path | str) -> bytes | None:
     from wozmod.donors import read_disc_member, trim_program
 
     try:
-        data = read_disc_member(Path(image), DISCS[disc][0], PROGRAMS[disc][0])
+        data = read_disc_member(Path(image), DISCS[disc].donor, DISCS[disc].program.member)
     except (OSError, ValueError):
         return None
-    return None if data is None else trim_program(data, _pins(disc)[0])
+    return None if data is None else trim_program(data, DISCS[disc].program.plain)
 
 
 def resolve_program(disc: str, inputs: dict, log=None) -> tuple[str, bytes | str]:
     """(the input the outcome belongs to, the pinned program of this disc image or the plain problem).
 
-    Order: a decrypted copy in the disc image, then the decrypted file, then the decryption program.
-    The first two are only read; only the last runs anything.
+    Each disc takes one source: a decrypted copy in the disc image, a decrypted file, or the decryption program.
+    A decrypted file given beside either other source is refused on its own row. Only the program runs anything.
     """
     _, tool, file_input = PROGRAMS[disc]
     image, file = inputs.get(disc), inputs.get(file_input)
-    if image and not check_input(disc, image) and (held := program_in_image(disc, image)) is not None:
-        return disc, held
+    held = program_in_image(disc, image) if image and not check_input(disc, image) else None
     if file:
-        return file_input, (found if (found := _trimmed(disc, file)) is not None else WRONG_FILE)
+        if held is not None:
+            return file_input, FILE_IN_IMAGE
+        if inputs.get(tool):
+            return file_input, FILE_AND_PROGRAM
+        return file_input, check_input(file_input, file) or _trimmed(disc, file)
+    if held is not None:
+        return disc, held
     return tool, decrypt_with_tool(disc, inputs.get(tool), image, log)
 
 
@@ -195,19 +210,19 @@ def decrypt_with_tool(disc: str, tool: Path | str | None, image: Path | str | No
     image; or the plain reason it cannot be made. The result is kept, so the window and the install run it once."""
     from wozmod.donors import NOT_PRODUCED, read_disc_member, run_tool, trim_program
 
-    member = PROGRAMS[disc][0]
+    member = DISCS[disc].program.member
     if not tool:
         return NEITHER
     if not image or check_input(disc, image):
-        return "Pick the right disc image first."
+        return IMAGE_FIRST
     tool, image = Path(tool), Path(image)
     if not tool.is_file():
         return "File not found."
     try:
-        data = read_disc_member(image, DISCS[disc][0], member)
+        data = read_disc_member(image, DISCS[disc].donor, member)
     except (OSError, ValueError):
         return "The disc image cannot be read."
-    decrypted, encrypted = _pins(disc)
+    decrypted, encrypted = DISCS[disc].program.plain, DISCS[disc].program.encrypted
     if data is None or data != trim_program(data, encrypted):
         return f"{member.rsplit('/', 1)[-1]} on the disc image is not the supported file."
     key = (disc, tool, image, tool.stat().st_mtime_ns, image.stat().st_mtime_ns)
@@ -220,6 +235,50 @@ def decrypt_with_tool(disc: str, tool: Path | str | None, image: Path | str | No
     if log:
         log(transcript)
     return program if program is not None else NOT_PRODUCED
+
+
+@dataclass(frozen=True)
+class ProgramStatus:
+    """One decryption program input's verdict. The install, the command line and the window all word theirs from it."""
+
+    covered: str | None  # None while a disc it serves has no usable decrypted file, so the program is needed; else
+    # "disc" when each disc image holds the file, "file" when a decrypted file under Advanced stands in
+    problems: dict[str, str]  # each plain problem on the input that caused it: the program (also when it is given
+    # but not needed), a decrypted file, or a disc image the program cannot be checked against (IMAGE_FIRST)
+    made: bool  # the program made the file for at least one disc
+
+    def verdict(self, tool: str) -> str | None:
+        """What the program's own row says: its own problem, else that a disc image it needs is wrong."""
+        return self.problems.get(tool) or (IMAGE_FIRST if IMAGE_FIRST in self.problems.values() else None)
+
+
+def file_problem(file: str, inputs: dict) -> str | None:
+    """The problem a given decrypted file input shows, worded as `program_status` words it. Nothing runs."""
+    found = resolve_program(FILE_PROGRAMS[file], inputs)[1]
+    return found if isinstance(found, str) else None
+
+
+def program_status(tool: str, inputs: dict, log=None) -> ProgramStatus:
+    """Check each disc the program serves on its own, in `resolve_program`'s order. The program runs (once, and the
+    result is kept) only on a disc whose image holds no decrypted copy and that has no decrypted file given."""
+    problems, covered, made = {}, [], False
+    for disc in TOOLS[tool]:
+        source, found = resolve_program(disc, inputs, log)
+        if found == IMAGE_FIRST:  # the program cannot be checked here: the problem is the image's
+            source = disc
+        if found == FILE_IN_IMAGE:  # the image's copy stands; only the file row is wrong
+            covered.append("disc")
+        if isinstance(found, str):
+            problems.setdefault(source, found)
+        elif source == tool:
+            made = True
+        else:
+            covered.append("disc" if source == disc else "file")
+    whole = len(covered) == len(TOOLS[tool])
+    if whole and inputs.get(tool):  # a file covers a disc only with no program given, so here each image holds it
+        problems[tool] = ("Not needed: your disc images already have the decrypted files. Clear this box."
+                          if len(TOOLS[tool]) > 1 else FILE_IN_IMAGE)
+    return ProgramStatus(("disc" if set(covered) == {"disc"} else "file") if whole else None, problems, made)
 
 
 def check_input(name: str, path: Path | str) -> str | None:
@@ -245,9 +304,9 @@ def check_input(name: str, path: Path | str) -> str | None:
         if not path.is_file():
             return "File not found. Pick the .iso file again."
         try:
-            check_donor_image(path, DISCS[name][0])
+            check_donor_image(path, DISCS[name].donor)
         except (OSError, ValueError):
-            return f"Not {DISCS[name][1]}. Pick the .iso made from that disc."
+            return f"Not the {INPUTS[name].label}. Pick the .iso made from that disc."
         return None
     if name in FILE_PROGRAMS:  # an already decrypted file: read, never run
         if not path.is_file():
@@ -265,24 +324,25 @@ def check_inputs(game: Path, inputs: dict[str, Path | None], log=None) -> None:
     The two files of the release download come first, on their own: a wrong download is named in milliseconds,
     not after the seconds the game folder's hashes take. Every other wrong input is then named in one error.
     """
-    if wrong := [f"{LABELS[name]}: {problem}" for name in ("lettering", "dll")
+    if wrong := [f"{INPUTS[name].label}: {problem}" for name in ("lettering", "dll")
                  if (problem := check_input(name, inputs[name]))]:
         raise InstallError("\n".join(wrong))
     problems = {"game": check_input("game", game)}
     for name in DISCS:
         problems[name] = check_input(name, inputs[name])
-    for disc, (_, tool, _) in PROGRAMS.items():
-        source, found = resolve_program(disc, inputs, log)
-        if isinstance(found, str) and not (source == tool and inputs.get(tool) and problems[disc]):
-            problems.setdefault(source, found)  # a wrong disc image is reported once, on the image
-    lines = [f"{LABELS[name]}: {problem}" for name, problem in problems.items() if problem]
+    for tool in TOOLS:  # a wrong disc image is named once, on the image: its key is already set above
+        for source, problem in program_status(tool, inputs, log).problems.items():
+            problems.setdefault(source, problem)
+    lines = [f"{INPUTS[name].label}: {problem}" for name, problem in problems.items() if problem]
     if resources.ffmpeg() is None:
         lines.append("ffmpeg was not found on PATH; the voice build needs it")
     if lines:
         raise InstallError("\n".join(lines))
 
 
-def _read_manifest(game: Path) -> dict[str, str]:
+def read_manifest(game: Path) -> dict[str, str]:
+    """The install record's files and their SHA-256, refused (InstallError) when unreadable or naming a file the
+    installer never writes."""
     path = game / MANIFEST
     try:
         files = json.loads(path.read_text(encoding="utf-8"))["files"]
@@ -358,7 +418,7 @@ def install_state(game: Path) -> tuple[str, str | None]:
     game = Path(game)
     if not (game / MANIFEST).is_file():
         return "none", None
-    _read_manifest(game)  # an unreadable record stops here, with its own message
+    read_manifest(game)  # an unreadable record stops here, with its own message
     found = installed_version(game)
     have, now = _version_key(found), _version_key(VERSION)
     if found == VERSION:
@@ -374,7 +434,7 @@ def uninstall(game: Path, keep_settings: bool = True, log=print) -> dict[str, st
     game = Path(game)
     if not (game / MANIFEST).is_file():
         raise InstallError(f"no wozmod install in {game} ({MANIFEST} is missing)")
-    files = _read_manifest(game)
+    files = read_manifest(game)
     version = installed_version(game)
     changed = _remove(game, files)
     if changed:
@@ -403,23 +463,40 @@ def _extract(flag: str, image: Path, donor, destination: Path, files, label: str
     try:
         extract_donor(image, donor, destination, files=files, on_bytes=reading)
     except (OSError, ValueError) as error:  # DiscError is a ValueError
-        raise InstallError(f"{LABELS[flag]}: {image} is not the supported disc image ({error})") from error
+        raise InstallError(f"{INPUTS[flag].label}: {image} is not the supported disc image ({error})") from error
 
 
 def _place_programs(inputs: dict[str, Path | None], donors: Path) -> None:
     """Put the decrypted program files, made by the player's programs, where the text build reads them."""
-    for disc, target in (("x360", "wo2-x360/default.pe"), ("wo1-x360", "wo1-x360/default.pe"),
-                         ("psp", "wo2-psp/eboot.prx")):
+    for disc in DISCS:
         source, found = resolve_program(disc, inputs)
         if isinstance(found, str):
-            raise InstallError(f"{LABELS[source]}: {found}")
-        (donors / target).write_bytes(found)
+            raise InstallError(f"{INPUTS[source].label}: {found}")
+        DonorsFolder(donors).stage_program(disc, found)
 
 
 def _text_table(game: Path, donors: Path, table: Path) -> None:
     from wozmod.text import DonorResolver, build_table
 
     build_table(game, DonorResolver(donors), TEXT_DATA, table)
+
+
+def _menu_art(game: Path, donors: Path, lettering: Path, staging: Path, out: Path, jobs: int) -> None:
+    """The art stage: build the menu art in staging and move all of it into out/wozmod."""
+    from wozmod.art.build import ArtError
+    from wozmod.art.compose import compose
+
+    folders = DonorsFolder(donors)
+    try:
+        art = compose(game, {"wo1-x360": folders.folder("wo1-x360") / "linkdata_ens",
+                             "x360": folders.folder("x360") / "linkdata_ens", "text": donors},
+                      lettering, staging, True, jobs)
+    except ArtError as error:
+        disc = next((f"{disc.title} disc: " for disc in DISCS.values() if disc.donor == error.donor), "")
+        raise InstallError(f"Menu art: {disc}{error}") from error
+    (out / "wozmod").mkdir(parents=True, exist_ok=True)
+    for built in art.iterdir():
+        os.replace(built, out / "wozmod" / built.name)
 
 
 def _worker_start(events, stop, log_path=None) -> None:
@@ -514,26 +591,22 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
     The input checks run while the discs are read; `checked()` waits for them and raises when an input is wrong,
     and `checked(wait=False)` raises only once they are done, so a wrong input stops the read at once.
     """
-    from wozmod.art.compose import compose
-    from wozmod.donors import PSP, WO1_X360, X360
     from wozmod.movies import movie_donors
     from wozmod.voices import VOICE_DONOR_FILES
 
     donors, out = staging / "donors", staging / "out"
-    psp_files = ["PSP_GAME/USRDIR/LINKDATA_NA.FNS"]
-    plan = [  # (input, donor, folder, files, what the progress view says, bytes to read)
-        ("wo1-x360", WO1_X360, "wo1-x360", VOICE_DONOR_FILES, "reading the Warriors Orochi Xbox 360 disc"),
-        ("x360", X360, "wo2-x360", VOICE_DONOR_FILES, "reading the Warriors Orochi 2 Xbox 360 disc"),
-        ("psp", PSP, "wo2-psp", psp_files, "reading the PSP disc"),
-    ]
-    flags = {name: flag for flag, (name, _) in DISCS.items()}
-    plan += [(flags[name], donor, "movie", None, "copying the English movies") for name, donor in movie_donors().items()]
+    folders = DonorsFolder(donors)
+    reads = {"wo1-x360": VOICE_DONOR_FILES, "x360": VOICE_DONOR_FILES, "psp": ["PSP_GAME/USRDIR/LINKDATA_NA.FNS"]}
+    plan = [(flag, DISCS[flag].donor, folders.folder(flag), files, f"reading the {DISCS[flag].title} disc")
+            for flag, files in reads.items()]
+    flags = {disc.donor.name: flag for flag, disc in DISCS.items()}
+    plan += [(flags[name], donor, donors / "movie", None, "copying the English movies") for name, donor in movie_donors().items()]
     sizes = [sum(m.size for m in donor.files if files is None or m.path in files) for _, donor, _, files, _ in plan]
     progress.begin("discs")
     offset, unread = 0, None
     try:
         for (flag, donor, folder, files, label), size in zip(plan, sizes, strict=True):
-            _extract(flag, inputs[flag], donor, donors / folder, files, label,
+            _extract(flag, inputs[flag], donor, folder, files, label,
                      offset / sum(sizes), (offset + size) / sum(sizes), lambda: checked(wait=False))
             offset += size
     except InstallError as error:
@@ -560,9 +633,7 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
         futures = {
             pool.submit(_text_table, game, donors, out / "wozmod/table.bin"): "text",
             pool.submit(_voice_banks, game, donors, out / "wozmod", jobs): "voices",
-            pool.submit(compose, game, {"wo1-x360": donors / "wo1-x360/linkdata_ens",
-                                        "x360": donors / "wo2-x360/linkdata_ens", "text": donors},
-                        inputs["lettering"], staging / "art", True, jobs): "art",
+            pool.submit(_menu_art, game, donors, inputs["lettering"], staging / "art", out, jobs): "art",
         }
         for key, text in (("text", "building the text table"), ("voices", "reading the voice banks"),
                           ("art", "preparing the menu art")):
@@ -573,9 +644,6 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
             _stop_workers(pool, futures, stop)
             raise
     progress.finish("build")
-    art = staging / "art/wozmod"
-    for name in ("entries", "hires.bin", "prompts-xbox.bin", "glyphs.bin"):
-        os.replace(art / name, out / "wozmod" / name)
     os.replace(donors / "movie", out / "wozmod/movie")
     shutil.copyfile(inputs["dll"], out / "d3d9.dll")
     return out
@@ -590,7 +658,7 @@ def install(game: Path, inputs: dict[str, Path], force: bool = False, log=print,
     """
     game = Path(game)
     progress = progress or Progress()
-    old = _read_manifest(game) if (game / MANIFEST).is_file() else {}
+    old = read_manifest(game) if (game / MANIFEST).is_file() else {}
     state, found = install_state(game)
     if state == "downgrade" and not force:
         raise InstallError(f"wozmod {found or 'of an unknown version'} is installed in {game}. This is wozmod "

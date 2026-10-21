@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from wozmod.donors.programs import ProgramError, ProgramIdentity, run_tool, verify_program
+from wozmod.donors.programs import ProgramIdentity, run_tool
 
 PAYLOAD = b"an authored test program"
 ENCRYPTED = b"an authored encrypted input"
@@ -40,14 +40,6 @@ def fake(path: Path, shape: str, *, produces: bytes = PAYLOAD, zeros: int = 0, b
                     encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
     return path
-
-
-def test_verify_program_rejects_wrong_size_even_when_hash_matches(tmp_path: Path) -> None:
-    source = tmp_path / "program"
-    source.write_bytes(PAYLOAD)
-    smaller = ProgramIdentity("Test program", len(PAYLOAD) - 1, hashlib.sha256(PAYLOAD).hexdigest(), "x360")
-    with pytest.raises(ProgramError, match="size"):
-        verify_program(source, smaller)
 
 
 def test_a_program_given_by_a_relative_path_still_runs(tmp_path, monkeypatch):

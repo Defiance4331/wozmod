@@ -6,7 +6,7 @@
 # reruns the art build when nothing it reads has changed since it last passed (WOZMOD_ART_FULL=1).
 cd "$(dirname "$0")/.." || exit 1
 [ "$1" = --full ] && { export WOZMOD_ART_FULL=1; shift; }
-for flag in ART_NO_WO1PC ART_WORDS AUDIO FONT_FACE_SOURCE FONT_GEOMETRY INSTALL_E2E RUNTIME_COMPILE; do
+for flag in ART_COMPOSE ART_NO_WO1PC ART_WORDS AUDIO FONT_FACE_SOURCE FONT_GEOMETRY INSTALL_E2E RUNTIME_COMPILE; do
   export "WOZMOD_$flag=1"
 done
 export WOZMOD_REQUIRE_INPUTS=1

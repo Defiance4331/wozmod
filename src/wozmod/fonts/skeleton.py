@@ -188,6 +188,28 @@ class Skeleton:
         return self.stroke([(x0, y0), (x1, y0), (x1, y1), (x0, y1)], r, True, **kw)
 
 
+def contours(layer, cap, u):
+    """A fontforge layer as paths for menu_effects.path, in units of `u` font units with y down from `cap`: each
+    path is its start point, then ("L", end) or ("C", control..., end) segments, closing on the start."""
+    out = []
+    for contour in layer:
+        pts = list(contour)
+        if not pts:
+            continue
+        k = next(i for i, q in enumerate(pts) if q.on_curve)
+        pts = pts[k:] + pts[:k] + [pts[k]]
+        g = lambda q: (q.x / u, cap - q.y / u)
+        segs, ctl = [g(pts[0])], []
+        for q in pts[1:]:
+            if q.on_curve:
+                segs.append(("C", *ctl, g(q)) if ctl else ("L", g(q)))
+                ctl = []
+            else:
+                ctl.append(g(q))
+        out.append(segs)
+    return out
+
+
 def merge(parts):
 
     l = fontforge.layer()

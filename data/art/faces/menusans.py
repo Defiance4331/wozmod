@@ -9,7 +9,7 @@ from pathlib import Path
 import fontforge
 import numpy as np
 
-from .skeleton import Skeleton, merge
+from .skeleton import Skeleton, contours, merge
 from .menu_stroke import pinched_stroke
 
 CAP = 17.2
@@ -466,7 +466,7 @@ def _draw_squared(ch, s, v):
 def _outer_rail(layer, x, *, bottom=False):
 
     crossings = []
-    for contour in _contours(layer):
+    for contour in contours(layer, CAP, U):
         start = np.asarray(contour[0])
         for segment in contour[1:]:
             end = np.asarray(segment[-1])
@@ -827,27 +827,6 @@ def _draw_symbol(ch, s):
     raise KeyError(ch)
 
 
-def _contours(layer):
-
-    out = []
-    for contour in layer:
-        pts = list(contour)
-        if not pts:
-            continue
-        k = next(i for i, p in enumerate(pts) if p.on_curve)
-        pts = pts[k:] + pts[:k] + [pts[k]]
-        cv = lambda p: (p.x / U, CAP - p.y / U)
-        segments, controls = [cv(pts[0])], []
-        for point in pts[1:]:
-            if point.on_curve:
-                segments.append(("C", *controls, cv(point)) if controls else ("L", cv(point)))
-                controls = []
-            else:
-                controls.append(cv(point))
-        out.append(segments)
-    return out
-
-
 @lru_cache(maxsize=64)
 def glyphs(axes=Axes()):
 
@@ -895,7 +874,7 @@ def glyphs(axes=Axes()):
                    CAP - ((BASE - crown) * U + bar * U / 2) / U,
                    (13.25 * U + half) / U,
                    CAP - ((BASE - foot) * U - bar * U / 2) / U)
-        out[ch] = (_contours(layer), box)
+        out[ch] = (contours(layer, CAP, U), box)
 
 
     for ch in "’”−":
@@ -903,5 +882,5 @@ def glyphs(axes=Axes()):
         s.pen = (v.CSV, v.CSH)
         layer = merge(_draw_symbol(ch, s))
         x0, y0, x1, y1 = layer.boundingBox()
-        out[ch] = (_contours(layer), (x0 / U, CAP - y1 / U, x1 / U, CAP - y0 / U))
+        out[ch] = (contours(layer, CAP, U), (x0 / U, CAP - y1 / U, x1 / U, CAP - y0 / U))
     return out

@@ -13,6 +13,9 @@ import tempfile
 from pathlib import Path
 
 from wozmod import resources
+from wozmod.formats import pe
+
+from .latin_font import LATIN_GLYPH, SURROGATE_CODE, SURROGATE_LETTERS
 
 C_SOURCE = resources.root() / "runtime" / "english_runtime.c"
 MINGW_IMAGE = "musou-dw5s-mingw:fc44-gcc16.1.1"
@@ -144,8 +147,10 @@ TEST_HOOKS = [
     (0x5DDDE0, "8b442424 8b4c241c", 73, None),  # sprite record builder (banner plates): a plain box in `screen`
     (0x590350, "83ec20 53 55", 74, None),       # nine-slice outline (the gallery selection frame), the same
 ]
-# Cyrillic surrogate codes 0x8440-0x8444 route to glyphs 2794-2798.
-SURROGATES = str.maketrans({"Ō": "А", "ō": "Б", "Ū": "В", "ū": "Г", "ï": "Д"})
+# Each letter CP932 lacks travels as the character at its surrogate code (latin_font).
+SURROGATES = str.maketrans({letter: (SURROGATE_CODE + i).to_bytes(2, "big").decode("cp932")
+                            for i, letter in enumerate(SURROGATE_LETTERS)})
+_UNSURROGATES = {ord(v): k for k, v in SURROGATES.items()}
 
 
 class RuntimeBuildError(ValueError):
@@ -162,26 +167,9 @@ def encode_english(text: str) -> bytes:
     return text.translate(SURROGATES).encode("cp932")
 
 
-def pe_layout(exe: bytes) -> dict:
-    pe = struct.unpack_from("<I", exe, 0x3C)[0]
-    _require(exe[pe:pe + 4] == b"PE\0\0" and struct.unpack_from("<H", exe, pe + 4)[0] == 0x14C,
-             "not an i386 PE image")
-    optional = pe + 24
-    table = optional + struct.unpack_from("<H", exe, pe + 20)[0]
-    sections = []
-    for i in range(struct.unpack_from("<H", exe, pe + 6)[0]):
-        name, vsize, rva, raw_size, raw = struct.unpack_from("<8sIIII", exe, table + 40 * i)
-        sections.append({"name": name.rstrip(b"\0"), "vsize": vsize, "rva": rva,
-                         "raw_size": raw_size, "raw": raw})
-    return {"sections": sections, "image_base": struct.unpack_from("<I", exe, optional + 28)[0]}
-
-
-def file_offset(layout: dict, va: int) -> int:
-    rva = va - layout["image_base"]
-    for s in layout["sections"]:
-        if s["rva"] <= rva < s["rva"] + s["raw_size"]:
-            return rva - s["rva"] + s["raw"]
-    raise RuntimeBuildError(f"VA {va:#x} is not file-backed")
+def decode_english(raw: bytes, errors: str = "strict") -> str:
+    """The text ``encode_english`` gave ``raw`` for."""
+    return raw.decode("cp932", errors).translate(_UNSURROGATES)
 
 
 def hook_sites(defines: tuple[str, ...] = ()) -> list[tuple[int, bytes, int, int | None, bool]]:
@@ -199,21 +187,21 @@ def hook_sites(defines: tuple[str, ...] = ()) -> list[tuple[int, bytes, int, int
 
 def check_spans(exe: bytes, edits: dict[int, list[tuple[int, bytes, bytes]]], hooks: list) -> None:
     """Reject stock-byte drift, changed edit sizes and overlapping spans."""
-    layout = pe_layout(exe)
+    layout = pe.layout(exe)
     spans = {group: [] for group in edits}
     for group, group_edits in edits.items():
         for va, before, after in group_edits:
             _require(len(before) == len(after), f"edit at {va:#x} changes its length")
-            at = file_offset(layout, va)
+            at = pe.file_offset(layout, va)
             _require(exe[at:at + len(before)] == before, f"stock executable lacks the code at {va:#x}")
             spans[group].append((va, va + len(before)))
-    at = file_offset(layout, WIDTH_POINTER)
+    at = pe.file_offset(layout, WIDTH_POINTER)
     _require(exe[at:at + 4] == bytes(4), "width pointer is not stock")
     spans[ENGLISH].append((WIDTH_POINTER, WIDTH_POINTER + 4))
     always = []
     for va, prologue, hook_id, _, english in hooks:
         _require(len(prologue) >= 5, f"hook {hook_id} prologue shorter than a jump")
-        at = file_offset(layout, va)
+        at = pe.file_offset(layout, va)
         _require(exe[at:at + len(prologue)] == prologue, f"prologue drift at {va:#x}")
         (spans[ENGLISH] if english else always).append((va, va + len(prologue)))
     for group in (ONE_ROW, TWO_ROWS):  # the rows install in both modes, beside the English edits
@@ -246,6 +234,7 @@ def data_header(exe: bytes, edits: dict[int, list[tuple[int, bytes, bytes]]], ho
         "static const struct site enrt_hooks[] = {", *sites, "};",
         f"static const u8 enrt_widths[{len(widths)}] = {{{_bytes(widths)}}};",
         f"#define WIDTH_POINTER {WIDTH_POINTER:#x}",
+        f"#define GLYPH_LATIN {LATIN_GLYPH}",
         "",
     ])
 
@@ -258,9 +247,8 @@ def compile_dll(output: Path, header: str, defines: tuple[str, ...] = ()) -> Non
              "-o", "d3d9.dll", "english_runtime.c", "-lgdi32"]  # gdi32: the borderless bars' black brush
     with tempfile.TemporaryDirectory() as tmp:
         shutil.copyfile(C_SOURCE, Path(tmp, "english_runtime.c"))
-        for name in ("text_fit.h", "glyph_raster.h", "display_fit.h", "troop_ring.h", "hfr_pair.h", "voice_play.h",
-                     "device_hooks.h"):
-            shutil.copyfile(C_SOURCE.with_name(name), Path(tmp, name))
+        for header_file in C_SOURCE.parent.glob("*.h"):
+            shutil.copyfile(header_file, Path(tmp, header_file.name))
         Path(tmp, "enrt_data.h").write_text(header, encoding="utf-8")
         if shutil.which("i686-w64-mingw32-gcc"):
             subprocess.run(["i686-w64-mingw32-gcc", *flags], cwd=tmp, check=True)

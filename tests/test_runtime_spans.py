@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import struct
-
 import pytest
 
+from synthetic import pe_image
 from wozmod.runtime.english_runtime import (
     ENGLISH,
     ONE_ROW,
@@ -27,13 +26,7 @@ WIDTH = 0x79BAC0
 
 
 def stock_image() -> bytes:
-    image = bytearray(RAW + 0x1000)
-    struct.pack_into("<I", image, 0x3C, 0x80)
-    image[0x80:0x84] = b"PE\0\0"
-    struct.pack_into("<HH", image, 0x84, 0x14C, 1)
-    struct.pack_into("<H", image, 0x94, 0xE0)
-    struct.pack_into("<I", image, 0xB4, 0x700000)
-    struct.pack_into("<8sIIII", image, 0x178, b".fixture", 0x1000, 0x9B000, 0x1000, RAW)
+    image = pe_image(RAW + 0x1000, (b".fixture", 0x1000, 0x9B000, 0x1000, RAW), image_base=0x700000)
     for va, value in [(EDIT, b"abc"), (ROW, b"de"),
                       (ENGLISH_HOOK, b"12345"), (ALWAYS_HOOK, b"ABCDE")]:
         at = RAW + va - SECTION_VA

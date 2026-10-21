@@ -1,16 +1,14 @@
 """Valueraster rendering support."""
 import argparse
-import json
 import math
 from functools import lru_cache
 from pathlib import Path
 
-import cairo
 import numpy as np
 from PIL import Image
 
 from . import valuevec
-from .buttonraster import Label, coverage
+from .menu_effects import Label, coverage, ink_layout, outline_table, path
 from .word_key import word_key
 
 
@@ -49,66 +47,14 @@ LOOKS = {
 def glyphs(face):
 
     V = getattr(valuevec, face)
-    out = {}
-    for ch in V.BUILD:
-        l = V.layer(ch)
-        x0, y0, x1, y1 = l.boundingBox()
-        out[ch] = (V.contours(l), (x0 / V.U, V.CAP - y1 / V.U, x1 / V.U, V.CAP - y0 / V.U), (x0 / V.U, x1 / V.U))
-    return out
+    return outline_table(V, V.layer)
 
 
 def layout(face, text):
 
 
-    V, g = getattr(valuevec, face), glyphs(face)
-    letters = text.replace(" ", "")
-    for ch in letters:
-        if ch not in g:
-            raise KeyError(f"valuevec.{face} has no glyph for {ch!r} in {text!r}")
-    ink = V.SETS.get(word_key(text))
-    if ink is None:
-        ink, pen, prev = [], 0.0, None
-        for ch in text:
-            if ch == " ":
-                pen += V.SPACE
-                continue
-            if prev is not None:
-                pen += V.BEARINGS[prev][1] + V.BEARINGS[ch][0]
-            ink.append(pen)
-            pen += g[ch][2][1] - g[ch][2][0]
-            prev = ch
-    ls = V.BEARINGS[letters[0]][0]
-    out = [(ch, ls + x - g[ch][2][0]) for ch, x in zip(letters, ink, strict=True)]
-    last = letters[-1]
-    return out, ls + ink[-1] + (g[last][2][1] - g[last][2][0]) + V.BEARINGS[last][1]
-
-
-def _path(ctx, cs, x, y, sx, sy):
-    for segs in cs:
-        ctx.move_to(x + segs[0][0] * sx, y + segs[0][1] * sy)
-        for seg in segs[1:]:
-            pts = [(x + a * sx, y + b * sy) for a, b in seg[1:]]
-            if seg[0] == "L":
-                ctx.line_to(*pts[0])
-            else:
-                ctx.curve_to(*pts[0], *pts[1], *pts[2])
-        ctx.close_path()
-
-
-def dilated(draw, w, h, r):
-
-    if r <= 0:
-        return coverage(draw, w, h)
-    surf = cairo.ImageSurface(cairo.FORMAT_A8, w, h)
-    ctx = cairo.Context(surf)
-    ctx.set_fill_rule(cairo.FILL_RULE_WINDING)
-    draw(ctx)
-    ctx.fill_preserve()
-    ctx.set_line_width(2 * r)
-    ctx.set_line_join(cairo.LINE_JOIN_ROUND)
-    ctx.stroke()
-    surf.flush()
-    return np.ndarray((h, surf.get_stride()), np.uint8, surf.get_data())[:, :w] / 255.0
+    V = getattr(valuevec, face)
+    return ink_layout(text, V, glyphs(face), V.SETS.get(word_key(text)))
 
 
 def face_for(text: str, look: str, ref: str | None = None) -> str:
@@ -145,11 +91,11 @@ def render(text, scale=1.0, hscale=1.0, look="value_dim", ref=None):
 
     def draw(ctx):
         for ch, x in placed:
-            _path(ctx, g[ch][0], ox + x * sx, baseline - V.CAP * s, sx, s)
+            path(ctx, g[ch][0], ox + x * sx, baseline - V.CAP * s, sx, s)
 
     pre, alpha = np.zeros((h, w, 3)), np.zeros((h, w))
     for r, rgb, a in [*L["rings"], (0.0, L["fill"], 1.0)]:
-        c = dilated(draw, w, h, (r + L["grow"]) * s) * a
+        c = coverage(draw, w, h, max((r + L["grow"]) * s, 0.0)) * a  # a negative grow leaves the plain fill
         pre = c[..., None] * np.array(rgb, float) + (1 - c[..., None]) * pre
         alpha = c + (1 - c) * alpha
     rgb = pre / np.maximum(alpha, 1e-9)[..., None]
@@ -168,7 +114,4 @@ if __name__ == "__main__":
     parser.add_argument("--ref", help="official sheet, e.g. 15.9 or 15.10")
     args = parser.parse_args()
     label = render(args.text, args.scale, args.hscale, args.look, args.ref)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    label.image.save(args.output)
-    print(json.dumps(dict(size=label.image.size, baseline=label.baseline, ink=[round(v, 3) for v in label.ink],
-                          pen=round(label.pen, 3), advance=round(label.advance, 3))))
+    label.emit(args.output)

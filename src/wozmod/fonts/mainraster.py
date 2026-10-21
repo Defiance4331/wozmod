@@ -1,6 +1,5 @@
 """Mainraster rendering support."""
 import argparse
-import json
 import math
 from functools import lru_cache
 from pathlib import Path
@@ -9,7 +8,7 @@ import numpy as np
 from PIL import Image
 
 from . import mainvec as V
-from .buttonraster import Label, blur, coverage, path
+from .menu_effects import Label, blur, coverage, ink_layout, outline_table, path
 from .word_key import word_key
 
 RING = 3.0
@@ -51,39 +50,13 @@ STYLES = {
 @lru_cache(maxsize=1)
 def glyphs():
 
-    out = {}
-    for ch in V.BUILD:
-        l = V.layer(ch)
-        x0, y0, x1, y1 = l.boundingBox()
-        out[ch] = V.contours(l), (x0 / V.U, V.CAP - y1 / V.U, x1 / V.U, V.CAP - y0 / V.U)
-    return out
+    return outline_table(V, V.layer)
 
 
 def layout(text):
 
 
-    g = glyphs()
-    letters = text.replace(" ", "")
-    for ch in letters:
-        if ch not in g:
-            raise KeyError(f"mainvec has no glyph for {ch!r} in {text!r}")
-    ink = V.SETS.get(word_key(text))
-    if ink is None:
-        ink, pen, prev = [], 0.0, None
-        for ch in text:
-            if ch == " ":
-                pen += V.SPACE
-                continue
-            if prev is not None:
-                pen += V.BEARINGS[prev][1] + V.KERN.get((prev, ch), 0.0) + V.BEARINGS[ch][0]
-            ink.append(pen)
-            pen += g[ch][1][2] - g[ch][1][0]
-            prev = ch
-    if not letters:
-        return [], V.SPACE * len(text)
-    ls, last = V.BEARINGS[letters[0]][0], letters[-1]
-    out = [(ch, ls + x - g[ch][1][0]) for ch, x in zip(letters, ink, strict=True)]
-    return out, ls + ink[-1] + (g[last][1][2] - g[last][1][0]) + V.BEARINGS[last][1]
+    return ink_layout(text, V, glyphs(), V.SETS.get(word_key(text)))
 
 
 def streak(xr, d, width, room=None):
@@ -105,8 +78,8 @@ def render(text, scale=1.0, style="lit", room=None):
     s, st = scale, STYLES[style]
     pad = math.ceil((HALO_R + 3 * HALO_SIGMA) * s) + 1
     left = math.ceil((STREAK_W / 2 - STREAK_L + 8 * STREAK_LEAN) * s)
-    asc = max(V.CAP - b[1] for _, b in g.values())
-    desc = max(b[3] - V.CAP for _, b in g.values())
+    asc = max(V.CAP - b[1] for _, b, _ in g.values())
+    desc = max(b[3] - V.CAP for _, b, _ in g.values())
     baseline = pad + math.ceil(asc * s)
     h = baseline + math.ceil(desc * s) + pad
     if placed:
@@ -156,7 +129,4 @@ if __name__ == "__main__":
     parser.add_argument("--room", type=float, help="official px from the ink's left edge the streak must end within")
     args = parser.parse_args()
     label = render(args.text, args.scale, args.style, args.room)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    label.image.save(args.output)
-    print(json.dumps(dict(size=label.image.size, baseline=label.baseline, ink=[round(v, 3) for v in label.ink],
-                          pen=round(label.pen, 3), advance=round(label.advance, 3))))
+    label.emit(args.output)

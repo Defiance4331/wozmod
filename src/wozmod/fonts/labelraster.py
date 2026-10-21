@@ -1,6 +1,5 @@
 """Labelraster rendering support."""
 import argparse
-import json
 import math
 from functools import lru_cache
 from pathlib import Path
@@ -9,7 +8,7 @@ import numpy as np
 from PIL import Image
 
 from . import labelvec as V
-from .buttonraster import Label, blur, coverage, path
+from .menu_effects import Label, blur, coverage, outline_table, path, pen_layout
 from .word_key import word_key
 
 FILL_A = 0.908100490
@@ -22,12 +21,7 @@ HALO_R, HALO_SIGMA, HALO_K, HALO_GREY = 0.84, 1.28, 0.82, 249
 @lru_cache(maxsize=1)
 def glyphs():
 
-    out = {}
-    for ch in V.BUILD:
-        l = V.layer(ch)
-        x0, y0, x1, y1 = l.boundingBox()
-        out[ch] = V.contours(l), (x0 / V.U, V.CAP - y1 / V.U, x1 / V.U, V.CAP - y0 / V.U)
-    return out
+    return outline_table(V, V.layer)
 
 
 def layout(text):
@@ -44,19 +38,7 @@ def layout(text):
         last = chars[-1]
         advance = ls + lefts[-1] + g[last][1][2] - g[last][1][0] + V.BEARINGS[last][1]
         return placed, advance
-    track, space = V.ROWS.get(word_key(text), (0.0, V.SPACE))
-    pen, out = 0.0, []
-    for k, ch in enumerate(text):
-        pen += track if k else 0.0
-        if ch == " ":
-            pen += space
-            continue
-        if ch not in g:
-            raise KeyError(f"labelvec has no glyph for {ch!r} in {text!r}")
-        (ls, rs), (x0, _, x1, _) = V.BEARINGS[ch], g[ch][1]
-        out.append((ch, pen + ls - x0))
-        pen += ls + (x1 - x0) + rs
-    return out, pen
+    return pen_layout(text, V, g, *V.ROWS.get(word_key(text), (0.0, V.SPACE)))
 
 
 def render(text, scale=1.0):
@@ -99,7 +81,4 @@ if __name__ == "__main__":
     parser.add_argument("--scale", type=float, default=1.0, help="device px per official 1x texel")
     args = parser.parse_args()
     label = render(args.text, args.scale)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    label.image.save(args.output)
-    print(json.dumps(dict(size=label.image.size, baseline=label.baseline, ink=[round(v, 3) for v in label.ink],
-                          pen=round(label.pen, 3), advance=round(label.advance, 3))))
+    label.emit(args.output)

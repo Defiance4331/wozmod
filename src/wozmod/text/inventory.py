@@ -7,8 +7,8 @@ import struct
 from pathlib import Path
 
 from wozmod.formats.linkdata import entry_bytes, moz_entries, parse_index
+from wozmod.formats.pe import pointer_strings
 from wozmod.formats.scripts import event_texts, mesc_blocks, parse_script, quote_tables, quote_text
-from wozmod.runtime.english_runtime import file_offset, pe_layout
 from wozmod.runtime.layout import DEFINES
 
 from .script_alignment import BRIEFINGS, QUOTES
@@ -70,8 +70,6 @@ def inventory(stock: Path) -> dict[str, dict[bytes, object]]:
     for line in (line for table in officers for line in table):
         add("officer quotes", quote_text(line), ("window", 1))
     exe = (stock / "OROCHI_Z.exe").read_bytes()
-    layout = pe_layout(exe)
-    for i in range(MESSAGE_COUNT):
-        at = file_offset(layout, struct.unpack_from("<I", exe, file_offset(layout, MESSAGES + 4 * i))[0])
-        add("exe messages", exe[at:exe.index(b"\0", at)], None)
+    for value in pointer_strings(exe, MESSAGES, MESSAGE_COUNT, 4):
+        add("exe messages", value, None)
     return found

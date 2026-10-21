@@ -1,7 +1,7 @@
 import struct
 
 from wozmod.text.inventory import inventory
-from synthetic import mesc, script, spans, strings, write_stock_archive
+from synthetic import mesc, pe_image, script, spans, strings, write_stock_archive
 
 
 def _cp932(ordinal):
@@ -13,13 +13,7 @@ def _script(notice, spoken):
 
 
 def _exe(messages):
-    data = bytearray(0x4200)
-    struct.pack_into("<I", data, 0x3C, 0x80)
-    data[0x80:0x84] = b"PE\0\0"
-    struct.pack_into("<HH", data, 0x84, 0x14C, 1)
-    struct.pack_into("<H", data, 0x94, 0xE0)
-    struct.pack_into("<I", data, 0x98 + 28, 0x6DE000)
-    struct.pack_into("<8sIIII", data, 0x178, b".data", 0x4000, 0x100, 0x4000, 0x200)
+    data = pe_image(0x4200, (b".data", 0x4000, 0x100, 0x4000, 0x200), image_base=0x6DE000)
     at = 0x1800
     for slot in range(911):
         value = messages.get(slot, b"ASCII")

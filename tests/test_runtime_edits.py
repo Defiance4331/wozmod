@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from wozmod.runtime import english_runtime as runtime
+from wozmod.formats import pe
 from wozmod.runtime import runtime_edits
 
 
@@ -107,9 +107,9 @@ def test_xbox_defaults_bind_each_camera_action_to_its_right_stick_half() -> None
     if not exe.is_file():
         pytest.skip("set WOZMOD_GAME to the stock game folder")
     stock = exe.read_bytes()
-    layout = runtime.pe_layout(stock)
+    layout = pe.layout(stock)
     start, end = 0x5E378D, 0x5E3891  # layout 3's camera block, up to its return
-    code = bytearray(stock[runtime.file_offset(layout, start):runtime.file_offset(layout, end)])
+    code = bytearray(stock[pe.file_offset(layout, start):pe.file_offset(layout, end)])
     for va, before, after in runtime_edits.PAD_CAMERA:
         assert code[va - start:va - start + len(before)] == before
         code[va - start:va - start + len(after)] = after

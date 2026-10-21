@@ -110,17 +110,13 @@ def outline_cells(glyphs: dict, cap: float, s: float = SCALE) -> dict[str, np.nd
 def faces() -> dict[str, dict[str, np.ndarray]]:
     from wozmod.fonts import buttonraster, headerraster, labelraster, mainraster, valueraster
     from wozmod.fonts import valuevec
+    from wozmod.fonts.menu_effects import outline_table
 
     found = {"wo1vec 24px (in-game text)": wo1_cells()}
     for name, mod in (("mainvec", mainraster), ("labelvec", labelraster), ("buttonvec", buttonraster)):
         found[name] = outline_cells(mod.glyphs(), 0)
     H = headerraster.V  # italic: measured upright, or every stem would read as a slanted stroke
-    upright = {}
-    for ch in H.BUILD:
-        layer = H.layer(ch, None, slant=0.0)
-        x0, y0, x1, y1 = layer.boundingBox()
-        upright[ch] = H.contours(layer), (x0 / H.U, H.CAP - y1 / H.U, x1 / H.U, H.CAP - y0 / H.U)
-    found["headervec upright"] = outline_cells(upright, 0)
+    found["headervec upright"] = outline_cells(outline_table(H, lambda ch: H.layer(ch, None, slant=0.0)), 0)
     for face in ("BOLD", "REGULAR", "CONFIRM_FACE", "LIGHT"):
         found[f"valuevec {face.removesuffix('_FACE').lower()}"] = outline_cells(valueraster.glyphs(face), getattr(valuevec, face).CAP)
     return found

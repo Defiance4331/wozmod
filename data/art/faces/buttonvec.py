@@ -662,24 +662,6 @@ def band(cap):
     return ymap
 
 
-def contours(l, cap=DESIGN_CAP):
-    out = []
-    for c in l:
-        pts = list(c)
-        k = next(i for i, q in enumerate(pts) if q.on_curve)
-        pts = pts[k:] + pts[:k] + [pts[k]]
-        g = lambda q: (q.x / U, cap - q.y / U)
-        segs, ctl = [g(pts[0])], []
-        for q in pts[1:]:
-            if q.on_curve:
-                segs.append(("C", *ctl, g(q)) if ctl else ("L", g(q)))
-                ctl = []
-            else:
-                ctl.append(g(q))
-        out.append(segs)
-    return out
-
-
 STYLE_METRICS = {
     '493.9': dict(STEM=2.2725, BAR=3.2375, pv=2.219, ph=3.2687),
     '508.0': dict(STEM=2.2475, BAR=2.9875, pv=2.2315, ph=3.0437),
@@ -700,31 +682,3 @@ def styled_layer(ch, cap=DESIGN_CAP, style='501.3'):
     finally:
         STEM, BAR, PEN, X0, PARAMS['O']['pv'], PARAMS['O']['ph'] = old
 
-
-REF_VARIANTS = {'493.9': {'slant': 0.0, 'weight_x': 1.00640625, 'weight_y': 1.055},
- '501.3': {'slant': 0.0, 'weight_x': 0.99828125, 'weight_y': 1.0009375},
- '508.0': {'slant': 0.0, 'weight_x': 0.99703125, 'weight_y': 1.0},
- '508.35': {'slant': 0.0015000000000000002, 'weight_x': 0.974375, 'weight_y': 1.0},
- '508.40': {'slant': 0.0, 'weight_x': 0.999375, 'weight_y': 1.0025}}
-
-
-def ref_layer(ch, ref, cap=DESIGN_CAP):
-    variant = REF_VARIANTS[ref]
-    global PARAMS, STEM, BAR, PEN, X0
-    old = PARAMS, STEM, BAR, PEN, X0
-    try:
-        wx, wy = variant['weight_x'], variant['weight_y']
-        PARAMS = {letter: dict(values) for letter, values in PARAMS.items()}
-        for values in PARAMS.values():
-            if 'pv' in values:
-                values['pv'] *= wx
-            if 'ph' in values:
-                values['ph'] *= wy
-        STEM, BAR = STEM * wx, BAR * wy
-        PEN, X0 = (STEM, BAR), STEM / 2
-        outline = layer(ch, cap)
-        if variant['slant']:
-            outline.transform((1., 0., variant['slant'], 1., 0., 0.))
-        return outline
-    finally:
-        PARAMS, STEM, BAR, PEN, X0 = old

@@ -210,11 +210,11 @@ FILE_NAME = re.compile(r"[\w-]+\.[A-Za-z0-9]{1,4}")
 def test_tracked_text_stores_no_official_english() -> None:
     # Bug: an official word or line is typed into the data, a font table's keys, the lettering code or a test (in
     # any case or spacing) instead of a pointer to its donor string, a letter map of its donor image or a hash.
-    from wozmod.art import build
+    from wozmod.art import build, faces, vector
 
     official = _donor_strings(Path(os.environ["WOZMOD_DONORS"]))
-    stored = [(f"art/build.py {name}", text) for name, value in vars(build).items() if name.isupper()
-              for text in _strings(value)]
+    stored = [(f"{module.__name__} {name}", text) for module in (build, faces, vector)
+              for name, value in vars(module).items() if name.isupper() for text in _strings(value)]
     for path in _files():
         where = path.relative_to(REPO).as_posix()
         if path.suffix == ".json" and where.startswith("data/"):

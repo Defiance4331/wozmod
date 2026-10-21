@@ -3,14 +3,66 @@
 from __future__ import annotations
 
 import re
+import struct
 from collections.abc import Iterable
 
-from .english_runtime import C_SOURCE, SURROGATES, encode_english
-from .latin_font import CELL, LATIN_GLYPH
+from .english_runtime import C_SOURCE, decode_english, encode_english
+from .latin_font import CELL, LATIN_COUNT, LATIN_FIRST, LATIN_GLYPH
 
-UNSURROGATES = {ord(v): k for k, v in SURROGATES.items()}
 SOURCE = C_SOURCE.read_text(encoding="utf-8")
-DEFINES = {name: int(value, 16) for name, value in re.findall(r"#define (\w+) (0x[0-9A-Fa-f]+)", SOURCE)}
+_COMMENTS = re.compile(r"/\*.*?\*/|//[^\n]*", re.S)
+_INTEGER = re.compile(r"(-?(?:0x[0-9A-Fa-f]+|\d+))[uU]?")
+
+
+def defines(source: str = SOURCE) -> dict[str, int]:
+    """Read every #define whose value is one integer: bare, in parentheses or behind casts (``0x1F``, ``(-3)``,
+    ``((void (*)(u32))0x4F4230)``). Defines of anything else (an expression, a float, a macro) are left out."""
+    found = {}
+    for name, value in re.findall(r"^[ \t]*#define[ \t]+(\w+)[ \t]+(.*?)[ \t]*$", _COMMENTS.sub("", source), re.M):
+        literal = re.search(rf"{_INTEGER.pattern}(\)*)$", value)
+        if literal is None:
+            continue
+        head = value[:literal.start()].rstrip()
+        if head and (head[-1] not in "()" or head.count("(") != head.count(")") + len(literal[2])):
+            continue  # the number ends an expression, not a cast
+        found[name] = int(literal[1], 0)
+    return found
+
+
+def c_array(name: str, source: str = SOURCE) -> list:
+    """Read the initializer of C array ``name``: an int per element of a one-dimensional array, a tuple per row of a
+    two-dimensional one. An element must be an integer or a define; any other raises ValueError rather than
+    dropping its row."""
+    array = re.search(rf"\b{name}\s*((?:\[[^\]]*\]\s*){{1,2}})=\s*\{{(.*?)\}}\s*;", _COMMENTS.sub("", source), re.S)
+    if array is None:
+        raise ValueError(f"{name} array initializer is missing")
+    sizes, body = re.findall(r"\[\s*(\w*)\s*\]", array[1]), array[2]
+    if len(sizes) == 1:
+        rows = [body]
+    else:
+        rows = re.findall(r"\{([^{}]*)\}", body)
+        if not rows or re.sub(r"\{[^{}]*\}", "", body).strip(" \t\r\n,"):
+            raise ValueError(f"{name} has an unsupported array initializer")
+    known = {}
+    values = []
+    for index, row in enumerate(rows, 1):
+        row_values = []
+        for token in (t.strip() for t in row.strip(" \t\r\n,").split(",")):
+            if number := _INTEGER.fullmatch(token):
+                row_values.append(int(number[1], 0))
+            elif token in (known := known or defines(source)):
+                row_values.append(known[token])
+            else:
+                raise ValueError(f"{name} initializer {index} is not integers or defines: {row.strip()!r}")
+        if len(sizes) == 2 and sizes[1] and len(row_values) != int(sizes[1], 0):
+            raise ValueError(f"{name} initializer {index} does not have {sizes[1]} values: {row.strip()!r}")
+        values.append(tuple(row_values))
+    if sizes[0] and len(values if len(sizes) == 2 else values[0]) != int(sizes[0], 0):
+        raise ValueError(f"{name} does not have {sizes[0]} initializers")
+    return values if len(sizes) == 2 else list(values[0])
+
+
+DEFINES = defines()
 JAPANESE = re.compile(r"[\u3000-\u30ff\u3400-\u9fff\uff00-\uffef]")
 WINDOW_TEXT, NOTICE_FORMATS, NOT_TEXT = 0x4F4D1F, 0x05, {0x08, 0x15, 0x16}
 
@@ -26,8 +78,8 @@ def units(data: bytes) -> list[tuple[int | None, bytes]]:
         c = data[i]
         if c == 0x5B and i + 2 < len(data):
             glyph, n = None, 3
-        elif 0x20 <= c <= 0x7D and c != 0x5D:
-            glyph, n = LATIN_GLYPH + c - 0x20, 1
+        elif LATIN_FIRST <= c < LATIN_FIRST + LATIN_COUNT and c != 0x5D:
+            glyph, n = LATIN_GLYPH + c - LATIN_FIRST, 1
         elif 0x81 <= c <= 0x9F or c >= 0xE0:
             glyph, n = 0, 2
         else:
@@ -55,77 +107,84 @@ def wrap(text: str, width: int, table: bytes, cell: int = CELL) -> str:
         elif space is not None and _width(out[line:], table, cell) >= width:
             out[space] = (None, b"\n")
             line, space = space + 1, None
-    return b"".join(raw for _, raw in out).decode("cp932").translate(UNSURROGATES)
+    return decode_english(b"".join(raw for _, raw in out))
 
-def _site_rows(name: str, pattern: str) -> list[tuple[str, str]]:
-    """Reject any initializer the value pattern cannot read."""
-    source = re.sub(r"/\*.*?\*/|//[^\n]*", "", SOURCE, flags=re.S)
-    array = re.search(rf"\b{name}\s*\[\s*\]\s*\[\s*\d+\s*\]\s*=\s*\{{(.*?)\}}\s*;", source, re.S)
-    if array is None:
-        raise ValueError(f"{name} layout array initializer is missing")
-    body = array[1]
-    rows = re.findall(r"\{[^{}]*\}", body)
-
-    if not rows or re.sub(r"\{[^{}]*\}", "", body).strip(" \t\r\n,"):
-        raise ValueError(f"{name} has an unsupported layout array initializer")
-    values = []
-    for index, row in enumerate(rows, 1):
-        match = re.fullmatch(pattern, row)
-        if match is None:
-            raise ValueError(f"{name} initializer {index} is not a supported layout site: {row!r}")
-        values.append((match[1], match[2]))
-    return values
-
-def sites() -> dict:
+def sites(source: str = SOURCE) -> dict:
     """Read wrapping widths and reflow flags from the runtime source."""
-    found = {("window", k + 1): (box, False) for k, (_, box) in enumerate(windows())} | {
-             DEFINES[f"{name}_DRAW"]: (int(re.search(rf"{name}_WIDTH (\d+)", SOURCE)[1]), True)
-             for name in ("SCENARIO_TEXT", "DREAM_SUMMARY")}
-    found[DEFINES["CAPTION_CUE"]] = (int(re.search(r"CAPTION_WIDTH (\d+)", SOURCE)[1]), False)
-    if "HISTORY_DRAW" in DEFINES and (history := re.search(r"HISTORY_WIDTH (\d+)", SOURCE)):
-        found[DEFINES["HISTORY_DRAW"]] = (int(history[1]), False)
-    found |= {site: (row[6], True) for site, row in pages().items()}
-    found |= {int(va, 16): (int(w), False)
-              for va, w in _site_rows("boxed", r"\{0x([0-9A-F]+), (\d+)\}")}
-    found |= {int(va, 16): (int(w), True)
-              for va, w in _site_rows("described", r"\{0x([0-9A-F]+), (\d+)\}")}
-    return found | {site: (width, False) for site, width in single_line_sites().items()}
+    known = defines(source)
+    found = {("window", k + 1): (box, False) for k, (_, box) in enumerate(windows(source))} | {
+             known[f"{name}_DRAW"]: (known[f"{name}_WIDTH"], True) for name in ("SCENARIO_TEXT", "DREAM_SUMMARY")}
+    found[known["CAPTION_CUE"]] = (known["CAPTION_WIDTH"], False)
+    if "HISTORY_DRAW" in known and "HISTORY_WIDTH" in known:
+        found[known["HISTORY_DRAW"]] = (known["HISTORY_WIDTH"], False)
+    found |= {site: (row[6], True) for site, row in pages(source).items()}
+    found |= {va: (width, False) for va, width in c_array("boxed", source)}
+    found |= {va: (width, True) for va, width in c_array("described", source)}
+    return found | {site: (width, False) for site, width in single_line_sites(source).items()}
 
-def single_line_sites() -> dict[int, int]:
+def single_line_sites(source: str = SOURCE) -> dict[int, int]:
     """Read known widths for draw sites that do not wrap."""
-    if not re.search(r"\bsingle_line\s*\[", SOURCE):
+    if not re.search(r"\bsingle_line\s*\[", source):
         return {}
-    return {int(va, 16): int(width)
-            for va, width in _site_rows("single_line", r"\{0x([0-9A-F]+), (\d+)\}")}
+    return dict(c_array("single_line", source))
 
-def glyph_sites() -> dict[int, int]:
+def glyph_sites(source: str = SOURCE) -> dict[int, int]:
     """Read the glyph finalizer return addresses the squish rescales, and their glyph register (0 esi, 1 edi)."""
-    return {int(va, 16): int(reg) for va, reg in _site_rows("glyph_sites", r"\{0x([0-9A-F]+), ([01])\}")}
+    found = dict(c_array("glyph_sites", source))
+    if not set(found.values()) <= {0, 1}:
+        raise ValueError(f"glyph_sites names a glyph register other than 0 or 1: {found}")
+    return found
 
-def windows() -> list[tuple[int, int]]:
+def windows(source: str = SOURCE) -> list[tuple[int, int]]:
     """Read the two windows' wrap and drawn widths."""
-    pairs = re.search(r"\bwindows\s*\[2\]\s*\[2\]\s*=\s*\{\{(\d+), (\d+)\}, \{(\d+), (\d+)\}\}", SOURCE)
-    if pairs is None:
-        raise ValueError("windows layout array initializer is missing")
-    values = list(map(int, pairs.groups()))
-    return [(values[0], values[1]), (values[2], values[3])]
+    rows = c_array("windows", source)
+    if len(rows) != 2:
+        raise ValueError("windows layout array initializer does not list two windows")
+    return rows
 
-def pages() -> dict[int, tuple[int, ...]]:
+def pages(source: str = SOURCE) -> dict[int, tuple[int, ...]]:
     """Read each page site's cell width and height, pitch, x, y, wrap width and box."""
-    rows = _site_rows("pages", r"\{(\w+_DRAW), (\d+(?:, \d+){6})\}")
-    return {DEFINES[name]: tuple(map(int, values.split(", "))) for name, values in rows}
+    return {row[0]: row[1:] for row in c_array("pages", source)}
 
-def cells() -> dict[int, int]:
+def cells(source: str = SOURCE) -> dict[int, int]:
     """Read the cell width of sites that draw at their own cell (cell 0 keeps the stock cell)."""
-    return {site: row[0] for site, row in pages().items() if row[0]}
+    return {site: row[0] for site, row in pages(source).items() if row[0]}
 
-def reflow_rules() -> dict[int, int]:
+def reflow_rules(source: str = SOURCE) -> dict[int, int]:
     """Read each site's wrap width where it differs from its box."""
-    rules = {site: row[5] for site, row in pages().items()}
-    rules |= {("window", k + 1): wrap for k, (wrap, _) in enumerate(windows())}
-    if re.search(r"\breflow\s*\[", SOURCE):
-        rules |= {int(site, 16): int(width) for site, width in _site_rows("reflow", r"\{0x([0-9A-F]+), (\d+)\}")}
+    rules = {site: row[5] for site, row in pages(source).items()}
+    rules |= {("window", k + 1): wrap for k, (wrap, _) in enumerate(windows(source))}
+    if re.search(r"\breflow\s*\[", source):
+        rules |= dict(c_array("reflow", source))
     return rules
+
+def runtime_writes(source: str = SOURCE) -> list[tuple[str, int, bytes | None, int]]:
+    """List the stock code the runtime checks or rewrites itself as the game starts, beside the build's edits: name,
+    VA, the stock bytes the runtime expects there (None where it writes without looking) and length. Rows come from
+    the site arrays the display and edge HUD code loop over, and from every stock_at or write_at call at a fixed
+    address; a call at a loop variable writes one of those arrays' sites."""
+    known = defines(source)
+    code = _COMMENTS.sub("", source)
+    rows = [(name, va, struct.pack("<I", value), 4) for name in ("to_window", "to_scene")
+            for va, value in c_array(name, source)]
+    rows += [(name, va, b"\xe8" + struct.pack("<i", known["FTOL"] - va - 5), 5) for name in ("ftol_x", "ftol_y")
+             for va in c_array(name, source)]
+    rows += [("hud_calls", va + 1, struct.pack("<i", target - va - 5), 4)
+             for va, target, _ in c_array("hud_calls", source)]
+    literal = r'\(const u8 \*\)"((?:\\x[0-9A-Fa-f]{2})+)"'
+    for name, stock, size in re.findall(rf"\bstock_at\(\s*(\w+)\s*,\s*{literal}\s*,\s*(\d+)\)", code):
+        rows.append((name, _address(name, known), bytes.fromhex(stock.replace("\\x", "")), int(size)))
+    for name, array in re.findall(r"\bstock_at\(\s*(\w+)\s*,\s*(\w+)\s*,\s*sizeof \2\s*\)", code):
+        stock = bytes(c_array(array, source))
+        rows.append((name, _address(name, known), stock, len(stock)))
+    for name, offset, size in re.findall(r"\bwrite_at\(\s*(\w+)(?:\s*\+\s*(0x[0-9A-Fa-f]+|\d+))?\s*,[^;]*?,\s*(\d+)\s*\)",
+                                         code):
+        if name in known or _INTEGER.fullmatch(name):  # else a loop variable over the arrays above
+            rows.append((name, _address(name, known) + int(offset or "0", 0), None, int(size)))
+    return rows
+
+def _address(name: str, known: dict[str, int]) -> int:
+    return int(name, 0) if _INTEGER.fullmatch(name) else known[name]
 
 def entry(line: str) -> tuple | None:
     """Read site, cell, text bytes and translation flag from a log row."""
@@ -140,14 +199,14 @@ def entry(line: str) -> tuple | None:
     return site, 24 if isinstance(site, tuple) else cell, bytes.fromhex(field[7]), bool(int(field[0], 16) & 0x80)
 
 def _laid_out(site, cell: int, text: str, table: bytes, boxes: dict, sample_text: str,
-              no_wrap: dict | None = None, reflow: dict | None = None) -> str:
+              no_wrap: dict, reflow: dict) -> str:
     for spec, value in (("%s", sample_text), ("%d", "1000")):
         text = text.replace(spec, value)
     width, flat = boxes[site]
     text = text.replace("\n", " ") if flat else text
-    if site in (single_line_sites() if no_wrap is None else no_wrap):
+    if site in no_wrap:
         return text
-    return wrap(text, (reflow_rules() if reflow is None else reflow).get(site, width), table, cell)
+    return wrap(text, reflow.get(site, width), table, cell)
 
 def squish_geometry(text_width: float, box_width: float | None, alignment: str = "left",
                     enabled: bool = True) -> tuple[float, float, float]:
@@ -160,14 +219,15 @@ def squish_geometry(text_width: float, box_width: float | None, alignment: str =
     return factor, (text_width - drawn) * inset, drawn
 
 def squish_report(rows: Iterable[tuple[str, object, int, str]], table: bytes, boxes: dict,
-                  sample_text: str, *, no_wrap_sites: Iterable[object] = (), reflow: dict | None = None) -> dict:
+                  sample_text: str, *, no_wrap_sites: Iterable[object] = (), reflow: dict | None = None,
+                  source: str = SOURCE) -> dict:
     """Report each site's minimum factor, limiting rows and rows below 70 percent."""
     reported = {site: {"width": width, "rows": 0, "min_factor": None, "limiting_rows": [],
                        "below_70": [], "vertical_overflow": []} for site, (width, _) in boxes.items()}
     unknown = []
-    no_wrap = dict.fromkeys((*single_line_sites(), *no_wrap_sites))
-    reflow = reflow_rules() if reflow is None else reflow
-    own = cells()
+    no_wrap = dict.fromkeys((*single_line_sites(source), *no_wrap_sites))
+    reflow = reflow_rules(source) if reflow is None else reflow
+    own = cells(source)
     for key, site, cell, text in rows:
         cell = own.get(site, cell)
         if site not in boxes or JAPANESE.search(text):
@@ -192,9 +252,10 @@ def squish_report(rows: Iterable[tuple[str, object, int, str]], table: bytes, bo
     return {"sites": reported, "unknown": unknown}
 
 def overflows(site, cell: int, text: str, table: bytes, boxes: dict, sample_text: str,
-              *, reflow: dict | None = None) -> str | None:
+              *, reflow: dict | None = None, source: str = SOURCE) -> str | None:
     """Return text exceeding its line limit; horizontal fit is reported separately."""
     if site not in boxes or JAPANESE.search(text):
         return None
-    lines = _laid_out(site, cells().get(site, cell), text, table, boxes, sample_text, reflow=reflow)
+    lines = _laid_out(site, cells(source).get(site, cell), text, table, boxes, sample_text,
+                      single_line_sites(source), reflow_rules(source) if reflow is None else reflow)
     return lines if lines.count("\n") >= LINES.get(site, 99) else None

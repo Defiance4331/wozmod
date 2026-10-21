@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 import re
 import struct
@@ -12,7 +13,7 @@ import struct
 import pytest
 from PIL import Image
 
-from wozmod.art import build, words
+from wozmod.art import build, faces, imaging, lettering, packing, vector, words
 
 FILL, OUTLINE = (220, 180, 40, 255), (8, 4, 0, 255)
 
@@ -36,7 +37,7 @@ class Target(Texture):
 def test_spacing_fit_does_not_drop_space_contribution():
     right, left, space = {"a": 10, "b": 7, "c": 12}, {"a": 1, "b": 3, "c": 2}, 6
     pairs = [(x, y, n, right[x] + left[y] + space * n) for x in "abc" for y in "abc" for n in (0, 1)]
-    got_right, got_left, got_space = build.fit_spacing(pairs)
+    got_right, got_left, got_space = faces.fit_spacing(pairs)
     assert abs(got_space - space) < 1e-6
     for x in "abc":
         for y in "abc":
@@ -53,7 +54,7 @@ def test_accented_letter_seen_only_after_a_wide_space_keeps_its_base_letter_side
              (98, 1, 106, 2), (98, 4, 106, 14), (108, 4, 113, 14)]                 # Ō a after a 20px gap
     for box in boxes:
         row.paste(FILL, box)
-    face = build.Face([(row, "aOaa aOa a Ōa", build.yellow, 3, None)])
+    face = faces.Face([(row, "aOaa aOa a Ōa", faces.yellow, 3, None)])
 
     def gap(text):
         image, _ = face.render(text)
@@ -67,7 +68,7 @@ def test_glyph_fills_keeps_a_dot_and_stem_as_one_letter():
     row = Image.new("RGBA", (40, 12), OUTLINE)
     for box in ((2, 2, 6, 10), (12, 1, 14, 3), (12, 5, 14, 10), (20, 2, 24, 10)):
         row.paste(FILL, box)
-    fills = build.glyph_fills(row, "a ib")
+    fills = faces.glyph_fills(row, "a ib")
     assert [len(f) for f in fills] == [32, 4 + 10, 32]
 
 
@@ -151,7 +152,7 @@ def test_a_plate_widened_past_its_source_texture_keeps_its_right_end():
     source = Image.new("RGBA", (128, 32))
     source.paste((40, 40, 90, 255), (0, 0, 70, 28))
     source.putpixel((69, 5), (200, 0, 0, 255))  # the plate's right end
-    plate = build.plated(source, 138, 35, 2)
+    plate = imaging.plated(source, 138, 35, 2)
     assert plate.getchannel("A").getbbox() == (0, 0, 138, 28)
     assert plate.getpixel((137, 5)) == (200, 0, 0, 255)
 
@@ -166,55 +167,49 @@ def test_native_plate_does_not_requantize_surrounding_pixels():
     g1t = build.parse_g1t(G1T_HEADER.pack(b"GT1G", b"0000", size, G1T_HEADER.size, 1, 0, 0, 0)
                           + struct.pack("<I", 4) + G1T_TEXTURE_HEADER.pack(0x10, 8, 0x33, 0)
                           + b"".join(blocks))
-    original = build.rgba(g1t.textures[0])
+    original = imaging.rgba(g1t.textures[0])
     image = original.copy()
     image.paste((220, 221, 220, 204), (1, 1, 3, 3))
-    native = build.native_plate(g1t, image)
+    native = vector.native_plate(g1t, image)
     assert native.textures[0].pixel_format == 1
-    assert build.rgba(native.textures[0]).tobytes() == image.tobytes()
+    assert imaging.rgba(native.textures[0]).tobytes() == image.tobytes()
 
 
-def test_vector_overflow_fails_instead_of_leaving_native_pixels(monkeypatch, tmp_path):
+def test_vector_overflow_fails_instead_of_leaving_native_pixels(letters):
     import pytest
 
-    original_temp = build.tempfile.TemporaryDirectory
-    monkeypatch.setattr(build.tempfile, "TemporaryDirectory", lambda: original_temp(dir=tmp_path))
     served = Image.new("RGBA", (16, 32))
     served.paste((41, 40, 41, 255), (2, 8, 14, 25))
     label = Image.new("RGBA", (60, 48), (41, 40, 41, 255))
-    monkeypatch.setattr(build, "header_label", lambda *a: (label, {"ink": [1, 1, 59, 47], "baseline": 40}))
+    letters(lambda request: (label, {"ink": [1, 1, 59, 47], "baseline": 40}))
     edit = {"entry": 4080, "item": 7, "style": "pause", "rows": [[{"text": "Alder archive"}]], "bands": [(0, 32)]}
     with pytest.raises(ValueError, match="full-width ink.*leaves the 16-wide texture"):
-        build.vector_art(edit, served, ["Alder archive"], 2)
+        vector.vector_art(edit, served, ["Alder archive"], 2)
 
 
-def test_vector_dark_row_does_not_take_a_long_crossbar_as_baseline(monkeypatch, tmp_path):
-    original_temp = build.tempfile.TemporaryDirectory
-    monkeypatch.setattr(build.tempfile, "TemporaryDirectory", lambda: original_temp(dir=tmp_path))
+def test_vector_dark_row_does_not_take_a_long_crossbar_as_baseline(letters):
     served = Image.new("RGBA", (64, 32))
     served.paste((41, 40, 41, 255), (7, 9, 26, 23))
     served.paste((41, 40, 41, 255), (26, 9, 62, 12))
     label = Image.new("RGBA", (48, 42))
     label.paste((41, 40, 41, 255), (4, 8, 44, 36))
-    monkeypatch.setattr(build, "header_label", lambda *a: (label, {"ink": [4, 8, 44, 36], "baseline": 36}))
+    letters(lambda request: (label, {"ink": [4, 8, 44, 36], "baseline": 36}))
     edit = {"entry": 4080, "item": 6, "style": "pause", "rows": [[{"text": "Menu"}]], "bands": [(0, 32)]}
-    assert build.vector_art(edit, served, ["Menu"], 2).getbbox() == (14, 18, 54, 46)
+    assert vector.vector_art(edit, served, ["Menu"], 2).getbbox() == (14, 18, 54, 46)
 
 
-def test_squeeze_does_not_shrink_fitting_rows_or_default_build(monkeypatch, tmp_path):
-    original_temp = build.tempfile.TemporaryDirectory
-    monkeypatch.setattr(build.tempfile, "TemporaryDirectory", lambda: original_temp(dir=tmp_path))
+def test_squeeze_does_not_shrink_fitting_rows_or_default_build(letters):
     label = Image.new("RGBA", (48, 42))
     label.paste((41, 40, 41, 255), (4, 8, 44, 36))
-    monkeypatch.setattr(build, "header_label", lambda *a: (label, {"ink": [4, 8, 44, 36], "baseline": 36}))
+    letters(lambda request: (label, {"ink": [4, 8, 44, 36], "baseline": 36}))
     edit = {"entry": 4080, "item": 6, "style": "pause", "rows": [[{"text": "Menu"}]], "bands": [(0, 32)]}
     for official_width in (24, 12, 8):
         left = 0 if official_width == 8 else 7
         served = Image.new("RGBA", (64, 32))
         served.paste((41, 40, 41, 255), (left, 9, left + official_width, 23))
-        default = build.vector_art(edit, served, ["Menu"], 2)
-        assert default.tobytes() == build.vector_art(edit, served, ["Menu"], 2, squeeze=False).tobytes()
-        squeezed = build.vector_art(edit, served, ["Menu"], 2, squeeze=True)
+        default = vector.vector_art(edit, served, ["Menu"], 2)
+        assert default.tobytes() == vector.vector_art(edit, served, ["Menu"], 2, squeeze=False).tobytes()
+        squeezed = vector.vector_art(edit, served, ["Menu"], 2, squeeze=True)
         if official_width == 24:
             assert squeezed.tobytes() == default.tobytes()
         else:
@@ -222,18 +217,17 @@ def test_squeeze_does_not_shrink_fitting_rows_or_default_build(monkeypatch, tmp_
             assert fill.getbbox() == (left * 2, 18, (left + official_width) * 2, 46)
 
 
-def test_serif_renderer_does_not_alias_distinct_donor_references(monkeypatch, tmp_path):
-    original_temp = build.tempfile.TemporaryDirectory
-    monkeypatch.setattr(build.tempfile, "TemporaryDirectory", lambda: original_temp(dir=tmp_path))
+def test_serif_renderer_does_not_alias_distinct_donor_references(letters):
     references = {"1.13": (220, 180, 40, 255), "17.34": (221, 180, 40, 255),
                   "15.9": (201, 100, 40, 255), "15.10": (251, 100, 40, 255)}
 
-    def render(text, scale, out, raster=build.HEADER_RASTER, *options):
+    def render(request):
+        options = request["options"]
         ref = options[options.index("--ref") + 1] if "--ref" in options else ""
         label = Image.new("RGBA", (40, 40), references.get(ref, (255, 0, 255, 255)))
         return label, {"ink": [0, 0, 40, 40], "baseline": 32}
 
-    monkeypatch.setattr(build, "header_label", render)
+    letters(render)
     for entry, item, ref, face in [(4060, 33, "1.13", {"face": "header"}),
                                    (4080, 38, "17.34", {"face": "header"}),
                                    (4077, 20, "15.9", {"look": "choice_dim"}),
@@ -243,73 +237,65 @@ def test_serif_renderer_does_not_alias_distinct_donor_references(monkeypatch, tm
         donor = [*map(int, ref.split(".")), 0]
         edit = {"entry": entry, "item": item, "rows": [[{"donor": donor, "row": 0}]],
                 "bands": [(0, 56)], **face}
-        art = build.vector_art(edit, served, ["Alder" if "face" in face else "Birch"], 2)
+        art = vector.vector_art(edit, served, ["Alder" if "face" in face else "Birch"], 2)
         assert {pixel for pixel in art.get_flattened_data() if pixel[3]} == {references[ref]}, ref
 
 
-def test_officer_detail_does_not_clip_leading_glow(monkeypatch, tmp_path):
-    original_temp = build.tempfile.TemporaryDirectory
-    monkeypatch.setattr(build.tempfile, "TemporaryDirectory", lambda: original_temp(dir=tmp_path))
+def test_officer_detail_does_not_clip_leading_glow(monkeypatch, letters):
     label = Image.new("RGBA", (128, 80), (255, 255, 255, 255))
     label.paste((255, 0, 0, 1), (0, 0, 1, 80))
-    monkeypatch.setattr(build, "pause_button_label", lambda *a: (label.copy(),
+    letters(lambda request: (label.copy(),
                         {"ink": [18, 0, 110, 80], "fill": [18, 110], "baseline": 64}))
     bands = [(42 * row, 42 * (row + 1)) for row in range(4)]
     served = Image.new("RGBA", (512, 168))
     served.paste((255, 255, 255, 255), (3, 134, 60, 158))
     texts = [None, None, None, "Alder controls"]
-    monkeypatch.setattr(build, "PAUSE_BUTTON_ROWS", {
+    monkeypatch.setattr(vector, "PAUSE_BUTTON_ROWS", {
         (4080, item, 3): (words.sha256("Alder controls"), 198.062306, 4.981308, 32, None, None)
         for item in (44, 45)
     })
     for item in (44, 45):
         edit = {"entry": 4080, "item": item, "rows": [[{"text": text}] for text in texts],
                 "bands": bands, "align": "left"}
-        art = build.vector_art(edit, served, texts, 2)
+        art = vector.vector_art(edit, served, texts, 2)
         assert sum(p == (255, 0, 0, 1) for p in art.get_flattened_data()) == 80
 
 
 @pytest.mark.parametrize("entry,item", [(4060, 2), (4069, 0), (4074, 10)])
-def test_help_does_not_recenter_a_shorter_label(monkeypatch, tmp_path, entry, item):
-    original_temp = build.tempfile.TemporaryDirectory
-    monkeypatch.setattr(build.tempfile, "TemporaryDirectory", lambda: original_temp(dir=tmp_path))
+def test_help_does_not_recenter_a_shorter_label(entry, item, letters):
     served = Image.new("RGBA", (64, 32))
     served.paste((38, 38, 38, 255), (20, 9, 50, 23))
     label = Image.new("RGBA", (32, 42))
     label.paste((38, 38, 38, 255), (4, 8, 24, 36))
-    monkeypatch.setattr(build, "header_label", lambda *a: (label, {"ink": [4, 8, 24, 36], "baseline": 36}))
+    letters(lambda request: (label, {"ink": [4, 8, 24, 36], "baseline": 36}))
     edit = {"entry": entry, "item": item, "style": "help",
             "rows": [[{"text": "Help"}]], "bands": [(0, 32)]}
-    assert build.vector_art(edit, served, ["Help"], 2).getbbox() == (80, 18, 100, 46)
+    assert vector.vector_art(edit, served, ["Help"], 2).getbbox() == (80, 18, 100, 46)
 
 
-def test_notice_growth_does_not_separate_shared_right_edges(monkeypatch, tmp_path):
-    original_temp = build.tempfile.TemporaryDirectory
-    monkeypatch.setattr(build.tempfile, "TemporaryDirectory", lambda: original_temp(dir=tmp_path))
+def test_notice_growth_does_not_separate_shared_right_edges(letters):
     served = Image.new("RGBA", (1024, 64))
     served.paste((38, 38, 38, 255), (7, 8, 413, 24))
     served.paste((38, 38, 38, 255), (119, 40, 413, 56))
-    def label(text, *args):
-        width = 900 if text == "Wide" else 600
+    def label(request):
+        width = 900 if request["text"] == "Wide" else 600
         image = Image.new("RGBA", (width + 8, 48))
         image.paste((38, 38, 38, 255), (4, 8, width + 4, 40))
         return image, {"ink": [4, 8, width + 4, 40], "baseline": 40}
-    monkeypatch.setattr(build, "header_label", label)
+    letters(label)
     edit = {"entry": 4074, "item": 10, "style": "help",
             "rows": [[{"text": "Wide"}], [{"text": "Short"}]], "bands": [(0, 32), (32, 64)]}
-    art = build.vector_art(edit, served, ["Wide", "Short"], 2)
+    art = vector.vector_art(edit, served, ["Wide", "Short"], 2)
     rights = [art.crop((0, top, art.width, top + 64)).getbbox()[2] / 2 for top in (0, 64)]
     assert [right - (art.info["minimum"] - 420) for right in rights] == [413, 413]
 
 
-def test_hires_bank_does_not_serialize_a_sheet_smaller_than_its_quad(monkeypatch, tmp_path):
+def test_hires_bank_does_not_serialize_a_sheet_smaller_than_its_quad(monkeypatch, tmp_path, letters):
     import struct
 
-    from test_art_hires import bank_rows
+    from wozmod.art.hires import read_hires_bank
     from wozmod.formats.textures import G1T_HEADER, G1T_TEXTURE_HEADER
 
-    original_temp = build.tempfile.TemporaryDirectory
-    monkeypatch.setattr(build.tempfile, "TemporaryDirectory", lambda: original_temp(dir=tmp_path))
     served = Image.new("RGBA", (512, 32))
     served.paste((38, 38, 38, 255), (3, 8, 305, 24))
     pixels = served.tobytes("raw", "BGRA")
@@ -319,32 +305,33 @@ def test_hires_bank_does_not_serialize_a_sheet_smaller_than_its_quad(monkeypatch
     entries = tmp_path / "wozmod/entries"
     entries.mkdir(parents=True)
     (entries / "4060.bin").write_bytes(source)
-    def label(text, scale, *args):  # 346 x 24 units, ink 0.5 to 344.5 across and 4 to 20 down
+    def label(request):  # 346 x 24 units, ink 0.5 to 344.5 across and 4 to 20 down
+        scale = request["scale"]
         image = Image.new("RGBA", (346 * scale, 24 * scale))
         ink = [scale // 2, 4 * scale, 689 * scale // 2, 20 * scale]
         image.paste((38, 38, 38, 255), tuple(ink))
         return image, {"ink": ink, "baseline": ink[3]}
 
-    monkeypatch.setattr(build, "header_label", label)
-    monkeypatch.setattr(build, "HIRES", [])
-    monkeypatch.setattr(build, "DARK", {(4060, 0): "help"})
-    monkeypatch.setattr(build, "HIRES_NATIVE_MENU", set())
-    monkeypatch.setattr(build, "HELP_QUAD_WIDTH", {(4060, 0): 476})
+    letters(label)
+    monkeypatch.setattr(vector, "HIRES", [])
+    monkeypatch.setattr(vector, "DARK", {(4060, 0): "help"})
+    monkeypatch.setattr(vector, "HIRES_NATIVE_MENU", set())
+    monkeypatch.setattr(vector, "HELP_QUAD_WIDTH", {(4060, 0): 476})
     mapping = {"faces": {}, "textures": [{"entry": 4060, "item": 0,
                                            "rows": [[{"text": "Help"}]]}]}
-    blob = build.hires_bin(entries, None, (mapping, {}))
-    (row, blocks), = bank_rows(blob).values()
-    assert (row[2], row[3], row[5] >> 16) == (build.HIRES_SCALE, 520, 520)
-    assert len(blocks) == 520 * 3 * 32 * 3  # the 3x image spans the whole quad: DXT5, a byte per texel
+    blob = vector.hires_bin(entries, None, (mapping, {}))
+    row, = read_hires_bank(blob)
+    assert (row.w, row.minimum) == (520, 520)
+    assert len(row.blocks[0][0]) == 520 * 3 * 32 * 3  # the 3x image spans the whole quad: DXT5, a byte per texel
     assert (entries / "4060.bin").read_bytes() == source
     # Bug: the threaded encode (native codecs, jobs > 1) hands back an unfinished or different sheet.
-    assert build.hires_bin(entries, None, (mapping, {}), jobs=4) == blob
+    assert vector.hires_bin(entries, None, (mapping, {}), jobs=4) == blob
 
 
-def test_hires_bank_does_not_shrink_frozen_attribute_samples(monkeypatch, tmp_path):
+def test_hires_bank_does_not_shrink_frozen_attribute_samples(monkeypatch, tmp_path, letters):
     import struct
 
-    from test_art_hires import bank_rows
+    from wozmod.art.hires import read_hires_bank
     from wozmod.formats.textures import G1T_HEADER, G1T_TEXTURE_HEADER
 
     minima = [76, 48, 52, 72, 56, 68, 92, 52, 76, 80, 64, 80, 72, 68]
@@ -366,18 +353,16 @@ def test_hires_bank_does_not_shrink_frozen_attribute_samples(monkeypatch, tmp_pa
         {"entry": entry, "item": item, "rows": [[{"text": f"{entry}.{item}"}]]}
         for entry, item in [(4079, item) for item in accepted] + list(others)
     ]}
-    monkeypatch.setattr(build, "HIRES", [])
-    monkeypatch.setattr(build, "HIRES_NATIVE_MENU", set())
-    monkeypatch.setattr(build, "DARK", {
+    monkeypatch.setattr(vector, "HIRES", [])
+    monkeypatch.setattr(vector, "HIRES_NATIVE_MENU", set())
+    monkeypatch.setattr(vector, "DARK", {
         **{(4079, item): "attributes" for item in accepted},
         **{key: "pause" for key in others},
     })
-    original_temp = build.tempfile.TemporaryDirectory
-    monkeypatch.setattr(build.tempfile, "TemporaryDirectory", lambda: original_temp(dir=tmp_path))
     narrower = False
 
-    def label(text, scale, *args):
-        entry, item = map(int, text.split("."))
+    def label(request):
+        scale, (entry, item) = request["scale"], map(int, request["text"].split("."))
         right = (accepted[item] - 2 if entry == 4079 else others[(entry, item)] - 2)
         if narrower and entry == 4079:
             right -= 12
@@ -386,21 +371,21 @@ def test_hires_bank_does_not_shrink_frozen_attribute_samples(monkeypatch, tmp_pa
         image.paste((item, 38, 38, 255), (0, 6, width, 46))
         return image, {"ink": [0, 6, width, 46], "baseline": 46}
 
-    monkeypatch.setattr(build, "header_label", label)
-    before = build.hires_bin(entries, None, (mapping, {}))
+    letters(label)
+    before = vector.hires_bin(entries, None, (mapping, {}))
     narrower = True
-    after = build.hires_bin(entries, None, (mapping, {}))
+    after = vector.hires_bin(entries, None, (mapping, {}))
 
-    old, new = bank_rows(before), bank_rows(after)
+    old, new = ({(row.entry, row.item): row for row in read_hires_bank(bank)} for bank in (before, after))
     assert set(old) == set(new) == {(4079, item) for item in accepted} | set(others)
-    assert [old[4079, item][0][5] >> 16 for item in accepted] == minima
-    assert [new[4079, item][0][5] >> 16 for item in accepted] == minima
-    for key, (record, blocks) in old.items():
+    assert [old[4079, item].minimum for item in accepted] == minima
+    assert [new[4079, item].minimum for item in accepted] == minima
+    for key, row in old.items():
         if key[0] == 4079:
-            assert new[key][0][:7] == record[:7], key
-            assert new[key][1] != blocks, key
+            assert replace(new[key], blocks=[]) == replace(row, blocks=[]), key
+            assert new[key].blocks[0][0] != row.blocks[0][0], key
         else:
-            assert new[key] == (record, blocks), key
+            assert new[key] == row, key
     assert {entry: (entries / f"{entry}.bin").read_bytes() for entry in sources} == sources
 
 
@@ -464,7 +449,7 @@ def test_font_environment_does_not_drop_package_or_inherited_import_paths(monkey
     result = subprocess.run([
         sys.executable, "-S", "-c",
         "from wozmod.art.hires import hires_bank; import authored_marker; print(authored_marker.VALUE)",
-    ], cwd=tmp_path, env=build.font_environment(), check=True, capture_output=True, text=True)
+    ], cwd=tmp_path, env=lettering.font_environment(), check=True, capture_output=True, text=True)
     assert result.stdout == "marker\n"
 
 
@@ -486,6 +471,52 @@ def test_cli_rejects_invalid_selection_before_opening_inputs(monkeypatch, capsys
     assert error.value.code == 2
     assert message in capsys.readouterr().err
     assert list(tmp_path.iterdir()) == []
+
+
+def test_art_build_refuses_a_wrong_donor_archive_before_writing_anything(tmp_path, monkeypatch):
+    """Bug: the art build reports a wrong donor archive as a usage error (SystemExit) instead of an error the installer
+    can name, or the player path stops checking one of the two archives against its pins."""
+    from wozmod.donors import Donor, DonorFile
+
+    contents = {"linkdata_ens.idx": b"index", "linkdata_ens.lnk": b"archive"}
+    for name in ("WO1_X360", "X360"):
+        monkeypatch.setattr(build, name, Donor(name, "xdvdfs", tuple(
+            DonorFile(member, member, len(data), hashlib.sha256(data).hexdigest()) for member, data in contents.items())))
+    stems = [tmp_path / "wo1-x360/linkdata_ens", tmp_path / "wo2-x360/linkdata_ens"]
+    output = tmp_path / "output"
+    for wrong in stems:
+        for stem in stems:
+            stem.parent.mkdir(exist_ok=True)
+            for member, data in contents.items():
+                (stem.parent / member).write_bytes(b"x" * len(data) if stem == wrong and member.endswith("lnk") else data)
+        with pytest.raises(build.ArtError, match="Wrong donor member hash: linkdata_ens.lnk"):
+            build.build_art(tmp_path / "game", *stems, None, output, hires="vector")
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("path", [[], ["--hires", "vector", "--hires-only"]], ids=["full", "hires-only"])
+def test_the_command_line_refuses_a_wrong_donor_archive_on_each_path(tmp_path, monkeypatch, capsys, path):
+    """Bug: the command line leaves the donor check to build_art, so a --hires-only run, which never calls it, letters
+    the large menus from an archive that fails its pin; or the full build stops turning the refusal into a usage exit."""
+    from wozmod.donors import Donor, DonorFile
+
+    contents = {"linkdata_ens.idx": b"index", "linkdata_ens.lnk": b"archive"}
+    for name in ("WO1_X360", "X360"):
+        monkeypatch.setattr(build, name, Donor(name, "xdvdfs", tuple(
+            DonorFile(member, member, len(data), hashlib.sha256(data).hexdigest()) for member, data in contents.items())))
+    stems = {}
+    for folder in ("wo1-x360", "wo2-x360"):
+        (tmp_path / folder).mkdir()
+        for member, data in contents.items():
+            (tmp_path / folder / member).write_bytes(b"x" * len(data) if folder == "wo2-x360" and member.endswith("lnk") else data)
+        stems[folder] = str(tmp_path / folder / "linkdata_ens")
+    output = tmp_path / "output"
+    with pytest.raises(SystemExit) as error:
+        build.main(["--game", str(tmp_path / "game"), "--output-dir", str(output), "--text-donors", str(tmp_path),
+                    "--wo1-x360-donor", stems["wo1-x360"], "--wo2-donor", stems["wo2-x360"], *path])
+    assert error.value.code == 2
+    assert "Wrong donor member hash: linkdata_ens.lnk" in capsys.readouterr().err
+    assert not output.exists()
 
 
 def test_officer_banner_recipe_serves_each_banner_its_own_whole_x360_member():
@@ -517,9 +548,9 @@ def test_draw_rows_does_not_drop_pieces_after_the_first_value():
         {"face": "value_dim", "text": text, "into": [0, 8 + 42 * row, 60, 40 + 42 * row]}
         for row, text in enumerate(("Alder", "Birch", "Cedar"))
     ]}]}
-    edit = build.rows_edit(11, 0, mapping, served, look="value_dim")
+    edit = vector.rows_edit(11, 0, mapping, served, look="value_dim")
     assert edit["bands"] == [(8, 32), (50, 74), (92, 116)]
-    assert build.hires_texts(edit, mapping, {}) == ["Alder", "Birch", "Cedar"]
+    assert vector.hires_texts(edit, mapping, {}) == ["Alder", "Birch", "Cedar"]
 
 
 def test_count_neighbor_uses_its_own_donor_item():
@@ -528,25 +559,24 @@ def test_count_neighbor_uses_its_own_donor_item():
     mapping = {"faces": {}, "textures": [
         {"entry": 11, "item": 3, "donor": [7, 10, 0], "count": 2},
     ]}
-    edit = build.rows_edit(11, 4, mapping, served, look="confirm_lit")
+    edit = vector.rows_edit(11, 4, mapping, served, look="confirm_lit")
     assert edit["donor"] == [7, 11, 0]
 
 
-def test_review_override_does_not_get_lost_or_leak_into_the_next_build(monkeypatch, tmp_path):
-    monkeypatch.setattr(build, "REVIEW_VARIANTS", {"help": "per-screen", "camp": "x360"})
-    original_temp = build.tempfile.TemporaryDirectory
-    monkeypatch.setattr(build.tempfile, "TemporaryDirectory", lambda: original_temp(dir=tmp_path))
+def test_review_override_does_not_get_lost_or_leak_into_the_next_build(monkeypatch, letters):
+    monkeypatch.setattr(vector, "REVIEW_VARIANTS", {"help": "per-screen", "camp": "x360"})
     treatments = {"condensed": (24, (38, 38, 38, 255)),
                   "wide": (40, (57, 57, 57, 255)),
                   "condensed-camp": (32, (57, 57, 57, 255))}
 
-    def rendered_label(text, scale, path, renderer, *options):
+    def rendered_label(request):
+        options = request["options"]
         width, colour = treatments[options[options.index("--role") + 1]]
         image = Image.new("RGBA", (width, 32))
         image.paste(colour, (0, 4, width, 24))
         return image, {"ink": [0, 4, width, 24], "baseline": 24}
 
-    monkeypatch.setattr(build, "header_label", rendered_label)
+    letters(rendered_label)
     served = Image.new("RGBA", (128, 32))
     served.paste((38, 38, 38, 255), (3, 7, 50, 25))
     cases = [([], 4069, 0, "condensed"), ([], 4060, 6, "wide"),
@@ -557,10 +587,10 @@ def test_review_override_does_not_get_lost_or_leak_into_the_next_build(monkeypat
              ([], 4069, 0, "condensed")]
     failures = []
     for choices, entry, item, role in cases:
-        build.set_review_variants(choices)
+        vector.set_review_variants(choices)
         edit = {"entry": entry, "item": item, "style": "help",
                 "bands": [(0, 32)], "rows": [[{"text": "Fixture"}]]}
-        art = build.vector_art(edit, served, ["Fixture"], 2)
+        art = vector.vector_art(edit, served, ["Fixture"], 2)
         box = art.getbbox()
         actual = (box[2] - box[0], art.getpixel((box[0], box[1])))
         if actual != treatments[role]:
@@ -568,8 +598,8 @@ def test_review_override_does_not_get_lost_or_leak_into_the_next_build(monkeypat
     assert not failures, failures
 
 
-def test_native_ability_bank_does_not_grow_fitting_ink_or_drop_fixed_reserve(monkeypatch, tmp_path):
-    from test_art_hires import bank_rows
+def test_native_ability_bank_does_not_grow_fitting_ink_or_drop_fixed_reserve(monkeypatch, tmp_path, letters):
+    from wozmod.art.hires import read_hires_bank
 
     source = (struct.pack("<4s4s6I", b"GT1G", b"test", 44 + 128 * 64 * 4, 32, 1, 0, 0, 0)
               + struct.pack("<I", 4) + struct.pack("<BBHI", 0x10, 1, 0x67, 0)
@@ -578,49 +608,44 @@ def test_native_ability_bank_does_not_grow_fitting_ink_or_drop_fixed_reserve(mon
     entries = tmp_path / "entries"
     entries.mkdir()
     (entries / "4079.bin").write_bytes(member * 77)
-    monkeypatch.setattr(build, "HIRES", [])
-    monkeypatch.setattr(build, "DARK", {})
-    original_temp = build.tempfile.TemporaryDirectory
-    monkeypatch.setattr(build.tempfile, "TemporaryDirectory", lambda: original_temp(dir=tmp_path))
-    monkeypatch.setattr(build, "native_menu_layout", lambda edit, donors: {
+    monkeypatch.setattr(vector, "HIRES", [])
+    monkeypatch.setattr(vector, "DARK", {})
+    monkeypatch.setattr(vector, "native_menu_layout", lambda edit, donors: {
         "style": "rounded.ability", "role": "yellow", "text": edit["text"],
         "left": 0, "baseline": 28, "sampled_window": [0, 0, 112, 35],
         "alpha_bbox": [0, 2, int(edit["text"]), 28],
     })
 
-    def rendered_label(text, scale, *args):
-        width = int(text) * scale
+    def rendered_label(request):
+        width = int(request["text"]) * request["scale"]
         image = Image.new("RGBA", (width, 64))
         image.paste((220, 180, 40, 255), (0, 2, width, 56))
         return image, {"ink": [0, 2, width, 56], "baseline": 56}
 
-    monkeypatch.setattr(build, "header_label", rendered_label)
+    letters(rendered_label)
     failures = []
     for item, right, minimum in ((76, 112, 0), (76, 113, 116), (69, 126, 144)):
-        monkeypatch.setattr(build, "HIRES_NATIVE_MENU", {(4079, item)})
+        monkeypatch.setattr(vector, "HIRES_NATIVE_MENU", {(4079, item)})
         mapping = {"textures": [{"entry": 4079, "item": item, "texture": 0, "text": str(right)}]}
-        bank = build.hires_bin(entries, None, (mapping, {}))
-        (row, _), = bank_rows(bank).values()
-        actual = row[5] >> 16
+        bank = vector.hires_bin(entries, None, (mapping, {}))
+        row, = read_hires_bank(bank)
+        actual = row.minimum
         if actual != minimum:
             failures.append((item, right, actual, minimum))
     assert not failures, failures
 
 
-def test_squish_condenses_an_overflowing_pause_row_to_its_official_width(monkeypatch, tmp_path):
+def test_squish_condenses_an_overflowing_pause_row_to_its_official_width(monkeypatch, letters):
     # Bug: pause rows skip the squish step and keep full-width lettering past the official width.
-    original_temp = build.tempfile.TemporaryDirectory
-    monkeypatch.setattr(build.tempfile, "TemporaryDirectory", lambda: original_temp(dir=tmp_path))
     label = Image.new("RGBA", (48, 42))
     label.paste((200, 200, 200, 255), (4, 8, 44, 36))
-    monkeypatch.setattr(build, "pause_button_label",
-                        lambda *a: (label, {"ink": [4, 8, 44, 36], "baseline": 36}))
-    monkeypatch.setattr(build, "PAUSE_BUTTON_ROWS", {(4080, 99, 0): (words.sha256("Menu"), 12.0, 7.0, 23, None, None)})
+    letters(lambda request: (label, {"ink": [4, 8, 44, 36], "baseline": 36}))
+    monkeypatch.setattr(vector, "PAUSE_BUTTON_ROWS", {(4080, 99, 0): (words.sha256("Menu"), 12.0, 7.0, 23, None, None)})
     served = Image.new("RGBA", (64, 32))
     served.paste((200, 200, 200, 255), (7, 9, 19, 23))
     edit = {"entry": 4080, "item": 99, "rows": [[{"text": "Menu"}]], "bands": [(0, 32)]}
     for squeeze, right in ((False, 54), (True, 38)):
-        art = build.vector_art(edit, served, ["Menu"], 2, squeeze=squeeze)
+        art = vector.vector_art(edit, served, ["Menu"], 2, squeeze=squeeze)
         fill = art.getchannel("A").point(lambda a: 255 if a > 128 else 0)
         assert fill.getbbox() == (14, 18, right, 46)
 
@@ -646,8 +671,8 @@ def test_worker_pool_falls_back_to_threads_where_fork_does_not_exist(monkeypatch
     # Bug: get_context("fork") raises ValueError on Windows, so the art stage (and the install) cannot start there.
     from concurrent.futures import ThreadPoolExecutor
 
-    monkeypatch.setattr(build, "get_all_start_methods", lambda: ["spawn"])
-    with build.worker_pool(2) as pool:
+    monkeypatch.setattr(packing, "get_all_start_methods", lambda: ["spawn"])
+    with packing.worker_pool(2) as pool:
         assert isinstance(pool, ThreadPoolExecutor)
         assert pool.submit(sum, [1, 2]).result() == 3
 
@@ -657,10 +682,10 @@ def test_a_lettering_face_survives_the_trip_from_a_worker_with_its_fill_test(mon
     # face comes back with another fill test and finds other pixels.
     import pickle
 
-    face = build.Face.__new__(build.Face)
-    face.__dict__.update(is_fill=build.FILLS["help"], glyphs={}, kern={})
+    face = faces.Face.__new__(faces.Face)
+    face.__dict__.update(is_fill=faces.FILLS["help"], glyphs={}, kern={})
     back = pickle.loads(pickle.dumps(face))
-    assert back.is_fill is build.FILLS["help"] and back.__dict__.keys() == face.__dict__.keys()
+    assert back.is_fill is faces.FILLS["help"] and back.__dict__.keys() == face.__dict__.keys()
 
 
 def _slow_early_face(name):  # at module level so a worker process can be handed it
@@ -671,10 +696,10 @@ def _slow_early_face(name):  # at module level so a worker process can be handed
 
 def test_faces_built_by_workers_come_back_in_the_order_of_the_recipe(monkeypatch):
     # Bug: faces are kept in the order the workers finish, so the recipe order (and what reads it) changes per run.
-    monkeypatch.setattr(build, "_face", _slow_early_face)
+    monkeypatch.setattr(faces, "_face", _slow_early_face)
     mapping = {"faces": {"list": {}, "header": {}, "tabs": {}}}
-    assert list(build.faces(mapping, {}, 4).values()) == ["STAGE", "TITLE", "LIST", "HEADER", "TABS"]
-    assert list(build.faces(mapping, {}, 1)) == ["stage", "title", "list", "header", "tabs"]
+    assert list(faces.faces(mapping, {}, 4).values()) == ["STAGE", "TITLE", "LIST", "HEADER", "TABS"]
+    assert list(faces.faces(mapping, {}, 1)) == ["stage", "title", "list", "header", "tabs"]
 
 
 def test_every_official_sheet_a_face_names_is_a_donor_the_recipes_pass() -> None:
@@ -703,12 +728,12 @@ def test_touching_letters_part_at_their_join():
     row.paste((255, 255, 0, 255), (2, 1, 12, 11))  # a 10-wide letter
     row.paste((255, 255, 0, 255), (12, 10, 15, 11))  # serifs meeting along the baseline
     row.paste((255, 255, 0, 255), (15, 1, 22, 11))  # a 7-wide letter
-    first, second = build.glyph_fills(row, "AB", least=3)
+    first, second = faces.glyph_fills(row, "AB", least=3)
     assert max(x for x, _ in first) < min(x for x, _ in second)
     assert {x for x, _ in first} >= set(range(2, 12)) and {x for x, _ in second} >= set(range(15, 22))
 
 
-def test_plate_room_from_its_recipe_sets_the_squeeze_not_the_1x_word(monkeypatch):
+def test_plate_room_from_its_recipe_sets_the_squeeze_not_the_1x_word(monkeypatch, letters):
     # Bug: a plate whose recipe gives its room still squeezes the hi-res word to the 1x word's ink, which is only a
     # reference drawn in another face, so the word comes out narrower than the room it was given.
     import struct
@@ -720,10 +745,10 @@ def test_plate_room_from_its_recipe_sets_the_squeeze_not_the_1x_word(monkeypatch
                     + struct.pack("<I", 4) + struct.pack("<BBHI", 1 << 4, 1, 6 | 4 << 4, 0x11111) + payload)
     label = Image.new("RGBA", (40, 24))
     label.paste((255, 255, 255, 255), (0, 4, 40, 20))
-    monkeypatch.setattr(build, "DARK_PLATE", {(4069, 99): "plate"})
-    monkeypatch.setattr(build, "header_label", lambda *a: (label, {"ink": [0, 4, 40, 20], "baseline": 20}))
+    monkeypatch.setattr(vector, "DARK_PLATE", {(4069, 99): "plate"})
+    letters(lambda request: (label, {"ink": [0, 4, 40, 20], "baseline": 20}))
     edit = {"rows": [[{"text": "Word"}]], "geometry": [2, 40, 12]}
-    _, overlay, _ = build.plate_art(4069, 99, g1t, edit, "Word", 2, squeeze=True)
+    _, overlay, _ = vector.plate_art(4069, 99, g1t, edit, "Word", 2, squeeze=True)
     assert overlay.getchannel("A").getbbox() == (4, 8, 44, 24)
 
 
@@ -737,11 +762,11 @@ def test_header_sheet_bands_keep_their_words_past_a_line_the_face_leaves_unread(
     mapping = {"faces": {"header": {"rows": [
         {"wo2": sheet, "texts": ["Alder", None, "Cedar", "Dogwood"]},
         {"donor": sheet, "texts": ["Wrong", "Wrong", "Wrong", "Wrong"]}]}}}
-    edit = build.header_edit({"entry": 11, "item": 0, "draw": [
+    edit = vector.header_edit({"entry": 11, "item": 0, "draw": [
         {"wo2": sheet, "box": [0, 0, 64, 40], "at": [0, 0]},
         {"face": "header", "text": "Birch", "into": [0, 42, 64, 82]},
         {"wo2": sheet, "box": [0, 84, 64, 168], "at": [0, 84]}]}, mapping, served)
-    assert build.hires_texts(edit, mapping, {}) == ["Alder", "Birch", "Cedar", "Dogwood"]
+    assert vector.hires_texts(edit, mapping, {}) == ["Alder", "Birch", "Cedar", "Dogwood"]
 
 
 def _wo1_pc_pointers(value, path=""):
@@ -776,7 +801,7 @@ ART_UNREAD = ("src/wozmod/install/", "src/wozmod/voices/", "src/wozmod/__main__.
               "src/wozmod/movies.py", "src/wozmod/remembered.py", "src/wozmod/window.py", "src/wozmod/art/__main__.py",
               "src/wozmod/art/bundle.py", "src/wozmod/art/compose.py", "src/wozmod/art/render.py",
               "src/wozmod/formats/audio.py", "src/wozmod/runtime/__main__.py", "src/wozmod/runtime/build.py",
-              "src/wozmod/runtime/layout.py", "src/wozmod/runtime/runtime_edits.py", "src/wozmod/text/inventory.py",
+              "src/wozmod/runtime/runtime_edits.py", "src/wozmod/text/inventory.py",
               "src/wozmod/text/psp_alignment.py", "src/wozmod/text/script_alignment.py", "src/wozmod/text/stock.py")
 PYTHON_SETUP = """import hashlib, importlib.metadata, importlib.util, pathlib, sys
 print(sys.version, sorted(f"{d.name}=={d.version}" for d in importlib.metadata.distributions()))
@@ -787,7 +812,7 @@ PACKAGE_DATABASE = (Path("/usr/lib/sysimage/rpm/rpmdb.sqlite"), Path("/usr/lib/s
 
 def art_sources(repo: Path) -> list[Path]:
     files = [*(repo / "src/wozmod").rglob("*.py"), *(repo / "data/art").rglob("*"), repo / "tests/test_art_build.py",
-             repo / "tests/conftest.py"]
+             repo / "tests/conftest.py", repo / "runtime/english_runtime.c"]  # the C: hires.bin's flags and limits
     return sorted(p for p in files if p.is_file() and "__pycache__" not in p.parts
                   and not p.relative_to(repo).as_posix().startswith(ART_UNREAD))
 
@@ -810,7 +835,8 @@ def test_the_art_build_key_changes_with_each_input_it_covers(tmp_path):
     """Bug: an input drops out of the key, so verify.sh skips the art build after a change that breaks it."""
     repo, game, donors, python = tmp_path / "repo", tmp_path / "game", tmp_path / "donors", tmp_path / "python"
     paths = [repo / "src/wozmod/fonts/raster.py", repo / "data/art/faces/mainvec.py", repo / "data/art/lettering.json",
-             repo / "tests/test_art_build.py", game / "LINKDATA1.BIN", donors / "wo2-x360/linkdata_ens.idx"]
+             repo / "tests/test_art_build.py", repo / "runtime/english_runtime.c", game / "LINKDATA1.BIN",
+             donors / "wo2-x360/linkdata_ens.idx"]
     for path in paths:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("a")
@@ -820,8 +846,8 @@ def test_the_art_build_key_changes_with_each_input_it_covers(tmp_path):
     def later(path):
         os.utime(path, ns=(path.stat().st_atime_ns, path.stat().st_mtime_ns + 10**9))
 
-    edits = {**{path.relative_to(tmp_path).as_posix(): lambda path=path: path.write_text("b") for path in paths[:4]},
-             "game file grows": lambda: paths[4].write_text("ab"), "donor file touched": lambda: later(paths[5]),
+    edits = {**{path.relative_to(tmp_path).as_posix(): lambda path=path: path.write_text("b") for path in paths[:5]},
+             "game file grows": lambda: paths[5].write_text("ab"), "donor file touched": lambda: later(paths[6]),
              "Python version": lambda: python.write_text("#!/bin/sh\necho 3.14.1\n")}
     unchanged = []
     for name, edit in edits.items():
@@ -841,7 +867,7 @@ def test_art_build_runs_without_the_warriors_orochi_pc_disc(tmp_path):
     if not (game / "LINKDATA1.BIN").is_file() or not (donors / "wo2-x360/linkdata_ens.idx").is_file():
         pytest.skip("set WOZMOD_GAME and WOZMOD_DONORS (the installer's donors folder)")
     repo = build.REPO.resolve()
-    key = art_build_key(repo, (game, donors, *PACKAGE_DATABASE), (sys.executable, build.FONT_PYTHON))
+    key = art_build_key(repo, (game, donors, *PACKAGE_DATABASE), (sys.executable, lettering.FONT_PYTHON))
     passed = repo / "work/art-build.passed"
     if os.environ.get("WOZMOD_ART_FULL") != "1" and passed.is_file() and passed.read_text() == key:
         pytest.skip("nothing the art build reads has changed since it last passed (set WOZMOD_ART_FULL=1 to run it)")

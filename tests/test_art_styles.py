@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from PIL import Image
 
-from wozmod.art import build
+from wozmod.art import build, vector
 
 
 class Texture:
@@ -24,11 +24,11 @@ class Texture:
 
 def test_sound_rows_do_not_drop_labels_missing_from_harvested_face(monkeypatch):
     records = {3: {"pc_text": "Orbit"}, 11: {"pc_text": "Signal"}}
-    monkeypatch.setattr(build, "reference", lambda texture, row: records.get(row))
+    monkeypatch.setattr(vector, "reference", lambda texture, row: records.get(row))
     mapping = {"faces": {"sound": {"rows": [
         {"base": [4069, 24, 0], "texts": [None] * 35},
     ]}}}
-    assert build.sound_menu_rows(mapping, 24) == [
+    assert vector.sound_menu_rows(mapping, 24) == [
         {"row": 3, "text": "Orbit", "at": [3, 157]},
         {"row": 11, "text": "Signal", "at": [3, 493]},
     ]
@@ -43,7 +43,7 @@ def test_ability_colour_roles_cannot_reuse_direct_donor_payload(monkeypatch):
     families = [(item, role) for role, start in (("blue", 60), ("pink", 66), ("yellow", 72))
                 for item in range(start, start + 6)]
     roles = {f"4079.{item}": role for item, role in families}
-    monkeypatch.setattr(build, "reference", lambda texture, row: {"role_variant": roles[texture]})
+    monkeypatch.setattr(vector, "reference", lambda texture, row: {"role_variant": roles[texture]})
     metrics = {"baseline": 3, "ink": [0, 0, 4, 4]}
     target = Texture(Image.new("RGBA", (128, 64)), b"fixture")
     donor_art = Image.new("RGBA", target.image.size)
@@ -53,7 +53,7 @@ def test_ability_colour_roles_cannot_reuse_direct_donor_payload(monkeypatch):
         507: {item - 1: SimpleNamespace(textures=[source]) for item, _ in families},
         "menu_native_texts": {(4079, item, 0): "Fixture" for item, _ in families},
         "menu_labels": {
-            build.menu_label_key("rounded.ability", "Fixture", role=role):
+            vector.menu_label_key("rounded.ability", "Fixture", role=role):
                 (Image.new("RGBA", (4, 4), colour), metrics)
             for role, colour in colours.items()
         },
@@ -79,7 +79,7 @@ def test_stage_placement_does_not_clip_left_or_top_halo():
         label = Image.new("RGBA", (10, height), (49, 32, 8, 32))
         label.paste((220, 180, 40, 255), (3, 2, 7, baseline))
         metrics = {"baseline": baseline, "ink": [3, 2, 7, baseline]}
-        donors = {"menu_labels": {build.menu_label_key("stage.stage", name): (label, metrics)}}
+        donors = {"menu_labels": {vector.menu_label_key("stage.stage", name): (label, metrics)}}
         expected = Image.new("RGBA", target.image.size)
         expected.alpha_composite(label, (0, top))
         image = build.payload(target, {"stage_name": name}, donors, None)
@@ -88,19 +88,19 @@ def test_stage_placement_does_not_clip_left_or_top_halo():
     assert not failures, failures
 
 
-def test_double_scale_glow_stays_inside_sampled_height(monkeypatch):
+def test_double_scale_glow_stays_inside_sampled_height(monkeypatch, letters):
     label = Image.new("RGBA", (32, 68))
     label.paste((214, 117, 107, 255), (3, 11, 28, 64))
     label.paste((16, 16, 16, 1), (6, 67, 25, 68))
     metrics = {"baseline": 59, "ink": [11, 19, 27, 60]}
-    monkeypatch.setattr(build, "header_label", lambda *args: (label, metrics))
+    letters(lambda request: (label, metrics))
     mapping = {"textures": [{"entry": 4079, "item": 80}]}
     failures = []
     for height, expected_y in ((31, -6), (35, -5)):
         layout = {"style": "rounded.base", "role": None, "text": "Fixture",
                   "left": 4, "baseline": 27, "sampled_window": [0, 0, 140, height]}
-        monkeypatch.setattr(build, "native_menu_layout", lambda *args, row=layout: row)
-        art = build.native_menu_art(4079, 80, Image.new("RGBA", (256, 64)), mapping, {}, 2)
+        monkeypatch.setattr(vector, "native_menu_layout", lambda *args, row=layout: row)
+        art = vector.native_menu_art(4079, 80, Image.new("RGBA", (256, 64)), mapping, {}, 2)
         expected = Image.new("RGBA", art.size)
         expected.alpha_composite(label, (-3, expected_y))
         if art.tobytes() != expected.tobytes() or art.getbbox()[3] > height * 2:
@@ -108,16 +108,16 @@ def test_double_scale_glow_stays_inside_sampled_height(monkeypatch):
     assert not failures, failures
 
 
-def test_triple_scale_outline_moves_inside_the_left_edge(monkeypatch):
+def test_triple_scale_outline_moves_inside_the_left_edge(monkeypatch, letters):
     """Bug: no left-edge rule, so a 4-px outline before a fill 3.82 px in stops the 3x build (4079.80)."""
     label = Image.new("RGBA", (48, 100))
     label.paste((214, 117, 107, 255), (4, 15, 44, 96))
     metrics = {"baseline": 87, "ink": [16, 27, 40, 88]}
-    monkeypatch.setattr(build, "header_label", lambda *args: (label, metrics))
+    letters(lambda request: (label, metrics))
     layout = {"style": "rounded.base", "role": None, "text": "Fixture",
               "left": 3.817, "baseline": 27, "sampled_window": [0, 0, 140, 31]}
-    monkeypatch.setattr(build, "native_menu_layout", lambda *args: layout)
-    art = build.native_menu_art(4079, 80, Image.new("RGBA", (256, 64)), {"textures": [{"entry": 4079, "item": 80}]},
+    monkeypatch.setattr(vector, "native_menu_layout", lambda *args: layout)
+    art = vector.native_menu_art(4079, 80, Image.new("RGBA", (256, 64)), {"textures": [{"entry": 4079, "item": 80}]},
                                 {}, 3)
     expected = Image.new("RGBA", art.size)
     expected.alpha_composite(label, (-4, -6))  # round(3.817 * 3 - 16) = -5 puts the outline at -1: one right

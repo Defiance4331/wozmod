@@ -1,4 +1,4 @@
-from .buttonvec import U, chain, contours as _contours, oval, rounded
+from .buttonvec import U, chain, oval, rounded
 from .skeleton import Skeleton, merge
 
 CAP = 17.1
@@ -226,7 +226,3 @@ def _(s, p):
 def layer(ch, p=None):
     s = Skeleton(CAP, PEN, 1.0, U)
     return merge(BUILD[ch](s, PARAMS[ch] if p is None else p))
-
-
-def contours(l):
-    return _contours(l, CAP)

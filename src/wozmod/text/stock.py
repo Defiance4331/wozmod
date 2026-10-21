@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import hashlib
-import struct
 from pathlib import Path
 
 from wozmod.formats.linkdata import archive
+from wozmod.formats.pe import pointer_strings
 from wozmod.formats.scripts import EVENT_TEXT, event_lines, quote_tables
-from wozmod.runtime.english_runtime import file_offset, pe_layout
 
 from .build import NAME_PARTS, NAME_TABLE, TableBuildError
 from .inventory import EVENTS, inventory
@@ -16,16 +15,22 @@ from .psp_exe import EXE_STRING
 from .script_alignment import QUOTES
 
 
+def stock_key(raw: bytes) -> tuple[str, bytes] | None:
+    """(SHA-256 hex, canonical CP932 bytes) that key a translation row; None when ``raw`` is not CP932."""
+    try:
+        canonical = raw.decode("cp932").encode("cp932")
+    except UnicodeError:
+        return None
+    return hashlib.sha256(canonical).hexdigest(), canonical
+
+
 def stock_strings(stock: Path) -> dict[str, bytes]:
     """SHA-256 of canonical CP932 bytes mapped to those bytes, without donors."""
     found: dict[str, bytes] = {}
 
     def add(value: bytes) -> None:
-        try:
-            canonical = value.decode("cp932").encode("cp932")
-        except UnicodeError:
-            return
-        found[hashlib.sha256(canonical).hexdigest()] = canonical
+        if keyed := stock_key(value):
+            found[keyed[0]] = keyed[1]
 
     for source in inventory(stock).values():
         for value in source:
@@ -39,11 +44,8 @@ def stock_strings(stock: Path) -> dict[str, bytes]:
     exe = (stock / "OROCHI_Z.exe").read_bytes()
     for match in EXE_STRING.finditer(exe):
         add(match.group())
-    layout = pe_layout(exe)
-    for index in range(NAME_PARTS):
-        pointer = file_offset(layout, NAME_TABLE + 8 * index)
-        at = file_offset(layout, struct.unpack_from("<I", exe, pointer)[0])
-        add(exe[at:exe.index(b"\0", at)])
+    for value in pointer_strings(exe, NAME_TABLE, NAME_PARTS, 8):
+        add(value)
     quote_data = archive(stock / "LINKDATA1")[QUOTES[0]]
     for table in quote_tables(quote_data):
         for line in table:
@@ -62,10 +64,9 @@ def resolve_stock_ref(stock: Path, reference: list, key: str) -> bytes:
     raw = exe[offset:offset + length]
     if len(raw) != length:
         raise TableBuildError(f"row {key}: stock reference exceeds executable")
-    try:
-        canonical = raw.decode("cp932").encode("cp932")
-    except UnicodeError as error:
-        raise TableBuildError(f"row {key}: stock reference is not CP932") from error
-    if hashlib.sha256(canonical).hexdigest() != key:
+    keyed = stock_key(raw)
+    if keyed is None:
+        raise TableBuildError(f"row {key}: stock reference is not CP932")
+    if keyed[0] != key:
         raise TableBuildError(f"row {key}: stock reference hash differs")
-    return canonical
+    return keyed[1]

@@ -6,6 +6,7 @@ import struct
 from dataclasses import dataclass
 from pathlib import Path
 
+from wozmod.donors import DonorsFolder
 from wozmod.formats.audio import (
     MOZ_VOICE_IDS, SE_BANKS, WO1_EVENT_VOICES, WO2_EVENT_VOICES, english_se_bank, english_voice_bank,
     english_voice_clips,
@@ -39,7 +40,8 @@ class VoiceBuildResult:
 def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | None = None) -> VoiceBuildResult:
     """Write voice/Voice.bin, voice/Lips.bin and voice/SE.bin below the supplied mod folder; jobs caps the ffmpeg processes."""
     stock, donors, output_dir = Path(stock), Path(donors), Path(output_dir)
-    wo1, wo2 = donors / "wo1-x360", donors / "wo2-x360"
+    folders = DonorsFolder(donors)
+    wo1, wo2 = folders.folder("wo1-x360"), folders.folder("x360")
     moz = moz_scripts(stock / "LINKDATA2")
     wo2_donor = wo2_x360(wo2 / "linkdata_ens")
     linkdata1, linkdata2, wo1_ens = archive(stock / "LINKDATA1"), archive(stock / "LINKDATA2"), archive(wo1 / "linkdata_ens")

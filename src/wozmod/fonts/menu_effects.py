@@ -1,9 +1,14 @@
 """Menu effects rendering support."""
+import json
 import math
 from collections.abc import Callable
+from dataclasses import dataclass, field
 
 import cairo
 import numpy as np
+from PIL import Image
+
+from .skeleton import contours
 
 
 def composite(fill, colors, rings, glow=None, *, ring_mode="outside"):
@@ -28,11 +33,91 @@ def composite(fill, colors, rings, glow=None, *, ring_mode="outside"):
                       np.clip(alpha * 255 + 0.5, 0, 255)]).astype(np.uint8)
 
 
-def path(ctx, cs, x, y, s):
+@dataclass
+class Label:
+    image: Image.Image
+    baseline: int
+    ink: tuple
+    pen: float
+    advance: float
+    fill_profile: list = field(default_factory=list)  # the fill's coverage per column (buttons; see lettering.fill_edges)
+
+    def emit(self, output):
+        """Save the image to `output` and print its metrics as JSON: what each raster's command line answers."""
+        output.parent.mkdir(parents=True, exist_ok=True)
+        self.image.save(output)
+        print(json.dumps(dict(size=self.image.size, baseline=self.baseline, ink=[round(v, 3) for v in self.ink],
+                              pen=round(self.pen, 3), advance=round(self.advance, 3))))
+
+
+def outline_table(face, layer, cap=None, upright=None):
+    """face.BUILD's letters as {letter: (paths, box, span)} in cap units, y down from the cap line: the paths of
+    layer(letter) for `path`, its ink box (x0, top, x1, bottom), and the (x0, x1) its spacing measures, taken from
+    upright(letter) when given (a slanted face is spaced upright)."""
+    cap = face.CAP if cap is None else cap
+    out = {}
+    for ch in face.BUILD:
+        l = layer(ch)
+        x0, y0, x1, y1 = l.boundingBox()
+        u = (upright(ch) if upright else l).boundingBox()
+        out[ch] = (contours(l, cap, face.U), (x0 / face.U, cap - y1 / face.U, x1 / face.U, cap - y0 / face.U),
+                   (u[0] / face.U, u[2] / face.U))
+    return out
+
+
+def _check(text, face, g):
+    for ch in text.replace(" ", ""):
+        if ch not in g:
+            raise KeyError(f"{face.__name__.rsplit('.', 1)[-1]} has no glyph for {ch!r} in {text!r}")
+
+
+def ink_layout(text, face, g, ink=None):
+    """text's letters placed by `ink`, each letter's ink start (a row fitted to its donor), or else by their spans
+    in the table `g` joined by face.BEARINGS, a space adding face.SPACE. Returns ([(letter, x)], advance)."""
+    _check(text, face, g)
+    letters = text.replace(" ", "")
+    if ink is None:
+        ink, pen, prev = [], 0.0, None
+        for ch in text:
+            if ch == " ":
+                pen += face.SPACE
+                continue
+            if prev is not None:
+                pen += face.BEARINGS[prev][1] + face.BEARINGS[ch][0]
+            ink.append(pen)
+            pen += g[ch][2][1] - g[ch][2][0]
+            prev = ch
+    if not letters:
+        return [], face.SPACE * len(text)
+    ls, last = face.BEARINGS[letters[0]][0], letters[-1]
+    out = [(ch, ls + x - g[ch][2][0]) for ch, x in zip(letters, ink, strict=True)]
+    return out, ls + ink[-1] + (g[last][2][1] - g[last][2][0]) + face.BEARINGS[last][1]
+
+
+def pen_layout(text, face, g, track=0.0, space=None):
+    """text's letters set by a pen: each letter's face.BEARINGS around its ink box in `g`, `track` more after every
+    character, a space adding `space` (face.SPACE by default). Returns ([(letter, x)], advance)."""
+    _check(text, face, g)
+    space = face.SPACE if space is None else space
+    pen, out = 0.0, []
+    for k, ch in enumerate(text):
+        pen += track if k else 0.0
+        if ch == " ":
+            pen += space
+            continue
+        (ls, rs), (x0, _, x1, _) = face.BEARINGS[ch], g[ch][1]
+        out.append((ch, pen + ls - x0))
+        pen += ls + (x1 - x0) + rs
+    return out, pen
+
+
+def path(ctx, cs, x, y, s, sy=None):
+    """Add the paths `cs` to ctx at (x, y), scaled by s (by sy vertically when given)."""
+    sy = s if sy is None else sy
     for segs in cs:
-        ctx.move_to(x + segs[0][0] * s, y + segs[0][1] * s)
+        ctx.move_to(x + segs[0][0] * s, y + segs[0][1] * sy)
         for seg in segs[1:]:
-            pts = [(x + a * s, y + b * s) for a, b in seg[1:]]
+            pts = [(x + a * s, y + b * sy) for a, b in seg[1:]]
             if seg[0] == "L":
                 ctx.line_to(*pts[0])
             else:
@@ -40,17 +125,15 @@ def path(ctx, cs, x, y, s):
         ctx.close_path()
 
 
-def coverage(draw, w, h, dilate=0.0, bold=0.0):
+def coverage(draw, w, h, dilate=0.0):
 
 
     surf = cairo.ImageSurface(cairo.FORMAT_A8, w, h)
     ctx = cairo.Context(surf)
     ctx.set_fill_rule(cairo.FILL_RULE_WINDING)
-    for dx in (-bold, 0.0, bold) if bold else (0.0,):
-        ctx.save()
-        ctx.translate(dx, 0)
-        draw(ctx)
-        ctx.restore()
+    ctx.save()  # draw's transform must not scale the dilation stroke below
+    draw(ctx)
+    ctx.restore()
     if dilate:
         ctx.set_line_width(2 * dilate)
         ctx.set_line_join(cairo.LINE_JOIN_ROUND)

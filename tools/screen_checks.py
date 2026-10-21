@@ -28,9 +28,7 @@ from typing import Any, Callable
 from PIL import Image
 
 from wozmod.runtime.english_runtime import DLL_BASE
-from wozmod.runtime.latin_font import ADVANCES
-
-_LATIN_ORDER = [chr(c) for c in range(0x20, 0x7E)] + list("ŌōŪūï")  # ADVANCES order
+from wozmod.runtime.latin_font import ADVANCES, LATIN_CHARS
 
 LAYOUT_W = 1280
 TEXT_H = 28  # one glyph row, layout px
@@ -241,7 +239,7 @@ def _table_width(line: str, cell: int = 24) -> int:
     """Layout px the game measures a line of Latin text at with `cell` px letters: each letter's width from the
     runtime's width table scaled to the cell, rounded down as the game does (colour tags take no room)."""
     line = re.sub(r"\[[0-9A-Fa-f]{2}|\]", "", line)
-    return sum(ADVANCES[_LATIN_ORDER.index(c)] * cell // 24 for c in line if c in _LATIN_ORDER)
+    return sum(ADVANCES[LATIN_CHARS.index(c)] * cell // 24 for c in line if c in LATIN_CHARS)
 
 
 def text_position(screen: dict, text: dict | None, x: int | None = None, y: int | None = None,

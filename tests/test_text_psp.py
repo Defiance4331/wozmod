@@ -1,35 +1,40 @@
 import hashlib
+from dataclasses import replace
 
 import pytest
 
-from wozmod.text import psp_exe
+from wozmod.donors import DISCS, ProgramError, ProgramIdentity
+from wozmod.text import DonorResolver, psp_exe
 
 
-def test_psp_pool_keeps_invalid_slots_instead_of_shifting_later_pointers(tmp_path, monkeypatch):
+def test_psp_pool_keeps_invalid_slots_instead_of_shifting_later_pointers():
     data = b"\0Alpha\0\x81\x82\0B\0Bravo \xd3\0\0Tail\0"
-    path = tmp_path / "program.prx"
-    path.write_bytes(data)
-    monkeypatch.setattr(psp_exe, "EBOOT_SHA256", hashlib.sha256(data).hexdigest())
 
-    assert psp_exe.eboot_strings(path) == ["Alpha", None, "Bravo \u014c", "Tail"]
+    assert psp_exe.eboot_strings(data) == ["Alpha", None, "Bravo \u014c", "Tail"]
 
 
-def test_encrypted_psp_input_is_refused_even_when_its_hash_matches(tmp_path, monkeypatch):
-    data = b"~PSP\0fixture\0"
-    path = tmp_path / "program.prx"
-    path.write_bytes(data)
-    monkeypatch.setattr(psp_exe, "EBOOT_SHA256", hashlib.sha256(data).hexdigest())
+def test_a_wrong_psp_program_cannot_supply_string_slots(tmp_path):
+    """Bug: the PSP pool reads the staged program without checking its pin, or looks for it in another folder."""
+    (tmp_path / "wo2-psp").mkdir()
+    (tmp_path / "wo2-psp/eboot.prx").write_bytes(b"\0Unrelated fixture\0")
 
-    with pytest.raises(ValueError, match="still encrypted"):
-        psp_exe.eboot_strings(path)
+    with pytest.raises(ProgramError, match="wrong size or SHA-256"):
+        DonorResolver(tmp_path).resolve(["psp", "prx", 0])
 
 
-def test_wrong_psp_program_cannot_supply_string_slots(tmp_path):
-    path = tmp_path / "program.prx"
-    path.write_bytes(b"\0Unrelated fixture\0")
+def test_the_psp_pool_reads_the_staged_program_without_its_tail(tmp_path, monkeypatch):
+    """Bug: bytes after the pinned program are read as more string slots."""
+    data = b"\0Alpha\0Bravo\0"
+    psp = DISCS["psp"]
+    pin = ProgramIdentity("test", len(data), hashlib.sha256(data).hexdigest(), "psp")
+    monkeypatch.setitem(DISCS, "psp", replace(psp, program=replace(psp.program, plain=pin)))
+    (tmp_path / "wo2-psp").mkdir()
+    (tmp_path / "wo2-psp/eboot.prx").write_bytes(data + b"Tail\0")
+    resolver = DonorResolver(tmp_path)
 
-    with pytest.raises(ValueError, match="not the decrypted"):
-        psp_exe.eboot_strings(path)
+    assert resolver.resolve(["psp", "prx", 1]) == "Bravo"
+    with pytest.raises(IndexError):
+        resolver.resolve(["psp", "prx", 2])
 
 
 def test_stock_pool_keeps_file_order_duplicates_and_the_400_byte_boundary():

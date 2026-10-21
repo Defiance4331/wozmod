@@ -1,6 +1,5 @@
 """Headerraster rendering support."""
 import argparse
-import json
 import math
 from functools import lru_cache
 from pathlib import Path
@@ -10,7 +9,7 @@ import numpy as np
 from PIL import Image
 
 from . import headervec as V
-from .buttonraster import Label, coverage
+from .menu_effects import Label, coverage, ink_layout, outline_table, path
 from .word_key import word_key
 
 FILL = ((0.00, (255.3, 254.0, 235.2)), (0.10, (250.1, 246.0, 220.5)), (0.19, (247.1, 242.2, 212.8)),
@@ -29,52 +28,14 @@ def glyphs(text=None):
     if text is not None and word_key(text) not in V.ROW_PARAMS:
         return glyphs()
     params = V.ROW_PARAMS.get(word_key(text), {}) if text is not None else {}
-    out = {}
-    for ch in V.BUILD:
-        p = params.get(ch)
-        l = V.layer(ch, p)
-        x0, y0, x1, y1 = l.boundingBox()
-        u = V.layer(ch, p, slant=0.0).boundingBox()
-        out[ch] = (V.contours(l), (x0 / V.U, V.CAP - y1 / V.U, x1 / V.U, V.CAP - y0 / V.U), (u[0] / V.U, u[2] / V.U))
-    return out
+    return outline_table(V, lambda ch: V.layer(ch, params.get(ch)),
+                         upright=lambda ch: V.layer(ch, params.get(ch), slant=0.0))
 
 
 def layout(text, ref=None):
 
 
-    g = glyphs(text)
-    letters = text.replace(" ", "")
-    for ch in letters:
-        if ch not in g:
-            raise KeyError(f"headervec has no glyph for {ch!r} in {text!r}")
-    ink = V.SETS.get(f"{word_key(text)}@{ref}", V.SETS.get(word_key(text)))
-    if ink is None:
-        ink, pen, prev = [], 0.0, None
-        for ch in text:
-            if ch == " ":
-                pen += V.SPACE
-                continue
-            if prev is not None:
-                pen += V.BEARINGS[prev][1] + V.BEARINGS[ch][0]
-            ink.append(pen)
-            pen += g[ch][2][1] - g[ch][2][0]
-            prev = ch
-    ls = V.BEARINGS[letters[0]][0]
-    out = [(ch, ls + x - g[ch][2][0]) for ch, x in zip(letters, ink, strict=True)]
-    last = letters[-1]
-    return out, ls + ink[-1] + (g[last][2][1] - g[last][2][0]) + V.BEARINGS[last][1]
-
-
-def _path(ctx, cs, x, y, sx, sy):
-    for segs in cs:
-        ctx.move_to(x + segs[0][0] * sx, y + segs[0][1] * sy)
-        for seg in segs[1:]:
-            pts = [(x + a * sx, y + b * sy) for a, b in seg[1:]]
-            if seg[0] == "L":
-                ctx.line_to(*pts[0])
-            else:
-                ctx.curve_to(*pts[0], *pts[1], *pts[2])
-        ctx.close_path()
+    return ink_layout(text, V, glyphs(text), V.SETS.get(f"{word_key(text)}@{ref}", V.SETS.get(word_key(text))))
 
 
 def edge_coverage(draw, w, h, rx, ry):
@@ -112,7 +73,7 @@ def render(text, scale=1.0, hscale=1.0, ref=None):
 
     def draw(ctx):
         for ch, x in placed:
-            _path(ctx, g[ch][0], ox + x * sx, baseline - V.CAP * s, sx, s)
+            path(ctx, g[ch][0], ox + x * sx, baseline - V.CAP * s, sx, s)
 
     F = coverage(draw, w, h)
     O = np.maximum(edge_coverage(draw, w, h, EDGE * s, EDGE_Y * s), F)
@@ -134,7 +95,4 @@ if __name__ == "__main__":
     parser.add_argument("--ref", help="official sheet, e.g. 1.13 or 17.34")
     args = parser.parse_args()
     label = render(args.text, args.scale, args.hscale, args.ref)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    label.image.save(args.output)
-    print(json.dumps(dict(size=label.image.size, baseline=label.baseline, ink=[round(v, 3) for v in label.ink],
-                          pen=round(label.pen, 3), advance=round(label.advance, 3))))
+    label.emit(args.output)

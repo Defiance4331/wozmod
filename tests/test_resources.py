@@ -60,16 +60,16 @@ def test_no_ffmpeg_anywhere_is_reported_as_none(tmp_path, monkeypatch):
 
 def test_lzp2_cache_key_needs_no_source_file(monkeypatch):
     # Bug: the key read the codec's .py file, which a packaged program does not have (FileNotFoundError mid-install).
-    from wozmod.art import build
+    from wozmod.art import packing
 
     namespace = {}
     exec(compile("def encode(data):\n    return data\n", "wozmod/not/on/disk.py", "exec"), namespace)
-    monkeypatch.setattr(build, "encode_lzp2", namespace["encode"])
-    build._lzp2_codec.cache_clear()
+    monkeypatch.setattr(packing, "encode_lzp2", namespace["encode"])
+    packing._lzp2_codec.cache_clear()
     try:
-        assert len(build._lzp2_codec()) == 32
+        assert len(packing._lzp2_codec()) == 32
     finally:
-        build._lzp2_codec.cache_clear()
+        packing._lzp2_codec.cache_clear()
 
 
 def test_packaged_install_takes_the_dll_and_lettering_from_inside_the_bundle(tmp_path, monkeypatch, capsys):

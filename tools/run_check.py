@@ -13,7 +13,6 @@ Exit 1 on any FAIL row, a run that did not end by our stop, or a game that never
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import signal
 import subprocess
@@ -27,7 +26,7 @@ import game_harness as harness
 import prepare_run
 import screen_checks
 
-DEFAULT_SPEC = harness.REPO / "data/checks/layout.toml"
+DEFAULT_SPEC = prepare_run.REPO / "data/checks/layout.toml"
 START_WAIT = 300  # seconds from launch (slot wait included) until the game answers the test mailbox
 STOP_WAIT = 60  # seconds for the supervisor to end after stop
 RETRIES = 2  # fresh runs after one that ended before the game started
@@ -79,11 +78,6 @@ def stop(root: Path, proc: subprocess.Popen) -> None:
                 proc.wait()
 
 
-def exit_reason(root: Path) -> dict | None:
-    path = root / "evidence/exit.json"
-    return json.loads(path.read_text()) if path.is_file() else None
-
-
 def run_name(label: str, attempt: int) -> str:
     base = datetime.now().strftime("%Y-%m-%d_%H%M-") + label + (f"-r{attempt}" if attempt else "")
     name, n = base, 1
@@ -123,8 +117,9 @@ def run_check(args: argparse.Namespace, stage=prepare_run.prepare, start=launch)
             t = time.monotonic()
             stop(root, proc)
             phases["stop"] += time.monotonic() - t
-        record = exit_reason(root)
-        # retry only a run that ended before the game started: reason unknown, and no frame ever answered
+        record = harness.exit_info(root)
+        # retry only a run that ended before the game started: no frame ever answered, the reason is unknown, and the
+        # game left no exit status (it can write one after the harness recorded a compositor that ended first)
         if up or record is None or record["reason"] != "unknown" or (root / "evidence/game-exit.json").is_file():
             break
         print(f"run_check: {root.name} ended before the game started (see evidence/harness.log); "
@@ -133,7 +128,7 @@ def run_check(args: argparse.Namespace, stage=prepare_run.prepare, start=launch)
     phases["total"] = time.monotonic() - began
     print(f"run: {root.name}")
     print("phases: " + ", ".join(f"{k} {v:.1f} s" for k, v in phases.items()) + f"; starts {attempt + 1}")
-    print(f"exit: {reason}" + (f" (game exit status {record['game_returncode']})" if record and "game_returncode" in record else ""))
+    print(f"exit: {harness.describe_exit(record) if record else reason}")
     if (root / "evidence").is_dir():
         harness.write_json(root / "evidence/run-check.json", {"phases": phases, "reason": reason, "starts": attempt + 1})
     if (root / "evidence/check-report.json").is_file():

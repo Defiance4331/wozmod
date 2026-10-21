@@ -28,8 +28,7 @@ from wozmod.formats.scripts import (
     caption_cues, donor_text, event_lines, mesc_blocks, parse_script,
     quote_tables, quote_text,
 )
-from wozmod.donors.programs import WO1_X360_PROGRAM, X360_PROGRAM, verify_program
-from wozmod.donors import PSP, verify_file
+from wozmod.donors import DISCS, PSP, DonorsFolder, verify_file
 
 
 def program_text(raw: bytes) -> str:
@@ -53,7 +52,7 @@ def program_text(raw: bytes) -> str:
 
 class DonorResolver:
     def __init__(self, root: Path):
-        self.root = Path(root)
+        self.donors = DonorsFolder(root)
 
     @cache
     def entry(self, donor: str, ordinal: int) -> bytes:
@@ -62,30 +61,25 @@ class DonorResolver:
                 raise ValueError("Invalid FNS member")
             data = ps2_members(self.psp_archive(), [ordinal])[ordinal]
             return data if ordinal == 27 else decoded_member(data)
-        folder = {"wo1-x360": "wo1-x360", "x360": "wo2-x360"}.get(donor)
-        if folder is None or not isinstance(ordinal, int) or ordinal < 0:
+        if donor not in DISCS or not isinstance(ordinal, int) or ordinal < 0:
             raise ValueError("Invalid ENS donor or entry")
-        return archive(self.root / folder / "linkdata_ens")[ordinal]
+        return archive(self.donors.folder(donor) / "linkdata_ens")[ordinal]
 
     @cache
     def psp_archive(self) -> Path:
         identity = next(file for file in PSP.files if file.path.endswith("/LINKDATA_NA.FNS"))
-        return verify_file(self.root / "wo2-psp" / identity.path, identity)
+        return verify_file(self.donors.folder("psp") / identity.path, identity)
 
     @cache
     def program(self, donor: str) -> bytes:
-        folder, identity = {"x360": ("wo2-x360", X360_PROGRAM), "wo1-x360": ("wo1-x360", WO1_X360_PROGRAM)}.get(
-            donor, (None, None))
-        if folder is None:
+        if donor not in ("x360", "wo1-x360"):
             raise ValueError("Invalid PE donor")
-        path = self.root / folder / "default.pe"
-        verify_program(path, identity)
-        return path.read_bytes()[:identity.size]
+        return self.donors.program(donor)
 
     @cache
     def psp_pool(self) -> list[str | None]:
         from .psp_exe import eboot_strings
-        return eboot_strings(self.root / "wo2-psp/eboot.prx")
+        return eboot_strings(self.donors.program("psp"))
 
     @cache
     def view(self, donor: str, ordinal: int, kind: str):

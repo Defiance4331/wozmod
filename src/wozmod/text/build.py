@@ -5,13 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import struct
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from wozmod.formats.pe import pointer_strings
 from wozmod.progress import report
 from wozmod.runtime.english_runtime import (
-    SURROGATES, encode_english, file_offset, pe_layout, table_blob,
+    SURROGATES, encode_english, table_blob,
 )
 
 if TYPE_CHECKING:
@@ -123,14 +123,9 @@ def table_pairs(rows: list[dict]) -> dict[bytes, bytes]:
 
 def name_parts(stock: bytes, pairs: dict[bytes, bytes], overrides: list[dict]) -> list[bytes | None]:
     """Resolve all name slots, retaining per-index overrides and exact stock bytes."""
-    layout = pe_layout(stock)
+    names = pointer_strings(stock, NAME_TABLE, NAME_PARTS, 8)
     by_index = {entry["index"]: encode_english(entry["en"]) for entry in overrides}
-    names = []
-    for index in range(NAME_PARTS):
-        pointer = file_offset(layout, NAME_TABLE + 8 * index)
-        at = file_offset(layout, struct.unpack_from("<I", stock, pointer)[0])
-        names.append(by_index.get(index) or pairs.get(stock[at:stock.index(b"\0", at)]))
-    return names
+    return [by_index.get(index) or pairs.get(name) for index, name in enumerate(names)]
 
 
 def _load_data(path: Path) -> dict:

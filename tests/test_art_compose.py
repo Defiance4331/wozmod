@@ -65,3 +65,23 @@ print("compose imported without font tools")
                             env=environment, capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
     assert result.stdout == "compose imported without font tools\n"
+
+
+@pytest.mark.skipif(os.environ.get("WOZMOD_ART_COMPOSE") != "1", reason="set WOZMOD_ART_COMPOSE=1 (about a minute)")
+def test_the_install_art_build_writes_only_the_player_files(tmp_path):
+    """Bug: the player's art build still writes a developer file beside wozmod/ (the LZP2 cache, a review folder,
+    manifest.json): hundreds of MB the install writes and hashes for nothing."""
+    from pathlib import Path
+
+    from wozmod.art.compose import compose
+
+    game, donors, bundle = (Path(os.environ.get(name, "")) for name in ("WOZMOD_GAME", "WOZMOD_DONORS",
+                                                                         "WOZMOD_LETTERING"))
+    if not ((game / "LINKDATA1.BIN").is_file() and (donors / "wo2-x360/linkdata_ens.idx").is_file()
+            and bundle.is_file()):
+        pytest.skip("set WOZMOD_GAME, WOZMOD_DONORS (the installer's donors folder) and WOZMOD_LETTERING")
+    stems = {"wo1-x360": donors / "wo1-x360/linkdata_ens", "x360": donors / "wo2-x360/linkdata_ens", "text": donors}
+    compose(game, stems, bundle, tmp_path / "art")
+    assert sorted(p.relative_to(tmp_path / "art").as_posix() for p in (tmp_path / "art").rglob("*")
+                  if p.parent.name != "entries") == [
+        "wozmod", "wozmod/entries", "wozmod/glyphs.bin", "wozmod/hires.bin", "wozmod/prompts-xbox.bin"]

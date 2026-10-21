@@ -74,19 +74,13 @@ def trim_program(data: bytes, identity: ProgramIdentity) -> bytes | None:
     return program if hashlib.sha256(program).hexdigest() == identity.sha256 else None
 
 
-def verify_program(path: str | os.PathLike[str], identity: ProgramIdentity) -> Path:
-    """Return a read-only input path after checking its size and SHA-256 (extra trailing bytes allowed)."""
-    source = Path(path)
-    try:
-        with source.open("rb") as stream:
-            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-                raise ProgramError(f"{identity.name} has the wrong size or file type")
-            data = stream.read(identity.size + MAX_EXTRA_BYTES + 1)
-    except OSError as exc:
-        raise ProgramError(f"Cannot read {identity.name}") from exc
-    if trim_program(data, identity) is None:
-        raise ProgramError(f"{identity.name} has the wrong size or SHA-256")
-    return source
+def read_pinned(path: str | os.PathLike[str], identity: ProgramIdentity) -> bytes | None:
+    """The pinned program when the file at path is it (extra trailing bytes allowed); None when it is not a regular
+    file or not the program. Reads no more than the pin allows. Raises OSError when the file cannot be read."""
+    with Path(path).open("rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            return None
+        return trim_program(stream.read(identity.size + MAX_EXTRA_BYTES + 1), identity)
 
 
 # How to run each tool known to give a matching file: (name, platform, arguments from the input and output paths).
@@ -128,10 +122,7 @@ def run_tool(
             except OSError as error:
                 transcript.append(f"{tool.name}: could not start ({error})")
                 return None, "\n".join(transcript)
-            data = None
-            if output.is_file():
-                with output.open("rb") as stream:
-                    data = trim_program(stream.read(identity.size + MAX_EXTRA_BYTES + 1), identity)
+            data = read_pinned(output, identity) if output.is_file() else None
             transcript.append(f"{tool.name} as {name}: {result}, " + ("output matches" if data else "output not accepted"))
             transcript.append(log.read_bytes()[:4000].decode("utf-8", "replace").strip())
             if data is not None:

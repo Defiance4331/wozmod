@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path
 
 from . import build, lettering
@@ -13,8 +12,8 @@ from .render import RECIPE, RECIPE_VERSION
 
 
 def compose(stock, donors, bundle, output_dir, squish=True, jobs=None) -> Path:
-    """Build output_dir/wozmod; donors maps wo1-x360 and x360 to archive stems, and text to the donors
-    folder the menu words resolve from.
+    """Build output_dir/wozmod and nothing else beside it; donors maps wo1-x360 and x360 to archive stems, and text
+    to the donors folder the menu words resolve from. Raises build.ArtError for a donor archive that fails its pin.
 
     The installer always squishes. squish=False is the developer oracle and needs a
     bundle rendered with full_width=True. jobs is the worker process count (default: CPU count).
@@ -26,13 +25,9 @@ def compose(stock, donors, bundle, output_dir, squish=True, jobs=None) -> Path:
     layers, outlines = read_bundle(Path(bundle), hashlib.sha256(recipe_bytes).hexdigest())
     if set(layers) != set(recipe["requests"]):
         raise ValueError("lettering bundle dropped or added a recipe layer")
-    arguments = ["--game", str(stock), "--wo1-x360-donor", str(donors["wo1-x360"]),
-                 "--wo2-donor", str(donors["x360"]), "--text-donors", str(donors["text"]), "--output-dir", str(output_dir),
-                 "--hires", "vector", "--jobs", str(jobs or os.process_cpu_count())]
-    if not squish:
-        arguments.append("--no-squish")
     with lettering.using(layers, outlines):
-        build.main(arguments)
+        build.build_art(Path(stock), Path(donors["wo1-x360"]), Path(donors["x360"]), Path(donors["text"]),
+                        Path(output_dir), hires="vector", squeeze=squish, jobs=jobs)
     return Path(output_dir) / "wozmod"
 
 
@@ -47,9 +42,12 @@ def main(argv=None) -> int:
     parser.add_argument("--oracle-full-width", action="store_true",
                         help="developer oracle only: full-width lettering from a --full-width bundle")
     args = parser.parse_args(argv)
-    compose(args.game, {"wo1-x360": args.wo1_x360_donor, "x360": args.wo2_donor,
-                                "text": args.text_donors}, args.bundle,
-            args.output_dir, squish=not args.oracle_full_width)
+    try:
+        compose(args.game, {"wo1-x360": args.wo1_x360_donor, "x360": args.wo2_donor,
+                                    "text": args.text_donors}, args.bundle,
+                args.output_dir, squish=not args.oracle_full_width)
+    except build.ArtError as error:
+        parser.error(str(error))
     return 0
 
 

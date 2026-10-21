@@ -1,4 +1,4 @@
-"""Game-format bytes built from the format description, for tests: string tables, scripts, MESC blocks, archives."""
+"""Game-format bytes built from the format description, for tests: string tables, scripts, MESC blocks, archives, PE images."""
 
 from __future__ import annotations
 
@@ -71,3 +71,16 @@ def write_ens(folder: Path, entries: dict[int, bytes], count: int | None = None)
     stem.with_suffix(".idx").write_bytes(struct.pack(">4sIII", b"SM4L", len(records) // 16, sector, 0) + records)
     stem.with_suffix(".lnk").write_bytes(body)
     return stem
+
+
+def pe_image(size: int, *sections: tuple[bytes, int, int, int, int], image_base: int = 0x400000,
+             pe_at: int = 0x80, optional_size: int = 0xE0) -> bytearray:
+    """An i386 PE: its header at pe_at, an optional header of optional_size, then (name, vsize, rva, raw_size, raw)."""
+    image = bytearray(size)
+    image[:2] = b"MZ"
+    struct.pack_into("<I", image, 0x3C, pe_at)
+    struct.pack_into("<4sHH12xH", image, pe_at, b"PE\0\0", 0x14C, len(sections), optional_size)
+    struct.pack_into("<I", image, pe_at + 24 + 28, image_base)
+    for i, section in enumerate(sections):
+        struct.pack_into("<8sIIII", image, pe_at + 24 + optional_size + 40 * i, *section)
+    return image

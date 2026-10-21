@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+import wozmod.install as installer
 from wozmod import __main__ as cli
 from wozmod import remembered, resources
 
@@ -58,7 +59,8 @@ def test_it_asks_for_each_missing_path_checks_the_answer_and_strips_quotes(monke
     monkeypatch.setattr(cli, "check_input", lambda name, path: checks.append((name, path)) or (
         "Not a folder." if path == Path("wrong") else None))
     ran = []
-    monkeypatch.setattr(cli, "decrypt_with_tool", lambda name, tool, image: ran.append((name, tool, image)) or b"program")
+    monkeypatch.setattr(cli, "program_status", lambda tool, inputs, log=None: (ran.append((tool, inputs)), installer.ProgramStatus(
+        None, {} if inputs[tool] else {tool: installer.NEITHER}, bool(inputs[tool])))[1])
     monkeypatch.setattr(cli, "install", lambda game, inputs, **kw: seen.update(game=game, **inputs))
     monkeypatch.setattr(cli, "TerminalView", Quiet)
     answer(monkeypatch, "wrong", f"'{tmp_path}'", '"/discs/wo1-x360.iso"', "", "/discs/psp.iso",
@@ -69,9 +71,9 @@ def test_it_asks_for_each_missing_path_checks_the_answer_and_strips_quotes(monke
     assert (seen["game"], seen["wo1-x360"], seen["x360"], seen["psp"]) == (
         tmp_path, Path("/discs/wo1-x360.iso"), Path("/remembered/x360.iso"), Path("/discs/psp.iso"))
     assert (seen["x360-tool"], seen["psp-tool"]) == (Path("/tools/x"), Path("/my tools/p"))
-    assert ran == [("wo1-x360", Path("/tools/x"), Path("/discs/wo1-x360.iso")),
-                   ("x360", Path("/tools/x"), Path("/remembered/x360.iso")),
-                   ("psp", Path("/my tools/p"), Path("/discs/psp.iso"))]  # each is run on each of its discs' files
+    assert [(tool, inputs[tool], inputs["x360"]) for tool, inputs in ran if inputs[tool]] == [
+        ("x360-tool", Path("/tools/x"), Path("/remembered/x360.iso")),
+        ("psp-tool", Path("/my tools/p"), Path("/remembered/x360.iso"))]  # each answer is checked with the discs given
     assert "Not a folder." in capsys.readouterr().out
     assert remembered.load_settings()["wo1-x360"] == "/discs/wo1-x360.iso"  # the window offers it next time
 
@@ -132,24 +134,13 @@ def test_the_menu_asks_again_after_a_bad_choice_and_ctrl_c_changes_nothing(monke
     assert cli.main([]) == 1 and ran == [] and "Nothing was changed" in capsys.readouterr().err
 
 
-def test_a_missing_program_pair_names_both_options_and_a_file_or_a_decrypted_disc_copy_covers_it(monkeypatch, tmp_path, capsys):
-    # Bug: --x360-file is ignored (the program is still demanded), or the error names only one way.
+def test_a_missing_program_names_the_program_and_each_decrypted_file_that_stands_in(monkeypatch, tmp_path, capsys):
+    # Bug: the error names only one way to cover a program (the program, or only one of its decrypted files).
     monkeypatch.setattr(sys, "stdin", io.StringIO(""))
     discs = ["install", "--game", str(tmp_path), "--wo1-x360", "w", "--x360", "b", "--psp", "c"]
     assert cli.main(discs) == 2
     error = capsys.readouterr().err
     assert "--x360-tool or --wo1-x360-file and --x360-file" in error and "--psp-tool or --psp-file" in error
-    assert cli.main([*discs, "--wo1-x360-file", "r", "--x360-file", "p", "--psp-file", "q"]) != 2 or (
-        "missing" not in capsys.readouterr().err)
-
-
-def test_a_program_whose_platform_disc_image_holds_the_decrypted_file_is_neither_required_nor_asked_for(monkeypatch, tmp_path, capsys):
-    # Bug: the command demands (or prompts for) a program the disc image makes unnecessary.
-    monkeypatch.setattr(cli, "resolve_program", lambda disc, values: (disc, b"program") if disc != "psp" else ("psp-tool", "no"))
-    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
-    assert cli.main(["install", "--game", str(tmp_path), "--wo1-x360", "w", "--x360", "b", "--psp", "c"]) == 2
-    error = capsys.readouterr().err
-    assert "--psp-tool or --psp-file" in error and "--x360-tool" not in error
 
 
 def _released_version() -> str:

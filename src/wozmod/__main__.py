@@ -6,23 +6,11 @@ import sys
 from pathlib import Path
 
 from wozmod import __version__, remembered, resources
-from wozmod.install import (FILES, LABELS, PROGRAMS, TOOLS, resolve_program, InstallError, check_input, decrypt_with_tool, existing_install, install,
-                            install_state, uninstall)
+from wozmod.install import (FILES, IMAGE_FIRST, INPUTS, PROGRAMS, TOOLS, InstallError, check_input, existing_install,
+                            install, install_state, program_status, uninstall)
 from wozmod.interactive import ask_choice, ask_path, ask_yes, interactive
 from wozmod.progress import Cancelled, Progress, TerminalView, duration
 
-INPUTS = (
-    ("wo1-x360", "Warriors Orochi Xbox 360 (USA) disc image"),
-    ("x360", "Warriors Orochi 2 Xbox 360 (USA) disc image"),
-    ("psp", "Warriors Orochi 2 PSP (USA) disc image"),
-    ("x360-tool", "a decryption program you already have, for the default.xex on both Xbox 360 discs"),
-    ("psp-tool", "a decryption program you already have, for the PSP EBOOT.BIN"),
-    ("x360-file", "advanced: in place of --x360-tool, the Warriors Orochi 2 Xbox 360 program file already decrypted"),
-    ("wo1-x360-file", "advanced: in place of --x360-tool, the Warriors Orochi Xbox 360 program file already decrypted"),
-    ("psp-file", "advanced: in place of --psp-tool, the PSP EBOOT.BIN already decrypted"),
-    ("lettering", None),  # for development: the release lettering bundle
-    ("dll", None),  # for development: the release d3d9.dll
-)
 ASKED = ("game", *PROGRAMS, *TOOLS)  # the inputs the terminal asks for when they are missing
 SHIPPED = {"lettering": "lettering.zip", "dll": "d3d9.dll"}  # inside the packaged program's resource folder
 
@@ -31,37 +19,26 @@ def attribute(name: str) -> str:
     return name.replace("-", "_")
 
 
-def tool_problem(name: str, tool: Path, args: argparse.Namespace) -> str | None:
-    """None when the program, run on the file from each disc image that needs it, gives the file wozmod needs."""
-    for disc in TOOLS[name]:
-        if not covered(disc, args):
-            found = decrypt_with_tool(disc, tool, getattr(args, attribute(disc)))
-            if isinstance(found, str):
-                return found
-    return None
+def program_inputs(args: argparse.Namespace) -> dict:
+    return {name: getattr(args, attribute(name)) for name in (*PROGRAMS, *TOOLS, *FILES.values())}
 
 
-def covered(disc: str, args: argparse.Namespace) -> bool:
-    """True when a disc needs no decryption program: a decrypted file was given, or the disc image holds the file."""
-    values = {disc: getattr(args, attribute(disc)), FILES[disc]: getattr(args, attribute(FILES[disc]))}
-    return values[FILES[disc]] is not None or resolve_program(disc, values)[0] == disc
-
-
-def not_needed(name: str, args: argparse.Namespace) -> bool:
-    """True when a program input is covered on every disc it serves."""
-    return all(covered(disc, args) for disc in TOOLS[name])
+def missing(name: str, args: argparse.Namespace) -> bool:
+    """True when the terminal still needs this input: absent, and for a program, a disc has nothing else to go on."""
+    return getattr(args, attribute(name)) is None and (name not in TOOLS or name in program_status(name, program_inputs(args)).problems)
 
 
 def ask_missing(args: argparse.Namespace) -> None:
     """Ask for each missing input, offering what the setup window remembered, and check the answer at once."""
     saved = remembered.load_settings()
     for name in ASKED:
-        if getattr(args, attribute(name)) is None and not (name in TOOLS and not_needed(name, args)):
-            if name in TOOLS:
-                check, label = (lambda p, n=name: tool_problem(n, p, args)), f"{LABELS[name]} you already have"
+        if missing(name, args):
+            if name in TOOLS:  # only the program's own problems ask again: a wrong disc image is named on the image
+                check, label, keep = ((lambda p, n=name: program_status(n, {**program_inputs(args), n: p}).verdict(n)),
+                                      f"{INPUTS[name].label} you already have", (IMAGE_FIRST,))
             else:
-                check, label = (lambda p, n=name: check_input(n, p)), LABELS[name]
-            setattr(args, attribute(name), ask_path(label, saved.get(name), check))
+                check, label, keep = (lambda p, n=name: check_input(n, p)), INPUTS[name].label, ()
+            setattr(args, attribute(name), ask_path(label, saved.get(name), check, keep))
 
 
 def remember(args: argparse.Namespace) -> None:
@@ -72,7 +49,7 @@ def remember(args: argparse.Namespace) -> None:
 
 def run_install(args: argparse.Namespace) -> int:
     absent = [f"--{name} or " + " and ".join(f"--{FILES[disc]}" for disc in TOOLS[name]) if name in TOOLS else f"--{name}"
-              for name in ASKED if getattr(args, attribute(name)) is None and not (name in TOOLS and not_needed(name, args))]
+              for name in ASKED if missing(name, args)]
     if any(getattr(args, name) is None for name in SHIPPED):
         print("wozmod: --lettering and --dll are needed outside the release program.", file=sys.stderr)
         return 2
@@ -107,7 +84,7 @@ def run_install(args: argparse.Namespace) -> int:
         args.force = True
     view = TerminalView()
     progress = Progress(view)
-    install(args.game, {name: getattr(args, attribute(name)) for name, _ in INPUTS},
+    install(args.game, {name: getattr(args, attribute(name)) for name in INPUTS if name != "game"},
             force=args.force, log=lambda _: None, progress=progress)
     view.finish(progress, f"Installed in {duration(progress.elapsed())}. Start the game as usual.")
     return 0
@@ -118,7 +95,7 @@ def run_uninstall(args: argparse.Namespace) -> int:
         if not interactive():
             print("wozmod: missing --game. Give it, or run wozmod in a terminal and it asks.", file=sys.stderr)
             return 2
-        args.game = ask_path(LABELS["game"], remembered.load_settings().get("game"),
+        args.game = ask_path(INPUTS["game"].label, remembered.load_settings().get("game"),
                              lambda p: None if (p / "wozmod/install.json").is_file() else "wozmod is not installed there.")
     keep = not args.remove_settings
     if not (args.keep_settings or args.remove_settings) and interactive():
@@ -134,11 +111,10 @@ def main(argv=None) -> int:
         "install", help="build the mod into a Musou Orochi Z folder (also updates an older install)",
         epilog="environment: WOZMOD_JOBS=N runs each build stage on at most N worker processes "
                "(default: one fewer than the CPUs, fewer if RAM is short). In a terminal, a path left out is asked for.")
-    add.add_argument("--game", type=Path, help="the stock Musou Orochi Z folder")
     packaged = getattr(sys, "frozen", False)
-    for name, text in INPUTS:
+    for name, each in INPUTS.items():
         shipped = resources.root() / SHIPPED[name] if packaged and name in SHIPPED else None
-        add.add_argument(f"--{name}", type=Path, default=shipped, help=argparse.SUPPRESS if text is None else text)
+        add.add_argument(f"--{name}", type=Path, default=shipped, help=argparse.SUPPRESS if each.help is None else each.help)
     add.add_argument("--force", action="store_true", help="reinstall, or go back to an older version, without asking")
     remove = commands.add_parser("uninstall", help="delete the files the install wrote")
     remove.add_argument("--game", type=Path, help="the Musou Orochi Z folder")

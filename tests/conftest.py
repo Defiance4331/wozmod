@@ -19,11 +19,11 @@ import subprocess
 import tomllib
 from pathlib import Path
 
+import checkout
 import pytest
-from checkout import main_checkout
 
 RUNTIME = Path(__file__).resolve().parents[1] / "runtime"
-CONFIG = Path(os.environ.get("WOZMOD_HARNESS_CONFIG", main_checkout() / "work/harness.toml"))
+CONFIG = checkout.config()
 REQUIRE_INPUTS = os.environ.get("WOZMOD_REQUIRE_INPUTS") == "1"
 INPUTS = tomllib.loads(CONFIG.read_text(encoding="utf-8")).get("tests", {}) if CONFIG.is_file() else {}
 
@@ -66,3 +66,24 @@ def c_library(tmp_path_factory):
         return ctypes.CDLL(str(directory / f"{name}.so"))
 
     return build
+
+
+@pytest.fixture
+def linked_worktree(tmp_path):
+    """(main, worktree): a main checkout in tmp_path and a linked worktree of it, as `git worktree add` leaves them."""
+    main, worktree = tmp_path / "main", tmp_path / "worktree"
+    (main / ".git/worktrees/worktree").mkdir(parents=True)
+    worktree.mkdir()
+    (worktree / ".git").write_text(f"gitdir: {main / '.git/worktrees/worktree'}\n")
+    return main, worktree
+
+
+@pytest.fixture
+def letters(monkeypatch):
+    """letters(draw, **more): the art build letters each request with draw(request) -> (image, metrics) instead of
+    the font Python; more gives the producer's other methods (native, latin, outlines)."""
+    from types import SimpleNamespace
+
+    from wozmod.art import lettering
+
+    return lambda draw, **more: monkeypatch.setattr(lettering, "PRODUCER", SimpleNamespace(produce=draw, **more))

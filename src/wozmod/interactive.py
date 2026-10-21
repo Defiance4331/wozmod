@@ -39,15 +39,16 @@ def ask_choice(options: list[str]) -> int | None:
             return None if int(answer) == len(options) else int(answer)
 
 
-def ask_path(label: str, offered: str | None, check) -> Path:
-    """Ask until the answer passes the check; an empty answer takes the remembered path."""
+def ask_path(label: str, offered: str | None, check, keep: tuple[str, ...] = ()) -> Path:
+    """Ask until the answer passes the check; an empty answer takes the remembered path. A problem in `keep` belongs
+    to another input, so the answer cannot fix it: it is shown, and the answer kept."""
     while True:
         answer = clean(input(f"{label}{f' [{offered}]' if offered else ''}: ")) or offered or ""
         if not answer:
             continue
         print("  checking...", flush=True)
         problem = check(Path(answer))
-        if problem is None:
-            print("  ✓ OK")
+        if problem is None or problem in keep:
+            print(f"  {problem or '✓ OK'}")
             return Path(answer)
         print(f"  {problem}")

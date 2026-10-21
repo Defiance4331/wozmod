@@ -11,10 +11,8 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from wozmod.runtime import english_runtime as runtime
+from wozmod.formats import pe
 from wozmod.runtime import layout, runtime_edits
-
-SOURCE = runtime.C_SOURCE.read_text()
 
 
 @pytest.fixture(scope="module")
@@ -29,15 +27,15 @@ def game() -> Path:
 def code(game: Path):
     """read(va, n, patched): bytes of the stock exe, or of the exe with every English code edit applied."""
     stock = (game / "OROCHI_Z.exe").read_bytes()
-    pe = runtime.pe_layout(stock)
+    where = pe.layout(stock)
     patched = bytearray(stock)
     for va, before, after in runtime_edits.CODE_EDITS:
-        at = runtime.file_offset(pe, va)
+        at = pe.file_offset(where, va)
         assert patched[at:at + len(before)] == before, hex(va)
         patched[at:at + len(after)] = after
 
     def read(va: int, n: int, edited: bool = False) -> bytes:
-        at = runtime.file_offset(pe, va)
+        at = pe.file_offset(where, va)
         return bytes((patched if edited else stock)[at:at + n])
     return read
 
@@ -161,7 +159,7 @@ def test_z_still_name_lane_fits_the_plate_dark_box_the_stock_centres_on(game: Pa
     assert (plate_y, name_y, cell, sides[0][:2], sides[1][:2]) == (440, 454, 28, (762, 994), (112, 285))
     package = parse_texture_package(decoded_member(
         moz_entries(game / "LINKDATA1.BIN", game / "LINKDATA1.IDX", [4102])[4102]))
-    lane = int(re.search(r"#define STILL_Z_LANE (\d+)", SOURCE)[1])
+    lane = layout.DEFINES["STILL_Z_LANE"]
     for plate_x, centre, item in sides:
         texture = package.items[item].g1t.textures[0]
         image = Image.frombytes("RGBA", (texture.width, texture.height), texture.decode_rgba()).crop((0, 0, 406, 70))

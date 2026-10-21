@@ -63,8 +63,8 @@ def test_every_missing_or_wrong_input_is_named_and_no_right_one(game, tmp_path, 
         install(game, inputs)
 
     named = {line.split(":")[0] for line in str(caught.value).splitlines() if ": " in line}
-    assert named == {"Game folder", "Warriors Orochi Xbox 360 disc image",
-                     "Warriors Orochi 2 Xbox 360 disc image", "PSP disc image"}
+    assert named == {"Game folder", "Warriors Orochi (Xbox 360, USA) disc image",
+                     "Warriors Orochi 2 (Xbox 360, USA) disc image", "Warriors Orochi 2 (PSP, USA) disc image"}
     assert "data/LINKDATA1.BIN" in str(caught.value) and "OROCHI_Z.exe" not in str(caught.value)
     assert not (game / "wozmod").exists()
 
@@ -327,3 +327,63 @@ def test_the_voice_stage_lowers_its_priority_before_it_starts_ffmpeg(monkeypatch
     monkeypatch.setattr(wozmod.voices, "build_voice_banks", lambda *args: calls.append(("build", args[3])))
     installer._voice_banks(tmp_path, tmp_path, tmp_path, 7)
     assert calls == [("nice", installer.VOICE_NICE), ("policy", 3), ("build", 7)] and installer.VOICE_NICE > 0
+
+
+def test_the_art_stage_places_every_file_the_art_build_writes(tmp_path, monkeypatch):
+    """Bug: the install moves a fixed list of art outputs, so a new one is left in the staging folder and dropped."""
+    import wozmod.art.compose
+
+    built = {"entries/4059.bin": b"entry", "glyphs.bin": b"glyphs", "new-art.bin": b"new"}
+
+    def compose(stock, donors, bundle, output_dir, squish=True, jobs=None):
+        for name, data in built.items():
+            (output_dir / "wozmod" / name).parent.mkdir(parents=True, exist_ok=True)
+            (output_dir / "wozmod" / name).write_bytes(data)
+        return output_dir / "wozmod"
+
+    monkeypatch.setattr(wozmod.art.compose, "compose", compose)
+    out = tmp_path / "out"
+    (out / "wozmod").mkdir(parents=True)
+    (out / "wozmod/table.bin").write_bytes(b"table")  # another stage's file, already in place
+    installer._menu_art(tmp_path / "game", tmp_path / "donors", tmp_path / "lettering.zip", tmp_path / "art", out, 1)
+    assert _tree(out / "wozmod") == {"entries": None, "table.bin": b"table", **built}
+
+
+@pytest.mark.parametrize("wrong, title", [("wo1-x360", "Warriors Orochi (Xbox 360, USA)"),
+                                          ("x360", "Warriors Orochi 2 (Xbox 360, USA)")])
+def test_a_wrong_donor_archive_ends_the_art_stage_with_an_install_error_naming_its_disc(tmp_path, monkeypatch,
+                                                                                        wrong, title):
+    """Bug: the art build reports a donor archive that fails its pin as a usage error (SystemExit), which neither the
+    window nor the command line catches; or the error names no disc, or the other Xbox 360 disc, so the player cannot
+    tell which disc image to replace."""
+    import dataclasses
+
+    import wozmod.art.compose as composer
+    from PIL import Image
+    from wozmod.art import build
+    from wozmod.art.bundle import write_bundle
+    from wozmod.donors.discs import DISCS, DonorsFolder
+    from wozmod.donors.inventory import DonorFile
+
+    recipe = tmp_path / "recipe.json"
+    recipe.write_bytes(json.dumps({"format_version": 2, "metrics_only": [], "requests": {"layer": {}}}).encode())
+    monkeypatch.setattr(composer, "RECIPE", recipe)
+    bundle = tmp_path / "lettering.zip"
+    write_bundle(bundle, {"layer": (Image.new("L", (1, 1)), {})}, hashlib.sha256(recipe.read_bytes()).hexdigest(),
+                 outlines=b"outlines")
+    donors = DonorsFolder(tmp_path / "donors")
+    for disc, attribute in (("wo1-x360", "WO1_X360"), ("x360", "X360")):  # each disc's archive pinned to its bytes
+        stem = donors.folder(disc) / "linkdata_ens"
+        stem.parent.mkdir(parents=True)
+        pins = []
+        for suffix in (".idx", ".lnk"):
+            data = f"{disc}{suffix}".encode()
+            stem.with_suffix(suffix).write_bytes(data[::-1] if disc == wrong and suffix == ".lnk" else data)
+            pins.append(DonorFile(f"linkdata_ens{suffix}", f"linkdata_ens{suffix}", len(data),
+                                  hashlib.sha256(data).hexdigest()))
+        donor = dataclasses.replace(DISCS[disc].donor, files=tuple(pins))
+        monkeypatch.setattr(build, attribute, donor)
+        monkeypatch.setitem(DISCS, disc, dataclasses.replace(DISCS[disc], donor=donor))
+    with pytest.raises(InstallError) as caught:
+        installer._menu_art(tmp_path / "game", donors.root, bundle, tmp_path / "art", tmp_path / "out", 1)
+    assert str(caught.value) == f"Menu art: {title} disc: Wrong donor member hash: linkdata_ens.lnk"

@@ -46,10 +46,9 @@ def test_cached_hash_is_reused_until_the_file_changes(tools, tmp_path, monkeypat
     assert tools.prepare_run.cached_sha256s([path], cache)[0] == digest(b"three!")
 
 
-def test_staged_game_sha256_covers_every_file_launch_checks_and_follows_a_new_dll(tools, tmp_path, monkeypatch):
-    """Bugs: game.sha256 drops a wozmod file, or d3d9.dll is hashed from a stale cache entry, so launch.sh verifies a
-    stale build; a stock file is copied (or missing) instead of linked to the read-only backup; the prefix or Steam
-    runtime is copied rather than left to the overlay, or the game link or save is missing from it."""
+def staging(tools, tmp_path, monkeypatch) -> SimpleNamespace:
+    """A stock backup, an install with its record, a save fixture and a pinned template, all in tmp_path, ready for
+    prepare_run.prepare(name, install, None, "s", cache)."""
     work, prep = tmp_path / "work", tools.prepare_run
     stock, install, fixture, template = tmp_path / "stock", tmp_path / "install", work / "saves/s", work / "runtime-tests/_template"
     for name in prep.STOCK_HASHED:
@@ -73,18 +72,22 @@ def test_staged_game_sha256_covers_every_file_launch_checks_and_follows_a_new_dl
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     for sdk in ("sdk32", "sdk64"):
         (tmp_path / "home/.steam" / sdk).mkdir(parents=True)
-    cache = tmp_path / "cache.json"
     (install / "d3d9.dll").write_bytes(b"dll one")
     record(install)
+    return SimpleNamespace(stock=stock, install=install, template=template, cache=tmp_path / "cache.json")
+
+
+def test_staged_game_sha256_covers_every_file_launch_checks_and_follows_a_new_dll(tools, tmp_path, monkeypatch):
+    """Bugs: game.sha256 drops a wozmod file, or d3d9.dll is hashed from a stale cache entry, so launch.sh verifies a
+    stale build; a stock file is copied (or missing) instead of linked to the read-only backup; the prefix or Steam
+    runtime is copied rather than left to the overlay, or the game link or save is missing from it."""
+    prep, staged = tools.prepare_run, staging(tools, tmp_path, monkeypatch)
+    stock, install, template, cache = staged.stock, staged.install, staged.template, staged.cache
     root = prep.prepare("one", install, None, "s", cache)
     expected = {"d3d9.dll": digest(b"dll one"), "wozmod/table.bin": digest(b"table"), "wozmod/entries/4059.bin": digest(b"entry"),
                  "wozmod/install.json": digest((install / "wozmod/install.json").read_bytes())}
-    listed = {line.split("  ")[1]: line.split("  ")[0] for line in (root / "game.sha256").read_text().splitlines()}
-    assert listed == expected
+    assert prep.recorded(root) == expected
     game = root / "game"
-    # the stamps it records let the launch check pass without reading the copy
-    monkeypatch.setattr(tools.game_harness.hashlib, "file_digest", lambda *a: pytest.fail("the launch read a file"))
-    tools.game_harness.check_game(root, game)
     assert sorted(p.name for p in game.iterdir()) == sorted({*(p.name for p in stock.iterdir()), "d3d9.dll", "wozmod"})
     assert all((game / p.name).is_symlink() and (game / p.name).resolve() == p for p in stock.iterdir())
     assert not (game / "d3d9.dll").is_symlink() and (game / "OROCHI_Z.exe").read_bytes() == b"OROCHI_Z.exe"
@@ -98,18 +101,50 @@ def test_staged_game_sha256_covers_every_file_launch_checks_and_follows_a_new_dl
     (install / "d3d9.dll").write_bytes(b"dll two")
     (install / "wozmod/table.bin").write_bytes(b"table 2")
     record(install)
-    listed = {line.split("  ")[1]: line.split("  ")[0] for line in (prep.prepare("two", install, None, "s", cache) / "game.sha256").read_text().splitlines()}
-    assert listed == expected | {"d3d9.dll": digest(b"dll two"), "wozmod/table.bin": digest(b"table 2"),
+    assert prep.recorded(prep.prepare("two", install, None, "s", cache)) == expected | {"d3d9.dll": digest(b"dll two"), "wozmod/table.bin": digest(b"table 2"),
                                  "wozmod/install.json": digest((install / "wozmod/install.json").read_bytes())}
     # a working table.bin swapped in: the run holds and lists it, the install keeps its own, and an unlisted name is refused
     (tmp_path / "work.bin").write_bytes(b"working table")
     root = prep.prepare("three", install, None, "s", cache, replace=[f"wozmod/table.bin={tmp_path / 'work.bin'}"])
-    listed = dict(reversed(line.split("  ")) for line in (root / "game.sha256").read_text().splitlines())
-    assert listed["wozmod/table.bin"] == digest(b"working table") == digest((root / "game/wozmod/table.bin").read_bytes())
+    assert prep.recorded(root)["wozmod/table.bin"] == digest(b"working table") == digest((root / "game/wozmod/table.bin").read_bytes())
     assert (install / "wozmod/table.bin").read_bytes() == b"table 2"
     assert json.loads((root / "fixtures.json").read_text())["replaced"] == {"wozmod/table.bin": str(tmp_path / "work.bin")}
     with pytest.raises(ValueError, match="install record"):
         prep.prepare("four", install, None, "s", cache, replace=[f"wozmod/new.bin={tmp_path / 'work.bin'}"])
+
+
+def test_launch_check_hashes_only_mod_files_whose_stamp_moved_and_refuses_a_changed_or_missing_one(
+        tools, tmp_path, monkeypatch):
+    """Bug: the launch check trusts a rewritten mod file because a stamp exists, refuses a file only touched, or goes
+    back to reading the whole multi-GB copy on every launch; or prepare_run.py stages a record it cannot read back."""
+    prep, staged = tools.prepare_run, staging(tools, tmp_path, monkeypatch)
+    root = prep.prepare("run", staged.install, None, "s", staged.cache)
+    game = root / "game"
+    monkeypatch.setattr(prep.hashlib, "file_digest", lambda *a: pytest.fail("an unchanged file was read"))
+    prep.verify_copy(root, game)
+    monkeypatch.undo()
+    os.utime(game / "wozmod/table.bin")  # touched, same bytes
+    prep.verify_copy(root, game)
+    (game / "wozmod/table.bin").write_bytes(b"mud")
+    with pytest.raises(ValueError, match="changed"):
+        prep.verify_copy(root, game)
+    (game / "wozmod/table.bin").unlink()
+    with pytest.raises(ValueError, match="lost"):
+        prep.verify_copy(root, game)
+
+
+def test_tools_and_tests_read_the_main_checkouts_harness_toml_from_a_linked_worktree(monkeypatch, linked_worktree):
+    """Bug: from a linked worktree, prepare_run.py reads (and stages under) the worktree's own work/, which a fresh
+    worktree lacks, while the tests and the game slots use the main checkout's."""
+    import runpy
+
+    import checkout
+    main, worktree = linked_worktree
+    monkeypatch.setattr(checkout, "REPO", worktree)
+    monkeypatch.delenv("WOZMOD_HARNESS_CONFIG", raising=False)
+    tools_dir, tests_dir = Path(__file__).resolve().parents[1] / "tools", Path(__file__).resolve().parent
+    stager, setup = runpy.run_path(str(tools_dir / "prepare_run.py")), runpy.run_path(str(tests_dir / "conftest.py"))
+    assert (stager["CONFIG"], setup["CONFIG"], stager["WORK"]) == (main / "work/harness.toml",) * 2 + (main / "work",)
 
 
 def pinned(template: Path) -> None:
@@ -172,10 +207,10 @@ def test_install_that_differs_from_its_installer_record_is_refused(tools, tmp_pa
 
 
 class FakeSupervisor:
-    def __init__(self, root: Path, reason: str, started: bool):
+    def __init__(self, root: Path, reason: str, game_exit: bool = False):
         (root / "evidence").mkdir(parents=True)
         (root / "evidence/exit.json").write_text(json.dumps({"reason": reason}))
-        if started:
+        if game_exit:  # the game's own status, written after the harness recorded its end
             (root / "evidence/game-exit.json").write_text(json.dumps({"returncode": 0}))
 
 
@@ -190,8 +225,8 @@ def spec(tmp_path):
     return path
 
 
-def drive_with(tools, tmp_path, monkeypatch, spec, runs, check=0, only=None):
-    """run_check over scripted runs, each (exit reason, game started). Returns (exit code, run directories staged)."""
+def drive_with(tools, tmp_path, monkeypatch, spec, runs, check=0, only=None, game_exit=False):
+    """run_check over scripted runs, each its exit reason. Returns (exit code, run directories staged)."""
     staged = []
     monkeypatch.setattr(tools.prepare_run, "WORK", tmp_path / "work")
     monkeypatch.setattr(tools.run_check, "stop", lambda root, proc: None)
@@ -203,8 +238,7 @@ def drive_with(tools, tmp_path, monkeypatch, spec, runs, check=0, only=None):
         return staged[-1]
 
     def start(root, pad=False):
-        reason, started = runs[len(staged) - 1]
-        FakeSupervisor(root, reason, started)
+        FakeSupervisor(root, runs[len(staged) - 1], game_exit)
         return SimpleNamespace()
 
     return tools.run_check.run_check(args(tmp_path, spec, only), stage, start), staged
@@ -214,25 +248,27 @@ def test_run_that_ends_before_the_game_starts_is_retried_in_a_fresh_run_director
     """Bug: a pulse start failure (reason unknown, no game) fails the whole check instead of staging a new run."""
     ups = iter([False, True])
     monkeypatch.setattr(tools.run_check, "wait_up", lambda root, proc: next(ups))
-    code, staged = drive_with(tools, tmp_path, monkeypatch, spec, [("unknown", False), ("stopped", True)])
+    code, staged = drive_with(tools, tmp_path, monkeypatch, spec, ["unknown", "stopped"])
     assert code == 0 and len(staged) == 2 and staged[0] != staged[1] and staged[1].name.endswith("-r1")
 
 
 def test_run_is_never_retried_once_the_game_started(tools, tmp_path, monkeypatch, spec):
-    """Bug: a game that drew a frame and then ended 'unknown' (compositor lost) is staged again and
-    hides the failure behind a second run."""
+    """Bug: a game that crashed before its first frame, or drew a frame and then ended 'unknown' (compositor lost), is
+    staged again and hides the failure behind a second run."""
     monkeypatch.setattr(tools.run_check, "wait_up", lambda root, proc: False)
-    code, staged = drive_with(tools, tmp_path, monkeypatch, spec, [("unknown", True)] * 3)
+    code, staged = drive_with(tools, tmp_path, monkeypatch, spec, ["crash"] * 3)
     assert code == 1 and len(staged) == 1
+    code, staged = drive_with(tools, tmp_path, monkeypatch, spec, ["unknown"] * 3, game_exit=True)
+    assert code == 1 and len(staged) == 1  # the compositor ended first, but the game had started
     monkeypatch.setattr(tools.run_check, "wait_up", lambda root, proc: True)
-    code, staged = drive_with(tools, tmp_path, monkeypatch, spec, [("unknown", False)] * 3)
+    code, staged = drive_with(tools, tmp_path, monkeypatch, spec, ["unknown"] * 3)
     assert code == 1 and len(staged) == 1  # the game answered a frame: its end is not a start failure
 
 
 def test_start_failures_are_retried_twice_then_reported(tools, tmp_path, monkeypatch, spec):
     """Bug: the retry loop runs forever, or exits 0 after a game that never started."""
     monkeypatch.setattr(tools.run_check, "wait_up", lambda root, proc: False)
-    code, staged = drive_with(tools, tmp_path, monkeypatch, spec, [("unknown", False)] * 3)
+    code, staged = drive_with(tools, tmp_path, monkeypatch, spec, ["unknown"] * 3)
     assert code == 1 and len(staged) == tools.run_check.RETRIES + 1
 
 
@@ -240,7 +276,7 @@ def test_start_failures_are_retried_twice_then_reported(tools, tmp_path, monkeyp
 def test_exit_code_is_one_for_a_failed_row_or_a_run_not_ended_by_stop(tools, tmp_path, monkeypatch, spec, check, reason, code):
     """Bug: a FAIL row, or a game that crashed after the last row, still exits 0."""
     monkeypatch.setattr(tools.run_check, "wait_up", lambda root, proc: True)
-    assert drive_with(tools, tmp_path, monkeypatch, spec, [(reason, True)], check)[0] == code
+    assert drive_with(tools, tmp_path, monkeypatch, spec, [reason], check)[0] == code
 
 
 def test_misspelt_only_name_fails_before_any_staging(tools, tmp_path, monkeypatch, spec):
@@ -250,13 +286,16 @@ def test_misspelt_only_name_fails_before_any_staging(tools, tmp_path, monkeypatc
 
 
 def test_settings_land_where_the_runtime_reads_them(tools):
-    """Bug: a setting is written under the wrong section or key, so the runtime's GetPrivateProfile read falls back
-    to its default and a "120 FPS" run plays at 60."""
+    """Bugs: a setting is written under the wrong section or key, or a key is renamed in the C, so the runtime's
+    GetPrivateProfile read falls back to its default and a "120 FPS" run plays at 60."""
     import configparser
+    import re
+    prep = tools.prepare_run
+    read = set(re.findall(r'GetPrivateProfile(?:String|Int)W\(L"(\w+)", L"(\w+)"',
+                          (prep.REPO / "runtime/english_runtime.c").read_text()))
     ini = configparser.ConfigParser()
-    ini.read_string(tools.prepare_run.settings_ini(["display.fps=120", "language.voice=japanese", "camera.fov=70"]))
-    assert {(s, k): v for s in ini.sections() for k, v in ini[s].items()} == {
-        ("display", "fps"): "120", ("language", "voice"): "japanese", ("camera", "fov"): "70"}
+    ini.read_string(prep.settings_ini([f"{key}={(allowed or ('70',))[0]}" for key, allowed in prep.SETTINGS.items()]))
+    assert {(section, key) for section in ini.sections() for key in ini[section]} == read
 
 
 def test_contact_sheet_shows_each_screens_capture_beside_its_own_rows(tmp_path, monkeypatch):
