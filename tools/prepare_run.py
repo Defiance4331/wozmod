@@ -118,10 +118,30 @@ def settings_ini(settings: list[str]) -> str:
     return "".join(f"[{section}]\r\n" + "".join(f"{line}\r\n" for line in lines) for section, lines in sections.items())
 
 
+def check_template(template: Path) -> None:
+    """Refuse a template whose prefix a launch would rebuild. Wine rewrites its built-in DLLs when the prefix's
+    .update-timestamp is not wine.inf's mtime, and Proton recopies them when another Proton build wrote config_info;
+    in a run those writes land in its own overlay, about 250 MB of unshared data per run. So launch.sh runs a pinned
+    copy of Proton in the template, and the prefix must have been set up by that copy."""
+    proton = template / "proton"
+    if f'PROTON="{proton}/proton"' not in (template / "launch.sh").read_text():
+        raise ValueError(f"{template}/launch.sh must run the pinned Proton {proton}/proton, not a copy that updates "
+                         "itself (copy it there with cp -a --reflink=always)")
+    stamp = (template / "prefix/pfx/.update-timestamp").read_text().strip()
+    if (stamp != str(int((proton / "files/share/wine/wine.inf").stat().st_mtime))
+            or f"{proton}/files/" not in (template / "prefix/config_info").read_text()):
+        raise ValueError(f"the template prefix was set up by another Proton build; refresh it once: "
+                         f"STEAM_COMPAT_DATA_PATH={template}/prefix STEAM_COMPAT_CLIENT_INSTALL_PATH=$HOME/.local/share/"
+                         f"Steam $HOME/.local/share/Steam/steamapps/common/SteamLinuxRuntime_4/run --batch -- "
+                         f"{proton}/proton run wineboot.exe -u")
+
+
 def prepare(name: str, install: Path, dll: Path | None, save: str, cache_file: Path = HASH_CACHE,
             settings: list[str] = (), replace: list[str] = ()) -> Path:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}", name):
         raise ValueError("run name is a short filename of letters, digits, . _ and -")
+    template = WORK / "runtime-tests/_template"
+    check_template(template)
     files = installed_files(install, cache_file)
     replaced = {}  # an installed file swapped for a working build, as --dll does for d3d9.dll; fixtures.json lists them
     for pair in replace:
@@ -132,7 +152,6 @@ def prepare(name: str, install: Path, dll: Path | None, save: str, cache_file: P
         replaced[listed] = Path(source).resolve(strict=True)
     ini = settings_ini(settings) if settings else None
     dll = (dll or install / "d3d9.dll").resolve(strict=True)
-    template = WORK / "runtime-tests/_template"
     fixture = WORK / "saves" / save
     meta = json.loads((fixture / "meta.json").read_text())
     data = (fixture / "save.dat").read_bytes()

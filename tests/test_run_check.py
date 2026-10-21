@@ -61,7 +61,7 @@ def test_staged_game_sha256_covers_every_file_launch_checks_and_follows_a_new_dl
     (install / "wozmod/entries/4059.bin").write_bytes(b"entry")
     for part in ("prefix/pfx/drive_c/Games", "steamrt"):
         (template / part).mkdir(parents=True)
-    (template / "launch.sh").write_text("exit 0\n")
+    pinned(template)
     fixture.mkdir(parents=True)
     (fixture / "save.dat").write_bytes(b"save")
     (fixture / "meta.json").write_text(json.dumps({"save_sha256": digest(b"save")}))
@@ -110,6 +110,37 @@ def test_staged_game_sha256_covers_every_file_launch_checks_and_follows_a_new_dl
     assert json.loads((root / "fixtures.json").read_text())["replaced"] == {"wozmod/table.bin": str(tmp_path / "work.bin")}
     with pytest.raises(ValueError, match="install record"):
         prep.prepare("four", install, None, "s", cache, replace=[f"wozmod/new.bin={tmp_path / 'work.bin'}"])
+
+
+def pinned(template: Path) -> None:
+    """A template as a refresh leaves it: launch.sh runs the pinned Proton, which set the prefix up."""
+    proton = template / "proton"
+    (proton / "files/share/wine").mkdir(parents=True)
+    (proton / "files/share/wine/wine.inf").write_text("[Version]\n")
+    (template / "launch.sh").write_text(f'PROTON="{proton}/proton"\nexit 0\n')
+    (template / "prefix/pfx").mkdir(parents=True, exist_ok=True)
+    (template / "prefix/pfx/.update-timestamp").write_text(str(int((proton / "files/share/wine/wine.inf").stat().st_mtime)))
+    (template / "prefix/config_info").write_text(f"CachyOS-11.0-100\n{proton}/files/share/fonts/\n")
+
+
+@pytest.mark.parametrize("drift", ["self-updating launcher", "proton updated", "set up by another proton"])
+def test_template_a_launch_would_rebuild_is_refused(tools, tmp_path, monkeypatch, drift):
+    """Bugs: the launcher runs a Proton that updates itself, or the prefix was set up by another Proton build, so
+    every launch rewrites about 250 MB of Wine DLLs into the run's own overlay (the 100+ GB work/ held in 2026-10)."""
+    work, prep = tmp_path / "work", tools.prepare_run
+    template = work / "runtime-tests/_template"
+    pinned(template)
+    monkeypatch.setattr(prep, "WORK", work)
+    if drift == "self-updating launcher":
+        (template / "launch.sh").write_text('PROTON="$STEAM_ROOT/compatibilitytools.d/Proton-CachyOS Latest/proton"\n')
+    elif drift == "proton updated":  # the pinned copy replaced in place by a newer build
+        inf = template / "proton/files/share/wine/wine.inf"
+        os.utime(inf, (inf.stat().st_atime, inf.stat().st_mtime + 86400))
+    else:
+        (template / "prefix/config_info").write_text("CachyOS-11.0-100\n/elsewhere/Proton-CachyOS Latest/files/share/fonts/\n")
+    with pytest.raises(ValueError, match="pinned Proton|another Proton build"):
+        prep.prepare("run", tmp_path / "install", None, "s")
+    assert not (work / "runtime-tests/run").exists()
 
 
 def record(install: Path) -> None:

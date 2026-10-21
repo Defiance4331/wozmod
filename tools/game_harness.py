@@ -1385,8 +1385,8 @@ UNLOCK_STEP = {"action": "unlock"}  # every officer gets four weapons: the rest 
 # (from, to, steps): each step is (keys or one request, screen to wait for); a bare key list is one
 # step that waits for the destination screen. A move up a level that leaves a submenu cursor on the
 # item it opened ends with the keys that put the cursor back, so the move down works again.
-# An edge enters this table only after it worked in a run; each group names its run (runs under
-# work/runtime-tests/, 2026-10-11_ prefix). A back edge that sends several keys sends a key that a
+# An edge enters this table only after it worked in a run; each group names its run (2026-10-11_
+# runs, since removed from work/runtime-tests/). A back edge that sends several keys sends a key that a
 # menu still sliding in drops, so one that has to leave the cursor on an item sends each key as its
 # own step. A fingerprint that is only drawn while a screen slides in (not steady) breaks the next route.
 # Drop an edge that fails twice.
