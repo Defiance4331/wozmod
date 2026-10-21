@@ -849,16 +849,21 @@ def ended(root: Path) -> str | None:
 # checkout's work/, for its whole life. `flock work/.game-run.lock run` there holds the first; `run --slot` takes
 # whichever is free.
 SLOTS = ("work/.game-run.lock", "work/.game-run.1.lock")
+# Each slot's own Steam runtime in the main checkout's template, so two games never share one. A run binds its slot's
+# writable: pressure-vessel hard-links the runtime into its var/, which through an overlay copied 16k files into every
+# run. Make one with cp -a --reflink=always _template/steamrt _template/steamrt-1.
+RUNTIMES = ("steamrt", "steamrt-1")
 
 
-def take_slot(poll: float = 1.0) -> int:
-    """Wait for a free game slot and lock it; the descriptor stays open, so the lock lasts until the process ends."""
+def take_slot(poll: float = 1.0) -> tuple[int, int]:
+    """Wait for a free game slot and lock it: (descriptor, slot index). The descriptor stays open, so the lock lasts
+    until the process ends."""
     while True:
-        for slot in SLOTS:
+        for index, slot in enumerate(SLOTS):
             fd = os.open(main_checkout() / slot, os.O_RDWR | os.O_CREAT, 0o600)
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return fd
+                return fd, index
             except BlockingIOError:
                 os.close(fd)
         time.sleep(poll)
@@ -885,17 +890,20 @@ def check_game(root: Path, game: Path) -> None:
 def run(root: Path, args: argparse.Namespace) -> int:
     if not args.authorize_launch:
         raise ValueError("launch needs current-task permission and --authorize-launch")
-    if getattr(args, "slot", False):
-        take_slot()
+    slot = take_slot()[1] if getattr(args, "slot", False) else 0  # without --slot the caller holds the first (flock)
     game = args.game.resolve(strict=True)
     if not game.is_dir() or not game.is_relative_to(root):
         raise ValueError("--game must be a disposable directory inside --root")
     launcher = local_path(root, "launch.sh")
     if not launcher.is_file():
         raise ValueError("prepare and review a run-local launch.sh first")
+    steamrt = (main_checkout() / "work/runtime-tests/_template" / RUNTIMES[slot]).resolve()
     if args.target != XENIA:  # a MOZ run is staged by prepare_run.py; the reference emulator's are not
         check_game(root, game)
-    for name in ("tmp", "runtime", "home", "prefix", "steamrt"):
+        if not (steamrt / "run").is_file():
+            raise ValueError(f"no Steam runtime for game slot {slot}: cp -a --reflink=always "
+                             f"{steamrt.parent / RUNTIMES[0]} {steamrt}")
+    for name in ("tmp", "runtime", "home", "prefix"):
         local_path(root, name).mkdir(mode=0o700, exist_ok=True)
     # Run directories are single-use: never replay stale input after a restart.
     local_path(root, "control").mkdir(mode=0o700)
@@ -924,6 +932,7 @@ def run(root: Path, args: argparse.Namespace) -> int:
         "--unshare-net", "--unshare-ipc", "--ro-bind", "/", "/",
         "--bind", str(root), str(root), "--bind", str(root / "tmp"), "/tmp",
         "--bind", str(root / "runtime"), runtime,
+        *(["--bind", str(steamrt), str(steamrt)] if steamrt.is_dir() else []),
         "--dev", "/dev", "--proc", "/proc",
     ]
     fixtures = root / "fixtures.json"
@@ -952,7 +961,7 @@ def run(root: Path, args: argparse.Namespace) -> int:
         "XDG_RUNTIME_DIR": runtime, "PULSE_SERVER": "unix:/nonexistent",
         "HOME": str(root / "home"), "XDG_CACHE_HOME": str(root / "home/cache"),
         "XDG_CONFIG_HOME": str(root / "home/config"), "XDG_STATE_HOME": str(root / "home/state"),
-        "STEAM_COMPAT_DATA_PATH": str(root / "prefix"), "SLR4": str(root / "steamrt/run"),
+        "STEAM_COMPAT_DATA_PATH": str(root / "prefix"), "SLR4": str(steamrt / "run"),
         "DXVK_LOG_PATH": str(root / "evidence"), "DXVK_STATE_CACHE_PATH": str(root / "home/cache"),
         "PROTON_USE_XALIA": "0",
     }

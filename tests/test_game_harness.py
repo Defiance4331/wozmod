@@ -91,6 +91,10 @@ def test_control_round_trip(tmp_path, monkeypatch):
 
 
 def test_launch_boundaries_and_isolation(tmp_path, monkeypatch):
+    monkeypatch.setattr(checkout, "REPO", tmp_path)  # the game slot's Steam runtime, never the machine's template
+    steamrt = tmp_path / "work/runtime-tests/_template/steamrt"
+    steamrt.mkdir(parents=True)
+    (steamrt / "run").write_text("")
     root = tmp_path / "run"
     root.mkdir()
     game = _staged(root / "game")
@@ -122,7 +126,7 @@ def test_launch_boundaries_and_isolation(tmp_path, monkeypatch):
     assert command[command.index("--backend") + 1] == "headless"
     binds = [command[i + 1:i + 3] for i, item in enumerate(command) if item == "--bind"]
     assert binds == [[str(root), str(root)], [str(root / "tmp"), "/tmp"],
-                     [str(root / "runtime"), f"/run/user/{harness.os.getuid()}"]]
+                     [str(root / "runtime"), f"/run/user/{harness.os.getuid()}"], [str(steamrt), str(steamrt)]]
     assert "PROTON_USE_XALIA" in command
     assert json.loads((root / "evidence/session.json").read_text())["game"] == str(game)
     with pytest.raises(FileExistsError):
@@ -1193,15 +1197,18 @@ def test_stage_keys_land_on_every_stage_by_the_games_own_cursor_rules():
         harness.story_keys(45)
 
 
-def test_staged_run_sees_the_template_prefix_and_runtime_through_overlays_on_its_own_folders(tmp_path, monkeypatch):
-    """Bug: the overlays are missing, or mounted before the run's own bind hides them, so Proton finds an empty
+def test_staged_run_sees_the_template_prefix_through_an_overlay_on_its_own_folder(tmp_path, monkeypatch):
+    """Bug: the overlay is missing, or mounted before the run's own bind hides it, so Proton finds an empty
     prefix (or writes into the shared template) and the run plays a different Wine setup than the template's."""
     monkeypatch.setattr(harness, "REPO", tmp_path)
+    monkeypatch.setattr(checkout, "REPO", tmp_path)
     root = tmp_path / "work/runtime-tests/overlay"
     _staged(root / "game")
     (root / "launch.sh").write_text("exit 0\n")
     template = tmp_path / "work/runtime-tests/_template"
-    overlays = {part: str(template / part) for part in ("prefix", "steamrt")}
+    (template / "steamrt").mkdir(parents=True)
+    (template / "steamrt/run").write_text("")
+    overlays = {"prefix": str(template / "prefix")}
     (root / "fixtures.json").write_text(json.dumps({**json.loads((root / "fixtures.json").read_text()), "overlays": overlays}))
     calls = []
     monkeypatch.setattr(harness.subprocess, "Popen", lambda command, **kwargs: calls.append(command) or
@@ -1244,17 +1251,44 @@ def test_two_runs_hold_the_two_game_slots_and_a_third_waits_across_worktrees(tmp
     worktree.mkdir()
     (worktree / ".git").write_text(f"gitdir: {main / '.git/worktrees/worktree'}\n")
     monkeypatch.setattr(checkout, "REPO", main)
-    first = harness.take_slot(0.01)
+    first, _ = harness.take_slot(0.01)
     monkeypatch.setattr(checkout, "REPO", worktree)
-    second = harness.take_slot(0.01)
+    second, _ = harness.take_slot(0.01)
     third, got = threading.Event(), []
-    thread = threading.Thread(target=lambda: got.append(harness.take_slot(0.01)) or third.set(), daemon=True)
+    thread = threading.Thread(target=lambda: got.append(harness.take_slot(0.01)[0]) or third.set(), daemon=True)
     thread.start()
     assert not third.wait(0.3)
     os.close(first)
     assert third.wait(2)
     for fd in (second, *got):
         os.close(fd)
+
+
+def test_two_games_at_once_each_run_their_own_writable_steam_runtime(tmp_path, monkeypatch):
+    """Bug: both game slots launch the same Steam runtime, so two games share pressure-vessel's var/; or the runtime
+    is left read-only (or bound as two mounts), so pressure-vessel cannot hard-link it into var/."""
+    monkeypatch.setattr(harness, "REPO", tmp_path)
+    monkeypatch.setattr(checkout, "REPO", tmp_path)
+    template = tmp_path / "work/runtime-tests/_template"
+    for runtime in harness.RUNTIMES:
+        (template / runtime).mkdir(parents=True)
+        (template / runtime / "run").write_text("")
+    calls = []
+    monkeypatch.setattr(harness.subprocess, "Popen", lambda command, **kwargs: calls.append(command) or
+                        SimpleNamespace(wait=lambda: 0, poll=lambda: 0, returncode=0))
+    monkeypatch.setattr(harness, "start_audio", lambda root: None)
+    for name in ("first", "second"):  # a run keeps its slot until its process ends, so here the second gets slot 1
+        root = tmp_path / "work/runtime-tests" / name
+        _staged(root / "game")
+        (root / "launch.sh").write_text("exit 0\n")
+        harness.main(["run", "--root", str(root), "--game", str(root / "game"), "--authorize-launch", "--slot",
+                      "--target", harness.TARGET])
+    launched = [c for c in calls if "bwrap" in c]
+    used = [c[c.index("SLR4") + 1] for c in launched]
+    assert used == [str(template / runtime / "run") for runtime in harness.RUNTIMES]
+    for command, runtime in zip(launched, harness.RUNTIMES, strict=True):
+        bind = command.index(str(template / runtime)) - 1
+        assert command[bind:bind + 3] == ["--bind", str(template / runtime), str(template / runtime)]
 
 
 def test_a_resend_loop_sends_nothing_when_its_screen_is_up_already(monkeypatch):

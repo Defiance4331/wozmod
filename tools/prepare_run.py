@@ -2,7 +2,7 @@
 """Stage a disposable MOZ harness run under work/runtime-tests/.
 
 The run gets links to the stock backup's files, reflinks of the install's d3d9.dll and wozmod/ folder (checked
-against the installer's record), overlay folders over the template Proton prefix and Steam runtime, a seeded save
+against the installer's record), an overlay folder over the template Proton prefix, a seeded save
 and a game.sha256 over the mod files, which game_harness.py run finds unchanged before each launch. Machine paths
 come from the ignored work/harness.toml.
 """
@@ -17,6 +17,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -40,7 +41,8 @@ SETTINGS = {"language.text": ("english", "japanese"), "language.voice": ("englis
             "display.size": tuple(f"{w}x{h}" for w, h in re.findall(
                 r"\{(\d+), (\d+)\}", (REPO / "runtime/display_fit.h").read_text().split("display_sizes[][2] = {")[1]
                 .split("};")[0]))}
-OVERLAID = ("prefix", "steamrt")  # template parts a run sees through an overlay instead of a copy
+OVERLAID = ("prefix",)  # template parts a run sees through an overlay instead of a copy (the Steam runtime is its
+# game slot's own: game_harness.RUNTIMES)
 EXTRAS = {"wozmod/review.bin"}  # test-only files a run may hold beyond the record: the `review` reference
 
 
@@ -68,9 +70,10 @@ def cached_sha256s(paths: list[Path], cache_file: Path = HASH_CACHE) -> list[str
             for (key, stamp), digest in zip(missing, pool.map(lambda m: sha256(Path(m[0])), missing), strict=True):
                 cache[key] = {"stamp": stamp, "sha256": digest}
         cache_file.parent.mkdir(parents=True, exist_ok=True)
-        temporary = cache_file.with_suffix(".next")
-        temporary.write_text(json.dumps(cache, indent=1) + "\n")
-        temporary.replace(cache_file)
+        # a temporary file of its own: two checks staging at once must not rename each other's
+        with tempfile.NamedTemporaryFile("w", dir=cache_file.parent, suffix=".next", delete=False) as temporary:
+            temporary.write(json.dumps(cache, indent=1) + "\n")
+        Path(temporary.name).replace(cache_file)
     return [cache[key]["sha256"] for key, _ in keys]
 
 
@@ -180,8 +183,8 @@ def prepare(name: str, install: Path, dll: Path | None, save: str, cache_file: P
         (game / "wozmod/settings.ini").write_text(ini, newline="")
     files |= dict(zip(["d3d9.dll", MANIFEST, *replaced], cached_sha256s([dll, install / MANIFEST, *replaced.values()],
                                                                        cache_file), strict=True))
-    # The prefix and the Steam runtime are the template seen through an overlay (game_harness.py run): the run's
-    # prefix/ and steamrt/ hold only what the run writes, here the game link and the save.
+    # The prefix is the template's seen through an overlay (game_harness.py run): the run's prefix/ holds only what the
+    # run writes, here the game link and the save.
     for part in OVERLAID:
         (root / part).mkdir()
     link = root / "prefix/pfx/drive_c/Games/Musou Orochi Z"
