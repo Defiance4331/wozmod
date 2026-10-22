@@ -12,7 +12,7 @@ from wozmod.formats.scripts import EVENT_TEXT, event_lines, quote_tables
 from .build import NAME_PARTS, NAME_TABLE, TableBuildError
 from .inventory import EVENTS, inventory
 from .psp_exe import EXE_STRING
-from .script_alignment import QUOTES
+from .script_alignment import QUOTES, moz_scripts
 
 
 def stock_key(raw: bytes) -> tuple[str, bytes] | None:
@@ -25,7 +25,11 @@ def stock_key(raw: bytes) -> tuple[str, bytes] | None:
 
 
 def stock_strings(stock: Path) -> dict[str, bytes]:
-    """SHA-256 of canonical CP932 bytes mapped to those bytes, without donors."""
+    """SHA-256 of canonical CP932 bytes mapped to those bytes, without donors.
+
+    A spoken line or officer quote is also listed with its @NNNN voice suffix: the runtime looks the whole line up
+    first (runtime voiced_line), so a row keyed that way gives one voiced line its own English where another line
+    with the same text is voiced from another donor."""
     found: dict[str, bytes] = {}
 
     def add(value: bytes) -> None:
@@ -41,6 +45,10 @@ def stock_strings(stock: Path) -> dict[str, bytes]:
             add(value)
         for match in EVENT_TEXT.finditer(data):
             add(match.group(1) or match.group(2))
+    for script in moz_scripts(stock / "LINKDATA2").values():
+        for record in script.dialog.records:
+            if record.dialog_suffix:
+                add(record.value[2:])
     exe = (stock / "OROCHI_Z.exe").read_bytes()
     for match in EXE_STRING.finditer(exe):
         add(match.group())

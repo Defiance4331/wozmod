@@ -16,8 +16,8 @@ from wozmod.text.stock import resolve_stock_ref, stock_key, stock_strings
 
 TABLE = Path(__file__).resolve().parents[1] / "data/text/table.json"
 # The shipped table's rows: their count and the SHA-256 of their sorted keys, one per line.
-ROW_COUNT = 23943
-ROW_KEYS_SHA256 = "765c1e139a6ba00eb64f06e30f9c70d7e97e70829195cc3076a194f03f95f558"
+ROW_COUNT = 23949
+ROW_KEYS_SHA256 = "7283569d53e3c558d530544ad92265581918ec323a1ef570e8c94f45d92db89b"
 
 
 def test_shipped_table_is_valid_and_keeps_every_row() -> None:
@@ -216,6 +216,22 @@ def test_hashed_builder_does_not_drop_a_pointer_row_or_shift_name_overrides(synt
     assert pairs == {_token("name"): b"Resolved pointer", _token("message"): b"Authored message", substring: b"Authored substring"}
     assert names == [b"Resolved pointer", b"Override", None, *([b"Resolved pointer"] * 887)]
     assert result == {"rows": 3, "pairs": 3, "name_parts": 889, "bytes": output.stat().st_size, "sha256": hashlib.sha256(output.read_bytes()).hexdigest()}
+
+
+def test_voiced_line_keeps_its_own_english_where_another_voice_shares_its_text(synthetic_stock, tmp_path: Path) -> None:
+    # Bug: the catalog lists a spoken stage line only without its @NNNN voice suffix, so a row keyed by the voiced
+    # line cannot build. A PSP-voiced Dream line whose text an Xbox 360-voiced line shares then shows the Xbox
+    # wording over the PSP voice. The runtime looks the line up with its suffix first, then the text alone.
+    stock, _ = synthetic_stock
+    text, voiced = _token("dialog"), _token("dialog") + b"@0001"
+    rows = [{"key": hashlib.sha256(text).hexdigest(), "source": "authored", "en": "Shared wording"},
+            {"key": hashlib.sha256(voiced).hexdigest(), "source": "authored", "en": "This voice's wording"}]
+    data = tmp_path / "table.json"
+    data.write_text(json.dumps({"version": 1, "rows": rows, "name_parts": []}))
+    output = tmp_path / "table.bin"
+    build_table(stock, _SyntheticResolver(), data, output)
+    pairs, _ = _table_values(output.read_bytes())
+    assert pairs == {text: b"Shared wording", voiced: b"This voice's wording"}
 
 
 @pytest.mark.parametrize("fault", ["hash", "duplicate-row", "source", "name-index", "duplicate-name", "version"])
