@@ -2,24 +2,20 @@
 
 from __future__ import annotations
 
-import hashlib
 from itertools import pairwise
-import json
-import os
 import shutil
 import struct
 import subprocess
 import tempfile
 from pathlib import Path
 
-from wozmod import resources
 from wozmod.formats import pe
 
 from .latin_font import LATIN_GLYPH, SURROGATE_CODE, SURROGATE_LETTERS
+from .layout import C_SOURCE
 from .text_room import ROOMS, WIDE
 
-C_SOURCE = resources.root() / "runtime" / "english_runtime.c"
-MINGW_IMAGE = "musou-dw5s-mingw:fc44-gcc16.1.1"
+COMPILER = "i686-w64-mingw32-gcc"
 DLL_BASE = 0x68000000  # the harness finds a --test build's mailbox in the image at this base
 WIDTH_POINTER = 0x79BAC0  # per-glyph advance table; stock 0 means every glyph is 24 wide
 # Text edits and the two alternative settings-row groups.
@@ -142,8 +138,6 @@ ALWAYS_HOOKS = [
 MOVING_FIX_HOOKS = [
     (0x427F61, "8b4704 d9470c", 72, None),      # follow camera facing set: the camera stick keeps it (mid-function)
 ]
-# ENRT_LOG and ENRT_TEST builds only.
-LOG_HOOKS = []
 # ENRT_TEST builds only.
 TEST_HOOKS = [
     (0x5DDDE0, "8b442424 8b4c241c", 73, None),  # sprite record builder (banner plates): a plain box in `screen`
@@ -179,8 +173,6 @@ def hook_sites(defines: tuple[str, ...] = ()) -> list[tuple[int, bytes, int, int
     sites = [(*h, True) for h in HOOKS] + [(*h, False) for h in ALWAYS_HOOKS]
     if "ENRT_MOVING_FIX" in defines:
         sites += [(*h, False) for h in MOVING_FIX_HOOKS]
-    if {"ENRT_LOG", "ENRT_TEST"} & set(defines):
-        sites += [(*h, False) for h in LOG_HOOKS]
     if "ENRT_TEST" in defines:
         sites += [(*h, False) for h in TEST_HOOKS]
     return [(va, bytes.fromhex(prologue.replace(" ", "")), hook_id, pops, english)
@@ -245,32 +237,22 @@ def data_header(exe: bytes, edits: dict[int, list[tuple[int, bytes, bytes]]], ho
 
 
 def compile_dll(output: Path, header: str, defines: tuple[str, ...] = ()) -> None:
-    """Compile with local MinGW, or the pinned Docker toolchain."""
+    """Compile with MinGW (Fedora's mingw32-gcc; the DLL pin follows its updates)."""
     flags = ["-std=c11", "-O2", "-Wall", "-Werror", "-shared", "-static-libgcc",
              "-fno-asynchronous-unwind-tables", *(f"-D{d}" for d in defines),
              f"-Wl,--no-insert-timestamp,--kill-at,--disable-dynamicbase,--image-base,{DLL_BASE:#x}",
              "-o", "d3d9.dll", "english_runtime.c", "-lgdi32"]  # gdi32: the borderless bars' black brush
+    if shutil.which(COMPILER) is None:
+        raise FileNotFoundError(f"{COMPILER} is missing: install Fedora's mingw32-gcc package")
     with tempfile.TemporaryDirectory() as tmp:
         shutil.copyfile(C_SOURCE, Path(tmp, "english_runtime.c"))
         for header_file in C_SOURCE.parent.glob("*.h"):
             shutil.copyfile(header_file, Path(tmp, header_file.name))
         Path(tmp, "enrt_data.h").write_text(header, encoding="utf-8")
-        if shutil.which("i686-w64-mingw32-gcc"):
-            subprocess.run(["i686-w64-mingw32-gcc", *flags], cwd=tmp, check=True)
-        else:
-            subprocess.run(["docker", "run", "--rm", "--network=none", "--user", f"{os.getuid()}:{os.getgid()}",
-                            "-v", f"{tmp}:/build:z", "-w", "/build", MINGW_IMAGE,
-                            "i686-w64-mingw32-gcc", *flags], check=True)
+        subprocess.run([COMPILER, *flags], cwd=tmp, check=True)
         dll = Path(tmp, "d3d9.dll").read_bytes()
     _require(dll[:2] == b"MZ", "the compiler wrote no PE image")
     output.write_bytes(dll)
-
-
-def write_manifest(directory: Path) -> None:
-    """manifest.json: every other file under ``directory`` with its SHA-256, by relative path."""
-    files = sorted(p for p in directory.rglob("*") if p.is_file() and p.name != "manifest.json")
-    manifest = {p.relative_to(directory).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in files}
-    (directory / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
 
 
 def table_blob(pairs: dict[bytes, bytes], names: list[bytes | None] = ()) -> bytes:

@@ -9,7 +9,7 @@ FontForge, Cairo and NumPy. Run this on the developer machine, before you push t
     uv run python packaging/release_assets.py --tag v0.1.0 --build --game "<stock Musou Orochi Z folder>" \
         --donors "<donors folder, as the installer lays it out>"
 
---build renders both files first (Docker or MinGW for the DLL, the system python3 with FontForge, Cairo
+--build renders both files first (MinGW, Fedora's mingw32-gcc, for the DLL, the system python3 with FontForge, Cairo
 and NumPy for the lettering, which reads the menu words from the donors). Both files must match the sizes and SHA-256 pinned in
 src/wozmod/install/__init__.py; the script stops otherwise. Add --dry-run to check without uploading.
 """
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import shutil
 import subprocess
 import sys
@@ -35,10 +36,10 @@ def check(path: Path, pin: tuple[int, str]) -> None:
 
 
 def build(game: Path, donors: Path, folder: Path) -> tuple[Path, Path]:
-    """Render d3d9.dll (from the stock executable) and lettering.zip into folder."""
+    """Render d3d9.dll (from the stock executable) and lettering.zip into folder (tests/test_install_e2e.py too)."""
     subprocess.run([sys.executable, "-m", "wozmod.runtime", "--game", str(game), "--output-dir", str(folder)], check=True)
     subprocess.run([sys.executable, "-m", "wozmod.art", "render", str(folder / "lettering.zip"),
-                    "--text-donors", str(donors)], check=True)
+                    "--text-donors", str(donors), "--jobs", str(os.cpu_count() or 4)], check=True)
     return folder / "d3d9.dll", folder / "lettering.zip"
 
 

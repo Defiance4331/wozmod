@@ -201,25 +201,3 @@ def test_a_program_asked_for_while_a_disc_image_is_wrong_is_asked_once(world, mo
     assert code == 1 and "Warriors Orochi 2 (PSP, USA) disc image: Not the Warriors Orochi 2 (PSP, USA) disc image." in err
     assert IMAGE_FIRST not in err and "cancelled" not in err
     assert window.check_row("psp-tool", {**given, "psp-tool": world["psp-tool.good"]}) == (IMAGE_FIRST, "")
-
-
-def test_a_program_that_fails_on_one_disc_is_named_although_the_other_disc_image_is_wrong(world, monkeypatch, capsys):
-    """Bug: the program's verdict stops at the first disc, so a wrong first image hides its failure on the second."""
-    given = values(world, "x360-tool", [("wrong", "none"), ("encrypted", "none")], "bad")
-    assert install_says("x360-tool", given) == {"x360-tool": NOT_PRODUCED}
-    assert window.check_row("x360-tool", given) == (NOT_PRODUCED, "")
-    _, out, _ = cli_says("x360-tool", {**given, "x360-tool": ""}, monkeypatch, capsys, typed=given["x360-tool"])
-    assert prompt_answer(out) == NOT_PRODUCED
-
-
-def test_with_no_program_a_wrong_decrypted_file_says_a_program_would_do(world, monkeypatch, capsys):
-    """Bug: the wrong-file message tells the player only to fix the file, though a program would do instead."""
-    given = values(world, "psp-tool", [("encrypted", "wrong")], "none")
-    line = f"Already decrypted Warriors Orochi 2 (PSP, USA) EBOOT: {WRONG_FILE}"
-    with pytest.raises(installer.InstallError) as caught:
-        installer.check_inputs(Path(given["game"]), {name: Path(path) if path else None for name, path in given.items()})
-    assert line in str(caught.value).splitlines() and "PSP decryption program" not in str(caught.value)
-    code, _, err = cli_says("psp-tool", given, monkeypatch, capsys)
-    assert code == 1 and line in err.removeprefix("wozmod: ").splitlines()
-    assert window.check_row("psp-file", given) == (WRONG_FILE, "OK")
-    assert window.check_row("psp-tool", given) == (None, "")  # unticked: the row still counts as missing

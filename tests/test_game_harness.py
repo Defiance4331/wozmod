@@ -35,6 +35,9 @@ def _staged(game: Path) -> Path:
 
 
 def test_control_round_trip(tmp_path, monkeypatch):
+    """Bugs: the server does not answer through the control folder, runs a malformed or unknown request (a key name
+    with a shell character, a path out of evidence/), leaves ready.json behind after stop, or does not log the stop.
+    The key defaults and a taken capture name have their own tests."""
     (tmp_path / "control").mkdir()
     (tmp_path / "evidence").mkdir()
     (tmp_path / "launch.sh").write_text("exec sleep 60\n")
@@ -62,14 +65,12 @@ def test_control_round_trip(tmp_path, monkeypatch):
         assert harness.send(tmp_path, {
             "action": "keys", "keys": ["Down", "Down", "Return"], "hold": 0.08, "gap": 0.3,
         }, 5)["ok"]
-        assert keys == [(["Return"], 0.08, 1.0, 1.0), (["Down", "Down", "Return"], 0.08, 0.3, 0.3)]
         for bad in ({"keys": []}, {"keys": ["Down", "Down;id"]}, {"keys": "Down"}, {"gap": 0.01},
                     {"keys": ["Down"] * (harness.MAX_KEYS + 1)}):
             request = {"action": "keys", "keys": ["Down"], "hold": 0.08, "gap": 0.3} | bad
             assert not harness.send(tmp_path, request, 5)["ok"]
         assert len(keys) == 2
         assert harness.send(tmp_path, {"action": "capture", "name": "menu"}, 5)["ok"]
-        assert not harness.send(tmp_path, {"action": "capture", "name": "menu"}, 5)["ok"]
         assert not harness.send(tmp_path, {"action": "capture", "name": "../escape"}, 5)["ok"]
         assert not harness.send(tmp_path, {
             "action": "key", "key": "Return", "hold": float("nan"),

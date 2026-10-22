@@ -64,6 +64,7 @@ def test_the_buttonraster_command_line_draws_the_tracked_button_players_see(tmp_
             image.tobytes(), image.size, metrics["baseline"])
 
 
+@pytest.mark.slow_first
 def test_the_font_process_draws_the_release_lettering_layers(monkeypatch):
     """Bug: the font side draws a button or pause another way than the release did (the sub-pixel phase on the wrong
     branch, another cap, another fill rule), so a developer build no longer matches lettering.zip."""

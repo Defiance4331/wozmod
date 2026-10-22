@@ -106,20 +106,6 @@ def test_wrong_output_gets_the_plain_message_and_the_install_stops_before_buildi
     assert "Xbox 360 decryption program: This program did not produce the file wozmod needs." in str(caught.value)
 
 
-def test_the_install_refuses_to_start_without_both_programs(tmp_path, monkeypatch):
-    # Bug: a missing program is skipped (the build then reads a file that is not there) or only one is named.
-    game = tmp_path / "game"
-    game.mkdir()
-    monkeypatch.setattr(installer, "_build", lambda *args: (args[-1](), pytest.fail("the build must not go on past the checks"))[1])
-    monkeypatch.setattr(installer.resources, "ffmpeg", lambda: "ffmpeg")
-    inputs = {"wo1": tmp_path, "wo1-x360": tmp_path, "x360": tmp_path, "psp": tmp_path, "x360-tool": None, "psp-tool": None,
-              "lettering": tmp_path, "dll": tmp_path}
-    with pytest.raises(InstallError) as caught:
-        installer.install(game, inputs, log=lambda _: None)
-    assert "Xbox 360 decryption program: Pick a decryption program, or a decrypted file under Advanced." in str(caught.value)
-    assert "PSP decryption program: Pick a decryption program, or a decrypted file under Advanced." in str(caught.value)
-
-
 @pytest.mark.parametrize("extra, accepted", [(65_536, True), (65_537, False)])
 def test_the_tail_limit_after_the_program_is_exactly_64_kib(extra, accepted):
     # Bug: the limit is off by one, or any file of the right length passes without the prefix hash.

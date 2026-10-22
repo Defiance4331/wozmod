@@ -211,6 +211,7 @@ def _start_a_child_and_hang(stage: str) -> None:
 
 
 @pytest.mark.skipif(os.name == "nt", reason="uses sleep and process groups")
+@pytest.mark.slow_first
 def test_a_worker_that_does_not_stop_is_killed_together_with_what_it_started(monkeypatch):
     # Bug: only the worker is killed, so its ffmpeg (or its own pool) keeps running after Cancel.
     monkeypatch.setattr(installer, "GRACE", 1)

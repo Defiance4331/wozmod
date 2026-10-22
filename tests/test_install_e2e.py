@@ -1,6 +1,8 @@
 """Full install and uninstall into a copy of the stock game from the real disc images (about 5 minutes).
 
-Run with WOZMOD_INSTALL_E2E=1 and the inputs below. The game copy goes in work/install-e2e/, not pytest's tmp_path:
+Run with WOZMOD_INSTALL_E2E=1 and the inputs below. The release files (d3d9.dll, lettering.zip) are built from this
+checkout first, as packaging/release_assets.py builds them (about a minute), so the install also checks their pins
+against what the checkout builds. The game copy goes in work/install-e2e/, not pytest's tmp_path:
 /tmp is often RAM, where a 7 GB copy cannot be a reflink. It is removed when the tests end or are stopped; a copy left
 by a run killed outright (SIGKILL) is removed when the next run starts. WOZMOD_INSTALL_BUDGET (seconds, default
 300) is the time the install may take with the default WOZMOD_JOBS.
@@ -11,6 +13,7 @@ from __future__ import annotations
 import fcntl
 import filecmp
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -25,26 +28,40 @@ import pytest
 from wozmod.__main__ import main
 from wozmod.install import check_input
 
+REPO = Path(__file__).resolve().parents[1]
 INPUTS = {"wo1-x360": "WOZMOD_WO1_X360_ISO", "x360": "WOZMOD_X360_ISO", "psp": "WOZMOD_PSP_ISO",
-          "x360-tool": "WOZMOD_X360_TOOL", "psp-tool": "WOZMOD_PSP_TOOL",
-          "lettering": "WOZMOD_LETTERING", "dll": "WOZMOD_DLL"}
+          "x360-tool": "WOZMOD_X360_TOOL", "psp-tool": "WOZMOD_PSP_TOOL"}
 
 pytestmark = [pytest.mark.skipif(
     os.environ.get("WOZMOD_INSTALL_E2E") != "1"
-    or not all(os.environ.get(v) for v in ["WOZMOD_GAME", *INPUTS.values()]),
-    reason="set WOZMOD_INSTALL_E2E=1, WOZMOD_GAME and " + ", ".join(INPUTS.values()),
+    or not all(os.environ.get(v) for v in ["WOZMOD_GAME", "WOZMOD_DONORS", *INPUTS.values()]),
+    reason="set WOZMOD_INSTALL_E2E=1, WOZMOD_GAME, WOZMOD_DONORS (the menu words of the lettering) and "
+           + ", ".join(INPUTS.values()),
 ), pytest.mark.xdist_group("install-e2e")]  # one xdist worker, so its tests share one install in work/install-e2e
 
 
 @pytest.fixture(scope="module")
-def installed():
+def release_files(tmp_path_factory) -> dict[str, Path]:
+    """d3d9.dll and lettering.zip built from this checkout by the release's own build, by installer flag."""
+    spec = importlib.util.spec_from_file_location("release_assets", REPO / "packaging/release_assets.py")
+    release_assets = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(release_assets)
+    dll, lettering = release_assets.build(Path(os.environ["WOZMOD_GAME"]), Path(os.environ["WOZMOD_DONORS"]),
+                                          tmp_path_factory.mktemp("release"))
+    return {"dll": dll, "lettering": lettering}
+
+
+@pytest.fixture(scope="module")
+def installed(release_files):
     """One install into a copy of the stock game: (game copy, install command, seconds, log lines)."""
-    # The installer names a wrong release file at once, but only after the game copy (6 to 60 s): check them first.
-    wrong = [f"{INPUTS[name]}: {problem}" for name in ("lettering", "dll")
-             if (problem := check_input(name, os.environ[INPUTS[name]]))]
+    # Bug: the checkout builds another d3d9.dll or lettering.zip than the one its pin names (the runtime or the
+    # lettering changed and the pin did not), so a release from it refuses its own files. The installer would say
+    # so only after the game copy (6 to 60 s): check them first.
+    wrong = [f"the {path.name} this checkout builds: {problem} Refresh its pin in wozmod.install"
+             for name, path in release_files.items() if (problem := check_input(name, path))]
     if wrong:
         pytest.fail("\n".join(wrong), pytrace=False)
-    folder = Path(__file__).resolve().parents[1] / "work/install-e2e"
+    folder = REPO / "work/install-e2e"
     folder.parent.mkdir(exist_ok=True)
     with folder.with_suffix(".lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)  # held while the copy is in use, so whatever is there now is a dead run's
@@ -52,17 +69,19 @@ def installed():
         folder.mkdir()
         stopped = signal.signal(signal.SIGTERM, signal.default_int_handler)  # a stopped run cleans up too
         try:
-            yield _install(folder / "game")
+            yield _install(folder / "game", release_files)
         finally:
             signal.signal(signal.SIGTERM, stopped)
             shutil.rmtree(folder)
 
 
-def _install(game: Path):
+def _install(game: Path, release_files: dict[str, Path]):
     subprocess.run(["cp", "-a", "--reflink=auto", os.environ["WOZMOD_GAME"], str(game)], check=True)
     command = ["install", "--game", str(game)]
     for flag, variable in INPUTS.items():
         command += [f"--{flag}", os.environ[variable]]
+    for flag, path in release_files.items():
+        command += [f"--{flag}", str(path)]
     start = time.perf_counter()
     # as on a player's machine: no font tools (build.FONT_PYTHON), whatever this machine has
     font_tools = dict(os.environ, WOZMOD_FONT_PYTHON=str(game.parent / "no-font-python"))

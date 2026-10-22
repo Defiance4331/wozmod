@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[1]
 TEST = "import os, pytest\n\ndef test_needs_inputs():\n    pytest.skip(os.environ['REASON'])\n"
 
@@ -24,6 +26,7 @@ CASES = [
 ]
 
 
+@pytest.mark.slow_first
 def test_required_inputs_turn_unexpected_skips_into_failures(tmp_path: Path) -> None:
     # Bug: a linked worktree (or a push from one) finds no work/harness.toml, so every test that reads the game
     # or the donors skips, and verify.sh still reports a pass; or a strict run refuses a slow test left off.

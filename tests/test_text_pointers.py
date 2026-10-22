@@ -76,6 +76,7 @@ def test_rows_that_insert_a_donor_string_read_as_they_did():
 
 @pytest.mark.skipif(not (os.environ.get("WOZMOD_DONORS") and os.environ.get("WOZMOD_GAME")),
                     reason="set WOZMOD_DONORS and WOZMOD_GAME")
+@pytest.mark.slow_first
 def test_the_real_table_builds_from_the_shipped_rows(tmp_path):
     # Catches a row whose donor text the renderer cannot draw or whose stock string is gone, which only the
     # build from real files sees.

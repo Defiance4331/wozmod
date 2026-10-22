@@ -28,7 +28,7 @@ WIDTH = 0x79BAC0
 def stock_image() -> bytes:
     image = pe_image(RAW + 0x1000, (b".fixture", 0x1000, 0x9B000, 0x1000, RAW), image_base=0x700000)
     for va, value in [(EDIT, b"abc"), (ROW, b"de"),
-                      (ENGLISH_HOOK, b"12345"), (ALWAYS_HOOK, b"ABCDE")]:
+                      (ENGLISH_HOOK, b"12345"), (ALWAYS_HOOK, b"ABCDEFG")]:
         at = RAW + va - SECTION_VA
         image[at:at + len(value)] = value
     return bytes(image)
@@ -41,18 +41,28 @@ def spans() -> tuple[dict, list]:
         TWO_ROWS: [(ROW, b"de", b"hi")],
     }
     hooks = [(ENGLISH_HOOK, b"12345", 7, None, True),
-             (ALWAYS_HOOK, b"ABCDE", 8, 0, False)]
+             (ALWAYS_HOOK, b"ABCDEFG", 8, 0, False)]  # 7 bytes, as hook 1: more than the jump it gets
     return edits, hooks
 
 
-@pytest.mark.parametrize("va", [EDIT, ROW, ENGLISH_HOOK, ALWAYS_HOOK, WIDTH],
-                         ids=["edit", "row", "english-hook", "always-hook", "width"])
-def test_changed_stock_byte_refuses_the_edit_hook_or_width_pointer(va: int) -> None:
-    image = bytearray(stock_image())
-    image[RAW + va - SECTION_VA] ^= 1
+def test_each_changed_stock_byte_refuses_the_edit_hook_or_width_pointer() -> None:
+    """Bug: the build compares only part of the stock bytes an edit, hook or the width pointer covers (the first
+    byte, or a hook's first 5 for its jump), so it installs over the wrong instructions and the game crashes. Flips
+    the first, a middle and the last byte of each span; the unflipped image passes."""
     edits, hooks = spans()
-    with pytest.raises(RuntimeBuildError):
-        check_spans(bytes(image), edits, hooks)
+    check_spans(stock_image(), edits, hooks)
+    accepted = []
+    for name, va, size in [("edit", EDIT, 3), ("row", ROW, 2), ("english hook", ENGLISH_HOOK, 5),
+                           ("always hook", ALWAYS_HOOK, 7), ("width pointer", WIDTH, 4)]:
+        for position in sorted({0, size // 2, size - 1}):
+            image = bytearray(stock_image())
+            image[RAW + va - SECTION_VA + position] ^= 1
+            try:
+                check_spans(bytes(image), edits, hooks)
+            except RuntimeBuildError:
+                continue
+            accepted.append((name, position))
+    assert accepted == []
 
 
 def test_different_length_edit_cannot_shift_stock_code() -> None:

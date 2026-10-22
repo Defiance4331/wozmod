@@ -71,6 +71,7 @@ def area_coverage(poly, w, h, n=64):
              for x in range(w)] for y in range(h)]
 
 
+@pytest.mark.slow_first
 def test_coverage_matches_the_covered_area_of_each_pixel(raster):
     # Catches a wrong area split at a pixel edge or across a sloped edge, which shows as ragged or swollen glyphs.
     w, h = 12, 10

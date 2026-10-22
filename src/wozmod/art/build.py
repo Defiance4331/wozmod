@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -17,7 +18,6 @@ from wozmod.formats.linkdata import (
 )
 from wozmod import resources
 from wozmod.progress import report as report_progress
-from wozmod.runtime.english_runtime import write_manifest
 from . import lettering, words
 from wozmod.runtime.latin_font import CELL, LATIN_GLYPH
 from wozmod.donors import WO1_X360, X360, extract_donor, verify_file
@@ -858,6 +858,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.output_dir:
         write_manifest(args.output_dir)
     return 0
+
+def write_manifest(directory: Path) -> None:
+    """manifest.json: every other file under ``directory`` with its SHA-256, by relative path."""
+    files = sorted(p for p in directory.rglob("*") if p.is_file() and p.name != "manifest.json")
+    manifest = {p.relative_to(directory).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in files}
+    (directory / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
+
 
 def write_hires(output_dir: Path, hires: str, wo1_x360: Path | None, wo2: Path | None, squeeze: bool, jobs: int = 1,
                 review: bool = False, fresh: bool = True) -> None:

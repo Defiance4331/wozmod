@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-import shutil
 import struct
 import subprocess
 from pathlib import Path
@@ -74,19 +73,13 @@ def test_data_header_keeps_group_lengths_terminator_and_hook_return_flags() -> N
     ]
 
 
-@pytest.mark.parametrize("native", [True, False], ids=["native", "docker"])
-def test_compiler_prefers_native_and_falls_back_to_pinned_docker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native: bool,
-) -> None:
+def test_compiler_gets_every_header_and_the_requested_defines(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     calls = []
-    monkeypatch.setattr(runtime.shutil, "which", lambda name: "native-gcc" if native else None)
+    monkeypatch.setattr(runtime.shutil, "which", lambda name: "/usr/bin/" + name)
 
     def fake_run(command, **kwargs):
         calls.append(command)
-        if command[0] == "docker":
-            build = Path(command[command.index("-v") + 1].split(":", 1)[0])
-        else:
-            build = Path(kwargs["cwd"])
+        build = Path(kwargs["cwd"])
         assert (build / "enrt_data.h").read_text() == "synthetic header\n"
         assert (build / "english_runtime.c").is_file()
         # Bug: a header the runtime includes is left out of the compiler's folder.
@@ -100,16 +93,7 @@ def test_compiler_prefers_native_and_falls_back_to_pinned_docker(
     output = tmp_path / "d3d9.dll"
     runtime.compile_dll(output, "synthetic header\n", ("ENRT_TEST",))
     assert output.read_bytes() == b"MZsynthetic-dll"
-    assert len(calls) == 1
-    command = calls[0]
-    if native:
-        assert command[0] == "i686-w64-mingw32-gcc"
-    else:
-        assert command[:4] == ["docker", "run", "--rm", "--network=none"]
-        assert command[command.index("-w") + 2:command.index("-w") + 4] == [
-            "musou-dw5s-mingw:fc44-gcc16.1.1", "i686-w64-mingw32-gcc",
-        ]
-    assert "-DENRT_TEST" in command
+    assert [(command[0], "-DENRT_TEST" in command) for command in calls] == [("i686-w64-mingw32-gcc", True)]
 
 
 OPTIONS = {
@@ -174,22 +158,6 @@ def test_build_puts_each_edit_list_in_its_text_mode_group(stock_builds, variant:
         0: {(b"\x74\x04", b"\x90\x90")} if options.get("preview") else set(), 1: set(), 2: set()}
 
 
-def _need_compiler() -> None:
-    if shutil.which("i686-w64-mingw32-gcc"):
-        return
-    if not shutil.which("docker"):
-        pytest.skip("native compiler and Docker executable absent")
-    inspection = subprocess.run(
-        ["docker", "image", "inspect", runtime.MINGW_IMAGE], capture_output=True, text=True,
-    )
-    if inspection.returncode:
-        if "No such image" in inspection.stderr:
-            pytest.skip("pinned Docker image absent")
-        if "Cannot connect to the Docker daemon" in inspection.stderr:
-            pytest.skip("Docker service unavailable")
-        pytest.fail(f"Docker image inspection failed: {inspection.stderr.strip()}")
-
-
 SYNTHETIC_HEADER = "\n".join([
     "static const u8 enrt_stock_sha256[32] = {0};",
     "static const u8 enrt_edits[] = {0xff};",
@@ -200,29 +168,38 @@ SYNTHETIC_HEADER = "\n".join([
 ])
 
 
+RELEASE, TEST = (), ("ENRT_LOG", "ENRT_TEST")
+
+
+def compiles(test):
+    """Gate a test that runs the MinGW compiler. They share one worker, so each variant compiles once."""
+    gate = pytest.mark.skipif(os.environ.get("WOZMOD_RUNTIME_COMPILE") != "1", reason="set WOZMOD_RUNTIME_COMPILE=1")
+    return pytest.mark.xdist_group("runtime-compile")(gate(test))
+
+
 @pytest.fixture(scope="module")
-def compiled_test_dlls(tmp_path_factory: pytest.TempPathFactory) -> tuple[bytes, bytes]:
-    _need_compiler()
-    directory = tmp_path_factory.mktemp("runtime-compile")
-    first, second = directory / "first.dll", directory / "second.dll"
-    for output in (first, second):
-        runtime.compile_dll(output, SYNTHETIC_HEADER, ("ENRT_TEST", "ENRT_LOG"))
-    return first.read_bytes(), second.read_bytes()
+def compiled(tmp_path_factory: pytest.TempPathFactory):
+    """compiled(defines): the DLL SYNTHETIC_HEADER compiles to with these defines, compiled once per module."""
+    directory, built = tmp_path_factory.mktemp("runtime-compile"), {}
+
+    def dll(defines: tuple[str, ...]) -> bytes:
+        if defines not in built:
+            output = directory / f"{len(built)}.dll"
+            runtime.compile_dll(output, SYNTHETIC_HEADER, defines)
+            built[defines] = output.read_bytes()
+        return built[defines]
+
+    return dll
 
 
-@pytest.mark.skipif(os.environ.get("WOZMOD_RUNTIME_COMPILE") != "1",
-                    reason="set WOZMOD_RUNTIME_COMPILE=1")
-def test_release_runtime_has_no_render_distance_row_key_or_patch(tmp_path: Path) -> None:
+@compiles
+def test_release_runtime_has_no_render_distance_row_key_or_patch(compiled) -> None:
     """Bug: the release build still shows the unreleased RENDER DISTANCE row, reads or writes its settings.ini
     key, or patches the view getter. The development build is compiled as the control that the probes see them."""
-    _need_compiler()
     probes = [b"RENDER DISTANCE", "distance".encode("utf-16-le"), "refused: RENDER DISTANCE".encode()]
-    dlls = {}
-    for name, defines in [("release", ()), ("development", ("ENRT_RENDER_DISTANCE",))]:
-        runtime.compile_dll(tmp_path / f"{name}.dll", SYNTHETIC_HEADER, defines)
-        dlls[name] = (tmp_path / f"{name}.dll").read_bytes()
-    assert [probe in dlls["release"] for probe in probes] == [False] * 3
-    assert [probe in dlls["development"] for probe in probes] == [True] * 3
+    release, development = compiled(RELEASE), compiled(("ENRT_RENDER_DISTANCE",))
+    assert [probe in release for probe in probes] == [False] * 3
+    assert [probe in development for probe in probes] == [True] * 3
 
 
 def test_shipped_builds_never_install_the_moving_camera_fix_hook() -> None:
@@ -233,37 +210,48 @@ def test_shipped_builds_never_install_the_moving_camera_fix_hook() -> None:
     assert any(va == 0x427F61 for va, *_ in runtime.hook_sites(("ENRT_MOVING_FIX",)))
 
 
-@pytest.mark.skipif(os.environ.get("WOZMOD_RUNTIME_COMPILE") != "1",
-                    reason="set WOZMOD_RUNTIME_COMPILE=1")
-def test_release_runtime_has_no_moving_camera_fix_row_or_key(tmp_path: Path) -> None:
+@compiles
+def test_release_runtime_has_no_moving_camera_fix_row_or_key(compiled) -> None:
     """Bug: the release or test build still draws the MOVING CAMERA FIX row or reads its settings.ini key
     in release 1. The ENRT_MOVING_FIX build is the control that the probes see them."""
-    _need_compiler()
     probes = [b"MOVING CAMERA FIX", "moving_fix".encode("utf-16-le")]
-    dlls = {}
-    for name, defines in [("release", ()), ("test", ("ENRT_LOG", "ENRT_TEST")), ("dev", ("ENRT_MOVING_FIX",))]:
-        runtime.compile_dll(tmp_path / f"{name}.dll", SYNTHETIC_HEADER, defines)
-        dlls[name] = (tmp_path / f"{name}.dll").read_bytes()
-    assert [[probe in dlls[name] for probe in probes] for name in ("release", "test", "dev")] == [
-        [False, False], [False, False], [True, True]]
+    dlls = [compiled(defines) for defines in (RELEASE, TEST, ("ENRT_MOVING_FIX",))]
+    assert [[probe in dll for probe in probes] for dll in dlls] == [[False, False], [False, False], [True, True]]
 
 
-@pytest.mark.skipif(os.environ.get("WOZMOD_RUNTIME_COMPILE") != "1",
-                    reason="set WOZMOD_RUNTIME_COMPILE=1")
-def test_test_build_keeps_the_harness_mailbox_version_and_size(compiled_test_dlls: tuple[bytes, bytes]) -> None:
+@compiles
+def test_test_build_keeps_the_harness_mailbox_version_and_size(compiled) -> None:
     """Bug: the runtime's mailbox gains, loses or resizes a field the harness does not mirror, so the harness
     refuses the build or reads every text and quad at the wrong offset."""
     import game_harness
-    dll, _ = compiled_test_dlls
+    dll = compiled(TEST)
     at = dll.index(game_harness.TEST_MAGIC)
     assert struct.unpack_from("<2I", dll, at + 16) == (game_harness.TEST_VERSION, game_harness.TEST_SIZE)
 
 
-@pytest.mark.skipif(os.environ.get("WOZMOD_RUNTIME_COMPILE") != "1",
-                    reason="set WOZMOD_RUNTIME_COMPILE=1")
-def test_repeated_dll_builds_do_not_add_wall_clock_timestamps(compiled_test_dlls: tuple[bytes, bytes]) -> None:
-    first, second = compiled_test_dlls
-    assert first == second
+@compiles
+def test_repeated_dll_builds_do_not_add_wall_clock_timestamps(compiled, tmp_path: Path) -> None:
+    runtime.compile_dll(tmp_path / "again.dll", SYNTHETIC_HEADER, TEST)
+    assert (tmp_path / "again.dll").read_bytes() == compiled(TEST)
+
+
+def _dispatched(function: str) -> set[int]:
+    """The case labels of the hook switch in C function ``function``."""
+    code = re.sub(r"/\*.*?\*/|//[^\n]*", "", layout.SOURCE, flags=re.S)
+    body = re.search(rf"^static \w+ {function}\(u32 id,[^)]*\)\n\{{\n(.*?)^\}}", code, re.M | re.S)[1]
+    return {int(label) for label in re.findall(r"\bcase (\d+):", body)}
+
+
+def test_every_hook_a_build_installs_has_a_case_in_the_dispatch_of_its_mode() -> None:
+    """Bug: a hook the build installs has no case in the runtime's dispatch for its mode (a new hook whose case was
+    never written, a case in the English-only switch for a hook that runs in both modes, or a display case outside
+    the ids always() hands to display_hook), so the game jumps into the hook and nothing happens."""
+    low, high = map(int, re.search(r"if \(id >= (\d+) && id <= (\d+)\)\s*return display_hook\(", layout.SOURCE).groups())
+    both = _dispatched("always") | {i for i in _dispatched("display_hook") if low <= i <= high}
+    english = both | _dispatched("english_hook")
+    installed = {(hook_id, english_only) for defines in (RELEASE, TEST, ("ENRT_MOVING_FIX",), ("ENRT_RENDER_DISTANCE",))
+                 for _, _, hook_id, _, english_only in runtime.hook_sites(defines)}
+    assert sorted(hook for hook, english_only in installed if hook not in (english if english_only else both)) == []
 
 
 def test_scene_command_calls_the_scene_starter_the_games_own_scene_command_calls() -> None:

@@ -32,6 +32,7 @@ for name, value in INPUTS.items():
 
 
 def pytest_configure(config) -> None:
+    config.addinivalue_line("markers", "slow_first: a test of 2 s or more, started before the others")
     if not REQUIRE_INPUTS:
         return
     if not CONFIG.is_file():
@@ -39,6 +40,12 @@ def pytest_configure(config) -> None:
     missing = [name for name in INPUTS if not Path(os.environ[name]).exists()]
     if missing:
         raise pytest.UsageError(f"WOZMOD_REQUIRE_INPUTS=1, but these inputs do not exist: {', '.join(missing)}")
+
+
+def pytest_collection_modifyitems(items) -> None:
+    """Move the slow_first tests to the front. xdist starts tests in this order, so a slow test that sorts late
+    keeps one worker busy after the others are done (the fast run took 20 s instead of 15)."""
+    items.sort(key=lambda item: item.get_closest_marker("slow_first") is None)
 
 
 @pytest.hookimpl(hookwrapper=True)

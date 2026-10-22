@@ -476,7 +476,8 @@ def _place_programs(inputs: dict[str, Path | None], donors: Path) -> None:
 
 
 def _text_table(game: Path, donors: Path, table: Path) -> None:
-    from wozmod.text import DonorResolver, build_table
+    from wozmod.text import DonorResolver
+    from wozmod.text.build import build_table
 
     build_table(game, DonorResolver(donors), TEXT_DATA, table)
 

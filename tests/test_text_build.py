@@ -278,6 +278,7 @@ SUBTITLES = ("events", "captions", "spoken", "mesc 4071", "mesc 4073", "mesc 410
 
 
 @pytest.mark.skipif(not os.environ.get("WOZMOD_GAME"), reason="set WOZMOD_GAME to the stock game")
+@pytest.mark.slow_first
 def test_every_stock_subtitle_line_has_a_translation_row() -> None:
     # Bug: a dropped or rekeyed row, or a subtitle source the table never covered, ships that line in Japanese.
     from wozmod.text.inventory import inventory

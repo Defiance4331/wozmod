@@ -264,12 +264,18 @@ def drive_with(tools, tmp_path, monkeypatch, spec, runs, check=0, only=None, gam
     return tools.run_check.run_check(args(tmp_path, spec, only), stage, start), staged
 
 
-def test_run_that_ends_before_the_game_starts_is_retried_in_a_fresh_run_directory(tools, tmp_path, monkeypatch, spec, capsys):
-    """Bug: a pulse start failure (reason unknown, no game) fails the whole check instead of staging a new run."""
-    ups = iter([False, True])
+@pytest.mark.parametrize("second_run_starts", [True, False], ids=["second-run-starts", "never-starts"])
+def test_a_run_that_ends_before_the_game_starts_is_retried_twice_in_fresh_run_directories(
+        tools, tmp_path, monkeypatch, spec, second_run_starts):
+    """Bugs: a pulse start failure (reason unknown, no game) fails the whole check instead of staging a new run; the
+    retry loop runs forever, or exits 0 after a game that never started."""
+    retries = tools.run_check.RETRIES
+    ups = iter([False, True] if second_run_starts else [False] * (retries + 1))
     monkeypatch.setattr(tools.run_check, "wait_up", lambda root, proc: next(ups))
-    code, staged = drive_with(tools, tmp_path, monkeypatch, spec, ["unknown", "stopped"])
-    assert code == 0 and len(staged) == 2 and staged[0] != staged[1] and staged[1].name.endswith("-r1")
+    ends = ["unknown", "stopped"] if second_run_starts else ["unknown"] * (retries + 1)
+    code, staged = drive_with(tools, tmp_path, monkeypatch, spec, ends)
+    assert (code, len(staged)) == ((0, 2) if second_run_starts else (1, retries + 1))
+    assert len(set(staged)) == len(staged) and staged[1].name.endswith("-r1")
 
 
 def test_run_is_never_retried_once_the_game_started(tools, tmp_path, monkeypatch, spec):
@@ -316,13 +322,6 @@ def test_release_dll_is_refused_before_staging(tools, tmp_path, monkeypatch, spe
     staged = []
     assert tools.run_check.run_check(options, lambda *a, **k: staged.append(a), None) == 1
     assert staged == []
-
-
-def test_start_failures_are_retried_twice_then_reported(tools, tmp_path, monkeypatch, spec):
-    """Bug: the retry loop runs forever, or exits 0 after a game that never started."""
-    monkeypatch.setattr(tools.run_check, "wait_up", lambda root, proc: False)
-    code, staged = drive_with(tools, tmp_path, monkeypatch, spec, ["unknown"] * 3)
-    assert code == 1 and len(staged) == tools.run_check.RETRIES + 1
 
 
 @pytest.mark.parametrize("check, reason, code", [(0, "stopped", 0), (1, "stopped", 1), (0, "crash", 1)])

@@ -801,7 +801,8 @@ ART_UNREAD = ("src/wozmod/install/", "src/wozmod/voices/", "src/wozmod/__main__.
               "src/wozmod/movies.py", "src/wozmod/remembered.py", "src/wozmod/window.py", "src/wozmod/art/__main__.py",
               "src/wozmod/art/bundle.py", "src/wozmod/art/compose.py", "src/wozmod/art/render.py",
               "src/wozmod/formats/audio.py", "src/wozmod/runtime/__main__.py", "src/wozmod/runtime/build.py",
-              "src/wozmod/runtime/runtime_edits.py", "src/wozmod/text/inventory.py",
+              "src/wozmod/runtime/english_runtime.py", "src/wozmod/runtime/runtime_edits.py",
+              "src/wozmod/runtime/text_room.py", "src/wozmod/text/build.py", "src/wozmod/text/inventory.py",
               "src/wozmod/text/psp_alignment.py", "src/wozmod/text/script_alignment.py", "src/wozmod/text/stock.py")
 PYTHON_SETUP = """import hashlib, importlib.metadata, importlib.util, pathlib, sys
 print(sys.version, sorted(f"{d.name}=={d.version}" for d in importlib.metadata.distributions()))
