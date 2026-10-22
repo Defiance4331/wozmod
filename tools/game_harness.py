@@ -1308,6 +1308,9 @@ ROUTE_SCREENS = {
     "story-stage-scenario": {"texture": "|".join(f"4077.{30 + m}" for m in range(137))},
     "story-pre-battle": {"texture": "4079.168"},
     "story-battle": {"texture": "4079.148"},
+    "story-team-info": {"texture": "4080.7"},  # TEAM INFO's officer list on the story pre-battle menu
+    "story-officer-page": {"caller": "0x59538a"},  # an officer's page, cursor on ABILITY ACQUISITION
+    "ability-acquisition": {"texture": "4080.28"},  # the officer's next ability and its conditions
     # VS: character select (three picks a side, the player picks COM's too), its confirmation, the battle (stage 68,
     # TAG TEAM) and its menu (RETRY / CHANGE CHARACTER / MAIN MENU), which Escape opens mid-match (run vs-a)
     "vs-character-select": {"texture": "4099.1"},
@@ -1546,6 +1549,15 @@ ROUTE_EDGES = [
     ("story-stage-scenario", "story-pre-battle", [(["Return"], None), (["Left", "Left", "Left", "Return"], None),
                                                   (["Escape"], {**ROUTE_SCREENS["story-pre-battle"], "every": 3})]),
     ("story-pre-battle", "story-battle", [(["Up", "Return"], slow("story-battle", 3.0))]),
+    # 2026-10-22_2103-route-ability: Ability Acquisition of the first officer (the save picks which ability shows:
+    # work/saves/ability-next-N); TEAM INFO is the third item, so the way back moves the cursor up to the top
+    ("story-pre-battle", "story-team-info", ["Down", "Down", "Return"]),
+    ("story-team-info", "story-officer-page", ["Return"]),
+    ("story-officer-page", "ability-acquisition", ["Return"]),
+    ("ability-acquisition", "story-officer-page", ["Escape"]),
+    ("story-officer-page", "story-team-info", ["Escape"]),
+    ("story-team-info", "story-pre-battle", [(["Escape"], ROUTE_SCREENS["story-pre-battle"]), (["Up"], None),
+                                             (["Up"], None)]),
 ]
 NAVIGATION = {"key", "keys", "pad", "click", "win", "lose"}  # actions that can move the game off a screen
 
@@ -1913,7 +1925,8 @@ def main(argv: list[str] | None = None) -> int:
                    "find", "screen", "wait", "say", "notice", "win", "lose", "scripts", "script", "scene", "spawn", "unlock",
                    "reload", "review", "tour", "route", "check", "stop", "_audio", "_serve"):
         command = commands.add_parser(action)
-        command.add_argument("--root", required=True, type=Path)
+        command.add_argument("--root", required=True, type=Path,
+                             help="the run directory, or a bare run name under work/runtime-tests")
         command.add_argument("--timeout", type=bounded, default=1800 if action == "run" else 30)
         if action == "run":
             command.add_argument("--target", required=True, choices=[TARGET, XENIA])
@@ -2000,7 +2013,8 @@ def main(argv: list[str] | None = None) -> int:
                                  help="compare this run's tour with a base run's, such as a golden, instead of touring")
     args = parser.parse_args(argv)
     try:
-        root = args.root.resolve(strict=True)
+        # a bare run name is a MOZ run under work/runtime-tests
+        root = (args.root if len(args.root.parts) > 1 else work() / "runtime-tests" / args.root).resolve(strict=True)
         storage = (work() / "runtime-tests").resolve()
         xenia_storage = (work() / "xenia/runs").resolve()
         permitted = (storage, xenia_storage)

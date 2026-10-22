@@ -4,6 +4,9 @@
     uv run python tools/run_check.py --install work/install [--dll FILE] [--save NAME]
         [--only SCREEN,...] [SPEC]
 
+With --to SCREEN [--stage N] it routes the game there instead and leaves it running for hand commands
+(`game_harness.py ACTION --root RUN`); `game_harness.py stop --root RUN` ends it, or its 30-minute limit does.
+
 SPEC defaults to data/checks/layout.toml. Running this launches the game under the machine-wide lock:
 get the user's permission for the current task first (AGENTS.md).
 It also writes evidence/contact-sheet.html: each capture beside its rows, for review.
@@ -35,11 +38,14 @@ RETRIES = 2  # fresh runs after one that ended before the game started
 def launch(root: Path, pad: bool = False, size: str | None = None) -> subprocess.Popen:
     """The supervisor, in a game slot, in its own process group so it can be ended whole; ``pad``: routes press a
     virtual pad instead of the keyboard; ``size``: render at WxH instead of 1080p upscaled."""
-    command = [sys.executable, str(Path(harness.__file__).resolve()), "run", "--root", str(root), "--slot",
+    # low CPU and disk priority, so the user's own work stays responsive
+    command = ["nice", "-n", "10", "ionice", "-c2", "-n7",
+               sys.executable, str(Path(harness.__file__).resolve()), "run", "--root", str(root), "--slot",
                "--target", harness.TARGET, "--game", str(root / "game"), "--authorize-launch", "--timeout", "1800",
                *(["--pad", "--route-input", "pad"] if pad else []), *(["--size", size] if size else [])]
     with (root / "run.log").open("w") as log:
-        return subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        return subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                                start_new_session=True)
 
 
 def wait_up(root: Path, proc: subprocess.Popen, seconds: float = START_WAIT) -> bool:
@@ -88,12 +94,21 @@ def run_name(label: str, attempt: int) -> str:
 
 
 def run_check(args: argparse.Namespace, stage=prepare_run.prepare, start=launch) -> int:
-    spec = args.spec.resolve(strict=True)
-    names = {sc["name"] for sc in screen_checks.load_spec(spec)}
-    only = args.only.split(",") if args.only else None
-    if only and set(only) - names:  # before the minute of staging and boot
-        print(f"run_check: no screen {', '.join(sorted(set(only) - names))} in {spec.name}", file=sys.stderr)
+    dll = args.dll or args.install / "d3d9.dll"
+    if harness.TEST_MAGIC not in Path(dll).read_bytes():  # its routes and checks talk to the test mailbox
+        print(f"run_check: {dll} is not a --test build; build one with `uv run python -m wozmod.runtime --game GAME_DIR "
+              "--output-dir DIR --test --log` and pass it with --dll", file=sys.stderr)
         return 1
+    to = getattr(args, "to", None)
+    if to:
+        harness.route_plan("boot", to)  # an unknown screen fails before the minute of staging and boot
+    else:
+        spec = args.spec.resolve(strict=True)
+        names = {sc["name"] for sc in screen_checks.load_spec(spec)}
+        only = args.only.split(",") if args.only else None
+        if only and set(only) - names:  # before the minute of staging and boot
+            print(f"run_check: no screen {', '.join(sorted(set(only) - names))} in {spec.name}", file=sys.stderr)
+            return 1
     phases: dict[str, float] = {"stage": 0.0, "boot": 0.0, "check": 0.0, "stop": 0.0}
     began, result, record = time.monotonic(), 1, None
     for attempt in range(RETRIES + 1):
@@ -109,13 +124,14 @@ def run_check(args: argparse.Namespace, stage=prepare_run.prepare, start=launch)
             if up:
                 t = time.monotonic()
                 try:
-                    result = harness.check(root, spec, only)
+                    result = harness.route(root, to, args.stage) if to else harness.check(root, spec, only)
                 except (OSError, ValueError, RuntimeError) as exc:
                     print(f"run_check: check failed: {exc}", file=sys.stderr)
                 phases["check"] += time.monotonic() - t
         finally:
             t = time.monotonic()
-            stop(root, proc)
+            if not (to and up and result == 0):  # a game routed with --to stays up for hand commands
+                stop(root, proc)
             phases["stop"] += time.monotonic() - t
         record = harness.exit_info(root)
         # retry only a run that ended before the game started: no frame ever answered, the reason is unknown, and the
@@ -124,6 +140,10 @@ def run_check(args: argparse.Namespace, stage=prepare_run.prepare, start=launch)
             break
         print(f"run_check: {root.name} ended before the game started (see evidence/harness.log); "
               + ("retrying" if attempt < RETRIES else "giving up"), file=sys.stderr)
+    if to and up and result == 0:
+        print(f"run: {root.name}\nphases: stage {phases['stage']:.1f} s, boot {phases['boot']:.1f} s, "
+              f"route {phases['check']:.1f} s\nup at {to}: game_harness.py ACTION --root {root.name}; stop ends it")
+        return 0
     reason = record["reason"] if record else "missing exit.json (see run.log)"
     phases["total"] = time.monotonic() - began
     print(f"run: {root.name}")
@@ -141,7 +161,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("spec", type=Path, nargs="?", default=DEFAULT_SPEC, help="check file (default layout.toml)")
     parser.add_argument("--install", type=Path, required=True, help="directory holding d3d9.dll and wozmod/")
     parser.add_argument("--dll", type=Path, help="use this d3d9.dll instead of the install's")
-    parser.add_argument("--save", default="full-unlock", help="fixture under work/saves (default full-unlock)")
+    parser.add_argument("--save", default="full-unlock",
+                        help="fixture under work/saves (default full-unlock), a save.dat path, or none for a fresh profile")
     parser.add_argument("--file", action="append", default=[], metavar="INSTALLED=PATH",
                         help="swap one installed file for a working build, such as wozmod/table.bin=PATH")
     parser.add_argument("--setting", action="append", default=[], metavar="SECTION.KEY=VALUE",
@@ -151,6 +172,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--size", metavar="WxH", help="render the game at this listed display size (saved as the "
                         "player's choice) instead of 1080p upscaled")
     parser.add_argument("--name", default="check", help="label in the run directory name")
+    parser.add_argument("--to", metavar="SCREEN", help="instead of a spec: route to this screen (game_harness.py "
+                        "route) and leave the game running")
+    parser.add_argument("--stage", type=int, help="with --to: the story chapter or Dream stage the route picks")
     args = parser.parse_args(argv)
     try:
         return run_check(args)

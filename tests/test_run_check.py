@@ -185,6 +185,24 @@ def record(install: Path) -> None:
     (install / "wozmod/install.json").write_text(json.dumps({"format": 1, "files": files}))
 
 
+def test_run_starts_from_a_fixture_a_save_file_or_no_save(tools, tmp_path, monkeypatch):
+    """Bugs: a save.dat path is looked up only as a fixture name, or staged with other bytes; a fresh-profile run
+    (--save none) gets a save anyway, or silently sees the template prefix's save through its overlay."""
+    prep, staged = tools.prepare_run, staging(tools, tmp_path, monkeypatch)
+    (tmp_path / "edited.dat").write_bytes(b"edited save")
+    root = prep.prepare("file", staged.install, None, str(tmp_path / "edited.dat"), staged.cache)
+    assert (root / prep.SAVE).read_bytes() == b"edited save"
+    assert json.loads((root / "fixtures.json").read_text())["save"] == {
+        "name": str(tmp_path / "edited.dat"), "sha256": digest(b"edited save")}
+    root = prep.prepare("fresh", staged.install, None, "none", staged.cache)
+    assert not (root / prep.SAVE).exists() and (root / prep.SAVE).parent.is_dir()
+    assert json.loads((root / "fixtures.json").read_text())["save"] == {"name": "none", "sha256": None}
+    (staged.template / prep.SAVE).parent.mkdir(parents=True)
+    (staged.template / prep.SAVE).write_bytes(b"template save")
+    with pytest.raises(ValueError, match="template prefix holds"):
+        prep.prepare("shadowed", staged.install, None, "none", staged.cache)
+
+
 @pytest.mark.parametrize("change", ["leftover", "edited", "missing"])
 def test_install_that_differs_from_its_installer_record_is_refused(tools, tmp_path, change):
     """Bugs: a run stages a file the installer never wrote (a settings.ini or runtime.log from an earlier launch),
@@ -215,6 +233,8 @@ class FakeSupervisor:
 
 
 def args(tmp_path, spec, only=None):
+    import game_harness
+    (tmp_path / "d3d9.dll").write_bytes(b"MZ" + game_harness.TEST_MAGIC)  # a --test build
     return SimpleNamespace(spec=spec, install=tmp_path, dll=None, save="s", setting=[], file=[], pad=False, only=only, name="check")
 
 
@@ -263,6 +283,39 @@ def test_run_is_never_retried_once_the_game_started(tools, tmp_path, monkeypatch
     monkeypatch.setattr(tools.run_check, "wait_up", lambda root, proc: True)
     code, staged = drive_with(tools, tmp_path, monkeypatch, spec, ["unknown"] * 3)
     assert code == 1 and len(staged) == 1  # the game answered a frame: its end is not a start failure
+
+
+@pytest.mark.parametrize("routed, stopped", [(0, False), (1, True)])
+def test_run_routed_with_to_stays_up_unless_the_route_failed(tools, tmp_path, monkeypatch, spec, routed, stopped):
+    """Bugs: the game a --to run routed is stopped when run_check exits, so the hand commands that follow find no game;
+    a failed route leaves its game holding a slot."""
+    monkeypatch.setattr(tools.prepare_run, "WORK", tmp_path / "work")
+    monkeypatch.setattr(tools.run_check, "wait_up", lambda root, proc: True)
+    monkeypatch.setattr(tools.run_check.harness, "route", lambda root, screen, stage: routed)
+    stops = []
+    monkeypatch.setattr(tools.run_check, "stop", lambda root, proc: stops.append(root))
+
+    def stage(name, install, dll, save, settings=(), replace=()):
+        (tmp_path / "work/runtime-tests" / name).mkdir(parents=True)
+        return tmp_path / "work/runtime-tests" / name
+
+    def start(root, pad=False):
+        FakeSupervisor(root, "stopped")
+        return SimpleNamespace()
+
+    options = SimpleNamespace(**vars(args(tmp_path, spec)), to="title", stage=None)
+    assert tools.run_check.run_check(options, stage, start) == routed
+    assert bool(stops) == stopped
+
+
+def test_release_dll_is_refused_before_staging(tools, tmp_path, monkeypatch, spec):
+    """Bug: a release d3d9.dll, which has no test mailbox, is staged and booted, and the run waits out its five-minute
+    start limit before failing."""
+    options = args(tmp_path, spec)
+    (tmp_path / "d3d9.dll").write_bytes(b"MZ release build")
+    staged = []
+    assert tools.run_check.run_check(options, lambda *a, **k: staged.append(a), None) == 1
+    assert staged == []
 
 
 def test_start_failures_are_retried_twice_then_reported(tools, tmp_path, monkeypatch, spec):

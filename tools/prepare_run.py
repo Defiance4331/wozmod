@@ -184,6 +184,25 @@ def check_template(template: Path) -> None:
                          f"{proton}/proton run wineboot.exe -u")
 
 
+def save_data(save: str, template: Path) -> tuple[bytes | None, str]:
+    """The save.dat a run starts with, and its name for fixtures.json: a fixture under work/saves (its meta.json hash
+    checked), a save.dat file, or none for a fresh profile, which the template prefix must then not supply instead."""
+    if save == "none":
+        if (template / SAVE).exists():
+            raise ValueError(f"--save none: the template prefix holds {template / SAVE}, which the run would see "
+                             "through its overlay; move it to a fixture under work/saves")
+        return None, save
+    fixture = WORK / "saves" / save
+    if not fixture.is_dir():
+        path = Path(save).resolve(strict=True)
+        return path.read_bytes(), str(path)
+    meta = json.loads((fixture / "meta.json").read_text())
+    data = (fixture / "save.dat").read_bytes()
+    if hashlib.sha256(data).hexdigest() != meta["save_sha256"]:
+        raise ValueError(f"{fixture}/save.dat changed since export")
+    return data, save
+
+
 def prepare(name: str, install: Path, dll: Path | None, save: str, cache_file: Path = HASH_CACHE,
             settings: list[str] = (), replace: list[str] = ()) -> Path:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}", name):
@@ -200,11 +219,7 @@ def prepare(name: str, install: Path, dll: Path | None, save: str, cache_file: P
         replaced[listed] = Path(source).resolve(strict=True)
     ini = settings_ini(settings) if settings else None
     dll = (dll or install / "d3d9.dll").resolve(strict=True)
-    fixture = WORK / "saves" / save
-    meta = json.loads((fixture / "meta.json").read_text())
-    data = (fixture / "save.dat").read_bytes()
-    if hashlib.sha256(data).hexdigest() != meta["save_sha256"]:
-        raise ValueError(f"{fixture}/save.dat changed since export")
+    data, save = save_data(save, template)
     stock, root = stock_backup(), WORK / "runtime-tests" / name
     if root.exists():
         raise ValueError(f"exists: {root}")
@@ -239,10 +254,12 @@ def prepare(name: str, install: Path, dll: Path | None, save: str, cache_file: P
     shutil.copymode(template / "launch.sh", root / "launch.sh")
     target = root / SAVE
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(data)
+    if data is not None:
+        target.write_bytes(data)
     stock_sha256 = dict(zip(STOCK_HASHED, cached_sha256s([stock / f for f in STOCK_HASHED], cache_file), strict=True))
     write_record(root, files, {
-        "save": {"name": save, "sha256": meta["save_sha256"]}, "dll": str(dll), "install": str(install),
+        "save": {"name": save, "sha256": None if data is None else hashlib.sha256(data).hexdigest()}, "dll": str(dll),
+        "install": str(install),
         "version": installer.installed_version(install),
         "extras": sorted(EXTRAS & set(files)), "settings": list(settings),
         "replaced": {listed: str(source) for listed, source in replaced.items()},
@@ -256,7 +273,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("name", help="new run directory name under work/runtime-tests")
     parser.add_argument("--install", type=Path, required=True, help="directory holding d3d9.dll and wozmod/")
     parser.add_argument("--dll", type=Path, help="use this d3d9.dll instead of the install's, such as instrumented/d3d9.dll")
-    parser.add_argument("--save", default="full-unlock", help="fixture under work/saves (default full-unlock)")
+    parser.add_argument("--save", default="full-unlock",
+                        help="fixture under work/saves (default full-unlock), a save.dat path, or none for a fresh profile")
     parser.add_argument("--setting", action="append", default=[], metavar="SECTION.KEY=VALUE",
                         help="a mod setting the player saved earlier, such as display.fps=120 (default: none, as installed)")
     parser.add_argument("--file", action="append", default=[], metavar="INSTALLED=PATH",

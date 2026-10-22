@@ -162,6 +162,19 @@ def test_size_renders_and_outputs_unscaled(tmp_path, monkeypatch):
     assert session["render_size"] == session["output_size"] == [3440, 1440] and not session["fsr"]
 
 
+def test_bare_run_name_addresses_the_run_under_work_runtime_tests(tmp_path, monkeypatch):
+    """Bug: a bare --root name resolves against the shell's directory, so a command sent from the repo root misses the
+    run (or reaches another directory of that name)."""
+    monkeypatch.setattr(checkout, "REPO", tmp_path)
+    (tmp_path / "work/runtime-tests/r1").mkdir(parents=True)
+    (tmp_path / "r1").mkdir()
+    sent = []
+    monkeypatch.setattr(harness, "send", lambda root, request, timeout: sent.append(root) or {"ok": True})
+    monkeypatch.chdir(tmp_path)
+    assert harness.main(["status", "--root", "r1"]) == 0
+    assert sent == [(tmp_path / "work/runtime-tests/r1").resolve()]
+
+
 def test_xenia_launch_keeps_native_frame_and_save_inside_its_storage(tmp_path, monkeypatch):
     """Bug: the reference emulator inherits MOZ scaling/save edits or accepts another run store."""
     monkeypatch.setattr(checkout, "REPO", tmp_path)
@@ -591,7 +604,8 @@ def test_route_library_reaches_every_screen_and_back_to_the_menu():
     assert {n for edge in harness.ROUTE_EDGES for n in edge[:2]} == names
     dead_ends = {"story-z-narration", "story-z-still", "story-z-still-2",  # story pages: no verified way out, so a check spec lists them last
                  "story-narration", "story-wei-pre-battle", "story-wei-battle", "story-victory-still",
-                 "story-stage-camp", "story-stage-scenario", "story-pre-battle", "story-battle"}
+                 "story-stage-camp", "story-stage-scenario", "story-pre-battle", "story-battle",
+                 "story-team-info", "story-officer-page", "ability-acquisition"}
     for start in names:
         for target in names - {"boot"} | {"menu"}:
             try:
