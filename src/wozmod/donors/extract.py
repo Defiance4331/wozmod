@@ -88,7 +88,7 @@ def extract_donor(
     targets = tuple(_target(destination, member.path) for member in selected)
     destination.parent.mkdir(parents=True, exist_ok=True)
     with _open_disc(image, donor) as disc, tempfile.TemporaryDirectory(
-        prefix=".donor-", dir=destination.parent
+        prefix=".donor-", dir=destination.parent, ignore_cleanup_errors=True  # as in audio._ffmpeg_each
     ) as staging:
         available = {member.path.casefold(): member for member in disc.files()}
         resolved = {}

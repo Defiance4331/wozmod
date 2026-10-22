@@ -335,7 +335,8 @@ def _ffmpeg_each(jobs: list[tuple[list[str], bytes, list[str]]], workers: int | 
 
     def batch(start: int) -> list[bytes]:
         part = jobs[start:start + FFMPEG_BATCH]
-        with tempfile.TemporaryDirectory(prefix="wozmod-ffmpeg-") as folder:
+        # On Windows a virus scanner can hold a new file, so the folder delete fails; a leftover folder is harmless.
+        with tempfile.TemporaryDirectory(prefix="wozmod-ffmpeg-", ignore_cleanup_errors=True) as folder:
             command = [resources.ffmpeg() or "ffmpeg", "-hide_banner", "-loglevel", "error", "-filter_threads", "1"]
             for k, (before, data, _) in enumerate(part):
                 Path(folder, f"{k}.in").write_bytes(data)

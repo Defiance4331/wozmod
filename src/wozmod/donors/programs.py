@@ -106,7 +106,7 @@ def run_tool(
     tool = Path(tool).absolute()  # it runs in a temporary folder, where a relative path names nothing
     profiles = sorted((p for p in PROFILES if p[1] == identity.platform), key=lambda p: p[0] not in tool.name.lower())
     transcript: list[str] = []
-    with tempfile.TemporaryDirectory(prefix="wozmod-tool-") as folder:
+    with tempfile.TemporaryDirectory(prefix="wozmod-tool-", ignore_cleanup_errors=True) as folder:  # as in _ffmpeg_each
         source = Path(folder) / ("default.xex" if identity.platform == "x360" else "EBOOT.BIN")
         source.write_bytes(encrypted)
         for name, _, arguments in profiles:
