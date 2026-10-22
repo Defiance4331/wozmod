@@ -25,7 +25,7 @@ from wozmod.donors.discs import DISCS, DonorsFolder
 from wozmod.progress import Cancelled, Progress
 
 MANIFEST = "wozmod/install.json"
-RUNTIME_FILES = ("wozmod/settings.ini", "wozmod/runtime.log")  # written by the game, not by the installer
+RUNTIME_FILES = ("wozmod/settings.ini", "wozmod/runtime.log", "wozmod/runtime.crash.log")  # written by the game, not by the installer
 TEXT_DATA = resources.root() / "data/text/table.json"
 
 # Stock files the build reads: (size, SHA-256) of the supported Japanese PC release.
@@ -39,7 +39,7 @@ STOCK_FILES = {
 }
 # Release assets built by us; a release updates both pins with the files it ships.
 LETTERING = (18_399_206, "5c45d5a0d200c3fe55f31140285f9ac6c22cff172850a79484fe3dbb5a4c6ec0")
-DLL = (219_048, "90a826a8fa5d2c36ae210301fe906d2cb75e6a88af14dbc552f5dbd34ce77f12")
+DLL = (220_683, "3a3165a0381eb095bba11172e1f8cc1f8db883d346a9658d4ac99016f8345d8c")
 
 _MOD_PATH = re.compile(r"d3d9\.dll|wozmod(/[A-Za-z0-9_][A-Za-z0-9_.-]*)+")
 

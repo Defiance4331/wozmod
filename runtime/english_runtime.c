@@ -21,6 +21,7 @@
 #include "display_fit.h"
 #include "voice_play.h"
 #include "device_hooks.h"
+#include "crash_log.h"
 
 typedef unsigned int u32;
 typedef unsigned short u16;
@@ -5480,14 +5481,21 @@ static int patch(void)
 
 static void install(HINSTANCE self)
 {
-    WCHAR name[MAX_PATH], value[16];
+    WCHAR name[MAX_PATH], crash[MAX_PATH], value[16];
+    char started[48];
+    SYSTEMTIME now;
     u32 n = GetModuleFileNameW(self, root, MAX_PATH - 40);
     if (!n || n >= MAX_PATH - 40)
         return;
     while (n && root[n - 1] != '\\' && root[n - 1] != '/')
         n--;
     lstrcpyW(root + n, L"wozmod\\");
-    runtime_log = CreateFileW(path(name, L"runtime.log"), GENERIC_WRITE, FILE_SHARE_READ, 0, CREATE_ALWAYS, 0, 0);
+    keep_crash_log(path(name, L"runtime.log"), path(crash, L"runtime.crash.log"));
+    runtime_log = CreateFileW(name, GENERIC_WRITE, FILE_SHARE_READ, 0, CREATE_ALWAYS, 0, 0);
+    GetSystemTime(&now);  /* UTC: one clock for every player's log */
+    wsprintfA(started, "started %04u-%02u-%02u %02u:%02u:%02u UTC", now.wYear, now.wMonth, now.wDay, now.wHour,
+              now.wMinute, now.wSecond);
+    note(started, 0);
     GetPrivateProfileStringW(L"language", L"text", L"english", value, 16, path(name, L"settings.ini"));
     text_saved = !lstrcmpiW(value, L"japanese");
     GetPrivateProfileStringW(L"language", L"voice", L"english", value, 16, name);
@@ -5566,6 +5574,6 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved)
         install(self);
     }
     if (reason == DLL_PROCESS_DETACH)  /* 2: the process is ending; no line at all: it crashed or was ended from outside */
-        note("process exit", reserved ? 2 : 1);
+        note(EXIT_LINE, reserved ? 2 : 1);
     return TRUE;
 }

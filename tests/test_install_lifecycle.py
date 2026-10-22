@@ -178,13 +178,14 @@ def test_a_record_from_the_first_release_is_still_uninstalled(game):
 
 
 def test_uninstall_that_removes_the_settings_leaves_the_stock_folder(game, tmp_path, monkeypatch):
-    # Bug: settings.ini and runtime.log (written by the game, so not in install.json) stay behind, with
+    # Bug: settings.ini and the runtime logs (written by the game, so not in install.json) stay behind, with
     # an otherwise empty wozmod/ folder, so the folder is no longer stock.
     monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: None)
     before = _tree(game)
     install(game, _inputs(tmp_path), log=lambda _: None)
     (game / "wozmod/settings.ini").write_bytes(b"player settings")
     (game / "wozmod/runtime.log").write_bytes(b"log")
+    (game / "wozmod/runtime.crash.log").write_bytes(b"log")
 
     uninstall(game, log=lambda _: None, keep_settings=False)
 

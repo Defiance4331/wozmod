@@ -184,6 +184,10 @@ change.
 - **The screen stays black at start (Linux).** The game must start in its own
   folder. If you added it to Steam as a non-Steam game, set **Start In** to the
   game folder.
+- **You want to report a bug.** Open an issue on GitHub and attach
+  `wozmod/runtime.log`. If the game crashed or froze, also attach
+  `wozmod/runtime.crash.log`. wozmod keeps the log of the last run that crashed
+  in that file, so you can start the game again before you report.
 
 ## Use the terminal instead
 

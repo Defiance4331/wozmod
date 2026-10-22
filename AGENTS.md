@@ -64,9 +64,11 @@ what synthetic bytes cannot show, and skip when they are absent. Slow tests run
 only behind a `WOZMOD_<NAME>=1` skipif. Input paths come from `[tests]` in
 the main checkout's `work/harness.toml` (see `tests/conftest.py`).
 `tools/verify.sh` also runs the slow ones, and fails when an input is missing
-instead of skipping; run it before handing back a change to the runtime, the art
-or the install. It skips the art build while nothing it reads has changed since
-it last passed; run `tools/verify.sh --full` before a release. Hand back a
+instead of skipping. Before handing back a change to the runtime, the art or the
+install, run the slow tests that guard what you changed: `tools/verify.sh`
+followed by their paths (for example the DLL pin in `tests/test_install_pins.py`
+after a runtime change). Run `tools/verify.sh --full`, which runs everything and
+rebuilds the art even when nothing it reads has changed, before a release. Hand back a
 change players see with the
 `evidence/contact-sheet.html` that `tools/run_check.py` writes: each capture beside
 its PASS/FAIL rows. The hooks in `tools/githooks/` lint each
