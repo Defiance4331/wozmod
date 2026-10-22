@@ -696,10 +696,12 @@ def install(game: Path, inputs: dict[str, Path], force: bool = False, log=print,
             progress.checkpoint()  # the last place to cancel: below, the files are put in place
             progress.begin("place")
             files = {p.relative_to(out).as_posix(): _sha256(p) for p in sorted(out.rglob("*")) if p.is_file()}
-            if old:
-                _remove(game, old)
+            # An installed file with the same bytes stays in place: rewriting it costs its size in new disk blocks.
+            same = {name for name, digest in files.items()
+                    if old.get(name) == digest and (game / name).is_file() and _sha256(game / name) == digest}
+            _remove(game, {name: digest for name, digest in old.items() if name not in same})
             try:
-                for name in files:
+                for name in [name for name in files if name not in same]:
                     (game / name).parent.mkdir(parents=True, exist_ok=True)
                     os.replace(out / name, game / name)
                     written.append(name)

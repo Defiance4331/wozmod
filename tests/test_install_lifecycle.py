@@ -108,6 +108,30 @@ def test_install_over_the_same_version_rebuilds_and_a_newer_one_asks_first(game,
     assert installer.installed_version(game) == installer.VERSION
 
 
+def test_a_reinstall_leaves_unchanged_files_in_place_and_replaces_changed_ones(game, tmp_path, monkeypatch):
+    # Bug: a reinstall writes every file anew (gigabytes of fresh disk blocks for the same bytes), or keeps a
+    # file whose build changed, or one changed on disk since the last install.
+    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: None)
+    install(game, _inputs(tmp_path), log=lambda _: None)
+    inodes = {name: (game / name).stat().st_ino for name in ("d3d9.dll", "wozmod/entries/4059.bin", "wozmod/table.bin")}
+    build = installer._build
+
+    def changed_table(*args):
+        out = build(*args)
+        (out / "wozmod/table.bin").write_bytes(b"new table")
+        return out
+
+    monkeypatch.setattr(installer, "_build", changed_table)
+    with (game / "d3d9.dll").open("r+b") as dll:
+        dll.write(b"DLL")  # same inode, other bytes
+    install(game, _inputs(tmp_path), log=lambda _: None)
+
+    now = {name: (game / name).stat().st_ino for name in inodes}
+    assert [name for name in inodes if now[name] == inodes[name]] == ["wozmod/entries/4059.bin"]
+    assert (game / "d3d9.dll").read_bytes() == b"dll" and (game / "wozmod/table.bin").read_bytes() == b"new table"
+    assert installer.read_manifest(game)["wozmod/table.bin"] == hashlib.sha256(b"new table").hexdigest()
+
+
 # The install record exactly as the first release wrote it: no "version" key.
 FROZEN_FIRST_RECORD = """{
  "format": 1,
