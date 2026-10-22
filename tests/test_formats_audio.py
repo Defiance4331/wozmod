@@ -218,6 +218,63 @@ def test_psp_voice_fills_only_a_line_neither_xbox_360_disc_has_and_leaves_as_48_
     english_voice_bank(clips)  # raises unless every clip is 48 kHz mono
 
 
+def _atrac3plus_riff(frames: int) -> bytes:
+    """A mono 44.1 kHz ATRAC3plus RIFF laid out as the PSP bank's are (192-byte frames of 2048 samples), silent."""
+    import uuid
+    block = 192
+    frame = bytes((0b0110_0000,)) + bytes(block - 1)  # a zero start bit, then the channel-unit terminator
+    subtype = uuid.UUID("e923aabf-cb58-4471-a119-fffa01e4ce62").bytes_le  # KSDATAFORMAT_SUBTYPE_ATRAC3PLUS
+    fmt = struct.pack("<HHIIHHHHI", 0xFFFE, 1, 44_100, block * 44_100 // 2048, block, 0, 22, 2048, 4) + subtype
+    data = frame * frames
+    body = b"WAVEfmt " + struct.pack("<I", len(fmt)) + fmt + b"data" + struct.pack("<I", len(data)) + data
+    return b"RIFF" + struct.pack("<I", len(body)) + body
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
+def test_psp_atrac3plus_clip_declares_its_whole_length(tmp_path: Path) -> None:
+    # Bug: ffmpeg stamps each two-frame ATRAC3plus packet with one frame's duration, the Ogg granule positions follow
+    # those timestamps, and the clip declares about half its length: the game stops every PSP line halfway. With 16
+    # frames the last starts at sample 30720, where a timestamp rebuilt as N/SR/TB truncates to one sample short.
+    import subprocess
+
+    from synthetic import write_ps2_archive
+
+    from wozmod.formats.audio import donor_voice_clips
+    from wozmod.formats.linkdata import ps2_extents
+
+    riff = _atrac3plus_riff(16)
+    bank = write_ps2_archive(tmp_path / "voice_na.bns", {0: riff})
+    clips, _ = donor_voice_clips([("wo2-psp", {12: 0}, ps2_extents(bank), bank)])
+
+    (tmp_path / "clip.wav").write_bytes(riff)
+    pcm = subprocess.run(["ffmpeg", "-v", "quiet", "-i", str(tmp_path / "clip.wav"), "-ac", "1", "-ar", "48000",
+                          "-f", "s16le", "-"], capture_output=True, check=True).stdout  # ffmpeg's own decode
+    assert parse_kovs_record(clips[12])[2].sample_count == len(pcm) // 2
+    english_voice_bank(clips)
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
+def test_voice_bank_refuses_a_clip_that_declares_less_than_it_holds(tmp_path: Path) -> None:
+    # Bug: a clip whose final granule position is short of its audio ships, and the game cuts the line there.
+    import subprocess
+
+    wav = tmp_path / "tone.wav"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.5:sample_rate=48000",
+                    "-ac", "1", str(wav)], check=True)
+    ogg = bytearray(subprocess.run(["ffmpeg", "-v", "error", "-i", str(wav), "-c:a", "libvorbis", "-f", "ogg", "-"],
+                                   capture_output=True, check=True).stdout)
+    last = ogg.rindex(b"OggS")
+    end = last + 27 + ogg[last + 26] + sum(ogg[last + 27:last + 27 + ogg[last + 26]])
+    assert end == len(ogg) and struct.unpack_from("<Q", ogg, last + 6)[0] == 24_000
+    english_voice_bank({1: kovs_record(bytes(ogg))})
+
+    struct.pack_into("<Q", ogg, last + 6, 12_000)  # the final page now declares half the clip
+    ogg[last + 22:last + 26] = bytes(4)
+    struct.pack_into("<I", ogg, last + 22, _checksum(ogg[last:end]))
+    with pytest.raises(VoiceBankError, match="declares 12000 samples but holds"):
+        english_voice_bank({1: kovs_record(bytes(ogg))})
+
+
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
 def test_batched_x360_clips_keep_their_own_audio_across_batch_boundaries(tmp_path: Path, monkeypatch) -> None:
     # Bug: one ffmpeg process converts several clips; a clip gets a neighbour's audio, or the last

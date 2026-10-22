@@ -193,6 +193,75 @@ def parse_kovs_record(
     return stream_bytes, loop_start if loop_start != 0 else None, ogg
 
 
+def _vorbis_block_flags(setup: bytes) -> list[int]:
+    """Each Vorbis mode's block flag (0 short, 1 long), read backwards from the end of the setup header.
+
+    The mode list closes the header: a 6-bit count less one, then per mode a block flag, two 16-bit zeros and an
+    8-bit mapping, then the framing bit. The codebooks before it are not parsed, so the scan keeps the longest run
+    of modes whose count field agrees, as ffmpeg's vorbis_parser does.
+    """
+    bits, position = int.from_bytes(setup, "little"), len(setup) * 8 - 1
+    while position >= 0 and not bits >> position & 1:
+        position -= 1
+    flags: list[int] = []
+    found: list[int] | None = None
+    while position >= 41 and len(flags) < 64:
+        mode = bits >> (position - 41) & ((1 << 41) - 1)
+        if mode >> 1 & 0xFFFFFFFF or mode >> 33 > 63:
+            break
+        flags.insert(0, mode & 1)
+        position -= 41
+        if position >= 6 and (bits >> (position - 6) & 63) + 1 == len(flags):
+            found = list(flags)
+    if not found:
+        raise VoiceBankError("Vorbis setup header has no mode list")
+    return found
+
+
+def _vorbis_decoded_samples(payload: bytes) -> tuple[int, int]:
+    """(samples a validated KOVS record's Vorbis packets decode to, samples in its last packet), from block sizes.
+
+    A packet decodes to a quarter of its block plus a quarter of the one before it, and the first audio packet
+    to none. The final granule position is what the game plays: at most the last packet's samples below this.
+    """
+    stream = bytearray(payload[KOVS_HEADER_BYTES:])
+    for position in range(min(256, len(stream))):
+        stream[position] ^= position
+    headers: list[bytes] = []  # the three header packets whole, then only each audio packet's first byte
+    audio: list[int] = []
+    packet, started, offset = bytearray(), False, 0
+    while offset < len(stream):
+        table_end = offset + 27 + stream[offset + 26]
+        body = table_end
+        for size in stream[offset + 27:table_end]:
+            if len(headers) < 3:
+                packet += stream[body:body + size]
+            elif size and not started:
+                audio.append(stream[body])
+                started = True
+            body += size
+            if size < 255:
+                if len(headers) < 3:
+                    headers.append(bytes(packet))
+                    packet.clear()
+                started = False
+        offset = body
+    if not audio:
+        return 0, 0
+    blocks = (1 << (headers[0][28] & 15), 1 << (headers[0][28] >> 4))
+    flags = _vorbis_block_flags(headers[2])
+    mode_bits = (len(flags) - 1).bit_length()
+    total, last, previous = 0, 0, None
+    for head in audio:
+        mode = head >> 1 & ((1 << mode_bits) - 1)
+        if head & 1 or mode >= len(flags):
+            raise VoiceBankError("Vorbis audio packet is malformed")
+        current = blocks[flags[mode]]
+        last = 0 if previous is None else (previous + current) // 4
+        total, previous = total + last, current
+    return total, last
+
+
 def build_synthetic_kovs_record(
     logical_bytes: int,
     *,
@@ -376,7 +445,11 @@ def donor_voice_clips(banks: list[tuple[str, dict[int, int], list[tuple[int, int
                 if moz_id not in riffs and copies[hashlib.sha256(riff).digest()] <= 2:
                     riffs[moz_id], sources[moz_id] = riff, source
     def encode(moz_ids: list[int], quality: int, span: tuple[float, float]) -> dict[int, bytes]:
-        vorbis = ["-ac", "1", "-ar", "48000", "-c:a", "libvorbis", "-threads", "1",
+        # The Ogg granule positions, which the game reads as the clip's length, come from the frame timestamps.
+        # ffmpeg's RIFF reader packs two ATRAC3plus frames per packet but stamps one frame's duration, so the PSP
+        # timestamps repeat and advance at half speed: asetpts numbers them by the decoded samples instead, rounded
+        # because it truncates the quotient and N/SR/TB can land a hair under the whole number (one sample short).
+        vorbis = ["-af", "asetpts=round(N/SR/TB)", "-ac", "1", "-ar", "48000", "-c:a", "libvorbis", "-threads", "1",
                   "-q:a", str(quality), "-fflags", "+bitexact", "-flags:a", "+bitexact", "-f", "ogg"]
         oggs = _ffmpeg_each([(["-threads", "1", "-f", "wav"], riffs[i], vorbis) for i in moz_ids], jobs,
                             "converting voice clips", span)
@@ -425,6 +498,9 @@ def english_voice_bank(clips: dict[int, bytes]) -> bytes:
         ogg = parse_kovs_record(data, ordinal=moz_id)[2]
         if (ogg.sample_rate, ogg.channels) != (48_000, 1) or len(data) > SLOT_BYTES:
             raise VoiceBankError(f"voice id {moz_id} is not a 48 kHz mono clip under {SLOT_BYTES} bytes")
+        decoded, last = _vorbis_decoded_samples(data)
+        if not 0 <= decoded - ogg.sample_count <= last:  # the game stops a clip at its declared length
+            raise VoiceBankError(f"voice id {moz_id} declares {ogg.sample_count} samples but holds {decoded}")
         struct.pack_into("<II", table, 4 + 8 * moz_id, len(table) + len(body), len(data))
         body += data + bytes(_aligned_size(len(data)) - len(data))
     return bytes(table + body)
