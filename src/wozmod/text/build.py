@@ -21,6 +21,7 @@ NAME_TABLE = 0x6F6368
 NAME_PARTS = 890
 SOURCES = frozenset({"wo1-x360", "wo2-x360", "wo2-ps2", "wo2-psp", "edited", "authored"})
 FORMAT_SPEC = re.compile(rb"%[-+#0-9.]*[a-zA-Z]")
+PLACED_SPEC = re.compile(rb"%(?:(\d+)\$)?([-+#0-9.]*[a-zA-Z])")  # %2$d prints the second argument
 ENGLISH_FORMAT_SPEC = re.compile(rb"%%|%s|%d|%02d")
 PRINTF_FORM = re.compile(rb"%[-+ #0-9.*]*(?:I64|ll|[hl])?[a-zA-Z]?")
 IBM_KANJI = {
@@ -83,12 +84,42 @@ def _draw_checks(stock: bytes, text: str, english: bytes, key: str) -> None:
         raise TableBuildError(f"row {key}: invalid renderer text ({', '.join(problems)})")
 
 
+def _arguments(text: bytes) -> list[bytes]:
+    """Each placeholder's form, in the order of the arguments it prints."""
+    found = [(int(spec[1] or number), spec[2])
+             for number, spec in enumerate(PLACED_SPEC.finditer(text.replace(b"%%", b"")), 1)]
+    return [form for _, form in sorted(found)]
+
+
+def _in_argument_order(stock: bytes, english: bytes, order: list | None, key: str) -> bytes:
+    """English whose placeholders print the game's arguments in ``order``.
+
+    The game passes a format's arguments in the order of the Japanese sentence. ``order`` gives, for each English
+    placeholder in turn, the number of the argument it prints (from 1); every format of two or more arguments states
+    it, so a sentence that names them in another order cannot pass unnoticed. A placeholder out of turn is written
+    %2$d, which the runtime puts back in turn before the game formats the line (runtime/format_order.h)."""
+    count = len(FORMAT_SPEC.findall(stock.replace(b"%%", b"")))
+    placeholders = [spec for spec in ENGLISH_FORMAT_SPEC.findall(english) if spec != b"%%"]
+    if order is None:
+        if count >= 2:
+            raise TableBuildError(f"row {key}: {count} arguments and no argument order")
+        return english
+    if (not isinstance(order, list) or len(order) != len(placeholders) or len(set(order)) != len(order)
+            or not all(type(n) is int and 1 <= n <= count for n in order)):
+        raise TableBuildError(f"row {key}: argument order {order!r} does not fit its {count} arguments")
+    if order == list(range(1, len(order) + 1)):
+        return english
+    numbers = iter(order)
+    return ENGLISH_FORMAT_SPEC.sub(lambda spec: spec[0] if spec[0] == b"%%" else b"%%%d$" % next(numbers) + spec[0][1:],
+                                   english)
+
+
 def table_index(rows: list[dict]) -> dict[bytes, tuple[bytes, dict]]:
     """Runtime keys mapped to encoded English and their originating in-memory row."""
     index: dict[bytes, tuple[bytes, dict]] = {}
 
     def add(stock: bytes, english: bytes, row: dict) -> None:
-        specs = [FORMAT_SPEC.findall(text.replace(b"%%", b"")) for text in (stock, english)]
+        specs = [_arguments(text) for text in (stock, english)]
         if specs[1] != specs[0][:len(specs[1])]:
             raise TableBuildError(f"row {_row_key(row)}: format arguments differ")
         if stock and stock != english:
@@ -109,6 +140,7 @@ def table_index(rows: list[dict]) -> dict[bytes, tuple[bytes, dict]]:
                 form = PRINTF_FORM.match(english, at)[0].decode("ascii")
                 raise TableBuildError(f"row {key}: unsupported English printf form {form!r}")
             at = english.find(b"%", spec.end())
+        english = _in_argument_order(forms[0], english, row.get("order"), key)
         for stock in forms:
             add(stock, english, row)
             if stock[:1].isdigit() and english[:1] == stock[:1] and (b"%s" in stock or b"[1" in stock):
@@ -155,6 +187,18 @@ def _load_data(path: Path) -> dict:
 
 def build_table(stock: Path, donors: DonorResolver, data: Path, output: Path) -> dict:
     """Build table.bin from player inputs and version-1 hash/pointer data."""
+    rows, pairs, names = resolved_text(stock, donors, data)
+    blob = table_blob(pairs, names)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(blob)
+    return {
+        "rows": len(rows), "pairs": len(pairs), "name_parts": sum(name is not None for name in names),
+        "sha256": hashlib.sha256(blob).hexdigest(), "bytes": len(blob),
+    }
+
+
+def resolved_text(stock: Path, donors: DonorResolver, data: Path) -> tuple[list[dict], dict[bytes, bytes], list]:
+    """The data's rows with their stock and English text, the stock-to-English pairs, and the English name parts."""
     from .stock import resolve_stock_ref, stock_strings
 
     payload = _load_data(data)
@@ -172,10 +216,4 @@ def build_table(stock: Path, donors: DonorResolver, data: Path, output: Path) ->
     overrides = [{**row, "en": donors.resolve_row(row)} for row in payload["name_parts"]]
     pairs = table_pairs(rows)
     names = name_parts((stock / "OROCHI_Z.exe").read_bytes(), pairs, overrides)
-    blob = table_blob(pairs, names)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_bytes(blob)
-    return {
-        "rows": len(rows), "pairs": len(pairs), "name_parts": sum(name is not None for name in names),
-        "sha256": hashlib.sha256(blob).hexdigest(), "bytes": len(blob),
-    }
+    return rows, pairs, names

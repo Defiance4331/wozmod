@@ -123,11 +123,11 @@ def test_cp932_objective_aliases_do_not_drop_or_reorder_ibm_keys() -> None:
 
 
 def test_objective_alias_does_not_consume_a_literal_percent_argument() -> None:
-    row = {"ja": "1%s item: %d / %02d (%%s)", "en": "1Authored %s: %d / %02d (%%s)"}
+    row = {"ja": "1%s item: %d / %02d (%%s)", "en": "1Authored %s: %d / %02d (%%s)", "order": [1, 2, 3]}
     assert table_pairs([row]) == {
         row["ja"].encode(): row["en"].encode(), row["ja"][1:].encode(): row["en"][1:].encode(),
     }
-    assert table_pairs([{"ja": "Source %s %d", "en": "Authored %s"}]) == {b"Source %s %d": b"Authored %s"}
+    assert table_pairs([{"ja": "Source %s %d", "en": "Authored %s", "order": [1]}]) == {b"Source %s %d": b"Authored %s"}
 
 
 @pytest.mark.parametrize("form", ["% d", "%*d", "%ld", "%lld", "%I64d", "%f", "%u", "%03d", "%", "%q"])
@@ -139,10 +139,17 @@ def test_unsupported_printf_form_cannot_hide_a_consumed_argument(form: str) -> N
     assert key in str(error.value) and repr(form) in str(error.value)
 
 
-@pytest.mark.parametrize(("stock", "english"), [("Source %s %d", "Authored %d %s"), ("Source %s", "Authored %s %d")])
-def test_reordered_or_added_printf_arguments_cannot_enter_the_table(stock: str, english: str) -> None:
-    with pytest.raises(TableBuildError, match="format arguments differ"):
-        table_pairs([{"ja": stock, "en": english}])
+@pytest.mark.parametrize(("stock", "english", "order", "problem"), [
+    ("Source %s %d", "Authored %d %s", None, "no argument order"),  # the order is the row's to state
+    ("Source %s %d", "Authored %d %s", [1, 2], "format arguments differ"),  # a %s would print a number
+    ("Source %d %d", "Authored %d", [1, 1], "does not fit"),
+    ("Source %d %d", "Authored %d %d", [2, 3], "does not fit"),
+    ("Source %s", "Authored %s %d", None, "format arguments differ"),
+])
+def test_reordered_or_added_printf_arguments_cannot_enter_the_table(stock, english, order, problem) -> None:
+    # Bug: an English sentence prints the game's arguments in another order, or one it never passes, unnoticed.
+    with pytest.raises(TableBuildError, match=problem):
+        table_pairs([{"ja": stock, "en": english, **({"order": order} if order else {})}])
 
 
 @pytest.mark.parametrize(("stock", "english", "problem"), [

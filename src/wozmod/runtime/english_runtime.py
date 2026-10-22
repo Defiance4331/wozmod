@@ -16,6 +16,7 @@ from wozmod import resources
 from wozmod.formats import pe
 
 from .latin_font import LATIN_GLYPH, SURROGATE_CODE, SURROGATE_LETTERS
+from .text_room import ROOMS, WIDE
 
 C_SOURCE = resources.root() / "runtime" / "english_runtime.c"
 MINGW_IMAGE = "musou-dw5s-mingw:fc44-gcc16.1.1"
@@ -55,6 +56,7 @@ HOOKS = [
     (0x590D40, "83ec20 53 8b5c2428", 42, None),  # box: text inside wraps to it, the box grows to fit
     (0x5949E0, "83ec1c 837c243800", 43, None),  # framed box, the same
     (0x593CE0, "83ec48 a1e4057c00", 108, 0),  # skill tag: a wider blank plate and its name in the game font
+    (0x58CE50, "8b442408 56", 111, 0),  # officer name by cast id, for a caller listed in text_room
     (0x591430, "51535556 8b742420", 66, None),  # battle label and its plate: width from the vector sheet
     (0x5915C0, "535556 8b74241c", 67, None),    # the alternate battle label plate
     (0x5DCA30, "8b442408 8b4c2404", 68, None),  # two-corner glyph finalizer
@@ -235,6 +237,9 @@ def data_header(exe: bytes, edits: dict[int, list[tuple[int, bytes, bytes]]], ho
         f"static const u8 enrt_widths[{len(widths)}] = {{{_bytes(widths)}}};",
         f"#define WIDTH_POINTER {WIDTH_POINTER:#x}",
         f"#define GLYPH_LATIN {LATIN_GLYPH}",
+        f"#define WIDE_TEXT {WIDE}",
+        f"static const u32 enrt_wide_writes[] = {{{', '.join(f'{r.call + 5:#x}' for r in ROOMS if r.room == WIDE)}}};",
+        f"static const u32 enrt_wide_reads[] = {{{', '.join(f'{r.read + 5:#x}' for r in ROOMS if r.read)}}};",
         "",
     ])
 

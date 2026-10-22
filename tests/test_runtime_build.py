@@ -63,7 +63,11 @@ def test_data_header_keeps_group_lengths_terminator_and_hook_return_flags() -> N
     )
     assert bytes(layout.c_array("enrt_stock_sha256", header)) == bytes([0x12]) * 32
     assert bytes(layout.c_array("enrt_widths", header)) == b"\x05\x07"
-    assert layout.defines(header) == {"WIDTH_POINTER": 0x79BAC0, "GLYPH_LATIN": LATIN_GLYPH}
+    assert layout.defines(header) == {"WIDTH_POINTER": 0x79BAC0, "GLYPH_LATIN": LATIN_GLYPH, "WIDE_TEXT": 1024}
+    # The runtime matches the return address of each widened write and draw, as read in the stock code.
+    wide = dict(re.findall(r"enrt_wide_(\w+)\[\] = \{([^}]*)\}", header))
+    assert {name: sorted(int(v, 16) for v in values.split(",")) for name, values in wide.items()} == {
+        "writes": [0x5851E3, 0x593B55, 0x593B7A, 0x598171, 0x5A1A6A], "reads": [0x593B98, 0x593B98, 0x59818B, 0x5A1AC2]}
     assert re.findall(r"^    \{([^{}]+), \{", header, re.MULTILINE) == [
         "0x79b030, 0, 7, 1, 5", "0x79b040, 4, 8, 2, 5",
         "0x79b050, 0, 9, 3, 5", "0x79b060, 0, 10, 0, 5",
@@ -191,7 +195,8 @@ SYNTHETIC_HEADER = "\n".join([
     "static const u8 enrt_edits[] = {0xff};",
     "static const struct site enrt_hooks[] = {{0x5c9fd0, 0, 24, 0, 5, {0x83,0xec,0x1c,0x53,0x55}}};",
     "static const u8 enrt_widths[1] = {24};",
-    "#define WIDTH_POINTER 0x79bac0", f"#define GLYPH_LATIN {LATIN_GLYPH}", "",
+    "#define WIDTH_POINTER 0x79bac0", f"#define GLYPH_LATIN {LATIN_GLYPH}",
+    "#define WIDE_TEXT 1024", "static const u32 enrt_wide_writes[] = {0};", "static const u32 enrt_wide_reads[] = {0};", "",
 ])
 
 

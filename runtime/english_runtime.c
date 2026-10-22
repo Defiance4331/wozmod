@@ -17,6 +17,7 @@
 
 #include <windows.h>
 #include "text_fit.h"
+#include "format_order.h"
 #include "glyph_raster.h"
 #include "display_fit.h"
 #include "voice_play.h"
@@ -1183,6 +1184,22 @@ static u32 name_cells(u32 surname, u32 given)
 }
 
 static char wrapped[512], window_text[256], message_text[256], printed_name[96], line_text[512], flat_text[512];
+/* A text whose English outgrows the buffer the game sized for Japanese (wozmod.runtime.text_room): the write at a
+   listed call goes here instead, and the listed draw reads it from here. */
+static char wide_text[WIDE_TEXT];
+
+static int listed(u32 ret, const u32 *sites, u32 count)
+{
+    while (count--)
+        if (sites[count] == ret)
+            return 1;
+    return 0;
+}
+
+#define WIDE_WRITE(ret) listed(ret, enrt_wide_writes, sizeof enrt_wide_writes / sizeof *enrt_wide_writes)
+#define WIDE_READ(ret) listed(ret, enrt_wide_reads, sizeof enrt_wide_reads / sizeof *enrt_wide_reads)
+#define CAST_SLOT ((u32 (*)(u32))0x4F8CB0)
+#define CAST_RECORDS (*(const u8 *const *)0x9C8FD0)
 
 
 static const u32 boxed[][2] = {
@@ -4013,6 +4030,8 @@ static u32 english_hook(u32 id, struct frame *f)
         if (f->ret == WEAPON_READING_DRAW || f->ret == WEAPON_INFO_READING_DRAW)
             return 1;
         text_draws += id == 1;
+        if (id == 1 && WIDE_READ(f->ret))
+            f->arg[0] = (u32)wide_text;
         f->arg[0] = before = text(f->arg[0], id, f);
         if (id == 1)
             row_columns(f);
@@ -4141,6 +4160,8 @@ static u32 english_hook(u32 id, struct frame *f)
             f->arg[0] = (u32)wrap((const char *)text(f->arg[0], id, f), f->arg[2], wrapped, sizeof wrapped);
         break;
     case 5:
+        if (WIDE_WRITE(f->ret))
+            f->arg[0] = (u32)wide_text;
         f->arg[1] = text(f->arg[1], id, f);
         if (f->arg[1] == NAME_FORMAT_TITLED || f->arg[1] == NAME_FORMAT_PLAIN) {
 
@@ -4150,6 +4171,12 @@ static u32 english_hook(u32 id, struct frame *f)
                 name[0] = (u32)compose(printed_name, a, b);
                 f->arg[1] = (u32)(f->arg[1] == NAME_FORMAT_TITLED ? "%s %s %s" : "%s %s");
             }
+        }
+        {
+            static char ordered[4][512];
+            static u32 next;
+            if (f->arg[1] && format_order((const char *)f->arg[1], ordered[next & 3], sizeof ordered[0], f->arg + 2, 9))
+                f->arg[1] = (u32)ordered[next++ & 3];
         }
         translate_args((const u8 *)f->arg[1], f->arg + 2, 9, f);
         break;
@@ -4171,8 +4198,16 @@ static u32 english_hook(u32 id, struct frame *f)
         f->edx = width24(PROMPT_TEXT) + 0x83;
         break;
     case 12:
-        f->eax = (u32)compose((char *)f->arg[0], f->arg[1], f->arg[2]);
+        f->eax = (u32)compose(WIDE_WRITE(f->ret) ? wide_text : (char *)f->arg[0], f->arg[1], f->arg[2]);
         return 1;
+    case 111: {  /* the name wrapper 0x58CE50: a cast record's name into the caller's buffer, returned */
+        const u16 *record;
+        if (!WIDE_WRITE(f->ret))
+            break;
+        record = (const u16 *)(CAST_RECORDS + 36 * CAST_SLOT(f->arg[1]));
+        f->eax = (u32)compose(wide_text, record[0], record[1]);
+        return 1;
+    }
     case 13: {
         char name[96];
         u32 *quad = (u32 *)f->arg[5], i;
