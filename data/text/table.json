@@ -215,6 +215,96 @@
       "en": "Not enough free disk space\nto write save data."
     },
     {
+      "key": "b5bdd99819a74c142f449690ef3a440dda5f4683fea8403b3d0f2ff56b986d06",
+      "source": "authored",
+      "en": "Unused"
+    },
+    {
+      "key": "b3bf3f4a88d38d3667c762722d69ae4f7ac6b6b3835afec9ddcc1fc09399297f",
+      "source": "authored",
+      "en": "Install the Warriors Orochi Z\ngame data. Continue?"
+    },
+    {
+      "key": "2dc2f4158888dea2267b92d4f850c1933bffa25c5a1337dadac2dc46bf0d4706",
+      "source": "authored",
+      "en": "Cancel installing the\nWarriors Orochi Z game data?"
+    },
+    {
+      "key": "b7f78799f2dac7fb6bf2ff2765de274ed66e6f3c99ac8101851f5c63cfb36744",
+      "source": "authored",
+      "en": "Installing the Warriors Orochi Z\ngame data.\nPlease don't turn off the power."
+    },
+    {
+      "key": "3f1e4be5a53f8daadcefed3dd8d562388c4a4ae8a35fbe65f9a2253e12a3d31d",
+      "source": "authored",
+      "en": "The Warriors Orochi Z game data\nis already installed."
+    },
+    {
+      "key": "fb0ab55c0aea46f210f401c7602670e00e2f8915d99aeb4e379b511595139998",
+      "source": "authored",
+      "en": "There is not enough free space on the HDD.\nInstalling the Warriors Orochi Z\ngame data needs at least\n[011024 MB] of free space."
+    },
+    {
+      "key": "583728c55abd2699bbec48b245d943d32e2dbd418ecb57fee8cd1daec3dc5aec",
+      "source": "authored",
+      "en": "The [01PlayStation BB Unit]\nis not formatted."
+    },
+    {
+      "key": "0e246a124d454e37d3c62c283ce3dad2851195aad0ce15fa09ac63094d9dce3e",
+      "source": "authored",
+      "en": "Format the [01PlayStation BB Unit]\nas its instruction manual\ndescribes."
+    },
+    {
+      "key": "33f50f01e19a8f9d48baac57452227e0cea2de2923d6595f567ee14b38ce0bc6",
+      "source": "authored",
+      "en": "A problem was found with the\n[01PlayStation BB Unit]."
+    },
+    {
+      "key": "33e072f7d3ab950d4f9107c296909009b91fd2d9ae90aadef0f1c3dc6b93342d",
+      "source": "authored",
+      "en": "Repair the [01PlayStation BB Unit]\nas its instruction manual\ndescribes."
+    },
+    {
+      "key": "496ab5891a7426eb949c2acb80353ace0cdad3676cfc2f5fc91e0ea9bf5a1458",
+      "source": "authored",
+      "en": "The Warriors Orochi Z game data\non the HDD cannot be loaded.\nThe game data may be corrupted."
+    },
+    {
+      "key": "f014997f12657702e936856c0ef5b8376e0155e548ea326f384fc0b160a6bbae",
+      "source": "authored",
+      "en": "Delete the Warriors Orochi Z\ngame data first,\nthen try installing again."
+    },
+    {
+      "key": "c351edc1763fcc4b047ee3dfbd33a06d67ab7a1655a726af3f5e5fa5f9bc2ff6",
+      "source": "authored",
+      "en": "The [01PlayStation BB Unit]\nis not connected correctly.\nInstalling the Warriors Orochi 2\ngame data needs at least\n[011024 MB] of free space."
+    },
+    {
+      "key": "26ec2833578e2f9e45d370db9a2a055439d777f4565b0cdd1a23f599b7671142",
+      "source": "authored",
+      "en": "The [01PlayStation BB Unit]\nis not connected correctly."
+    },
+    {
+      "key": "f19fa298ac5943ae4d3ff14956aafcf69fcaa1748444f26067e5476066f1ab5a",
+      "source": "authored",
+      "en": "Uninstall the Warriors Orochi Z\ngame data from the\n[01PlayStation BB Unit]. Continue?"
+    },
+    {
+      "key": "ac965b17b56498a267df0d464f6b07e99854f4540bf2fdfb4977ea607d4b1db8",
+      "source": "authored",
+      "en": "Cancel uninstalling the\nWarriors Orochi Z game data?"
+    },
+    {
+      "key": "61b1f3e19976399cb53ff08b7f5ec2e44c0bbfc9cd10a06f2b5e0ddd1b0b6202",
+      "source": "authored",
+      "en": "Uninstalling the Warriors Orochi Z\ngame data.\nPlease don't turn off the power\nor disconnect the\n[01PlayStation BB Unit]."
+    },
+    {
+      "key": "b506c7b8a09e51310b9f7b35f82659ebc9984e8d8cc712f79c4a114a19f27c55",
+      "source": "authored",
+      "en": "The Warriors Orochi Z game data\nis not installed."
+    },
+    {
       "key": "81f7995d87c334fff50063460d73276d904c87b3dc802dbf61d3d3857cbc23df",
       "source": "authored",
       "en": "Installation complete."
@@ -256208,8 +256298,14 @@
     },
     {
       "key": "c4b740b4b9772b676950a5d593be0a691674f4e1626420e65a37821d33a75479",
-      "source": "authored",
-      "en": "Gold? You lot've been hidin' treasure in the Mystic Realm?!"
+      "source": "wo2-psp",
+      "ref": [
+        "psp",
+        "fns",
+        280,
+        "dialog",
+        67
+      ]
     },
     {
       "key": "f42287375a6cadcc54ac445ea5d23167fc6ccd9a3595213b14d4eb4dc57e0cf8",

@@ -7,6 +7,7 @@ import struct
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 
 from wozmod import native
 
@@ -519,33 +520,49 @@ def wo1_entries(lnk_path: Path, idx_path: Path, ordinals) -> dict[int, bytes]:
     return entries
 
 
+def _ps2_table(stream: BinaryIO) -> tuple[list[tuple[int, int]], int, int]:
+    """A PS2-layout archive's (sector, size) records, with the table end and the archive size."""
+    stream.seek(0, 2)
+    data_size = stream.tell()
+    stream.seek(0)
+    header = stream.read(PS2_HEADER.size)
+    if len(header) != PS2_HEADER.size:
+        raise ArchiveError("PS2 archive header is truncated")
+    magic, count, sector_size, reserved = PS2_HEADER.unpack(header)
+    if magic != 0x33B59 or sector_size != SECTOR_SIZE or reserved != 0:
+        raise ArchiveError("PS2 archive header is unsupported")
+    table_end = PS2_HEADER.size + count * PS2_RECORD.size
+    if table_end > data_size:
+        raise ArchiveError("PS2 archive member table is truncated")
+    return list(PS2_RECORD.iter_unpack(stream.read(count * PS2_RECORD.size))), table_end, data_size
+
+
+def _ps2_extent(records: list[tuple[int, int]], member: int, table_end: int, data_size: int) -> tuple[int, int]:
+    if not 0 <= member < len(records):
+        raise ArchiveError(f"PS2 archive member is out of range: {member}")
+    sector, size = records[member]
+    offset = sector * SECTOR_SIZE
+    if offset + size > data_size or (size and offset < table_end):
+        raise ArchiveError(f"PS2 archive member extent is invalid: {member}")
+    return offset, size
+
+
+def ps2_extents(archive_path: Path) -> list[tuple[int, int]]:
+    """The byte offset and size of every member of a sector-indexed PS2-layout archive."""
+    with archive_path.open("rb") as stream:
+        records, table_end, data_size = _ps2_table(stream)
+    return [_ps2_extent(records, member, table_end, data_size) for member in range(len(records))]
+
+
 def ps2_members(archive_path: Path, members) -> dict[int, bytes]:
     """Read stored members from a sector-indexed PS2-layout archive."""
     entries = {}
     with archive_path.open("rb") as stream:
-        stream.seek(0, 2)
-        data_size = stream.tell()
-        stream.seek(0)
-        header = stream.read(PS2_HEADER.size)
-        if len(header) != PS2_HEADER.size:
-            raise ArchiveError("PS2 archive header is truncated")
-        magic, count, sector_size, reserved = PS2_HEADER.unpack(header)
-        if magic != 0x33B59 or sector_size != SECTOR_SIZE or reserved != 0:
-            raise ArchiveError("PS2 archive header is unsupported")
-        table_end = PS2_HEADER.size + count * PS2_RECORD.size
-        if table_end > data_size:
-            raise ArchiveError("PS2 archive member table is truncated")
-        table = stream.read(count * PS2_RECORD.size)
+        records, table_end, data_size = _ps2_table(stream)
         for member in members:
-            if not 0 <= member < count:
-                raise ArchiveError(f"PS2 archive member is out of range: {member}")
-            sector, size = PS2_RECORD.unpack_from(table, member * PS2_RECORD.size)
-            offset = sector * SECTOR_SIZE
-            if offset + size > data_size or (size and offset < table_end):
-                raise ArchiveError(f"PS2 archive member extent is invalid: {member}")
+            offset, size = _ps2_extent(records, member, table_end, data_size)
             stream.seek(offset)
-            data = stream.read(size)
-            entries[member] = data
+            entries[member] = stream.read(size)
     return entries
 
 

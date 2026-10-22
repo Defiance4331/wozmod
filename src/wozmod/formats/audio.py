@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import BinaryIO
 
 from wozmod import process, resources
+from wozmod.formats.linkdata import ps2_extents
 from wozmod.progress import report
 
 KOVS_HEADER_BYTES = 32
@@ -260,6 +261,9 @@ WO2_STAGES = range(0x28)
 WO2_SUFFIX_BASE = 0x3078
 WO2_CLIP_BASE = 1644
 WO2_VORBIS_QUALITY = 7
+# WO2 PSP 0x156788 plays sound/voice_na.bns member 0x58B + a line's voice index, and the index is @NNNN - 1: with
+# that base the Japanese bank's take of every Z Dream line has the stock take's length less Z's 0.5 s of padding.
+PSP_CLIP_BASE = 1419
 
 
 WO1_EVENT_VOICES = (0x8F4, 957, 511)
@@ -267,6 +271,9 @@ WO2_EVENT_VOICES = (0xAF3, 1398, 246)
 
 
 WO2_SELECT_VOICES = (0, 0, 92)
+# MOZ plays select voice = officer id (0x512B20). The X360 lacks officers 94 and 95; the PSP bank holds their voices
+# at 94 and 95 (inferred: its first 76 clips are the stock takes, and 94 and 95 are the stock ones less the padding).
+PSP_SELECT_VOICES = (94, 94, 2)
 
 
 WO1_NARRATION_VOICES = ((96, 80, 209), (306, 289, 40), (592, 329, 628))
@@ -354,14 +361,14 @@ def _ffmpeg_each(jobs: list[tuple[list[str], bytes, list[str]]], workers: int | 
         return [out for part in pool.map(batch, range(0, len(jobs), FFMPEG_BATCH)) for out in part]
 
 
-def x360_voice_clips(banks: list[tuple[str, dict[int, int], bytes, Path]],
-                     jobs: int | None = None) -> tuple[dict[int, bytes], dict[int, str]]:
-    """Convert donor RIFF clips from (source, mapping, index, bank) Xbox 360 banks, an earlier bank first,
-    excluding repeated placeholders; with each clip's source."""
+def donor_voice_clips(banks: list[tuple[str, dict[int, int], list[tuple[int, int]], Path]],
+                      jobs: int | None = None) -> tuple[dict[int, bytes], dict[int, str]]:
+    """Convert donor RIFF clips from (source, mapping, clip extents, bank) banks, an earlier bank first, excluding
+    repeated placeholders; with each clip's source. ffmpeg reads any RIFF codec the donors use (Xbox 360 XMA,
+    PSP ATRAC3plus) and every clip leaves as 48 kHz mono Vorbis."""
     from collections import Counter
     riffs, sources = {}, {}
-    for source, mapping, index, bank in banks:
-        records = wo2_voice_records(index)
+    for source, mapping, records, bank in banks:
         with bank.open("rb") as stream:
             copies = Counter(hashlib.sha256(_read_at(stream, *record)).digest() for record in records)
             for moz_id, clip in mapping.items():
@@ -387,11 +394,16 @@ def x360_voice_clips(banks: list[tuple[str, dict[int, int], bytes, Path]],
 def english_voice_clips(wo1_mapping: dict[int, int], wo1_index: bytes, wo1_bank: Path,
                         wo2_mapping: dict[int, int], wo2_index: bytes, wo2_bank: Path,
                         stock_index: bytes, stock_bank: Path,
-                        jobs: int | None = None) -> tuple[dict[int, bytes], dict[int, str]]:
-    """Select usable WO2 X360 clips before WO1 X360 fallbacks, with each clip's source; jobs is the ffmpeg process
-    count. A WO1 clip as long as the stock clip is the stock take, not an English one, and is left out."""
-    clips, sources = x360_voice_clips([("wo2-x360", wo2_mapping, wo2_index, wo2_bank),
-                                       ("wo1-x360", wo1_mapping, wo1_index, wo1_bank)], jobs)
+                        jobs: int | None = None, *, psp: tuple[dict[int, int], Path] | None = None,
+                        ) -> tuple[dict[int, bytes], dict[int, str]]:
+    """Select usable WO2 X360 clips, then WO1 X360 ones, then WO2 PSP ones (lower quality: only for a line neither
+    Xbox 360 disc has), with each clip's source; jobs is the ffmpeg process count. A WO1 clip as long as the stock
+    clip is the stock take, not an English one, and is left out."""
+    banks = [("wo2-x360", wo2_mapping, wo2_voice_records(wo2_index), wo2_bank),
+             ("wo1-x360", wo1_mapping, wo2_voice_records(wo1_index), wo1_bank)]
+    if psp:
+        banks.append(("wo2-psp", psp[0], ps2_extents(psp[1]), psp[1]))
+    clips, sources = donor_voice_clips(banks, jobs)
     samples = lambda record: parse_kovs_record(record, verify_checksums=False)[2].sample_count  # noqa: E731
     with stock_bank.open("rb") as stock:
         stock_takes = {moz_id for moz_id, source in sources.items() if source == "wo1-x360" and samples(clips[moz_id])

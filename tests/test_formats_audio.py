@@ -180,6 +180,45 @@ def test_x360_placeholder_falls_back_without_blocking_a_usable_shared_clip(tmp_p
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
+def test_psp_voice_fills_only_a_line_neither_xbox_360_disc_has_and_leaves_as_48_khz(tmp_path: Path) -> None:
+    # Bug: the lower-quality PSP take replaces an Xbox 360 line, a line only the PSP has stays Japanese, its 44.1 kHz
+    # clip reaches the bank unconverted (which the build rejects), or a repeated PSP placeholder ships.
+    from synthetic import write_ps2_archive
+
+    def wav(samples: int, rate: int) -> bytes:
+        pcm = b"".join(struct.pack("<h", (i * 7) % 4000 - 2000) for i in range(samples))
+        fmt = struct.pack("<IHHIIHH", 16, 1, 1, rate, 2 * rate, 2, 16)
+        return b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " + fmt + b"data" + struct.pack("<I", len(pcm)) + pcm
+
+    def x360_bank(name: str, riffs: list[bytes]) -> tuple[bytes, Path]:
+        bank = tmp_path / name
+        bank.write_bytes(b"".join(c + bytes(-len(c) % 2048) for c in riffs))
+        starts = [sum(-(-len(c) // 2048) for c in riffs[:i]) for i in range(len(riffs))]
+        return struct.pack(">II", len(riffs), 0) + b"".join(
+            struct.pack(">5I", i, starts[i], -(-len(c) // 2048), len(c), 48_000) for i, c in enumerate(riffs)), bank
+
+    wo2_index, wo2_bank = x360_bank("wo2.bdx", [wav(4800, 48_000)])  # 0.1 s
+    wo1_index, wo1_bank = x360_bank("wo1.bdx", [wav(9600, 48_000)])  # 0.2 s
+    placeholder = wav(441, 44_100)
+    psp_bank = write_ps2_archive(tmp_path / "voice_na.bns", {
+        0: wav(13_230, 44_100), 1: wav(17_640, 44_100), 2: wav(22_050, 44_100),  # 0.3, 0.4 and 0.5 s
+        3: placeholder, 4: placeholder, 5: placeholder,
+    })
+    stock = tmp_path / "stock.bin"
+    stock.write_bytes(_record(96, samples=1234))
+    stock_index = bytes(8) + struct.pack(">II", 0, 96) * 15
+
+    clips, sources = english_voice_clips(
+        {11: 0}, wo1_index, wo1_bank, {10: 0}, wo2_index, wo2_bank, stock_index, stock,
+        psp=({10: 0, 11: 1, 12: 2, 14: 3}, psp_bank))
+
+    assert sources == {10: "wo2-x360", 11: "wo1-x360", 12: "wo2-psp"}
+    seconds = {i: round(parse_kovs_record(clip)[2].sample_count / 48_000, 2) for i, clip in clips.items()}
+    assert seconds == {10: 0.1, 11: 0.2, 12: 0.5}
+    english_voice_bank(clips)  # raises unless every clip is 48 kHz mono
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
 def test_batched_x360_clips_keep_their_own_audio_across_batch_boundaries(tmp_path: Path, monkeypatch) -> None:
     # Bug: one ffmpeg process converts several clips; a clip gets a neighbour's audio, or the last
     # partial batch is dropped.
@@ -199,7 +238,7 @@ def test_batched_x360_clips_keep_their_own_audio_across_batch_boundaries(tmp_pat
         struct.pack(">5I", i, starts[i], -(-len(c) // 2048), len(c), 48_000) for i, c in enumerate(clips))
     monkeypatch.setattr(audio, "FFMPEG_BATCH", 2)
 
-    converted, _ = audio.x360_voice_clips([("x360", {100 + i: i for i in range(len(clips))}, index, bank)], jobs=2)
+    converted, _ = audio.donor_voice_clips([("x360", {100 + i: i for i in range(len(clips))}, audio.wo2_voice_records(index), bank)], jobs=2)
 
     assert {moz_id: parse_kovs_record(clip)[2].sample_count for moz_id, clip in converted.items()} == {
         100 + i: n for i, n in enumerate(lengths)}
@@ -239,7 +278,7 @@ def test_voice_clip_too_long_for_the_game_slot_is_encoded_again_one_step_lower(t
         return [b"x" * (audio.SLOT_BYTES if job[1][:1] == b"B" and quality == audio.WO2_VORBIS_QUALITY else 100) for job in jobs]
 
     monkeypatch.setattr(audio, "_ffmpeg_each", fake)
-    clips, _ = audio.x360_voice_clips([("x360", {7: 0, 8: 1}, index, bank)])
+    clips, _ = audio.donor_voice_clips([("x360", {7: 0, 8: 1}, audio.wo2_voice_records(index), bank)])
 
     assert calls == [(audio.WO2_VORBIS_QUALITY, riffs), (audio.WO2_VORBIS_QUALITY - 1, [riffs[1]])]
     assert {i: len(c) for i, c in clips.items()} == {7: 132, 8: 132}

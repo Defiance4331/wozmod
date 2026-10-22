@@ -128,6 +128,8 @@ PSP = Donor(
                   '696a08d42e4f9934d51b6cc4821624230c081dbb474203b9c29144eaf861f84f'),
         DonorFile('PSP_GAME/USRDIR/LINKDATA_NA.FNS', 'PSP_GAME/USRDIR/LINKDATA_NA.FNS', 34457600,
                   '6d7213772b30cfdbf9e4ad3c4d49b52d6acf78696b0f2259d6c421356c79a40b'),
+        DonorFile('PSP_GAME/USRDIR/sound/voice_na.bns', 'PSP_GAME/USRDIR/sound/voice_na.bns', 100902912,
+                  'c0303321783ff239d7c9617f63bfe16411b22f82263f78cf183c258da7b5cf3d'),
     ),
 )
 

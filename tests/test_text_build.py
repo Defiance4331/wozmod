@@ -16,8 +16,8 @@ from wozmod.text.stock import resolve_stock_ref, stock_key, stock_strings
 
 TABLE = Path(__file__).resolve().parents[1] / "data/text/table.json"
 # The shipped table's rows: their count and the SHA-256 of their sorted keys, one per line.
-ROW_COUNT = 23925
-ROW_KEYS_SHA256 = "c7a6dd34ce38a7002af41e2adcbeef95d9f794e9f55177a8e93c719aeeb35ddf"
+ROW_COUNT = 23943
+ROW_KEYS_SHA256 = "765c1e139a6ba00eb64f06e30f9c70d7e97e70829195cc3076a194f03f95f558"
 
 
 def test_shipped_table_is_valid_and_keeps_every_row() -> None:
@@ -273,18 +273,22 @@ def test_stock_key_joins_both_cp932_spellings_and_skips_bytes_that_are_not_cp932
     assert [stock_key(nec), stock_key(bytes((0xFA, 0x5C))), stock_key(b"\x81")] == [
         (hashlib.sha256(nec).hexdigest(), nec), (hashlib.sha256(nec).hexdigest(), nec), None]
 
-# Inventory sources the player reads as subtitles: event and movie captions, spoken battle lines, narration, stills.
-SUBTITLES = ("events", "captions", "spoken", "mesc 4071", "mesc 4073", "mesc 4103", "mesc 4105")
-
-
 @pytest.mark.skipif(not os.environ.get("WOZMOD_GAME"), reason="set WOZMOD_GAME to the stock game")
 @pytest.mark.slow_first
-def test_every_stock_subtitle_line_has_a_translation_row() -> None:
-    # Bug: a dropped or rekeyed row, or a subtitle source the table never covered, ships that line in Japanese.
+def test_every_stock_text_line_has_a_row_or_a_reviewed_reason_to_stay_japanese() -> None:
+    # Bug: a stock line silently ships untranslated: a dropped or rekeyed row, a source the table never covered, or
+    # a source the inventory stops reading (which would leave nothing to check). A reviewed key that later gets a
+    # row, or leaves the stock game, is stale and would hide the next gap.
     from wozmod.text.inventory import inventory
 
     keys = {row["key"] for row in json.loads(TABLE.read_text())["rows"]}
+    reviewed = json.loads((TABLE.parent / "left_japanese.json").read_text())["keys"]
+    allowed = {entry["key"] for entry in reviewed}
     found = inventory(Path(os.environ["WOZMOD_GAME"]))
-    missing = [(source, key) for source in SUBTITLES for text in found.get(source, ())
-               if (key := stock_key(text)[0]) not in keys]
-    assert missing == []
+    stock = {stock_key(text)[0]: source for source, texts in found.items() for text in texts}
+
+    assert set(found) == {"notices", "spoken", "captions", "events", "mesc 4071", "mesc 4073", "mesc 4103",
+                          "mesc 4105", "briefings", "quote formats", "officer quotes", "exe messages"}
+    assert all(entry["reason"].strip() and entry["source"] == stock.get(entry["key"]) for entry in reviewed)
+    assert sorted((source, key) for key, source in stock.items() if key not in keys | allowed) == []
+    assert sorted(allowed & keys | allowed - stock.keys()) == []

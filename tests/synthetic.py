@@ -73,6 +73,21 @@ def write_ens(folder: Path, entries: dict[int, bytes], count: int | None = None)
     return stem
 
 
+def write_ps2_archive(path: Path, entries: dict[int, bytes], count: int | None = None) -> Path:
+    """Write a PSP/PS2-layout archive: header, a (sector, size) pair per member, each member at its own sector."""
+    count = max(entries) + 1 if count is None else count
+    table = 16 + 8 * count
+    sector, index, body = -(-table // SECTOR), b"", b""
+    for ordinal in range(count):
+        data = entries.get(ordinal, b"")
+        index += struct.pack("<II", sector, len(data))
+        body += data + bytes(-len(data) % SECTOR)
+        sector += -(-len(data) // SECTOR)
+    head = struct.pack("<4I", 0x33B59, count, SECTOR, 0) + index
+    path.write_bytes(head + bytes(-len(head) % SECTOR) + body)
+    return path
+
+
 def pe_image(size: int, *sections: tuple[bytes, int, int, int, int], image_base: int = 0x400000,
              pe_at: int = 0x80, optional_size: int = 0xE0) -> bytearray:
     """An i386 PE: its header at pe_at, an optional header of optional_size, then (name, vsize, rva, raw_size, raw)."""

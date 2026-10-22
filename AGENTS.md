@@ -37,9 +37,10 @@ copies.
 
 - Stock and donor files are read-only inputs. Extract and build only under
   `work/`.
-- Donor priority, per item: menu art, dialogue voices and cinematics use
-  WO2 X360, then WO1 X360. Fonts, attack shouts and text use WO1 X360, then
-  WO2 X360, then WO2 PSP. Our authored work fills the gaps, including PC-only
+- Donor priority, per item: menu art and cinematics use WO2 X360, then
+  WO1 X360. Dialogue voices use WO2 X360, then WO1 X360, then WO2 PSP, whose
+  lower-quality takes fill only lines neither Xbox 360 disc has. Fonts, attack
+  shouts and text use WO1 X360, then WO2 X360, then WO2 PSP. Our authored work fills the gaps, including PC-only
   text such as keyboard and graphics settings. The layout reference (font
   size, boxes) is WO2 X360 only. Music stays stock, except the mix inside
   donor movies.

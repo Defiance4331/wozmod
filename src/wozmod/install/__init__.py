@@ -600,13 +600,13 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
     as the game folder, but for "movies", whose folder is wozmod/movie. Nothing is kept before the checks pass.
     """
     from wozmod.movies import movie_donors
-    from wozmod.voices import VOICE_DONOR_FILES
+    from wozmod.voices import PSP_VOICE_FILES, VOICE_DONOR_FILES
 
     donors, out = staging / "donors", staging / "out"
     folders = DonorsFolder(donors)
     sources = {"game": game, "donors": donors, **inputs}
     movies_kept = cache is not None and cache.fetch("movies", sources, donors / "movie")
-    reads = {"wo1-x360": VOICE_DONOR_FILES, "x360": VOICE_DONOR_FILES, "psp": ["PSP_GAME/USRDIR/LINKDATA_NA.FNS"]}
+    reads = {"wo1-x360": VOICE_DONOR_FILES, "x360": VOICE_DONOR_FILES, "psp": PSP_VOICE_FILES}
     plan = [(flag, DISCS[flag].donor, folders.folder(flag), files, f"reading the {DISCS[flag].title} disc")
             for flag, files in reads.items()]
     flags = {disc.donor.name: flag for flag, disc in DISCS.items()}

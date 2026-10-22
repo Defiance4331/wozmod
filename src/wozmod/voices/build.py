@@ -11,19 +11,30 @@ from wozmod.formats.audio import (
     MOZ_VOICE_IDS, SE_BANKS, WO1_EVENT_VOICES, WO2_EVENT_VOICES, english_se_bank, english_voice_bank,
     english_voice_clips,
 )
-from wozmod.formats.linkdata import archive, decoded_member
+from wozmod.formats.linkdata import archive, decoded_member, ps2_members
+from wozmod.formats.scripts import Script, parse_script, quote_tables
+from wozmod.text.psp_alignment import PSP_STAGE_MEMBERS
 from wozmod.text.script_alignment import (
     EVENTS, QUOTES, WO1_QUOTE_INSERT, moz_scripts, paired_quote_tables, wo1_scripts, wo2_x360,
 )
 
 from .lips import WO1_LINES, X360_LINES, donor_lips, english_lips, lip_bank, stock_lips, wo1_fits, x360_fits
-from .maps import dialogue_voice_maps
+from .maps import dialogue_voice_maps, psp_voice_map
 
 
 VOICE_DONOR_FILES = (
     "linkdata_ens.idx", "linkdata_ens.lnk", "linkdata_ans.idx", "link_vodat.bdx",
     "link_sebank.hdx", "link_sebank.bdx",
 )
+PSP_TEXT, PSP_VOICES = "PSP_GAME/USRDIR/LINKDATA_NA.FNS", "PSP_GAME/USRDIR/sound/voice_na.bns"
+PSP_VOICE_FILES = (PSP_TEXT, PSP_VOICES)
+
+
+def psp_text_voice_map(moz: dict[int, Script], quotes: bytes, fns: Path) -> dict[int, int]:
+    """Stock voice id to WO2 PSP clip, from the stock scripts and quote tables and the PSP text archive."""
+    psp = ps2_members(fns, [27, *PSP_STAGE_MEMBERS.values()])  # member 27, the quotes, is stored unpacked
+    return psp_voice_map(moz, {o: parse_script(decoded_member(psp[m])) for o, m in PSP_STAGE_MEMBERS.items()},
+                         list(zip(quote_tables(quotes), quote_tables(psp[27]), strict=True)))
 
 
 @dataclass(frozen=True)
@@ -41,7 +52,7 @@ def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | N
     """Write voice/Voice.bin, voice/Lips.bin and voice/SE.bin below the supplied mod folder; jobs caps the ffmpeg processes."""
     stock, donors, output_dir = Path(stock), Path(donors), Path(output_dir)
     folders = DonorsFolder(donors)
-    wo1, wo2 = folders.folder("wo1-x360"), folders.folder("x360")
+    wo1, wo2, psp = folders.folder("wo1-x360"), folders.folder("x360"), folders.folder("psp")
     moz = moz_scripts(stock / "LINKDATA2")
     wo2_donor = wo2_x360(wo2 / "linkdata_ens")
     linkdata1, linkdata2, wo1_ens = archive(stock / "LINKDATA1"), archive(stock / "LINKDATA2"), archive(wo1 / "linkdata_ens")
@@ -53,13 +64,14 @@ def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | N
         moz, wo1_scripts(wo1 / "linkdata_ens"),
         wo2_donor.scripts(), wo1_tables, wo2_tables,
     )
+    three = psp_text_voice_map(moz, quotes, psp / PSP_TEXT)
     voiceidx = decoded_member(linkdata1[4058])
     clips, sources = english_voice_clips(
         one, (wo1 / "linkdata_ans.idx").read_bytes(), wo1 / "link_vodat.bdx",
         two, (wo2 / "linkdata_ans.idx").read_bytes(), wo2 / "link_vodat.bdx",
-        voiceidx, stock / "data/Sound/Voice/Voice.bin", jobs,
+        voiceidx, stock / "data/Sound/Voice/Voice.bin", jobs, psp=(three, psp / PSP_VOICES),
     )
-    dialogue_tiers = {tier: sum(s == tier for s in sources.values()) for tier in ("wo1-x360", "wo2-x360")}
+    dialogue_tiers = {tier: sum(s == tier for s in sources.values()) for tier in ("wo1-x360", "wo2-x360", "wo2-psp")}
     destination = output_dir / "voice"
     destination.mkdir(parents=True, exist_ok=True)
     voice_path = destination / "Voice.bin"
@@ -72,6 +84,7 @@ def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | N
          for ordinals, source, _ in EVENTS for o in ordinals]), {
         "wo1-x360": (one, donor_lips(wo1_events.values(), ">", *WO1_LINES), wo1_fits),
         "wo2-x360": (two, donor_lips(wo2_events.values(), wo2_donor.order, *X360_LINES), x360_fits),
+        "wo2-psp": (three, {}, x360_fits),  # the PSP plays its scenes as movies: no voiced line has a lip block
     })
     (destination / "Lips.bin").write_bytes(lip_bank(lips))
     seidx, se = linkdata1.read([4056, 4057]).values()

@@ -1,0 +1,4 @@
+{
+  "about": "Stock strings that ship in Japanese on purpose, reviewed one by one: key (SHA-256 of the stock string), the inventory source, and a one-line reason. tests/test_text_build.py fails on any other stock string without a row.",
+  "keys": []
+}
