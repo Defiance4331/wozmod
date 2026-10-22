@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Stage a run, launch the game, run a check spec, stop, and print the result: one command.
 
-    uv run python tools/run_check.py --install work/fixups2/install [--dll FILE] [--save NAME]
+    uv run python tools/run_check.py --install work/install [--dll FILE] [--save NAME]
         [--only SCREEN,...] [SPEC]
 
 SPEC defaults to data/checks/layout.toml. Running this launches the game under the machine-wide lock:
