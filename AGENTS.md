@@ -54,6 +54,9 @@ copies.
   single-file change, pass the new build to `tools/run_check.py` with `--dll`
   or `--file`. Do not make another install per task or per round: each one
   costs about 3 GB of disk.
+- When the disk needs it, `tools/cleanup.py` lists old game test runs, stale
+  caches, older packaging rounds and worktrees already in main; `--delete`
+  removes them slowly. Run it by hand only, never from a hook or a timer.
 
 ## Testing
 
