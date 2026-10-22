@@ -244,6 +244,13 @@ the release workflow in `.github/workflows/`, which takes the two files from
 the draft, builds the zips for Windows and Linux, and then takes the two
 files off the draft, so the release holds only the zips.
 
+### Build the Windows zip on Linux
+
+`packaging/build_windows.sh <folder with d3d9.dll and lettering.zip>` builds
+the Windows zip on Linux, under Wine, with no GitHub workflow. It built the
+published v0.1.0 Windows zip. The header of the script lists what it needs
+(Wine, uv, rustup, curl and MinGW). The zip goes to `build/packaging/`.
+
 ## Legal
 
 See also the legal notice at the top. Game and company names identify

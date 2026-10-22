@@ -11,12 +11,6 @@ from .skeleton import Skeleton
 OFFSET_TOLERANCE = 0.00005
 _NODES, _WEIGHTS = np.polynomial.legendre.leggauss(16)
 _CHECKS = np.arange(1, 16) / 16
-_DIAGNOSTICS = []
-
-
-def diagnostics() -> list[dict]:
-
-    return [dict(row) for row in _DIAGNOSTICS]
 
 
 def _point(skeleton, point):
@@ -332,5 +326,4 @@ def pinched_stroke(skeleton, pts, radii, closed, pen, joins, depth, length, box=
     layer.removeOverlap()
     layer.correctDirection()
     if box:layer=skeleton.clip(layer,*box)
-    _DIAGNOSTICS.append(stats)
     return layer

@@ -700,8 +700,6 @@ ROLE_VARIANTS = {'dark.pause': {'purple': {},
                                 'ring_fill': [66, 52, 0]}}}
 
 
-HELP_TREATMENTS = ("condensed", "wide", "condensed-camp")
-HELP_DEFAULT = "per-screen"
 HELP_TREATMENT_BY_ROW = {
     **{(4060, item, 0): "wide" for item in range(4, 9)},
     **{(4060, item, 0): "condensed-camp" for item in (2, 3, 9, 10, 11, 12, 13)},
@@ -763,20 +761,6 @@ ROLE_VARIANTS["dark.help"] = {'condensed': {'cap': 20.06,
                     'track': -0.48,
                     'space': 9.024981879757597}}
 STYLES["dark.help"].update(ROLE_VARIANTS["dark.help"]["wide"])
-ROLE_VARIANTS["dark.camp"]["wo1"] = {'cap': 18.28,
- 'fill': [41, 40, 41],
- 'face': 'menusans',
- 'axes': {'pen': (1.1, 1.1),
-          'w_width': 1.34,
-          'lower_w_width': 1.14,
-          'm_width': 1.1,
-          'x_height': 1,
-          'descender': 1.0,
-          'corner_radius': 1.2,
-          'slant': 0.0},
- 'width': 0.6397,
- 'track': 1.9126,
- 'space': 7.9333}
 
 
 DREAM_CARD_STYLE = {'ring': 2.5,

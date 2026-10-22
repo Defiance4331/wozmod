@@ -27,7 +27,7 @@ def compose(stock, donors, bundle, output_dir, squish=True, jobs=None) -> Path:
         raise ValueError("lettering bundle dropped or added a recipe layer")
     with lettering.using(layers, outlines):
         build.build_art(Path(stock), Path(donors["wo1-x360"]), Path(donors["x360"]), Path(donors["text"]),
-                        Path(output_dir), hires="vector", squeeze=squish, jobs=jobs)
+                        Path(output_dir), hires=True, squeeze=squish, jobs=jobs)
     return Path(output_dir) / "wozmod"
 
 

@@ -1,38 +1,67 @@
 """Native donor texture references."""
 from functools import lru_cache
 import json
-from pathlib import Path
 import struct
-
-from PIL import Image
 
 from wozmod import resources
 
-from wozmod.donors import DonorsFolder
-from wozmod.formats.linkdata import LZP2_SIGNATURE, WO1_LZP2_SIGNATURE, parse_lzp2, parse_wo1_index
 from wozmod.formats.textures import (
     TextureCodecError, x360_g1t,
 )
 
 REPO = resources.root()
 CATALOG = REPO / "data/art/menu_visuals.json"
+ROW_FIELDS = {"original", "pc_text", "role_variant"}
+NO_COUNTERPART = {"kind": "no-official-counterpart", "donor": None}
+OFFICIAL_DONORS = {"x360", "wo1-x360"}
+
+
+def _integers(value, count: int) -> bool:
+    return isinstance(value, list) and len(value) == count and all(type(n) is int and n >= 0 for n in value)
+
+
+def _check_row(where: str, row) -> None:
+    if not isinstance(row, dict) or not row or not set(row) <= ROW_FIELDS:
+        raise ValueError(f"menu visual catalog row {where}: a non-empty object of {sorted(ROW_FIELDS)}")
+    if "role_variant" in row and not isinstance(row["role_variant"], str):
+        raise ValueError(f"menu visual catalog row {where}: role_variant must be a string")
+    if "pc_text" in row and not isinstance(row["pc_text"], (str, dict)):
+        raise ValueError(f"menu visual catalog row {where}: pc_text must be a word or a stored form")
+    original = row.get("original")
+    if original is None or original == NO_COUNTERPART:
+        return
+    if (not isinstance(original, dict) or set(original) != {"donor", "kind", "ens", "crop"}
+            or original["donor"] not in OFFICIAL_DONORS or original["kind"] != "official"
+            or not _integers(original["ens"], 3) or not _integers(original["crop"], 4)):
+        raise ValueError(f"menu visual catalog row {where}: original must be {NO_COUNTERPART} or an official "
+                         "donor, kind, ens [entry, member, texture] and crop [left, top, right, bottom]")
+
 
 @lru_cache(maxsize=1)
 def load_catalog() -> dict:
-    """Read the recipe catalog. Its pc_text words stay stored forms (see wozmod.art.words)."""
+    """Read the recipe catalog, refusing any field no reader takes. Its pc_text words stay stored forms (see
+    wozmod.art.words)."""
     data = json.loads(CATALOG.read_text(encoding="utf-8"))
-    if data.get("schema") != "moz-menu-visual-references-v1":
+    if not isinstance(data, dict) or data.get("schema") != "moz-menu-visual-references-v1":
         raise ValueError(f"unsupported menu visual catalog: {CATALOG}")
+    if set(data) != {"schema", "textures"} or not isinstance(data["textures"], dict):
+        raise ValueError(f"menu visual catalog holds schema and textures only: {CATALOG}")
+    for texture, record in data["textures"].items():
+        entry, _, item = texture.partition(".")
+        if not (entry.isdecimal() and item.isdecimal()):
+            raise ValueError(f"menu visual catalog texture {texture!r}: name it ENTRY.ITEM")
+        if not isinstance(record, dict) or set(record) != {"rows"} or not isinstance(record["rows"], dict) \
+                or not record["rows"]:
+            raise ValueError(f"menu visual catalog texture {texture}: holds non-empty rows only")
+        for row, value in record["rows"].items():
+            if not row.isdecimal():
+                raise ValueError(f"menu visual catalog texture {texture}: row {row!r} is not a number")
+            _check_row(f"{texture}/{row}", value)
     return data["textures"]
 
 def reference(texture: str, row: int) -> dict | None:
     """Return the explicitly keyed row reference."""
     return load_catalog().get(texture, {}).get("rows", {}).get(str(row))
-
-def visual_role(texture: str, row: int) -> str | None:
-    """Return optional role metadata."""
-    record = reference(texture, row)
-    return record.get("semantic_role") if record else None
 
 def x360_members(data: bytes) -> dict:
     """Read native X360 members without changing their ordinals."""
@@ -77,47 +106,3 @@ def x360_members(data: bytes) -> dict:
                 if not str(error).startswith("unsupported Xbox 360 texture format"):
                     raise
     return members
-
-class DonorReader:
-    """Read donor archive textures without extracting them."""
-
-    def __init__(self, root: Path = REPO / "work/donors") -> None:
-        self.root = root
-        self._indices = {}
-        self._members = {}
-
-    def members(self, donor: str, entry: int) -> dict:
-        """Read one donor archive entry."""
-        key = donor, entry
-        if key in self._members:
-            return self._members[key]
-        if donor not in ("wo1-x360", "x360"):
-            raise ValueError(f"unsupported native reference donor: {donor}")
-        folder = DonorsFolder(self.root).folder(donor)
-        archive = folder / "linkdata_ens.lnk"
-        if donor not in self._indices:
-            self._indices[donor] = parse_wo1_index(
-                (folder / "linkdata_ens.idx").read_bytes(), data_size=archive.stat().st_size)
-        record = self._indices[donor][entry]
-        with archive.open("rb") as stream:
-            stream.seek(record.offset_sectors * 2048)
-            data = stream.read(record.stored_bytes)
-        if data[:4] == b"LZP2":
-            signature = LZP2_SIGNATURE if donor == "x360" else WO1_LZP2_SIGNATURE
-            data = parse_lzp2(data, signature).decoded
-        members = x360_members(data)
-        self._members[key] = members
-        return members
-
-    def image(self, source: dict) -> Image.Image:
-        """Decode and crop a native reference."""
-        if source.get("kind") == "no-official-counterpart":
-            raise ValueError("no official counterpart: no native donor image exists")
-        entry, item, number = source["ens"]
-        texture = self.members(source["donor"], entry)[item].textures[number]
-        image = Image.frombytes("RGBA", (texture.width, texture.height), texture.decode_rgba())
-        box = source.get("crop", [0, 0, image.width, image.height])
-        if (len(box) != 4 or any(type(n) is not int for n in box) or
-                not (0 <= box[0] < box[2] <= image.width and 0 <= box[1] < box[3] <= image.height)):
-            raise ValueError(f"native reference crop exceeds ENS {source['ens']}: {box}")
-        return image.crop(box)

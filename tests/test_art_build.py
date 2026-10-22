@@ -319,13 +319,13 @@ def test_hires_bank_does_not_serialize_a_sheet_smaller_than_its_quad(monkeypatch
     monkeypatch.setattr(vector, "HELP_QUAD_WIDTH", {(4060, 0): 476})
     mapping = {"faces": {}, "textures": [{"entry": 4060, "item": 0,
                                            "rows": [[{"text": "Help"}]]}]}
-    blob = vector.hires_bin(entries, None, (mapping, {}))
+    blob = vector.hires_bin(entries, (mapping, {}))
     row, = read_hires_bank(blob)
     assert (row.w, row.minimum) == (520, 520)
     assert len(row.blocks[0][0]) == 520 * 3 * 32 * 3  # the 3x image spans the whole quad: DXT5, a byte per texel
     assert (entries / "4060.bin").read_bytes() == source
     # Bug: the threaded encode (native codecs, jobs > 1) hands back an unfinished or different sheet.
-    assert vector.hires_bin(entries, None, (mapping, {}), jobs=4) == blob
+    assert vector.hires_bin(entries, (mapping, {}), jobs=4) == blob
 
 
 def test_hires_bank_does_not_shrink_frozen_attribute_samples(monkeypatch, tmp_path, letters):
@@ -372,9 +372,9 @@ def test_hires_bank_does_not_shrink_frozen_attribute_samples(monkeypatch, tmp_pa
         return image, {"ink": [0, 6, width, 46], "baseline": 46}
 
     letters(label)
-    before = vector.hires_bin(entries, None, (mapping, {}))
+    before = vector.hires_bin(entries, (mapping, {}))
     narrower = True
-    after = vector.hires_bin(entries, None, (mapping, {}))
+    after = vector.hires_bin(entries, (mapping, {}))
 
     old, new = ({(row.entry, row.item): row for row in read_hires_bank(bank)} for bank in (before, after))
     assert set(old) == set(new) == {(4079, item) for item in accepted} | set(others)
@@ -457,9 +457,7 @@ def test_font_environment_does_not_drop_package_or_inherited_import_paths(monkey
     ([], "give --output-dir"),
     (["--entries", "42"], "give --output-dir"),
     (["--output-dir", "out", "--entries", "42"], "give --output-dir"),
-    (["--output-dir", "out", "--variant", "help"], "must be NAME=VALUE"),
-    (["--output-dir", "out", "--variant", "help=wide", "--variant", "help=wide"], "specified twice"),
-    (["--entries", "42", "--preview-dir", "out", "--hires", "vector", "--hires-only"],
+    (["--entries", "42", "--preview-dir", "out", "--hires", "--hires-only"],
      "--hires-only needs --hires and --output-dir"),
 ])
 def test_cli_rejects_invalid_selection_before_opening_inputs(monkeypatch, capsys, tmp_path, extra, message):
@@ -490,11 +488,11 @@ def test_art_build_refuses_a_wrong_donor_archive_before_writing_anything(tmp_pat
             for member, data in contents.items():
                 (stem.parent / member).write_bytes(b"x" * len(data) if stem == wrong and member.endswith("lnk") else data)
         with pytest.raises(build.ArtError, match="Wrong donor member hash: linkdata_ens.lnk"):
-            build.build_art(tmp_path / "game", *stems, None, output, hires="vector")
+            build.build_art(tmp_path / "game", *stems, None, output, hires=True)
     assert not output.exists()
 
 
-@pytest.mark.parametrize("path", [[], ["--hires", "vector", "--hires-only"]], ids=["full", "hires-only"])
+@pytest.mark.parametrize("path", [[], ["--hires", "--hires-only"]], ids=["full", "hires-only"])
 def test_the_command_line_refuses_a_wrong_donor_archive_on_each_path(tmp_path, monkeypatch, capsys, path):
     """Bug: the command line leaves the donor check to build_art, so a --hires-only run, which never calls it, letters
     the large menus from an archive that fails its pin; or the full build stops turning the refusal into a usage exit."""
@@ -563,8 +561,8 @@ def test_count_neighbor_uses_its_own_donor_item():
     assert edit["donor"] == [7, 11, 0]
 
 
-def test_review_override_does_not_get_lost_or_leak_into_the_next_build(monkeypatch, letters):
-    monkeypatch.setattr(vector, "REVIEW_VARIANTS", {"help": "per-screen", "camp": "x360"})
+def test_help_rows_take_the_treatment_of_their_own_screen(letters):
+    """Bug: a help row letters with another screen's treatment (condensed, wide or condensed-camp)."""
     treatments = {"condensed": (24, (38, 38, 38, 255)),
                   "wide": (40, (57, 57, 57, 255)),
                   "condensed-camp": (32, (57, 57, 57, 255))}
@@ -579,22 +577,16 @@ def test_review_override_does_not_get_lost_or_leak_into_the_next_build(monkeypat
     letters(rendered_label)
     served = Image.new("RGBA", (128, 32))
     served.paste((38, 38, 38, 255), (3, 7, 50, 25))
-    cases = [([], 4069, 0, "condensed"), ([], 4060, 6, "wide"),
-             ([], 4060, 12, "condensed-camp"),
-             (["help=wide", "camp=wo1"], 4069, 0, "wide"),
-             (["help=condensed"], 4060, 6, "condensed"),
-             (["help=condensed-camp"], 4069, 0, "condensed-camp"),
-             ([], 4069, 0, "condensed")]
+    cases = [(4069, 0, "condensed"), (4060, 6, "wide"), (4060, 12, "condensed-camp")]
     failures = []
-    for choices, entry, item, role in cases:
-        vector.set_review_variants(choices)
+    for entry, item, role in cases:
         edit = {"entry": entry, "item": item, "style": "help",
                 "bands": [(0, 32)], "rows": [[{"text": "Fixture"}]]}
         art = vector.vector_art(edit, served, ["Fixture"], 2)
         box = art.getbbox()
         actual = (box[2] - box[0], art.getpixel((box[0], box[1])))
         if actual != treatments[role]:
-            failures.append((choices, entry, item, actual, treatments[role]))
+            failures.append((entry, item, actual, treatments[role]))
     assert not failures, failures
 
 
@@ -627,7 +619,7 @@ def test_native_ability_bank_does_not_grow_fitting_ink_or_drop_fixed_reserve(mon
     for item, right, minimum in ((76, 112, 0), (76, 113, 116), (69, 126, 144)):
         monkeypatch.setattr(vector, "HIRES_NATIVE_MENU", {(4079, item)})
         mapping = {"textures": [{"entry": 4079, "item": item, "texture": 0, "text": str(right)}]}
-        bank = vector.hires_bin(entries, None, (mapping, {}))
+        bank = vector.hires_bin(entries, (mapping, {}))
         row, = read_hires_bank(bank)
         actual = row.minimum
         if actual != minimum:
@@ -700,6 +692,18 @@ def test_faces_built_by_workers_come_back_in_the_order_of_the_recipe(monkeypatch
     mapping = {"faces": {"list": {}, "header": {}, "tabs": {}}}
     assert list(faces.faces(mapping, {}, 4).values()) == ["STAGE", "TITLE", "LIST", "HEADER", "TABS"]
     assert list(faces.faces(mapping, {}, 1)) == ["stage", "title", "list", "header", "tabs"]
+
+
+def test_the_build_letters_with_exactly_the_faces_its_edits_name(monkeypatch):
+    """Bugs: a face a nested piece or a stage title names is left out (the build stops on it), a face no edit names is
+    built anyway, or a preview of an entry that letters with no face cannot start (a pool of no workers)."""
+    monkeypatch.setattr(faces, "_face", _slow_early_face)
+    mapping = {"faces": {"list": {}, "header": {}, "tabs": {}}}
+    edits = {"none": [{"blank": True}],
+             "nested and title": [{"rows": [[{"text": "a"}, {"face": "header", "text": "b"}]]}, {"stage_title": "c"}],
+             "parts": [{"draw": [{"face": "tabs", "parts": ["d"]}]}]}
+    built = {name: list(faces.faces(mapping, {}, 4, faces.used_faces(group))) for name, group in edits.items()}
+    assert built == {"none": [], "nested and title": ["title", "header"], "parts": ["tabs"]}
 
 
 def test_every_official_sheet_a_face_names_is_a_donor_the_recipes_pass() -> None:
@@ -876,7 +880,7 @@ def test_art_build_runs_without_the_warriors_orochi_pc_disc(tmp_path):
     run = subprocess.run([sys.executable, "-m", "wozmod.art.build", "--game", str(game),
                           "--wo1-x360-donor", str(donors / "wo1-x360/linkdata_ens"),
                           "--wo2-donor", str(donors / "wo2-x360/linkdata_ens"), "--text-donors", str(donors),
-                          "--output-dir", str(tmp_path / "out"), "--hires", "vector"],
+                          "--output-dir", str(tmp_path / "out"), "--hires"],
                          capture_output=True, text=True, env={**os.environ, "PYTHONPYCACHEPREFIX": str(pycache)})
     assert run.returncode == 0, run.stdout[-2000:] + run.stderr[-4000:]
     imported = {Path("/", *p.relative_to(pycache).parent.parts, p.name.split(".")[0] + ".py") for p in pycache.rglob("*.pyc")}

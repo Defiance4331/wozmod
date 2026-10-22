@@ -462,15 +462,27 @@ def _face(name: str) -> Face:
     return face
 
 
-def faces(mapping: dict, donors: dict, jobs: int = 1) -> dict:
-    """The lettering faces, one worker process each when jobs > 1 (the longest step before the worker pool)."""
+def used_faces(edits) -> set[str]:
+    """The faces edits letter with: each piece's "face", and the title face for a stage title."""
+    if isinstance(edits, dict):
+        found = {edits["face"]} if isinstance(edits.get("face"), str) else set()
+        return found | ({"title"} if "stage_title" in edits else set()) | used_faces(list(edits.values()))
+    if isinstance(edits, list):
+        return set().union(*map(used_faces, edits))
+    return set()
+
+
+def faces(mapping: dict, donors: dict, jobs: int = 1, used: set[str] | None = None) -> dict:
+    """The lettering faces (only those in used, when given), one worker process each when jobs > 1 (the longest step
+    before the worker pool)."""
     global FACE_WORK
     # a words-only face lends its sheets' words (labels, hi-res rows) and letters nothing, so its art is never read
     names = ["stage", "title", *(name for name, face in mapping.get("faces", {}).items() if not face.get("words_only"))]
+    names = [name for name in names if used is None or name in used]
     FACE_WORK = mapping, donors
     report_progress("art", "reading the lettering faces", 0.05, (0, len(names)))
     found = {}
-    if jobs > 1:
+    if jobs > 1 and len(names) > 1:  # an entry may letter with one face or none
         with worker_pool(min(jobs, len(names))) as pool:
             pending = {pool.submit(_face, name): name for name in names}
             try:

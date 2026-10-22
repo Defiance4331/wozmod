@@ -77,49 +77,47 @@ def test_catalog_row_lookup_cannot_treat_explicit_keys_as_ordinals(tmp_path, mon
         references.load_catalog.cache_clear()
 
 
-def test_unknown_catalog_schema_cannot_supply_recipe_rows(tmp_path, monkeypatch):
+OFFICIAL = {"donor": "x360", "kind": "official", "ens": [7, 2, 0], "crop": [0, 0, 512, 42]}
+WRONG_CATALOGS = {
+    "unknown schema": {"schema": "other"},
+    "a field beside textures": {"note": "x"},
+    "a texture field no reader takes": {"textures": {"3.2": {"rows": {"7": {"role_variant": "blue"}}, "style": "x"}}},
+    "a texture with no rows": {"textures": {"3.2": {"rows": {}}}},
+    "a texture not named ENTRY.ITEM": {"textures": {"3": {"rows": {"7": {"role_variant": "blue"}}}}},
+    "a row not named by its number": {"textures": {"3.2": {"rows": {"x": {"role_variant": "blue"}}}}},
+    "an empty row": {"textures": {"3.2": {"rows": {"7": {}}}}},
+    "a misspelt row field": {"textures": {"3.2": {"rows": {"7": {"role_varient": "blue"}}}}},
+    "a row field no reader takes": {"textures": {"3.2": {"rows": {"7": {"role_variant": "blue", "alignment": "full"}}}}},
+    "a role that is not a name": {"textures": {"3.2": {"rows": {"7": {"role_variant": 1}}}}},
+    "a pc_text that is not a word": {"textures": {"3.2": {"rows": {"7": {"pc_text": 1}}}}},
+    "an original from an unknown donor": {"textures": {"3.2": {"rows": {"7": {"original": {**OFFICIAL, "donor": "wo1"}}}}}},
+    "an original of another kind": {"textures": {"3.2": {"rows": {"7": {"original": {**OFFICIAL, "kind": "guess"}}}}}},
+    "an original with a short ens": {"textures": {"3.2": {"rows": {"7": {"original": {**OFFICIAL, "ens": [7, 2]}}}}}},
+    "an original with no crop": {"textures": {"3.2": {"rows": {"7": {"original": {
+        name: value for name, value in OFFICIAL.items() if name != "crop"}}}}}},
+    "a counterpart that names a donor": {"textures": {"3.2": {"rows": {"7": {"original": {
+        "kind": "no-official-counterpart", "donor": "x360"}}}}}},
+}
+
+
+def test_the_catalog_refuses_each_field_no_reader_takes_or_reads_wrongly(tmp_path, monkeypatch):
+    """Bug: a misspelt or stale catalog field loads silently, so its row letters with the default role or no donor
+    reference instead of failing the build. Each wrong catalog differs from a good one in one place."""
     catalog = tmp_path / "catalog.json"
-    catalog.write_text(json.dumps({"schema": "other", "textures": {
-        "3.2": {"rows": {"7": {"role_variant": "blue"}}}}}))
-    references.load_catalog.cache_clear()
     monkeypatch.setattr(references, "CATALOG", catalog)
+    good = {"schema": "moz-menu-visual-references-v1", "textures": {"3.2": {"rows": {
+        "6": {"original": OFFICIAL, "pc_text": "Fixture"}, "7": {"role_variant": "blue"},
+        "8": {"original": {"kind": "no-official-counterpart", "donor": None}}}}}}
+    loaded = []
     try:
-        with pytest.raises(ValueError, match="unsupported menu visual catalog"):
-            references.reference("3.2", 7)
+        for name, change in {"good": {}, **WRONG_CATALOGS}.items():
+            catalog.write_text(json.dumps({**good, **change}))
+            references.load_catalog.cache_clear()
+            try:
+                references.load_catalog()
+                loaded.append(name)
+            except ValueError:
+                pass
     finally:
         references.load_catalog.cache_clear()
-
-
-VARIED = 0x1B4EB1E4  # each row of each block a different order of the four DXT1 colours
-
-
-def donor_folder(tmp_path):
-    folder = tmp_path / "wo1-x360"
-    folder.mkdir()
-    texture = xbox_texture(indices=VARIED)
-    (folder / "linkdata_ens.lnk").write_bytes(texture + bytes(2048 - len(texture)))
-    (folder / "linkdata_ens.idx").write_bytes(
-        struct.pack(">4s3I4I", b"SM4L", 1, 1, 0, 0, 1, len(texture), 0))
-    return tmp_path
-
-
-def test_donor_reader_cannot_read_the_wrong_folder_or_crop_origin(tmp_path):
-    """Bug: a reference read from another disc's folder, or cropped from the wrong origin, returns other pixels."""
-    want = references.x360_members(xbox_texture(indices=VARIED))[0].textures[0]
-    whole = references.Image.frombytes("RGBA", (want.width, want.height), bytes(want.decode_rgba()))
-    assert whole.crop((1, 2, 4, 4)).tobytes() not in (whole.crop((0, 2, 3, 4)).tobytes(), whole.crop((1, 0, 4, 2)).tobytes())
-    reader = references.DonorReader(donor_folder(tmp_path))
-    image = reader.image({"donor": "wo1-x360", "ens": [0, 0, 0], "crop": [1, 2, 4, 4]})
-    assert (image.size, image.tobytes()) == ((3, 2), whole.crop((1, 2, 4, 4)).tobytes())
-
-
-def test_native_crop_cannot_silently_pad_pixels_outside_its_texture(tmp_path):
-    reader = references.DonorReader(donor_folder(tmp_path))
-    with pytest.raises(ValueError, match="crop exceeds"):
-        reader.image({"donor": "wo1-x360", "ens": [0, 0, 0], "crop": [0, 0, 9, 4]})
-
-
-def test_missing_counterpart_cannot_try_to_read_a_donor_archive(tmp_path):
-    reader = references.DonorReader(tmp_path)
-    with pytest.raises(ValueError, match="no official counterpart"):
-        reader.image({"kind": "no-official-counterpart"})
+    assert loaded == ["good"]

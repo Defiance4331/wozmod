@@ -7,6 +7,7 @@ import io
 import json
 import re
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from PIL import Image
@@ -78,6 +79,13 @@ def _zip_member(name: str) -> zipfile.ZipInfo:
     return member
 
 
+def _png(image: Image.Image) -> bytes:
+    clean = Image.frombytes(image.mode, image.size, image.tobytes())
+    stream = io.BytesIO()
+    clean.save(stream, format="PNG", optimize=False, compress_level=9)
+    return stream.getvalue()
+
+
 def write_bundle(path: str | Path, layers: dict[str, tuple[Image.Image, dict]],
                  recipe_sha256: str, metrics_only: frozenset[str] = frozenset(), *, outlines: bytes) -> None:
     """Write deterministic PNG layers, the glyph outlines and their checked index; metrics_only keys get no PNG."""
@@ -87,23 +95,21 @@ def write_bundle(path: str | Path, layers: dict[str, tuple[Image.Image, dict]],
     if not isinstance(layers, dict) or any(not isinstance(key, str) or not key for key in layers):
         raise ValueError("layer keys must be nonempty strings")
     rows = []
-    payloads = []
     for key in sorted(layers):
         image, metrics = layers[key]
         if not isinstance(image, Image.Image) or image.mode not in _MODES:
             raise ValueError(f"unsupported layer image mode for {key}")
         if min(image.size) <= 0:
             raise ValueError(f"invalid layer image size for {key}")
-        row = {"key": key, "path": None, "sha256": None, "mode": image.mode,
-               "size": list(image.size), "metrics": _metrics(metrics)}
-        if key not in metrics_only:
-            clean = Image.frombytes(image.mode, image.size, image.tobytes())
-            stream = io.BytesIO()
-            clean.save(stream, format="PNG", optimize=False, compress_level=9)
-            payload = stream.getvalue()
-            row["path"], row["sha256"] = _layer_path(key), hashlib.sha256(payload).hexdigest()
-            payloads.append((row["path"], payload))
-        rows.append(row)
+        rows.append({"key": key, "path": None, "sha256": None, "mode": image.mode,
+                     "size": list(image.size), "metrics": _metrics(metrics)})
+    shipped = [row for row in rows if row["key"] not in metrics_only]
+    with ThreadPoolExecutor() as pool:  # the PNG encoder lets go of the GIL; each layer's bytes are its own
+        encoded = list(pool.map(lambda row: _png(layers[row["key"]][0]), shipped))
+    payloads = []
+    for row, payload in zip(shipped, encoded, strict=True):
+        row["path"], row["sha256"] = _layer_path(row["key"]), hashlib.sha256(payload).hexdigest()
+        payloads.append((row["path"], payload))
     index = _json_bytes({"format_version": FORMAT_VERSION,
                          "recipe_sha256": recipe_sha256,
                          "outlines_sha256": hashlib.sha256(outlines).hexdigest(), "layers": rows})

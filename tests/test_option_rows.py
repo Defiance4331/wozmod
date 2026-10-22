@@ -83,7 +83,7 @@ def test_hires_bank_carries_the_option_sheet_as_an_entry_zero_row(monkeypatch, t
                         lambda scale, squeeze: Image.new("RGBA", (vector.OPTION_W * scale, rows_h * scale)))
     (entries / "4069.bin").write_bytes(b"package")
     mapping = {"faces": {}, "textures": [{"entry": 4069, "item": 2, "rows": [[{"text": "x"}]]}]}
-    blob = vector.hires_bin(entries, None, (mapping, {}))
+    blob = vector.hires_bin(entries, (mapping, {}))
     rows = read_hires_bank(blob)
     scale = vector.HIRES_SCALE
     assert [(row.entry, row.item, row.w, row.h, row.band, row.per_col) for row in rows] == [

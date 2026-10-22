@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Stage a run, launch the game, run a check spec, stop, and print the result: one command.
 
-    uv run python tools/run_check.py --install work/install [--dll FILE] [--save NAME]
+    uv run python tools/run_check.py --install work/install [--dll FILE] [--art DIR] [--save NAME]
         [--only SCREEN,...] [SPEC]
 
 With --to SCREEN [--stage N] it routes the game there instead and leaves it running for hand commands
@@ -115,7 +115,8 @@ def run_check(args: argparse.Namespace, stage=prepare_run.prepare, start=launch)
         t = time.monotonic()
         size = getattr(args, "size", None)
         root = stage(run_name(args.name, attempt), args.install.resolve(strict=True), args.dll, args.save,
-                     settings=args.setting + ([f"display.size={size}"] if size else []), replace=args.file)
+                     settings=args.setting + ([f"display.size={size}"] if size else []), replace=args.file,
+                     art=args.art and args.art.resolve(strict=True))
         phases["stage"] += time.monotonic() - t
         t, proc = time.monotonic(), start(root, getattr(args, "pad", False), *([size] if size else []))
         try:
@@ -165,6 +166,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="fixture under work/saves (default full-unlock), a save.dat path, or none for a fresh profile")
     parser.add_argument("--file", action="append", default=[], metavar="INSTALLED=PATH",
                         help="swap one installed file for a working build, such as wozmod/table.bin=PATH")
+    parser.add_argument("--art", type=Path, metavar="DIR",
+                        help="swap all of the install's menu art for a fresh art build's: DIR as `python -m "
+                             "wozmod.art.build --output-dir DIR --hires` or `python -m wozmod.art compose` wrote it")
     parser.add_argument("--setting", action="append", default=[], metavar="SECTION.KEY=VALUE",
                         help="a mod setting saved before the run, such as display.fps=120")
     parser.add_argument("--pad", action="store_true", help="routes press a pad, so captures show the pad's prompts")

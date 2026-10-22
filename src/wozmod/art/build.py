@@ -37,12 +37,12 @@ from . import packing
 from .packing import packed_lzp2, worker_pool
 from .faces import (
     BANNER_LINES, BANNER_SAMPLE_WIDTH, BANNER_SINGLE_CENTRE, BASELINE, CARD_CENTRE, CARD_DROP, DREAM_NAME_BASELINES,
-    FILLS, Face, faces, ink_rows, lettering_layer, nearest, source_image, stock_image, strokes, text_lines,
+    FILLS, faces, ink_rows, lettering_layer, nearest, source_image, stock_image, strokes, text_lines, used_faces,
 )
 from .vector import (
-    ABILITY_QUAD_MINIMUM, DARK, HIRES, MENU_RASTER, REVIEW_VARIANTS, hires_bin, menu_label_key, menu_render_options,
+    ABILITY_QUAD_MINIMUM, DARK, HIRES, MENU_RASTER, hires_bin, menu_label_key, menu_render_options,
     native_menu_label, native_menu_layout, native_menu_payload, native_menu_role, native_menu_text, native_plate,
-    native_reference_entries, native_stage_baseline, native_stage_left, rekeyed, set_review_variants,
+    native_reference_entries, native_stage_baseline, native_stage_left, rekeyed,
     sound_menu_rows, squished_native_label, value_label, value_tinted,
 )
 MAPPING = REPO / "data/art/menu_textures.json"
@@ -121,12 +121,6 @@ def wo1_donors(stem: Path, entries: set[int]) -> dict:
 def wo2_g1ts(data: bytes) -> dict[int, G1tFile]:
 
     return x360_members(data)
-
-def stage_strip(text: str, font: Face, width: int, height: int) -> Image.Image:
-
-    image, baseline = font.render(text)
-    box = image.getbbox()
-    return placed(Image.new("RGBA", (width, height)), image.crop(box), 2, BASELINE - baseline + box[1])
 
 def only_strokes(image: Image.Image, spec: dict) -> Image.Image:
 
@@ -216,26 +210,31 @@ def recoloured(image: Image.Image, edit: dict) -> Image.Image:
         image = glowed(image, *edit["glow"])
     return image
 
-def prepare_menu_labels(mapping: dict, output_dir: Path | None = None) -> dict:
-
+def prepare_menu_labels(mapping: dict, output_dir: Path | None = None, entries: set[int] | None = None) -> dict:
+    """The native menu labels, drawn in one batch: all of them, or only those the edits of entries letter."""
     requests = {}
+    wanted = lambda *ordinals: entries is None or not entries.isdisjoint(ordinals)
 
     def add(style, text, role=None):
         requests.setdefault(menu_label_key(style, text, role),
                             {"style": style, "text": text, **({"role": role} if role else {})})
 
-    for text in mapping.get("stage_names", {}).get("names", []):
-        add("stage.stage", text)
-    for item in (23, 24, 25):
-        for row in sound_menu_rows(mapping, item):
-            add("sound.sound", row["text"])
-    for item in range(60, 78):
-        add("rounded.ability", native_menu_text(4079, item),
-            native_menu_role(4079, item))
-    add("rounded.base", native_menu_text(4079, 80))
+    stages = mapping.get("stage_names", {})
+    if wanted(*(strips["entry"] for strips in stages.get("strips", []))):
+        for text in stages.get("names", []):
+            add("stage.stage", text)
+    if wanted(4069):
+        for item in (23, 24, 25):
+            for row in sound_menu_rows(mapping, item):
+                add("sound.sound", row["text"])
+    if wanted(4079):
+        for item in range(60, 78):
+            add("rounded.ability", native_menu_text(4079, item),
+                native_menu_role(4079, item))
+        add("rounded.base", native_menu_text(4079, 80))
     for edit in mapping.get("textures", []):
         spec = edit.get("banner") or edit.get("card")
-        if spec and "lines" in spec:
+        if spec and "lines" in spec and wanted(*(ordinal for ordinal, _ in expanded(edit))):
             style = "banner.large" if len(spec["lines"]) == 1 else "banner.small"
             for row, text in enumerate(spec["lines"]):
                 add(style, text, officer_name_role(edit, row))
@@ -669,11 +668,11 @@ class ArtError(ValueError):
         self.donor = donor
 
 def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: Path | None,
-              output_dir: Path | None, *, hires: str | None = None, squeeze: bool = True, jobs: int | None = None,
+              output_dir: Path | None, *, hires: bool = False, squeeze: bool = True, jobs: int | None = None,
               review: bool = False, lzp2_cache: Path | None = None, latin_cells: Path | None = None,
               preview_dir: Path | None = None, entries: list[int] | None = None) -> None:
     """Build the menu art into output_dir/wozmod: entries/<ordinal>.bin, prompts-xbox.bin, glyphs.bin, and with hires
-    ('vector', 'fixture' or a folder of <entry>.<item>.png sheets) hires.bin.
+    hires.bin (the large-menu sheets the vector faces letter).
 
     The donors are linkdata_ens paths without their suffix, checked against their pins; text_donors is the folder the
     menu words resolve from. Nothing but the player files is written unless review is set: then the label review,
@@ -736,13 +735,14 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
     with base_bin.open("rb") as stream:
         donors |= {("moz", k): donor_g1ts(read_entry(stream, index.entries[k])[0])
                    for k in sorted({e[key][0] for e in flat for key in ("against", "base") if key in e})}
-    donors["faces"] = faces(mapping, donors, jobs)
+    donors["faces"] = faces(mapping, donors, jobs, used_faces(list(edits.values())))
     review_dir = output_dir / "review" if output_dir else preview_dir
-    donors["menu_labels"] = prepare_menu_labels(mapping, review_dir / "native-menu-labels" if review else None)
+    donors["menu_labels"] = prepare_menu_labels(mapping, review_dir / "native-menu-labels" if review else None,
+                                                set(edits) if entries else None)
     donors["menu_sound_rows"] = {item: sound_menu_rows(mapping, item) for item in (23, 24, 25)}
     if preview_dir:
         preview_dir.mkdir(parents=True, exist_ok=True)
-    if review and lettering.ACTIVE is None:
+    if review and lettering.ACTIVE is None and not entries:  # its rows cover every entry
         native_width_path = review_dir / "native-menu-widths.json"
         native_width_path.parent.mkdir(parents=True, exist_ok=True)
         with lettering.untracked():
@@ -784,7 +784,7 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
         atlas = b"".join(parse_lzp2(m).decoded for m in read_members(stream, index.entries[FONT_ENTRY]))
     (output_dir / "wozmod/glyphs.bin").write_bytes(glyphs_bin(atlas, from_json(outlines)))
     if hires:
-        write_hires(output_dir, hires, wo1_x360, wo2, squeeze, jobs, review)
+        write_hires(output_dir, wo1_x360, wo2, squeeze, jobs, review)
     print(f"{output_dir}: {len(stored)} entries")
 
 def main(argv: list[str] | None = None) -> int:
@@ -804,13 +804,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="write <entry>.<item>.<texture>.png stock|edited sheets of every edited texture")
     parser.add_argument("--entries", type=int, nargs="+",
                         help="rebuild only these entries for --preview-dir; writes no entries")
-    parser.add_argument("--hires", help="write wozmod/hires.bin: 'vector' (rows lettered by the vector "
-                        "faces), 'fixture' (2x nearest copy of the served art, for plumbing tests only) or a "
-                        "directory of <entry>.<item>.png sheets")
+    parser.add_argument("--hires", action="store_true",
+                        help="also write wozmod/hires.bin, the large-menu sheets the vector faces letter")
     parser.add_argument("--hires-only", action="store_true", help="with --hires: the entries are already built")
-    parser.add_argument("--variant", action="append", default=[], metavar="NAME=VALUE",
-                        help="review lettering: help=per-screen|condensed|wide|condensed-camp; "
-                        "camp=x360|wo1 (repeat to combine; defaults are per-screen and x360)")
     parser.add_argument("--no-squish", action="store_true",
                         help="developer oracle only: keep full-width vector lettering")
     parser.add_argument("--game", type=Path, default=os.environ.get("WOZMOD_GAME"))
@@ -821,31 +817,24 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     lettering.FONT_PYTHON = args.font_python
     working = args.output_dir or args.preview_dir
-    try:
-        set_review_variants(args.variant)
-    except ValueError as error:
-        parser.error(str(error))
-    if args.variant and args.hires != "vector":
-        parser.error("--variant needs --hires vector")
     if (bool(args.entries) == bool(args.output_dir)) or (args.entries and not args.preview_dir):
         parser.error("give --output-dir, or --entries with --preview-dir (a partial build is never written)")
     if args.hires_only and not (args.hires and args.output_dir):
         parser.error("--hires-only needs --hires and --output-dir")
     if not args.hires_only and args.game is None:
         parser.error("give --game or WOZMOD_GAME")
-    if not args.hires_only or args.hires == "vector":
-        try:  # build_art checks the archives against their pins; a --hires-only run never calls it
-            args.wo1_x360_donor = donor_stem(args.wo1_x360_donor, args.wo1_x360_iso, WO1_X360,
-                                             working / "donors/wo1-x360", check=args.hires_only)
-            args.wo2_donor = donor_stem(args.wo2_donor, args.wo2_iso, X360, working / "donors/wo2-x360",
-                                        check=args.hires_only)
-        except ValueError as error:
-            parser.error(str(error))
+    try:  # build_art checks the archives against their pins; a --hires-only run never calls it
+        args.wo1_x360_donor = donor_stem(args.wo1_x360_donor, args.wo1_x360_iso, WO1_X360,
+                                         working / "donors/wo1-x360", check=args.hires_only)
+        args.wo2_donor = donor_stem(args.wo2_donor, args.wo2_iso, X360, working / "donors/wo2-x360",
+                                    check=args.hires_only)
+    except ValueError as error:
+        parser.error(str(error))
     lzp2_cache = args.cache_dir or working / "lzp2-cache"
     if args.hires_only:
         packing.LZP2_CACHE = lzp2_cache
         words.use(args.text_donors)
-        write_hires(args.output_dir, args.hires, args.wo1_x360_donor, args.wo2_donor, not args.no_squish, args.jobs,
+        write_hires(args.output_dir, args.wo1_x360_donor, args.wo2_donor, not args.no_squish, args.jobs,
                     review=True, fresh=False)
     else:
         try:
@@ -866,35 +855,26 @@ def write_manifest(directory: Path) -> None:
     (directory / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
 
 
-def write_hires(output_dir: Path, hires: str, wo1_x360: Path | None, wo2: Path | None, squeeze: bool, jobs: int = 1,
+def write_hires(output_dir: Path, wo1_x360: Path | None, wo2: Path | None, squeeze: bool, jobs: int = 1,
                 review: bool = False, fresh: bool = True) -> None:
     """Write output_dir/wozmod/hires.bin over the built entries; review and fresh as for build_art, where fresh
     clears the plate sources a --hires-only run reuses."""
-    source = None if hires in ("fixture", "vector") else Path(hires)
-    vector = None
-    if hires == "vector":
-        mapping = words.load(MAPPING)
-        if review and fresh:
-            cache = output_dir / "vector-plate-sources"
-            for old in cache.glob("*.g1t"):
-                old.unlink()
-        pieces = [p for e in mapping["textures"] if (e["entry"], e.get("item")) in {h[:2] for h in HIRES} | set(DARK)
-                  for row in e.get("rows") or [e.get("draw", [])] for p in row]
-        donors = wo1_donors(wo1_x360, {p["donor"][0] for p in pieces if "box" in p and "donor" in p} | {1, 16})
-        donors |= {("wo2", k): x360_members(v) for k, v in wo1_entries(
-            wo2.with_suffix(".lnk"), wo2.with_suffix(".idx"),
-            sorted(set(X360_PLATE_ENTRIES) | native_reference_entries(mapping))).items()}
-        donors["menu_labels"] = prepare_menu_labels(mapping)
-        donors["squish"] = squeeze
-        vector = mapping, donors
+    mapping = words.load(MAPPING)
+    if review and fresh:
+        cache = output_dir / "vector-plate-sources"
+        for old in cache.glob("*.g1t"):
+            old.unlink()
+    pieces = [p for e in mapping["textures"] if (e["entry"], e.get("item")) in {h[:2] for h in HIRES} | set(DARK)
+              for row in e.get("rows") or [e.get("draw", [])] for p in row]
+    donors = wo1_donors(wo1_x360, {p["donor"][0] for p in pieces if "box" in p and "donor" in p} | {1, 16})
+    donors |= {("wo2", k): x360_members(v) for k, v in wo1_entries(
+        wo2.with_suffix(".lnk"), wo2.with_suffix(".idx"),
+        sorted(set(X360_PLATE_ENTRIES) | native_reference_entries(mapping))).items()}
+    donors["menu_labels"] = prepare_menu_labels(mapping)
+    donors["squish"] = squeeze
     (output_dir / "wozmod/hires.bin").write_bytes(hires_bin(
-        output_dir / "wozmod/entries", source, vector, squeeze, jobs, output_dir if review else None))
-    if review:
-        (output_dir / "review-variant.json").write_text(json.dumps({
-            "schema": "moz-menu-review-variant-v1", "selection": dict(REVIEW_VARIANTS),
-            "runtime_edits": "shared", "geometry": "per-bank minima and right-anchor growth",
-        }, indent=2) + "\n", encoding="utf-8")
-    print(f"{output_dir}: hires.bin ({hires})")
+        output_dir / "wozmod/entries", (mapping, donors), squeeze, jobs, output_dir if review else None))
+    print(f"{output_dir}: hires.bin")
 
 if __name__ == "__main__":
     raise SystemExit(main())

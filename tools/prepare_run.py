@@ -36,6 +36,8 @@ STOCK_HASHED = ["OROCHI_Z.exe", *(f"LINKDATA{n}.{ext}" for n in "123" for ext in
 
 HASH_CACHE = WORK / "hash-cache.json"
 MANIFEST = installer.MANIFEST  # the installer's record of every file it wrote, with its SHA-256
+# the files an art build writes under wozmod/ (wozmod.art.build.build_art with hires, as the installer runs it)
+ART_FILES = re.compile(r"wozmod/(entries/[0-9]+\.bin|glyphs\.bin|hires\.bin|prompts-xbox\.bin)")
 # the mod's own settings, as its Settings menu writes them to wozmod/settings.ini: section.key -> allowed values
 SETTINGS = {"language.text": ("english", "japanese"), "language.voice": ("english", "japanese"),
             "camera.fov": None, "camera.moving_fix": ("on", "off"), "display.fps": ("60", "120"),
@@ -203,19 +205,34 @@ def save_data(save: str, template: Path) -> tuple[bytes | None, str]:
     return data, save
 
 
+def art_build(folder: Path, files: dict[str, str]) -> list[str]:
+    """--file pairs that swap all of the install's menu art for an art build's: folder/wozmod as
+    `python -m wozmod.art.build --output-dir FOLDER --hires` or `python -m wozmod.art compose` wrote it. Refused
+    unless it holds every art file of the install record and nothing else, so a run never mixes two builds' art."""
+    built = {p.relative_to(folder).as_posix(): p for p in (folder / "wozmod").rglob("*") if p.is_file()}
+    installed = {name for name in files if ART_FILES.fullmatch(name)}
+    if stray := sorted(set(built) - installed):
+        raise ValueError(f"--art {folder}: not menu art of the install record: {', '.join(stray[:8])}")
+    if missing := sorted(installed - set(built)):
+        raise ValueError(f"--art {folder}: not a whole art build (give --hires), it lacks {', '.join(missing[:8])}")
+    return [f"{name}={path}" for name, path in sorted(built.items())]
+
+
 def prepare(name: str, install: Path, dll: Path | None, save: str, cache_file: Path = HASH_CACHE,
-            settings: list[str] = (), replace: list[str] = ()) -> Path:
+            settings: list[str] = (), replace: list[str] = (), art: Path | None = None) -> Path:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}", name):
         raise ValueError("run name is a short filename of letters, digits, . _ and -")
     template = WORK / "runtime-tests/_template"
     check_template(template)
     files = installed_files(install, cache_file)
     replaced = {}  # an installed file swapped for a working build, as --dll does for d3d9.dll; fixtures.json lists them
-    for pair in replace:
+    for pair in [*replace, *(art_build(art, files) if art else [])]:
         listed, _, source = pair.partition("=")
         if listed not in files or listed == "d3d9.dll":
             raise ValueError(f"--file {pair!r}: name a file of the install record, such as wozmod/table.bin=PATH "
                              "(d3d9.dll goes in with --dll)")
+        if listed in replaced:
+            raise ValueError(f"{listed} is swapped twice (by --file and --art?)")
         replaced[listed] = Path(source).resolve(strict=True)
     ini = settings_ini(settings) if settings else None
     dll = (dll or install / "d3d9.dll").resolve(strict=True)
@@ -279,10 +296,12 @@ def main(argv: list[str] | None = None) -> int:
                         help="a mod setting the player saved earlier, such as display.fps=120 (default: none, as installed)")
     parser.add_argument("--file", action="append", default=[], metavar="INSTALLED=PATH",
                         help="swap one installed file for a working build, such as wozmod/table.bin=work/x/table.bin")
+    parser.add_argument("--art", type=Path, metavar="DIR",
+                        help="swap all of the install's menu art for an art build's output folder (DIR/wozmod)")
     args = parser.parse_args(argv)
     try:
         print(prepare(args.name, args.install.resolve(strict=True), args.dll, args.save, settings=args.setting,
-                      replace=args.file))
+                      replace=args.file, art=args.art and args.art.resolve(strict=True)))
         return 0
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as exc:
         print(f"prepare_run: {exc}", file=sys.stderr)

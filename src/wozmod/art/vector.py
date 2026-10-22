@@ -26,9 +26,6 @@ from .packing import packed_lzp2, worker_pool
 from .faces import BASELINE, gaps, ink_rows, source_image
 
 
-REVIEW_VARIANTS = {"help": "per-screen", "camp": "x360"}
-CAMP_WO1_ROWS = {(4094, 4), (4094, 16), (4098, 11), (4098, 15)}
-
 TIME_LABEL_LAYOUT = {
     (4080, 14): ("time-purple", 5.0, 23.5),
     (4080, 27): ("time-blue", 24.0, 23.5),  
@@ -36,33 +33,6 @@ TIME_LABEL_LAYOUT = {
     (4077, 27): ("time-x360", 4.0, 24.0),
     (4085, 9): ("time-x360", 8.0, 24.0),
 }
-
-def set_review_variants(variants: dict[str, str] | list[str] | None = None) -> dict[str, str]:
-
-    from wozmod.fonts.menu_styles import HELP_TREATMENTS
-
-    selected = {"help": "per-screen", "camp": "x360"}
-    values = variants or {}
-    if isinstance(values, list):
-        parsed = {}
-        for value in values:
-            if "=" not in value:
-                raise ValueError(f"review variant must be NAME=VALUE: {value}")
-            key, choice = value.split("=", 1)
-            if key in parsed:
-                raise ValueError(f"review variant specified twice: {key}")
-            parsed[key] = choice
-        values = parsed
-    allowed = {"help": {"per-screen", *HELP_TREATMENTS}, "camp": {"wo1", "x360"}}
-    for key, choice in values.items():
-        if key not in allowed or choice not in allowed[key]:
-            raise ValueError(f"unsupported review variant {key}={choice}; choices are "
-                             + ", ".join(f"{name}={','.join(sorted(choices))}"
-                                         for name, choices in allowed.items()))
-        selected[key] = choice
-    REVIEW_VARIANTS.clear()
-    REVIEW_VARIANTS.update(selected)
-    return dict(selected)
 
 def menu_render_options(entry: int, item: int, row: int, piece: dict, style: str,
                         *, destination: tuple[int, int] | None = None) -> list[str]:
@@ -73,10 +43,7 @@ def menu_render_options(entry: int, item: int, row: int, piece: dict, style: str
     record = reference(f"{entry}.{item}", row) or {}
     role = record.get("role_variant")
     if menu_style == "dark.help":
-        role = (help_treatment(entry, item, row) if REVIEW_VARIANTS["help"] == "per-screen"
-                else REVIEW_VARIANTS["help"])
-    elif menu_style == "dark.camp" and (entry, item) in CAMP_WO1_ROWS and REVIEW_VARIANTS["camp"] == "wo1":
-        role = "wo1"
+        role = help_treatment(entry, item, row)
     elif not role and menu_style in {"dark.pause", "dark.camp"}:
         role = "blue" if piece.get("donor", [])[:2] in [[1, 18], [1, 19]] else "purple"
     time_key = (entry, item) if destination is None else destination
@@ -942,24 +909,24 @@ def _now(function, *args) -> Future:
     return done
 
 
-def hires_bin(entries: Path, source: Path | None, vector: tuple | None = None,
-              squeeze: bool = False, jobs: int = 1, review: Path | None = None) -> bytes:
+def hires_bin(entries: Path, vector: tuple, squeeze: bool = False, jobs: int = 1,
+              review: Path | None = None) -> bytes:
     """The large-menu sheets. With the native codecs (they let go of the GIL) the texture encoding and the
     LZP2 packing of each sheet run on `jobs` threads while the next sheet is drawn; the bytes are the same.
-    review is the developer folder that keeps the plate sources and the per-sheet layout details."""
+    vector is (the menu_textures mapping, the donors); review is the developer folder that keeps the plate sources
+    and the per-sheet layout details."""
     if not (native.module and jobs > 1):
-        return _hires_bin(entries, source, vector, squeeze, jobs, _now, review)
+        return _hires_bin(entries, vector, squeeze, jobs, _now, review)
     with ThreadPoolExecutor(jobs) as pool:
-        return _hires_bin(entries, source, vector, squeeze, jobs, pool.submit, review)
+        return _hires_bin(entries, vector, squeeze, jobs, pool.submit, review)
 
 
-def _hires_bin(entries: Path, source: Path | None, vector: tuple | None, squeeze: bool, jobs: int, later,
-               review: Path | None) -> bytes:
+def _hires_bin(entries: Path, vector: tuple, squeeze: bool, jobs: int, later, review: Path | None) -> bytes:
     rows, packages, parsed = [], {}, {}
     plate_sources = review and review / "vector-plate-sources"
-    if vector and review:
+    if review:
         plate_sources.mkdir(parents=True, exist_ok=True)
-    extras = list(DARK) + (sorted(HIRES_NATIVE_MENU) if vector else [])
+    extras = list(DARK) + sorted(HIRES_NATIVE_MENU)
     plates = HIRES + [(e, i, 0, 0, 0, 0) for e, i in extras]
     for number, (entry, item, w, h, band, per_col) in enumerate(plates):
         scale = HIRES_SCALE
@@ -970,7 +937,7 @@ def _hires_bin(entries: Path, source: Path | None, vector: tuple | None, squeeze
             parsed[entry] = parse_texture_package(parse_lzp2(data).decoded if data[:4] == b"LZP2" else data)
         package = parsed[entry]
         g1t = package.items[item].g1t
-        if vector and review and (entry, item) in DARK_PLATE:
+        if review and (entry, item) in DARK_PLATE:
             original = plate_sources / f"{entry}.{item}.g1t"
             if not original.exists():
                 original.write_bytes(g1t.encode())
@@ -980,15 +947,11 @@ def _hires_bin(entries: Path, source: Path | None, vector: tuple | None, squeeze
             w, h, band = served.width, served.height, served.height
         if served.width != w or served.height < h:
             raise ValueError(f"served {entry}.{item} is {served.size}, not {w} x at least {h}")
-        if source:
-            art = Image.open(source / f"{entry}.{item}.png").convert("RGBA")
-            if art.width != w * scale or art.height < h * scale:
-                raise ValueError(f"{entry}.{item}.png is {art.size}, not {w * scale} x at least {h * scale}")
-        elif (entry, item) in PAGE_LABEL and vector:
+        if (entry, item) in PAGE_LABEL:
             art = page_label_art(vector[0]["main_rows"], scale, w, served, squeeze)
-        elif (entry, item) in MAIN and vector:
+        elif (entry, item) in MAIN:
             art = main_art(vector[0]["main_rows"], served, scale, MAIN[(entry, item)], squeeze)
-        elif vector:
+        else:
             mapping, donors = vector
             if (entry, item) in HIRES_NATIVE_MENU:
                 art = native_menu_art(entry, item, served, mapping, donors, scale, squeeze)
@@ -1026,8 +989,6 @@ def _hires_bin(entries: Path, source: Path | None, vector: tuple | None, squeeze
                     (details / f"{entry}.{item}.json").write_text(json.dumps(art.info["plate"], indent=2) + "\n", encoding="utf-8")
             else:
                 art = vector_art(edit, served, texts, scale, VECTOR_WINDOW.get((entry, item)), squeeze)
-        else:
-            art = served.resize((served.width * scale, served.height * scale), Image.Resampling.NEAREST)
         growth = art.info.get("right_growth", 0)
         if growth:
             w += growth
@@ -1035,17 +996,17 @@ def _hires_bin(entries: Path, source: Path | None, vector: tuple | None, squeeze
 
             w = max(w, art.info.get("minimum", 0))
         art = art.crop((0, 0, w * scale, h * scale))
-        overlay = bool(vector) and (entry, item) in DARK_PLATE
+        overlay = (entry, item) in DARK_PLATE
         if not overlay:
             minimum = 0
         if (entry, item) in (set(DARK) - set(DARK_PLATE)) | HIRES_NATIVE_MENU:
             box = art.getbbox()
             minimum = art.info.get("minimum", 4 * math.ceil((box[2] / scale + 2) / 4) if box else 0)
-            if vector and (entry, item) in ATTRIBUTE_QUAD_MINIMUM:
+            if (entry, item) in ATTRIBUTE_QUAD_MINIMUM:
                 minimum = max(minimum, ATTRIBUTE_QUAD_MINIMUM[entry, item])
         rows.append((dict(entry=entry, item=item, w=w, h=h, band=band, per_col=per_col, overlay=overlay,
                           right_grow=bool(growth), minimum=minimum), later(hires_blocks, art, w, band, per_col)))
-    if vector and (4069, 2) in {plate[:2] for plate in plates}:  # entry 0: no stock texture, the runtime draws it
+    if (4069, 2) in {plate[:2] for plate in plates}:  # entry 0: no stock texture, the runtime draws it
         rows.append((dict(entry=0, item=0, w=OPTION_W, h=len(OPTION_ROWS) * OPTION_BAND, band=OPTION_BAND, per_col=0),
                      later(hires_blocks, option_rows_art(HIRES_SCALE, squeeze), OPTION_W, OPTION_BAND, 0)))
     encoded = {entry: package.encode() for entry, package in packages.items()}

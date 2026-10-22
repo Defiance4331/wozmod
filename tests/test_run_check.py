@@ -185,6 +185,38 @@ def record(install: Path) -> None:
     (install / "wozmod/install.json").write_text(json.dumps({"format": 1, "files": files}))
 
 
+ART = ("wozmod/entries/4059.bin", "wozmod/entries/4060.bin", "wozmod/glyphs.bin", "wozmod/hires.bin",
+       "wozmod/prompts-xbox.bin")
+
+
+def test_an_art_build_swaps_exactly_the_installs_menu_art(tools, tmp_path, monkeypatch):
+    """Bugs: a file of the art folder that is not the install's menu art (a review file, a table.bin) is staged, or a
+    partial art build (one built without --hires) goes in beside the install's older art, so a run mixes two builds;
+    or a swapped file is staged with other bytes than the build's."""
+    prep, staged = tools.prepare_run, staging(tools, tmp_path, monkeypatch)
+    for name in ART:
+        (staged.install / name).write_bytes(b"installed " + name.encode())
+    record(staged.install)
+    folders = {"whole build": ART, "a review file": (*ART, "wozmod/review/notes.json"),
+               "a text table": (*ART, "wozmod/table.bin"), "no hires.bin": ART[:3] + ART[4:]}
+    outcomes = {}
+    for case, names in folders.items():
+        folder = tmp_path / "art" / case.replace(" ", "-")
+        for name in names:
+            (folder / name).parent.mkdir(parents=True, exist_ok=True)
+            (folder / name).write_bytes(b"built " + name.encode())
+        try:
+            root = prep.prepare(case.replace(" ", "-"), staged.install, None, "s", staged.cache, art=folder)
+        except ValueError:
+            outcomes[case] = "refused"
+            continue
+        game = {name: (root / "game" / name).read_bytes() for name in (*ART, "wozmod/table.bin")}
+        outcomes[case] = (game == {**{name: b"built " + name.encode() for name in ART}, "wozmod/table.bin": b"table"}
+                          and all(prep.recorded(root)[name] == digest(data) for name, data in game.items()))
+    assert outcomes == {"whole build": True, "a review file": "refused", "a text table": "refused",
+                        "no hires.bin": "refused"}
+
+
 def test_run_starts_from_a_fixture_a_save_file_or_no_save(tools, tmp_path, monkeypatch):
     """Bugs: a save.dat path is looked up only as a fixture name, or staged with other bytes; a fresh-profile run
     (--save none) gets a save anyway, or silently sees the template prefix's save through its overlay."""
@@ -235,7 +267,8 @@ class FakeSupervisor:
 def args(tmp_path, spec, only=None):
     import game_harness
     (tmp_path / "d3d9.dll").write_bytes(b"MZ" + game_harness.TEST_MAGIC)  # a --test build
-    return SimpleNamespace(spec=spec, install=tmp_path, dll=None, save="s", setting=[], file=[], pad=False, only=only, name="check")
+    return SimpleNamespace(spec=spec, install=tmp_path, dll=None, save="s", setting=[], file=[], art=None, pad=False, only=only,
+                           name="check")
 
 
 @pytest.fixture
@@ -252,7 +285,7 @@ def drive_with(tools, tmp_path, monkeypatch, spec, runs, check=0, only=None, gam
     monkeypatch.setattr(tools.run_check, "stop", lambda root, proc: None)
     monkeypatch.setattr(tools.run_check.harness, "check", lambda root, spec, only: check)
 
-    def stage(name, install, dll, save, settings=(), replace=()):
+    def stage(name, install, dll, save, settings=(), replace=(), art=None):
         staged.append(tmp_path / "work/runtime-tests" / name)
         staged[-1].mkdir(parents=True)
         return staged[-1]
@@ -301,7 +334,7 @@ def test_run_routed_with_to_stays_up_unless_the_route_failed(tools, tmp_path, mo
     stops = []
     monkeypatch.setattr(tools.run_check, "stop", lambda root, proc: stops.append(root))
 
-    def stage(name, install, dll, save, settings=(), replace=()):
+    def stage(name, install, dll, save, settings=(), replace=(), art=None):
         (tmp_path / "work/runtime-tests" / name).mkdir(parents=True)
         return tmp_path / "work/runtime-tests" / name
 

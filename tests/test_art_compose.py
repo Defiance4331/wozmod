@@ -53,9 +53,8 @@ class DenyFontTools(importlib.abc.MetaPathFinder):
             raise ImportError("font tool import forbidden: " + fullname)
 
 sys.meta_path.insert(0, DenyFontTools())
-from wozmod.art import compose
+from wozmod.art.compose import compose  # as the installer imports it
 assert callable(compose)
-importlib.import_module("wozmod.art.compose")
 assert not attempted, attempted
 assert not any(name.split(".")[0] in blocked for name in sys.modules)
 print("compose imported without font tools")
