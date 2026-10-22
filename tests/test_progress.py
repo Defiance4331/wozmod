@@ -163,7 +163,7 @@ def game(tmp_path, monkeypatch):
     (folder / "data/LINKDATA1.BIN").write_bytes(b"stock archive")
     monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: None)
 
-    def build(game, inputs, staging, progress, jobs, checked):
+    def build(game, inputs, staging, progress, jobs, checked, cache=None):
         out = staging / "out"
         (out / "wozmod").mkdir(parents=True)
         for key in ("discs", "text", "voices", "art"):

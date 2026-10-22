@@ -32,7 +32,7 @@ def game(tmp_path: Path, monkeypatch) -> Path:
     monkeypatch.setattr(installer, "STOCK_FILES", {"OROCHI_Z.exe": _pin(b"stock exe"),
                                                    "data/LINKDATA1.BIN": _pin(b"stock archive")})
 
-    def build(game, inputs, staging, progress, jobs, checked):
+    def build(game, inputs, staging, progress, jobs, checked, cache=None):
         out = staging / "out"
         (out / "wozmod/entries").mkdir(parents=True)
         (out / "d3d9.dll").write_bytes(b"dll")
@@ -116,8 +116,8 @@ def test_a_reinstall_leaves_unchanged_files_in_place_and_replaces_changed_ones(g
     inodes = {name: (game / name).stat().st_ino for name in ("d3d9.dll", "wozmod/entries/4059.bin", "wozmod/table.bin")}
     build = installer._build
 
-    def changed_table(*args):
-        out = build(*args)
+    def changed_table(*args, **kwargs):
+        out = build(*args, **kwargs)
         (out / "wozmod/table.bin").write_bytes(b"new table")
         return out
 

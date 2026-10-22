@@ -96,7 +96,7 @@ def test_wrong_output_gets_the_plain_message_and_the_install_stops_before_buildi
     image = _xbox_image(tmp_path, b"default.xex", ENCRYPTED)
     tool = fake(tmp_path / "tool", "xex2ool", produces=b"X" * len(DECRYPTED))
     # the build runs while the checks finish: it must not go on past them
-    monkeypatch.setattr(installer, "_build", lambda *args: (args[-1](), pytest.fail("the build must not go on past the checks"))[1])
+    monkeypatch.setattr(installer, "_build", lambda *args, **kwargs: (args[-1](), pytest.fail("the build must not go on past the checks"))[1])
     monkeypatch.setattr(installer.resources, "ffmpeg", lambda: "ffmpeg")
     inputs = {"wo1": tmp_path, "wo1-x360": image, "x360": image, "psp": tmp_path, "x360-tool": tool, "psp-tool": tmp_path,
               "lettering": tmp_path, "dll": tmp_path}
@@ -168,7 +168,7 @@ def test_a_wrong_file_is_refused_with_the_plain_message_and_the_install_stops_be
     assert installer.resolve_program("x360", {"x360-file": bad}) == ("x360-file", installer.WRONG_FILE)
     game = tmp_path / "game"
     game.mkdir()
-    monkeypatch.setattr(installer, "_build", lambda *args: (args[-1](), pytest.fail("the build must not go on past the checks"))[1])
+    monkeypatch.setattr(installer, "_build", lambda *args, **kwargs: (args[-1](), pytest.fail("the build must not go on past the checks"))[1])
     monkeypatch.setattr(installer.resources, "ffmpeg", lambda: "ffmpeg")
     inputs = {"wo1": tmp_path, "x360": _xbox_image(tmp_path, b"default.xex", ENCRYPTED), "psp": tmp_path,
               "wo1-x360": tmp_path, "wo1-x360-file": _decrypted_file(tmp_path), "x360-file": bad, "x360-tool": None,
