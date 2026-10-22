@@ -93,8 +93,8 @@ def test_psp_map_joins_dream_lines_past_stage_139_insertion_voiced_quote_slots_a
 
 
 @pytest.mark.skipif(not (os.environ.get("WOZMOD_GAME") and os.environ.get("WOZMOD_DONORS")
-                         and os.environ.get("WOZMOD_PSP_ISO")),
-                    reason="set WOZMOD_GAME, WOZMOD_DONORS and WOZMOD_PSP_ISO")
+                         and os.environ.get("WOZMOD_WO2_PSP_ISO")),
+                    reason="set WOZMOD_GAME, WOZMOD_DONORS and WOZMOD_WO2_PSP_ISO")
 @pytest.mark.slow_first
 def test_every_psp_voice_group_plays_the_stock_lines_own_japanese_take() -> None:
     # Bug: a wrong PSP clip base, or a Z Dream stage or quote slot paired one line off, plays another line's English.
@@ -112,7 +112,7 @@ def test_every_psp_voice_group_plays_the_stock_lines_own_japanese_take() -> None
     game = Path(os.environ["WOZMOD_GAME"])
     moz, linkdata1 = moz_scripts(game / "LINKDATA2"), archive(game / "LINKDATA1")
     quotes = linkdata1[QUOTES[0]]
-    mapping = psp_text_voice_map(moz, quotes, DonorsFolder(Path(os.environ["WOZMOD_DONORS"])).folder("psp") / PSP_TEXT)
+    mapping = psp_text_voice_map(moz, quotes, DonorsFolder(Path(os.environ["WOZMOD_DONORS"])).folder("wo2-psp") / PSP_TEXT)
     groups: dict[str, list[int]] = {}
     for ordinal in range(132, 144):
         for record in moz[ordinal].dialog.records:
@@ -133,7 +133,7 @@ def test_every_psp_voice_group_plays_the_stock_lines_own_japanese_take() -> None
             ogg = parse_kovs_record(bank.read(size), verify_checksums=False)[2]
             return ogg.sample_count / ogg.sample_rate
         stock = {i: stock_seconds(i) for i in mapping}
-    with Iso9660(os.environ["WOZMOD_PSP_ISO"]) as disc, disc.open("PSP_GAME/USRDIR/sound/voice.bns") as japanese:
+    with Iso9660(os.environ["WOZMOD_WO2_PSP_ISO"]) as disc, disc.open("PSP_GAME/USRDIR/sound/voice.bns") as japanese:
         header = japanese.read(16)
         table = japanese.read(8 * struct.unpack_from("<I", header, 4)[0])
         def psp_seconds(member: int) -> float:

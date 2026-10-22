@@ -90,7 +90,7 @@ def paired_psp_rows(stock_dir: Path, fns_path: Path) -> list[PspPair]:
             group: str, location: list) -> None:
         text = donor_text(english)
         if text is not None and text.strip():
-            rows.append(PspPair(stock, ["psp", "fns", member, view, *indices], group, location))
+            rows.append(PspPair(stock, ["wo2-psp", "fns", member, view, *indices], group, location))
 
     linkdata2 = archive(stock_dir / "LINKDATA2")
     stages = linkdata2.read(PSP_STAGE_MEMBERS)

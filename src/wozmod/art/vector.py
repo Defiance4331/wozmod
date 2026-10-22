@@ -104,8 +104,8 @@ def native_menu_label(donors: dict, style: str, text: str, role: str | None = No
 
 def squished_native_label(donors: dict, style: str, text: str, role=None,
                           *, entry: int, item: int, row: int = 0, room: float,
-                          scale: int = 1, label=None, metrics=None, x360: bool = True) -> tuple:
-    """Condense a native label to the width its X360 counterpart fills, or (x360=False or no
+                          scale: int = 1, label=None, metrics=None, wo2_x360: bool = True) -> tuple:
+    """Condense a native label to the width its X360 counterpart fills, or (wo2_x360=False or no
     counterpart) only as far as it overflows `room`."""
     if label is None:
         label, metrics = native_menu_label(donors, style, text, role)
@@ -113,7 +113,7 @@ def squished_native_label(donors: dict, style: str, text: str, role=None,
         return label, metrics
     original = (reference(f"{entry}.{item}", row) or {}).get("original", {})
     geometry = None
-    if x360 and original.get("donor") == "x360" and original.get("ens"):
+    if wo2_x360 and original.get("donor") == "wo2-x360" and original.get("ens"):
         ens, member, texture = original["ens"]
         source = rgba(donors[("wo2", ens)][member].textures[texture])
         source = source.crop(original.get("crop"))
@@ -136,7 +136,7 @@ def native_reference_entries(mapping: dict) -> set[int]:
     from wozmod.fonts.menu_references import load_catalog
     return {record["original"]["ens"][0] for entry, item in keys
             for record in load_catalog().get(f"{entry}.{item}", {}).get("rows", {}).values()
-            if record.get("original", {}).get("donor") == "x360"
+            if record.get("original", {}).get("donor") == "wo2-x360"
             and record["original"].get("ens")}
 
 def draw_native_menu_label(image: Image.Image, label: Image.Image, metrics: dict,
@@ -197,7 +197,7 @@ def native_menu_payload(target, edit: dict, donors: dict) -> bytes | None:
         width, height = (432, 42) if key[0] == 4108 else (440, 35)
         # MOZ strips: a stage name condenses only where it overflows its own strip.
         label, metrics = squished_native_label(donors, "stage.stage", edit["stage_name"],
-                                               entry=key[0], item=key[1], room=width - 2, x360=False)
+                                               entry=key[0], item=key[1], room=width - 2, wo2_x360=False)
         image = Image.new("RGBA", (target.width, target.height))
         draw_native_menu_label(image, label, metrics, native_stage_left(label, metrics),
                                native_stage_baseline(label, metrics), (0, 0, width, height))

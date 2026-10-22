@@ -2,7 +2,7 @@
 """Print donor text candidates beside the translation table, for review before rows are added or changed.
 
     uv run python tools/text_candidates.py coverage            # per stock text source: rows by source, keys without one
-    uv run python tools/text_candidates.py psp [--all] [--rows] # WO2 PSP pairings (paired_psp_rows) against the table
+    uv run python tools/text_candidates.py wo2-psp [--all] [--rows] # WO2 PSP pairings (paired_psp_rows) against the table
     uv run python tools/text_candidates.py official [--all]     # WO1 and WO2 X360 pairings (official_pairs) against it
     uv run python tools/text_candidates.py prx WORDS            # WO2 PSP program strings holding WORDS, with their slot
 
@@ -93,13 +93,13 @@ def _print(status: str, key: str, where, ref, stock: bytes, english: str, row: d
         print(f"    table : {(shown or '')[:100]}  ({row['source']} {json.dumps(row.get('ref')) if 'ref' in row else ''})")
 
 
-def psp(args) -> None:
+def wo2_psp(args) -> None:
     from wozmod.donors import DonorsFolder
     from wozmod.text.psp_alignment import paired_psp_rows
 
     game, donors = _inputs(args)
     resolver, rows = DonorResolver(donors), _rows()
-    fns = DonorsFolder(donors).folder("psp") / "PSP_GAME/USRDIR/LINKDATA_NA.FNS"
+    fns = DonorsFolder(donors).folder("wo2-psp") / "PSP_GAME/USRDIR/LINKDATA_NA.FNS"
     counts, pasted = Counter(), {}
     for pair in paired_psp_rows(game, fns):
         if not (JAPANESE.search(pair.stock) and pair.stock.strip(b" \n\x81\x40") and (found := stock_key(pair.stock))):
@@ -124,7 +124,7 @@ def official(args) -> None:
 
     game, donors = _inputs(args)
     folders, resolver, rows = DonorsFolder(donors), DonorResolver(donors), _rows()
-    pairs = official_pairs(game, folders.folder("wo1-x360") / "linkdata_ens", wo2_x360(folders.folder("x360") / "linkdata_ens"))
+    pairs = official_pairs(game, folders.folder("wo1-x360") / "linkdata_ens", wo2_x360(folders.folder("wo2-x360") / "linkdata_ens"))
     counts = Counter()
     for stock, (english, source) in pairs.items():
         if not (found := stock_key(stock)):
@@ -144,7 +144,7 @@ def prx(args) -> None:
     words = " ".join(args.words).casefold()
     for slot, text in enumerate(DonorResolver(donors).psp_pool()):
         if text and words in text.casefold():
-            print(f'["psp", "prx", {slot}]  {text[:100]!r}')
+            print(f'["wo2-psp", "prx", {slot}]  {text[:100]!r}')
 
 
 def main(argv=None) -> int:
@@ -153,13 +153,13 @@ def main(argv=None) -> int:
     parser.add_argument("--donors", help="the extracted donor folder")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("coverage", help="rows per stock text source, and the keys without one")
-    for name in ("psp", "official"):
+    for name in ("wo2-psp", "official"):
         command = commands.add_parser(name, help=f"{name} candidates against the table")
         command.add_argument("--all", action="store_true", help="also print the candidates the table already settles")
-    commands.choices["psp"].add_argument("--rows", action="store_true", help="print the new and ours candidates as rows")
+    commands.choices["wo2-psp"].add_argument("--rows", action="store_true", help="print the new and ours candidates as rows")
     commands.add_parser("prx", help="search the PSP program strings").add_argument("words", nargs="+")
     args = parser.parse_args(argv)
-    {"coverage": coverage, "psp": psp, "official": official, "prx": prx}[args.command](args)
+    {"coverage": coverage, "wo2-psp": wo2_psp, "official": official, "prx": prx}[args.command](args)
     return 0
 
 

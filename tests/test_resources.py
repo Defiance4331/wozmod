@@ -78,7 +78,7 @@ def test_packaged_install_takes_the_dll_and_lettering_from_inside_the_bundle(tmp
     from wozmod import __main__ as cli
     seen = {}
     monkeypatch.setattr(cli, "install", lambda game, inputs, **_: seen.update(inputs))
-    discs = [arg for name in ("wo1-x360", "x360", "psp", "x360-tool", "psp-tool") for arg in (f"--{name}", name)]
+    discs = [arg for name in ("wo1-x360", "wo2-x360", "wo2-psp", "x360-tool", "psp-tool") for arg in (f"--{name}", name)]
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "executable", str(tmp_path / "release" / "wozmod"))
     monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path / "release/_internal"), raising=False)

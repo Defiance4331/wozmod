@@ -128,21 +128,21 @@ def test_psp_candidate_reader_keeps_duplicate_occurrences_at_their_original_memb
         stock_entries[ordinal] = _script_bytes(stock_notices, stock_dialog)
         donor_entries[member] = _script_bytes(donor_notices, donor_dialog)
         for slot in range(donor_notices):
-            expected.append(PspPair(b"Stock", ["psp", "fns", member, "notices", slot],
+            expected.append(PspPair(b"Stock", ["wo2-psp", "fns", member, "notices", slot],
                                     "Z Dream stage lines", ["linkdata2", ordinal, "notices", slot]))
         for slot in range(donor_dialog):
             stock_slot = slot + 12 if ordinal == 139 and slot >= 56 else slot
-            expected.append(PspPair(b"Stock", ["psp", "fns", member, "dialog", slot],
+            expected.append(PspPair(b"Stock", ["wo2-psp", "fns", member, "dialog", slot],
                                     "Z Dream stage lines", ["linkdata2", ordinal, "dialog", stock_slot]))
     write_stock_archive(tmp_path, "LINKDATA1", {4190: mesc(b"Stock") * 40, 4084: _quotes(b"@0001")})
     for row in range(28, 40):
         donor_entries[33 + row] = mesc(b"Stock")
-        expected.append(PspPair(b"Stock", ["psp", "fns", 33 + row, "mesc", 0, 0],
+        expected.append(PspPair(b"Stock", ["wo2-psp", "fns", 33 + row, "mesc", 0, 0],
                                 "Z Dream briefings", ["linkdata1", 4190, "mesc", row, 0]))
     donor_entries[27] = _quotes(b"@SV1_2")
     for table in range(109):
         group = "New officers' quotes" if table in (96, 97) else "Other quotes"
-        expected.append(PspPair(b"Stock", ["psp", "fns", 27, "quotes", table, 0], group,
+        expected.append(PspPair(b"Stock", ["wo2-psp", "fns", 27, "quotes", table, 0], group,
                                 ["linkdata1", 4084, "quotes", table, 0]))
     event_members = [(402 + slot, 164 + slot) for slot in range(6)]
     event_members += [(408 + slot, 158 + slot) for slot in range(6)]
@@ -152,11 +152,11 @@ def test_psp_candidate_reader_keeps_duplicate_occurrences_at_their_original_memb
         if ordinal == 404:
             continue
         for cue, line_id in enumerate((2, 9)):
-            expected.append(PspPair(b"Stock", ["psp", "fns", member, "captions", [cue]],
+            expected.append(PspPair(b"Stock", ["wo2-psp", "fns", member, "captions", [cue]],
                                     "Event subtitles", ["linkdata2", ordinal, "event", line_id]))
     for ordinal, member in ((175, 196), (176, 197)):
         stock_entries[ordinal], donor_entries[member] = _telop(1), _telop(1)
-        expected.append(PspPair(b"Stock", ["psp", "fns", member, "captions", [0]],
+        expected.append(PspPair(b"Stock", ["wo2-psp", "fns", member, "captions", [0]],
                                 "Movie captions", ["linkdata2", ordinal, "captions", 0]))
     write_stock_archive(tmp_path, "LINKDATA2", stock_entries)
     fns_path = tmp_path / "LINKDATA_NA.FNS"

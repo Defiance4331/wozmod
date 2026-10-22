@@ -231,14 +231,14 @@ def test_batched_x360_clips_keep_their_own_audio_across_batch_boundaries(tmp_pat
 
     lengths = [4800, 6400, 8000, 9600, 11200]  # three batches of two, the last one partial
     clips = [wav(n) for n in lengths]
-    bank = tmp_path / "x360.bdx"
+    bank = tmp_path / "wo2-x360.bdx"
     bank.write_bytes(b"".join(c + bytes(-len(c) % 2048) for c in clips))
     starts = [sum(-(-len(c) // 2048) for c in clips[:i]) for i in range(len(clips))]
     index = struct.pack(">II", len(clips), 0) + b"".join(
         struct.pack(">5I", i, starts[i], -(-len(c) // 2048), len(c), 48_000) for i, c in enumerate(clips))
     monkeypatch.setattr(audio, "FFMPEG_BATCH", 2)
 
-    converted, _ = audio.donor_voice_clips([("x360", {100 + i: i for i in range(len(clips))}, audio.wo2_voice_records(index), bank)], jobs=2)
+    converted, _ = audio.donor_voice_clips([("wo2-x360", {100 + i: i for i in range(len(clips))}, audio.wo2_voice_records(index), bank)], jobs=2)
 
     assert {moz_id: parse_kovs_record(clip)[2].sample_count for moz_id, clip in converted.items()} == {
         100 + i: n for i, n in enumerate(lengths)}
@@ -266,7 +266,7 @@ def test_voice_clip_too_long_for_the_game_slot_is_encoded_again_one_step_lower(t
     import wozmod.formats.audio as audio
 
     riffs = [b"A" * 2048, b"B" * 2048]
-    bank = tmp_path / "x360.bdx"
+    bank = tmp_path / "wo2-x360.bdx"
     bank.write_bytes(b"".join(riffs))
     index = struct.pack(">II", 2, 0) + b"".join(struct.pack(">5I", i, i, 1, 2048, 48_000) for i in range(2))
     calls = []
@@ -278,7 +278,7 @@ def test_voice_clip_too_long_for_the_game_slot_is_encoded_again_one_step_lower(t
         return [b"x" * (audio.SLOT_BYTES if job[1][:1] == b"B" and quality == audio.WO2_VORBIS_QUALITY else 100) for job in jobs]
 
     monkeypatch.setattr(audio, "_ffmpeg_each", fake)
-    clips, _ = audio.donor_voice_clips([("x360", {7: 0, 8: 1}, audio.wo2_voice_records(index), bank)])
+    clips, _ = audio.donor_voice_clips([("wo2-x360", {7: 0, 8: 1}, audio.wo2_voice_records(index), bank)])
 
     assert calls == [(audio.WO2_VORBIS_QUALITY, riffs), (audio.WO2_VORBIS_QUALITY - 1, [riffs[1]])]
     assert {i: len(c) for i, c in clips.items()} == {7: 132, 8: 132}

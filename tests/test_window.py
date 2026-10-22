@@ -32,7 +32,7 @@ def test_the_window_and_the_command_give_the_same_verdict_on_each_input(tmp_path
     monkeypatch.setattr(installer.resources, "ffmpeg", lambda: "ffmpeg")
     wrong = tmp_path / "wrong"
     wrong.write_bytes(b"xyz")
-    values = {"game": str(tmp_path), "wo1-x360": str(wrong), "x360": str(tmp_path / "none"), "psp": str(wrong),
+    values = {"game": str(tmp_path), "wo1-x360": str(wrong), "wo2-x360": str(tmp_path / "none"), "wo2-psp": str(wrong),
               "lettering": str(wrong), "dll": str(wrong)}
 
     def same_verdicts(names):
@@ -47,7 +47,7 @@ def test_the_window_and_the_command_give_the_same_verdict_on_each_input(tmp_path
     same_verdicts(("lettering", "dll"))  # the release files are checked first, on their own
     monkeypatch.setattr(installer, "LETTERING", (3, hashlib.sha256(b"xyz").hexdigest()))
     monkeypatch.setattr(installer, "DLL", installer.LETTERING)
-    same_verdicts(("game", "wo1-x360", "x360", "psp"))
+    same_verdicts(("game", "wo1-x360", "wo2-x360", "wo2-psp"))
 
 
 def test_settings_survive_a_restart_and_a_broken_file_is_ignored():
@@ -56,6 +56,14 @@ def test_settings_survive_a_restart_and_a_broken_file_is_ignored():
     assert remembered.load_settings() == {"game": "/some/folder"}
     remembered.settings_path().write_text("{not json")
     assert remembered.load_settings() == {}
+
+
+def test_paths_v0_1_0_remembered_come_back_under_the_disc_names_used_now():
+    # Bug: v0.1.0 remembered the Warriors Orochi 2 discs and their decrypted files as x360, psp, x360-file and
+    # psp-file; after the rename a returning player finds those four rows empty and has to pick each again.
+    remembered.save_settings({"game": "/g", "x360": "/a.iso", "psp": "/b.iso", "x360-file": "/c", "psp-file": "/d"})
+    assert remembered.load_settings() == {"game": "/g", "wo2-x360": "/a.iso", "wo2-psp": "/b.iso",
+                                          "wo2-x360-file": "/c", "wo2-psp-file": "/d"}
 
 
 @pytest.fixture(scope="session")
@@ -147,11 +155,11 @@ def test_every_place_names_each_disc_the_same_way(shown, tmp_path, monkeypatch, 
     from wozmod.progress import Progress
 
     win, root = shown
-    titles = {"wo1-x360": "Warriors Orochi (Xbox 360, USA)", "x360": "Warriors Orochi 2 (Xbox 360, USA)",
-              "psp": "Warriors Orochi 2 (PSP, USA)"}
+    titles = {"wo1-x360": "Warriors Orochi (Xbox 360, USA)", "wo2-x360": "Warriors Orochi 2 (Xbox 360, USA)",
+              "wo2-psp": "Warriors Orochi 2 (PSP, USA)"}
     files = {"wo1-x360": ("wo1-x360-file", "x360-tool", "program file", "program file"),
-             "x360": ("x360-file", "x360-tool", "program file", "program file"),
-             "psp": ("psp-file", "psp-tool", "EBOOT", "EBOOT.BIN")}
+             "wo2-x360": ("wo2-x360-file", "x360-tool", "program file", "program file"),
+             "wo2-psp": ("wo2-psp-file", "psp-tool", "EBOOT", "EBOOT.BIN")}
     monkeypatch.setenv("COLUMNS", "200")
     with pytest.raises(SystemExit):
         cli.main(["install", "--help"])
@@ -355,7 +363,7 @@ def program_pins(monkeypatch):
     pin_synthetic_programs(monkeypatch)
     real = window.check_row
     monkeypatch.setattr(window, "check_row", lambda name, values: real(name, values) if name in (
-        "x360-tool", "x360-file", "wo1-x360-file") else (None, "OK"))
+        "x360-tool", "wo2-x360-file", "wo1-x360-file") else (None, "OK"))
     check = installer.check_input  # the disc image check is not under test; the decrypted file check is
     monkeypatch.setattr(installer, "check_input", lambda name, path: None if name in installer.DISCS else check(name, path))
     return DECRYPTED, ENCRYPTED, _xbox_image
@@ -367,7 +375,7 @@ def test_advanced_is_collapsed_by_default_and_opens_when_a_value_was_saved(shown
     assert not win.advanced_open and not win.advanced_widgets[0].winfo_manager()
     win.toggle_advanced()
     assert win.advanced_open and win.advanced_widgets[0].winfo_manager()
-    remembered.save_settings({"psp-file": "/some/EBOOT.BIN"})
+    remembered.save_settings({"wo2-psp-file": "/some/EBOOT.BIN"})
     again = tkinter.Tk(screenName=root.winfo_screen())
     again.withdraw()
     try:
@@ -386,17 +394,17 @@ def test_a_good_advanced_file_makes_its_program_row_not_required_and_a_bad_one_d
     good, wrong = tmp_path / "plain.pe", tmp_path / "wrong"
     good.write_bytes(plain)
     wrong.write_bytes(b"x")
-    for name in ("game", "psp", "psp-tool"):
+    for name in ("game", "wo2-psp", "psp-tool"):
         win.vars[name].set(str(tmp_path))
-    for name in ("x360", "wo1-x360"):
+    for name in ("wo2-x360", "wo1-x360"):
         win.vars[name].set(str(xbox_image(tmp_path, b"default.xex", encrypted)))
     win.vars["wo1-x360-file"].set(str(good))  # the program row stays required until both discs are covered
-    win.vars["x360-file"].set(str(wrong))
-    _wait(root, lambda: win.status["x360-file"].cget("text") == installer.WRONG_FILE)
+    win.vars["wo2-x360-file"].set(str(wrong))
+    _wait(root, lambda: win.status["wo2-x360-file"].cget("text") == installer.WRONG_FILE)
     win.check_program("psp-tool")
     _wait(root, lambda: win.good["psp-tool"] and win.good["game"])
     assert not win.good["x360-tool"] and "disabled" in win.install_button.state()
-    win.vars["x360-file"].set(str(good))
+    win.vars["wo2-x360-file"].set(str(good))
     _wait(root, lambda: win.status["x360-tool"].cget("text") == "Not needed: using the decrypted file under Advanced")
     _wait(root, lambda: "disabled" not in win.install_button.state())  # psp-file is empty and not needed
 
@@ -410,9 +418,9 @@ def test_a_red_decrypted_file_row_keeps_install_disabled_and_counts_as_missing(s
     win, root = shown
     wrong = tmp_path / "wrong"
     wrong.write_bytes(b"x")
-    for name in ("game", "psp", "psp-tool"):
+    for name in ("game", "wo2-psp", "psp-tool"):
         win.vars[name].set(str(tmp_path))
-    for name in ("x360", "wo1-x360"):
+    for name in ("wo2-x360", "wo1-x360"):
         win.vars[name].set(str(xbox_image(tmp_path, b"default.xex", encrypted)))
     win.vars["wo1-x360-file"].set(str(wrong))  # refused beside the program, which still runs on the other disc
     win.vars["x360-tool"].set(str(fake(tmp_path / "xextool", "xextool")))
@@ -435,11 +443,11 @@ def test_a_decrypted_file_turns_red_when_its_disc_image_turns_out_to_hold_one(sh
     (tmp_path / "held").mkdir()
     good = tmp_path / "plain.pe"
     good.write_bytes(plain)
-    win.vars["x360"].set(str(xbox_image(tmp_path / "encrypted", b"default.xex", encrypted)))
-    win.vars["x360-file"].set(str(good))
-    _wait(root, lambda: win.good["x360-file"])
-    win.vars["x360"].set(str(xbox_image(tmp_path / "held", b"default.xex", plain)))
-    _wait(root, lambda: win.status["x360-file"].cget("text") == installer.FILE_IN_IMAGE)
+    win.vars["wo2-x360"].set(str(xbox_image(tmp_path / "encrypted", b"default.xex", encrypted)))
+    win.vars["wo2-x360-file"].set(str(good))
+    _wait(root, lambda: win.good["wo2-x360-file"])
+    win.vars["wo2-x360"].set(str(xbox_image(tmp_path / "held", b"default.xex", plain)))
+    _wait(root, lambda: win.status["wo2-x360-file"].cget("text") == installer.FILE_IN_IMAGE)
 
 
 def test_the_install_reason_counts_the_rows_still_missing(shown):
@@ -447,11 +455,11 @@ def test_the_install_reason_counts_the_rows_still_missing(shown):
     # or it stays stale after a row turns good.
     win, root = shown
     assert "Pick the 6 missing items above" in win.reason.cget("text")
-    for name in ("game", "wo1-x360", "x360"):
+    for name in ("game", "wo1-x360", "wo2-x360"):
         win.good[name] = True
     win.refresh_buttons()
     assert "Pick the 3 missing items above" in win.reason.cget("text")
-    win.good["psp"] = win.good["x360-tool"] = True
+    win.good["wo2-psp"] = win.good["x360-tool"] = True
     win.refresh_buttons()
     assert win.reason.cget("text") == "Pick the missing item above to enable Install."
     win.good["psp-tool"] = True
@@ -477,9 +485,9 @@ def test_a_long_path_box_shows_the_end_of_the_path(shown):
     # Bug: a path longer than the box shows its start, so the player never sees the file name.
     win, root = shown
     root.deiconify()
-    win.vars["psp"].set("/very/long/" + "folder/" * 30 + "Warriors Orochi 2.iso")
-    _wait(root, lambda: win.entries["psp"].xview()[1] == 1.0)
-    assert win.entries["psp"].xview()[0] > 0
+    win.vars["wo2-psp"].set("/very/long/" + "folder/" * 30 + "Warriors Orochi 2.iso")
+    _wait(root, lambda: win.entries["wo2-psp"].xview()[1] == 1.0)
+    assert win.entries["wo2-psp"].xview()[0] > 0
 
 
 def test_the_help_link_opens_the_list_of_tested_programs(shown, monkeypatch):

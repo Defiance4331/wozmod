@@ -129,9 +129,9 @@ def test_directory_extent_cycle_is_rejected_before_repeating_paths(tmp_path: Pat
         disc.files()
 
 
-@pytest.mark.skipif(not os.environ.get("WOZMOD_X360_ISO"), reason="Donor disc not configured")
+@pytest.mark.skipif(not os.environ.get("WOZMOD_WO2_X360_ISO"), reason="Donor disc not configured")
 def test_real_disc_large_file_size_is_not_truncated_at_signed_boundary() -> None:
-    path = Path(os.environ["WOZMOD_X360_ISO"])
+    path = Path(os.environ["WOZMOD_WO2_X360_ISO"])
     if not path.is_file():
         pytest.skip("Donor disc is absent")
     expected = {

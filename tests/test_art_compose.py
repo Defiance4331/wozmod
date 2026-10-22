@@ -79,7 +79,7 @@ def test_the_install_art_build_writes_only_the_player_files(tmp_path):
     if not ((game / "LINKDATA1.BIN").is_file() and (donors / "wo2-x360/linkdata_ens.idx").is_file()
             and bundle.is_file()):
         pytest.skip("set WOZMOD_GAME, WOZMOD_DONORS (the installer's donors folder) and WOZMOD_LETTERING")
-    stems = {"wo1-x360": donors / "wo1-x360/linkdata_ens", "x360": donors / "wo2-x360/linkdata_ens", "text": donors}
+    stems = {"wo1-x360": donors / "wo1-x360/linkdata_ens", "wo2-x360": donors / "wo2-x360/linkdata_ens", "text": donors}
     compose(game, stems, bundle, tmp_path / "art")
     assert sorted(p.relative_to(tmp_path / "art").as_posix() for p in (tmp_path / "art").rglob("*")
                   if p.parent.name != "entries") == [

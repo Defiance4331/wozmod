@@ -205,7 +205,7 @@ def test_hashed_builder_does_not_drop_a_pointer_row_or_shift_name_overrides(synt
     substring = _token("substring")
     executable.write_bytes(old_exe + b"prefix" + substring + b"suffix\0")
     authored = {"key": hashlib.sha256(_token("message")).hexdigest(), "source": "authored", "en": "Authored message"}
-    pointer = {"key": hashlib.sha256(_token("name")).hexdigest(), "source": "wo1-x360", "ref": ["synthetic", 1]}
+    pointer = {"key": hashlib.sha256(_token("name")).hexdigest(), "source": "wo1-x360", "ref": ["wo1-x360", 1]}
     view = {"key": hashlib.sha256(substring).hexdigest(), "source": "authored", "en": "Authored substring", "key_ref": ["exe", len(old_exe) + 6, len(substring)]}
     data = tmp_path / "data"
     data.mkdir()

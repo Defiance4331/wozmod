@@ -12,7 +12,7 @@ from .render import RECIPE, RECIPE_VERSION
 
 
 def compose(stock, donors, bundle, output_dir, squish=True, jobs=None) -> Path:
-    """Build output_dir/wozmod and nothing else beside it; donors maps wo1-x360 and x360 to archive stems, and text
+    """Build output_dir/wozmod and nothing else beside it; donors maps wo1-x360 and wo2-x360 to archive stems, and text
     to the donors folder the menu words resolve from. Raises build.ArtError for a donor archive that fails its pin.
 
     The installer always squishes. squish=False is the developer oracle and needs a
@@ -26,7 +26,7 @@ def compose(stock, donors, bundle, output_dir, squish=True, jobs=None) -> Path:
     if set(layers) != set(recipe["requests"]):
         raise ValueError("lettering bundle dropped or added a recipe layer")
     with lettering.using(layers, outlines):
-        build.build_art(Path(stock), Path(donors["wo1-x360"]), Path(donors["x360"]), Path(donors["text"]),
+        build.build_art(Path(stock), Path(donors["wo1-x360"]), Path(donors["wo2-x360"]), Path(donors["text"]),
                         Path(output_dir), hires=True, squeeze=squish, jobs=jobs)
     return Path(output_dir) / "wozmod"
 
@@ -35,7 +35,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--game", type=Path, required=True)
     parser.add_argument("--wo1-x360-donor", type=Path, required=True)
-    parser.add_argument("--wo2-donor", type=Path, required=True)
+    parser.add_argument("--wo2-x360-donor", type=Path, required=True)
     parser.add_argument("--text-donors", type=Path, required=True)
     parser.add_argument("--bundle", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -43,7 +43,7 @@ def main(argv=None) -> int:
                         help="developer oracle only: full-width lettering from a --full-width bundle")
     args = parser.parse_args(argv)
     try:
-        compose(args.game, {"wo1-x360": args.wo1_x360_donor, "x360": args.wo2_donor,
+        compose(args.game, {"wo1-x360": args.wo1_x360_donor, "wo2-x360": args.wo2_x360_donor,
                                     "text": args.text_donors}, args.bundle,
                 args.output_dir, squish=not args.oracle_full_width)
     except build.ArtError as error:

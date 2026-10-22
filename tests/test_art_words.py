@@ -35,9 +35,9 @@ def test_pointer_deletes_then_cases_and_must_give_its_word(tmp_path, monkeypatch
             return {7: "\tAlder Grove", 8: "Harbors"}[ref[2]]
     monkeypatch.setattr(words, "DONORS", Donors())
     path = tmp_path / "visuals.json"
-    stored = {"a": {"ref": ["x360", "pe", 7], "edits": [[0, 1, ""]], "case": "upper",
+    stored = {"a": {"ref": ["wo2-x360", "pe", 7], "edits": [[0, 1, ""]], "case": "upper",
                     "sha256": words.sha256("ALDER GROVE")},
-              "b": [{"ref": ["x360", "pe", 8], "edits": [[0, 1, ""], [6, 7, ""]], "sha256": words.sha256("arbor")}]}
+              "b": [{"ref": ["wo2-x360", "pe", 8], "edits": [[0, 1, ""], [6, 7, ""]], "sha256": words.sha256("arbor")}]}
     path.write_text(json.dumps(stored))
     assert words.load(path) == {"a": "ALDER GROVE", "b": ["arbor"]}
 

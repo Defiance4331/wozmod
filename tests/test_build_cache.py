@@ -129,13 +129,13 @@ MOVIE = b"movie bytes"
 def _fake_text(game, donors, out):
     _ran(game, "text")
     (out / "wozmod").mkdir(parents=True, exist_ok=True)
-    (out / "wozmod/table.bin").write_bytes(b"table of " + DonorsFolder(donors).folder("x360").joinpath("link_vodat.bdx").read_bytes())
+    (out / "wozmod/table.bin").write_bytes(b"table of " + DonorsFolder(donors).folder("wo2-x360").joinpath("link_vodat.bdx").read_bytes())
 
 
 def _fake_voices(game, donors, out, jobs):
     _ran(game, "voices")
     (out / "wozmod/voice").mkdir(parents=True, exist_ok=True)
-    (out / "wozmod/voice/Voice.bin").write_bytes(b"voices of " + DonorsFolder(donors).folder("x360").joinpath("link_vodat.bdx").read_bytes())
+    (out / "wozmod/voice/Voice.bin").write_bytes(b"voices of " + DonorsFolder(donors).folder("wo2-x360").joinpath("link_vodat.bdx").read_bytes())
 
 
 def _fake_art(game, donors, lettering, staging, out, jobs):
@@ -157,7 +157,7 @@ def test_a_reused_step_puts_the_bytes_its_build_wrote_and_runs_nothing(tmp_path,
     game.mkdir()
     (tmp_path / "lettering.zip").write_bytes(b"bundle")
     (tmp_path / "d3d9.dll").write_bytes(b"dll")
-    inputs = {**{flag: tmp_path / flag for flag in ("wo1-x360", "x360", "psp")},
+    inputs = {**{flag: tmp_path / flag for flag in ("wo1-x360", "wo2-x360", "wo2-psp")},
               "lettering": tmp_path / "lettering.zip", "dll": tmp_path / "d3d9.dll"}
     reads = []
 
@@ -185,13 +185,13 @@ def test_a_reused_step_puts_the_bytes_its_build_wrote_and_runs_nothing(tmp_path,
 
     plain, runs, _ = build("plain")
     assert runs == ["art", "text", "voices"]
-    assert build("cold", cache) == (plain, runs, ["wo1-x360", "x360", "psp", "movies"])
-    assert build("warm", cache) == (plain, [], ["wo1-x360", "x360", "psp"])
+    assert build("cold", cache) == (plain, runs, ["wo1-x360", "wo2-x360", "wo2-psp", "movies"])
+    assert build("warm", cache) == (plain, [], ["wo1-x360", "wo2-x360", "wo2-psp"])
 
     with open(tmp_path / "cold/out/wozmod/table.bin", "r+b") as built:  # the cache keeps this very file
         built.write(b"TABLE")
-    assert build("edited", cache) == (plain, ["text"], ["wo1-x360", "x360", "psp"])
-    assert build("again", cache) == (plain, [], ["wo1-x360", "x360", "psp"])
+    assert build("edited", cache) == (plain, ["text"], ["wo1-x360", "wo2-x360", "wo2-psp"])
+    assert build("again", cache) == (plain, [], ["wo1-x360", "wo2-x360", "wo2-psp"])
 
     donor["bytes"] = b"donor two"
     changed, runs, _ = build("changed", cache)

@@ -19,7 +19,7 @@ from wozmod.donors.extract import _open_disc
 from wozmod import resources
 from wozmod.movies import DATA
 
-DISC_VARIABLES = {"wo2-x360": "WOZMOD_X360_ISO", "wo1-x360": "WOZMOD_WO1_X360_ISO"}
+DISC_VARIABLES = {"wo2-x360": "WOZMOD_WO2_X360_ISO", "wo1-x360": "WOZMOD_WO1_X360_ISO"}
 FILE_PROPERTIES = uuid.UUID("8cabdca1-a947-11cf-8ee4-00c00c205365").bytes_le
 TOLERANCE = 0.5  # seconds; the donor cuts run within 0.35 s of stock, neighbouring scenes differ by far more
 

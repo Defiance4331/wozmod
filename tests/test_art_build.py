@@ -462,7 +462,7 @@ def test_font_environment_does_not_drop_package_or_inherited_import_paths(monkey
 ])
 def test_cli_rejects_invalid_selection_before_opening_inputs(monkeypatch, capsys, tmp_path, extra, message):
     monkeypatch.chdir(tmp_path)
-    for name in ("WOZMOD_WO1_X360_DONOR", "WOZMOD_X360_DONOR", "WOZMOD_WO1_X360_ISO", "WOZMOD_X360_ISO"):
+    for name in ("WOZMOD_WO1_X360_DONOR", "WOZMOD_WO2_X360_DONOR", "WOZMOD_WO1_X360_ISO", "WOZMOD_WO2_X360_ISO"):
         monkeypatch.delenv(name, raising=False)
     with pytest.raises(SystemExit) as error:
         build.main(["--game", str(tmp_path / "absent-game"), *extra])
@@ -477,7 +477,7 @@ def test_art_build_refuses_a_wrong_donor_archive_before_writing_anything(tmp_pat
     from wozmod.donors import Donor, DonorFile
 
     contents = {"linkdata_ens.idx": b"index", "linkdata_ens.lnk": b"archive"}
-    for name in ("WO1_X360", "X360"):
+    for name in ("WO1_X360", "WO2_X360"):
         monkeypatch.setattr(build, name, Donor(name, "xdvdfs", tuple(
             DonorFile(member, member, len(data), hashlib.sha256(data).hexdigest()) for member, data in contents.items())))
     stems = [tmp_path / "wo1-x360/linkdata_ens", tmp_path / "wo2-x360/linkdata_ens"]
@@ -499,7 +499,7 @@ def test_the_command_line_refuses_a_wrong_donor_archive_on_each_path(tmp_path, m
     from wozmod.donors import Donor, DonorFile
 
     contents = {"linkdata_ens.idx": b"index", "linkdata_ens.lnk": b"archive"}
-    for name in ("WO1_X360", "X360"):
+    for name in ("WO1_X360", "WO2_X360"):
         monkeypatch.setattr(build, name, Donor(name, "xdvdfs", tuple(
             DonorFile(member, member, len(data), hashlib.sha256(data).hexdigest()) for member, data in contents.items())))
     stems = {}
@@ -511,7 +511,7 @@ def test_the_command_line_refuses_a_wrong_donor_archive_on_each_path(tmp_path, m
     output = tmp_path / "output"
     with pytest.raises(SystemExit) as error:
         build.main(["--game", str(tmp_path / "game"), "--output-dir", str(output), "--text-donors", str(tmp_path),
-                    "--wo1-x360-donor", stems["wo1-x360"], "--wo2-donor", stems["wo2-x360"], *path])
+                    "--wo1-x360-donor", stems["wo1-x360"], "--wo2-x360-donor", stems["wo2-x360"], *path])
     assert error.value.code == 2
     assert "Wrong donor member hash: linkdata_ens.lnk" in capsys.readouterr().err
     assert not output.exists()
@@ -879,7 +879,7 @@ def test_art_build_runs_without_the_warriors_orochi_pc_disc(tmp_path):
     pycache = tmp_path / "pycache"  # every module any of the build's Pythons imports leaves its bytecode here
     run = subprocess.run([sys.executable, "-m", "wozmod.art.build", "--game", str(game),
                           "--wo1-x360-donor", str(donors / "wo1-x360/linkdata_ens"),
-                          "--wo2-donor", str(donors / "wo2-x360/linkdata_ens"), "--text-donors", str(donors),
+                          "--wo2-x360-donor", str(donors / "wo2-x360/linkdata_ens"), "--text-donors", str(donors),
                           "--output-dir", str(tmp_path / "out"), "--hires"],
                          capture_output=True, text=True, env={**os.environ, "PYTHONPYCACHEPREFIX": str(pycache)})
     assert run.returncode == 0, run.stdout[-2000:] + run.stderr[-4000:]

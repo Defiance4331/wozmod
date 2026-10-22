@@ -34,15 +34,15 @@ class ProgramIdentity:
             raise ValueError("Program SHA-256 must be 64 lowercase hexadecimal characters")
 
 
-X360_PROGRAM = ProgramIdentity(
+WO2_X360_PROGRAM = ProgramIdentity(
     "X360 program", 17_858_560,
     "a3064edfb90e851fbbfa3f183368aa91911a647f6cccc66215137f90cae9bdca", "x360",
 )
-PSP_PROGRAM = ProgramIdentity(
+WO2_PSP_PROGRAM = ProgramIdentity(
     "PSP program", 3_197_900,
     "adc763686495266265a484129e62f4d26040fafd02149b09b2ec71d65d84a669", "psp",
 )
-X360_ENCRYPTED_PROGRAM = ProgramIdentity(
+WO2_X360_ENCRYPTED_PROGRAM = ProgramIdentity(
     "Encrypted X360 program", 5_451_776,
     "5a99bd246d56e3a2362a65f1a617ebd427cc84b1c6468eb4f187496f7758f506", "x360",
 )
@@ -54,7 +54,7 @@ WO1_X360_ENCRYPTED_PROGRAM = ProgramIdentity(
     "Encrypted WO1 X360 program", 5_058_560,
     "2b57b71c803487ad6f8a3a04f3c1ffefdd0b727a4c4c8498d224b0a8ad9cf9ae", "x360",
 )
-PSP_ENCRYPTED_PROGRAM = ProgramIdentity(
+WO2_PSP_ENCRYPTED_PROGRAM = ProgramIdentity(
     "Encrypted PSP program", 3_198_240,
     "e7c3714e77f13a83beb0cd0586fc2340efc2214122b1d184fc72bd40c9c39d11", "psp",
 )

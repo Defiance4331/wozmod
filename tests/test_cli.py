@@ -45,16 +45,16 @@ def answer(monkeypatch, *lines):
 def test_without_a_terminal_it_lists_the_missing_options_and_exits_2(monkeypatch, capsys):
     # Bug: the command waits for input that never comes (a script hangs), or exits 0 after saying nothing.
     monkeypatch.setattr(sys, "stdin", io.StringIO(""))
-    assert cli.main(["install", "--psp", "a.iso"]) == 2
+    assert cli.main(["install", "--wo2-psp", "a.iso"]) == 2
     error = capsys.readouterr().err
     options = set(re.findall(r"--[\w-]+", error))
-    assert {"--game", "--wo1-x360", "--x360"} <= options and "--psp" not in options
+    assert {"--game", "--wo1-x360", "--wo2-x360"} <= options and "--wo2-psp" not in options
     assert cli.main([]) == 2  # no command and no terminal: the help, not a menu
 
 
 def test_it_asks_for_each_missing_path_checks_the_answer_and_strips_quotes(monkeypatch, tmp_path, capsys):
     # Bug: a dragged path keeps its quotes, a wrong answer is accepted, or the remembered path is not offered.
-    remembered.save_settings({"x360": "/remembered/x360.iso"})
+    remembered.save_settings({"wo2-x360": "/remembered/wo2-x360.iso"})
     checks, seen = [], {}
     monkeypatch.setattr(cli, "check_input", lambda name, path: checks.append((name, path)) or (
         "Not a folder." if path == Path("wrong") else None))
@@ -63,17 +63,17 @@ def test_it_asks_for_each_missing_path_checks_the_answer_and_strips_quotes(monke
         None, {} if inputs[tool] else {tool: installer.NEITHER}, bool(inputs[tool])))[1])
     monkeypatch.setattr(cli, "install", lambda game, inputs, **kw: seen.update(game=game, **inputs))
     monkeypatch.setattr(cli, "TerminalView", Quiet)
-    answer(monkeypatch, "wrong", f"'{tmp_path}'", '"/discs/wo1-x360.iso"', "", "/discs/psp.iso",
+    answer(monkeypatch, "wrong", f"'{tmp_path}'", '"/discs/wo1-x360.iso"', "", "/discs/wo2-psp.iso",
            "/tools/x", '"/my tools/p"')
 
     assert cli.main(["install"]) == 0
 
-    assert (seen["game"], seen["wo1-x360"], seen["x360"], seen["psp"]) == (
-        tmp_path, Path("/discs/wo1-x360.iso"), Path("/remembered/x360.iso"), Path("/discs/psp.iso"))
+    assert (seen["game"], seen["wo1-x360"], seen["wo2-x360"], seen["wo2-psp"]) == (
+        tmp_path, Path("/discs/wo1-x360.iso"), Path("/remembered/wo2-x360.iso"), Path("/discs/wo2-psp.iso"))
     assert (seen["x360-tool"], seen["psp-tool"]) == (Path("/tools/x"), Path("/my tools/p"))
-    assert [(tool, inputs[tool], inputs["x360"]) for tool, inputs in ran if inputs[tool]] == [
-        ("x360-tool", Path("/tools/x"), Path("/remembered/x360.iso")),
-        ("psp-tool", Path("/my tools/p"), Path("/remembered/x360.iso"))]  # each answer is checked with the discs given
+    assert [(tool, inputs[tool], inputs["wo2-x360"]) for tool, inputs in ran if inputs[tool]] == [
+        ("x360-tool", Path("/tools/x"), Path("/remembered/wo2-x360.iso")),
+        ("psp-tool", Path("/my tools/p"), Path("/remembered/wo2-x360.iso"))]  # each answer is checked with the discs given
     assert "Not a folder." in capsys.readouterr().out
     assert remembered.load_settings()["wo1-x360"] == "/discs/wo1-x360.iso"  # the window offers it next time
 
@@ -108,7 +108,7 @@ def _installed_here(monkeypatch, tmp_path, version):
     monkeypatch.setattr(cli, "install_state", lambda game: (version, "0.1.0"))
     monkeypatch.setattr(cli, "install", lambda game, inputs, **kw: ran.append(kw.get("force")))
     monkeypatch.setattr(cli, "TerminalView", Quiet)
-    return ran, ["install", "--game", str(tmp_path), "--wo1-x360", "w", "--x360", "b", "--psp", "c", "--x360-tool", "d", "--psp-tool", "e"]
+    return ran, ["install", "--game", str(tmp_path), "--wo1-x360", "w", "--wo2-x360", "b", "--wo2-psp", "c", "--x360-tool", "d", "--psp-tool", "e"]
 
 
 def test_reinstalling_the_same_version_asks_in_a_terminal_and_needs_force_without_one(monkeypatch, tmp_path, capsys):
@@ -137,10 +137,10 @@ def test_the_menu_asks_again_after_a_bad_choice_and_ctrl_c_changes_nothing(monke
 def test_a_missing_program_names_the_program_and_each_decrypted_file_that_stands_in(monkeypatch, tmp_path, capsys):
     # Bug: the error names only one way to cover a program (the program, or only one of its decrypted files).
     monkeypatch.setattr(sys, "stdin", io.StringIO(""))
-    discs = ["install", "--game", str(tmp_path), "--wo1-x360", "w", "--x360", "b", "--psp", "c"]
+    discs = ["install", "--game", str(tmp_path), "--wo1-x360", "w", "--wo2-x360", "b", "--wo2-psp", "c"]
     assert cli.main(discs) == 2
     error = capsys.readouterr().err
-    assert "--x360-tool or --wo1-x360-file and --x360-file" in error and "--psp-tool or --psp-file" in error
+    assert "--x360-tool or --wo1-x360-file and --wo2-x360-file" in error and "--psp-tool or --wo2-psp-file" in error
 
 
 def _released_version() -> str:

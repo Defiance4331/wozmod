@@ -2,10 +2,10 @@
 
 Pointers are positional arrays, with zero-based indices:
   [donor, "ens", entry, view, *indices]
-  ["x360", "pe", byte_offset], ["wo1-x360", "pe", byte_offset],
-  or ["psp", "prx", string_slot]
-  ["psp", "fns", member, view, *indices]
-Donors are wo1-x360, x360 and psp. ENS names linkdata_ens.lnk/.idx.
+  ["wo2-x360", "pe", byte_offset], ["wo1-x360", "pe", byte_offset],
+  or ["wo2-psp", "prx", string_slot]
+  ["wo2-psp", "fns", member, view, *indices]
+Donors are wo1-x360, wo2-x360 and wo2-psp. ENS names linkdata_ens.lnk/.idx.
 A pe offset addresses the decrypted Xbox 360 program (default.pe).
 Views: notices/dialog (slot), mesc (block, slot), quotes (table, slot),
 event (line id), captions (list of cue slots, whitespace joined), cstr
@@ -28,7 +28,7 @@ from wozmod.formats.scripts import (
     caption_cues, donor_text, event_lines, mesc_blocks, parse_script,
     quote_tables, quote_text,
 )
-from wozmod.donors import DISCS, PSP, DonorsFolder, verify_file
+from wozmod.donors import DISCS, WO2_PSP, DonorsFolder, verify_file
 
 
 def program_text(raw: bytes) -> str:
@@ -56,7 +56,7 @@ class DonorResolver:
 
     @cache
     def entry(self, donor: str, ordinal: int) -> bytes:
-        if donor == "psp":
+        if donor == "wo2-psp":
             if type(ordinal) is not int or ordinal < 0:
                 raise ValueError("Invalid FNS member")
             data = ps2_members(self.psp_archive(), [ordinal])[ordinal]
@@ -67,24 +67,24 @@ class DonorResolver:
 
     @cache
     def psp_archive(self) -> Path:
-        identity = next(file for file in PSP.files if file.path.endswith("/LINKDATA_NA.FNS"))
-        return verify_file(self.donors.folder("psp") / identity.path, identity)
+        identity = next(file for file in WO2_PSP.files if file.path.endswith("/LINKDATA_NA.FNS"))
+        return verify_file(self.donors.folder("wo2-psp") / identity.path, identity)
 
     @cache
     def program(self, donor: str) -> bytes:
-        if donor not in ("x360", "wo1-x360"):
+        if donor not in ("wo2-x360", "wo1-x360"):
             raise ValueError("Invalid PE donor")
         return self.donors.program(donor)
 
     @cache
     def psp_pool(self) -> list[str | None]:
         from .psp_exe import eboot_strings
-        return eboot_strings(self.donors.program("psp"))
+        return eboot_strings(self.donors.program("wo2-psp"))
 
     @cache
     def view(self, donor: str, ordinal: int, kind: str):
         data = self.entry(donor, ordinal)
-        order = "<" if donor == "psp" else ">"
+        order = "<" if donor == "wo2-psp" else ">"
         if kind in ("notices", "dialog"):
             return getattr(parse_script(data, order), kind).records
         if kind == "mesc":
@@ -103,16 +103,16 @@ class DonorResolver:
         donor, file, *parts = ref
         if any(not isinstance(i, int) or i < 0 for i in parts[:1]):
             raise ValueError("Invalid donor index")
-        if file == "prx" and donor == "psp" and len(parts) == 1:
+        if file == "prx" and donor == "wo2-psp" and len(parts) == 1:
             text = self.psp_pool()[parts[0]]
-        elif (file, donor) in (("pe", "x360"), ("pe", "wo1-x360")) and len(parts) == 1:
+        elif (file, donor) in (("pe", "wo2-x360"), ("pe", "wo1-x360")) and len(parts) == 1:
             data = self.program(donor)
             at = parts[0]
             if at >= len(data):
                 raise ValueError("PE pointer outside program")
             text = program_text(data[at:data.index(b"\0", at)])
-        elif ((file == "ens" and donor in ("wo1-x360", "x360"))
-              or (file == "fns" and donor == "psp")) and len(parts) >= 2:
+        elif ((file == "ens" and donor in ("wo1-x360", "wo2-x360"))
+              or (file == "fns" and donor == "wo2-psp")) and len(parts) >= 2:
             ordinal, kind, *indices = parts
             data = self.entry(donor, ordinal)
             if kind in ("cstr", "slice"):
@@ -135,7 +135,7 @@ class DonorResolver:
                 elif kind == "mesc" and len(indices) == 2:
                     raw = view[indices[0]][indices[1]]
                 elif kind == "quotes" and len(indices) == 2:
-                    if donor == "psp":
+                    if donor == "wo2-psp":
                         from .psp_alignment import psp_quote_text
                         raw = psp_quote_text(view[indices[0]][indices[1]])
                     else:
@@ -185,5 +185,5 @@ class DonorResolver:
 
 def layout_sample(donors: DonorResolver) -> str:
     """Resolve the two name parts used by runtime layout diagnostics."""
-    return " ".join(donors.resolve(["x360", "pe", at]) for at in (161192, 174664))
+    return " ".join(donors.resolve(["wo2-x360", "pe", at]) for at in (161192, 174664))
 

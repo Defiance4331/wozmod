@@ -51,7 +51,7 @@ def donors(tmp_path: Path) -> DonorResolver:
 
 def test_ens_pointer_does_not_switch_entry_view_slot_or_word_order(donors):
     cases = []
-    for donor, tag in (("wo1-x360", "WO1"), ("x360", "WO2")):
+    for donor, tag in (("wo1-x360", "WO1"), ("wo2-x360", "WO2")):
         cases.extend([
             ([donor, "ens", 0, "notices", 1], tag + " notice one"),
             ([donor, "ens", 0, "dialog", 1], tag + " dialog one"),
@@ -134,7 +134,7 @@ def test_pointer_to_non_english_donor_bytes_cannot_ship_an_unresolved_row(donors
 
 def test_official_prompt_controls_keep_original_spans_and_numeric_glyphs(donors):
     row = {
-        "source": "wo2-x360", "ref": ["x360", "ens", 5, "cstr", 6],
+        "source": "wo2-x360", "ref": ["wo2-x360", "ens", 5, "cstr", 6],
         "controls": [[7, 12, [0xE000, 32]], [18, 23, [0xE016]]],
     }
 

@@ -4,6 +4,7 @@ import json
 import struct
 
 from wozmod import resources
+from wozmod.donors import check_disc_names
 
 from wozmod.formats.textures import (
     TextureCodecError, x360_g1t,
@@ -13,7 +14,7 @@ REPO = resources.root()
 CATALOG = REPO / "data/art/menu_visuals.json"
 ROW_FIELDS = {"original", "pc_text", "role_variant"}
 NO_COUNTERPART = {"kind": "no-official-counterpart", "donor": None}
-OFFICIAL_DONORS = {"x360", "wo1-x360"}
+OFFICIAL_DONORS = {"wo2-x360", "wo1-x360"}
 
 
 def _integers(value, count: int) -> bool:
@@ -46,6 +47,7 @@ def load_catalog() -> dict:
         raise ValueError(f"unsupported menu visual catalog: {CATALOG}")
     if set(data) != {"schema", "textures"} or not isinstance(data["textures"], dict):
         raise ValueError(f"menu visual catalog holds schema and textures only: {CATALOG}")
+    check_disc_names(data, f"menu visual catalog {CATALOG}")
     for texture, record in data["textures"].items():
         entry, _, item = texture.partition(".")
         if not (entry.isdecimal() and item.isdecimal()):

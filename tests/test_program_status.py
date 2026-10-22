@@ -54,7 +54,7 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("APPDATA", str(tmp_path / "config"))
     monkeypatch.setattr(installer, "_TOOL_RUNS", {})
-    for disc, platform in (("wo1-x360", "x360"), ("x360", "x360"), ("psp", "psp")):
+    for disc, platform in (("wo1-x360", "x360"), ("wo2-x360", "x360"), ("wo2-psp", "psp")):
         plain, encrypted = (ProgramIdentity(disc, len(content), hashlib.sha256(content).hexdigest(), platform)
                             for content in (DECRYPTED, ENCRYPTED))
         each = donors.DISCS[disc]

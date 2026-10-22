@@ -29,7 +29,7 @@ from wozmod.__main__ import main
 from wozmod.install import check_input
 
 REPO = Path(__file__).resolve().parents[1]
-INPUTS = {"wo1-x360": "WOZMOD_WO1_X360_ISO", "x360": "WOZMOD_X360_ISO", "psp": "WOZMOD_PSP_ISO",
+INPUTS = {"wo1-x360": "WOZMOD_WO1_X360_ISO", "wo2-x360": "WOZMOD_WO2_X360_ISO", "wo2-psp": "WOZMOD_WO2_PSP_ISO",
           "x360-tool": "WOZMOD_X360_TOOL", "psp-tool": "WOZMOD_PSP_TOOL"}
 
 pytestmark = [pytest.mark.skipif(

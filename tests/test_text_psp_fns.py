@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from wozmod.donors import Donor, DonorFile, PSP, extract_donor
+from wozmod.donors import Donor, DonorFile, WO2_PSP, extract_donor
 from wozmod.formats.linkdata import decoded_member
 from wozmod.formats.scripts import caption_cues, donor_text, mesc_blocks, parse_script, quote_tables
 from wozmod.text import DonorResolver
@@ -25,20 +25,20 @@ def test_fns_pointer_keeps_its_archive_member_and_notice_slot(tmp_path, monkeypa
     path.write_bytes(archive)
     identity = DonorFile("PSP_GAME/USRDIR/LINKDATA_NA.FNS", "PSP_GAME/USRDIR/LINKDATA_NA.FNS",
                          len(archive), hashlib.sha256(archive).hexdigest())
-    monkeypatch.setattr("wozmod.text.resolver.PSP", Donor("fixture", "iso9660", (identity,)))
-    assert DonorResolver(tmp_path).resolve(["psp", "fns", 1, "notices", 1]) == "Authored second"
+    monkeypatch.setattr("wozmod.text.resolver.WO2_PSP", Donor("fixture", "iso9660", (identity,)))
+    assert DonorResolver(tmp_path).resolve(["wo2-psp", "fns", 1, "notices", 1]) == "Authored second"
 
 
-@pytest.mark.skipif(not os.environ.get("WOZMOD_PSP_ISO"), reason="set WOZMOD_PSP_ISO")
+@pytest.mark.skipif(not os.environ.get("WOZMOD_WO2_PSP_ISO"), reason="set WOZMOD_WO2_PSP_ISO")
 def test_real_psp_pointers_do_not_decode_raw_quotes_or_leak_voice_suffixes(tmp_path):
-    image = Path(os.environ["WOZMOD_PSP_ISO"])
+    image = Path(os.environ["WOZMOD_WO2_PSP_ISO"])
     if not image.is_file():
         pytest.skip("PSP image absent")
     member_name = "PSP_GAME/USRDIR/LINKDATA_NA.FNS"
-    path = extract_donor(image, PSP, tmp_path / "wo2-psp", files=[member_name])[0]
+    path = extract_donor(image, WO2_PSP, tmp_path / "wo2-psp", files=[member_name])[0]
     archive = path.read_bytes()
     payload = json.loads((Path(__file__).resolve().parents[1] / "data/text/table.json").read_text())
-    refs = [row["ref"] for row in payload["rows"] if row.get("ref", [])[:2] == ["psp", "fns"]]
+    refs = [row["ref"] for row in payload["rows"] if row.get("ref", [])[:2] == ["wo2-psp", "fns"]]
     assert refs, "No PSP data-file pointers"
     expected, views = {}, {}
     for ref in refs:

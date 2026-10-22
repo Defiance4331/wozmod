@@ -22,7 +22,7 @@ class Texture:
 def test_native_rounded_row_does_not_keep_overflowing_lettering_at_full_width(monkeypatch):
     monkeypatch.setattr(vector, "reference", lambda texture, row: {
         "pc_text": "Fixture", "role_variant": "blue",
-        "original": {"donor": "x360", "ens": [1, 0, 0]},
+        "original": {"donor": "wo2-x360", "ens": [1, 0, 0]},
     })
     source = Image.new("RGBA", (64, 32))
     source.paste((240, 240, 240, 255), (3, 5, 15, 9))
@@ -52,7 +52,7 @@ def test_stage_strip_name_condenses_only_where_it_overflows_its_own_strip(monkey
     source = Image.new("RGBA", (512, 35))
     source.paste((240, 240, 240, 255), (0, 5, 200, 25))  # X360 counterpart filling 200 px
     monkeypatch.setattr(vector, "reference", lambda texture, row: {
-        "original": {"donor": "x360", "ens": [1, 0, 0], "crop": [0, 0, 512, 35]}})
+        "original": {"donor": "wo2-x360", "ens": [1, 0, 0], "crop": [0, 0, 512, 35]}})
     right = {}
     for width in (400, 470):
         label = Image.new("RGBA", (480, 30))

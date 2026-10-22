@@ -18,6 +18,7 @@ from functools import cache
 from pathlib import Path
 
 from wozmod import resources
+from wozmod.donors import check_disc_names
 from wozmod.text.resolver import DonorResolver
 
 MAPPING = resources.root() / "data/art/menu_textures.json"
@@ -38,7 +39,7 @@ def sha256(text: str) -> str:
 
 def load(path: Path):
     """An art data file with every stored form replaced by its word (a fresh copy: callers may change it)."""
-    data = lettered(json.loads(Path(path).read_text(encoding="utf-8")))
+    data = lettered(_read(Path(path)))
     return _pointed(data, (data if "faces" in data else _labels())["faces"])
 
 
@@ -49,7 +50,13 @@ def resolved(value):
 
 @cache
 def _labels() -> dict:
-    return lettered(json.loads(MAPPING.read_text(encoding="utf-8")))
+    return lettered(_read(MAPPING))
+
+
+def _read(path: Path):
+    data = json.loads(path.read_text(encoding="utf-8"))
+    check_disc_names(data, f"art data {path}")
+    return data
 
 
 def _checked(text: str, expected: str, what: str) -> str:

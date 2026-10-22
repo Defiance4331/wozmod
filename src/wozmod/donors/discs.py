@@ -5,10 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from .inventory import PSP, WO1_X360, X360, Donor
+from .inventory import WO1_X360, WO2_PSP, WO2_X360, Donor
 from .programs import (
-    PSP_ENCRYPTED_PROGRAM, PSP_PROGRAM, WO1_X360_ENCRYPTED_PROGRAM, WO1_X360_PROGRAM, X360_ENCRYPTED_PROGRAM,
-    X360_PROGRAM, ProgramError, ProgramIdentity, read_pinned,
+    WO1_X360_ENCRYPTED_PROGRAM, WO1_X360_PROGRAM, WO2_PSP_ENCRYPTED_PROGRAM, WO2_PSP_PROGRAM,
+    WO2_X360_ENCRYPTED_PROGRAM, WO2_X360_PROGRAM, ProgramError, ProgramIdentity, read_pinned,
 )
 
 
@@ -22,20 +22,43 @@ class Program:
 
 @dataclass(frozen=True)
 class Disc:
-    donor: Donor  # its name is the disc's folder in the donors folder
+    donor: Donor  # its name is the disc's key in DISCS and its folder in the donors folder
     program: Program
     title: str  # the disc as players see it named, everywhere; each place adds "disc image", "disc" or "program file"
 
 
-# Keyed by the disc image's input name, which donor pointers also use. The only copy of this mapping.
-DISCS = {
-    "wo1-x360": Disc(WO1_X360, Program("default.xex", "default.pe", WO1_X360_PROGRAM, WO1_X360_ENCRYPTED_PROGRAM),
-                     "Warriors Orochi (Xbox 360, USA)"),
-    "x360": Disc(X360, Program("default.xex", "default.pe", X360_PROGRAM, X360_ENCRYPTED_PROGRAM),
-                 "Warriors Orochi 2 (Xbox 360, USA)"),
-    "psp": Disc(PSP, Program("PSP_GAME/SYSDIR/EBOOT.BIN", "eboot.prx", PSP_PROGRAM, PSP_ENCRYPTED_PROGRAM),
-                "Warriors Orochi 2 (PSP, USA)"),
-}
+# Keyed by the donor's name, which is also its disc image's input name, its folder in the donors folder and the
+# first item of every donor pointer in data/. The only copy of this mapping.
+DISCS = {disc.donor.name: disc for disc in (
+    Disc(WO1_X360, Program("default.xex", "default.pe", WO1_X360_PROGRAM, WO1_X360_ENCRYPTED_PROGRAM),
+         "Warriors Orochi (Xbox 360, USA)"),
+    Disc(WO2_X360, Program("default.xex", "default.pe", WO2_X360_PROGRAM, WO2_X360_ENCRYPTED_PROGRAM),
+         "Warriors Orochi 2 (Xbox 360, USA)"),
+    Disc(WO2_PSP, Program("PSP_GAME/SYSDIR/EBOOT.BIN", "eboot.prx", WO2_PSP_PROGRAM, WO2_PSP_ENCRYPTED_PROGRAM),
+         "Warriors Orochi 2 (PSP, USA)"),
+)}
+
+
+def check_disc_names(value, where: str) -> None:
+    """Raise ValueError at the first disc name in JSON data that is no key of DISCS: the first item of a donor
+    pointer (a "ref", or an edit's replacement that inserts a donor string) and a "donor" that is a name. Data
+    loaders call it once, so a misspelt or retired name stops the load instead of matching no branch later on."""
+    if isinstance(value, list):
+        for item in value:
+            check_disc_names(item, where)
+        return
+    if not isinstance(value, dict):
+        return
+    named = [value["donor"]] if isinstance(value.get("donor"), str) else []
+    if isinstance(value.get("ref"), list) and value["ref"]:
+        named.append(value["ref"][0])
+    named += [edit[2][0] for edit in value.get("edits", ())
+              if isinstance(edit, list) and len(edit) == 3 and isinstance(edit[2], list) and edit[2]]
+    for name in named:
+        if name not in DISCS:
+            raise ValueError(f"{where}: {name!r} is not a donor disc ({', '.join(DISCS)})")
+    for item in value.values():
+        check_disc_names(item, where)
 
 
 class DonorsFolder:

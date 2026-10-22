@@ -52,7 +52,7 @@ def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | N
     """Write voice/Voice.bin, voice/Lips.bin and voice/SE.bin below the supplied mod folder; jobs caps the ffmpeg processes."""
     stock, donors, output_dir = Path(stock), Path(donors), Path(output_dir)
     folders = DonorsFolder(donors)
-    wo1, wo2, psp = folders.folder("wo1-x360"), folders.folder("x360"), folders.folder("psp")
+    wo1, wo2, psp = folders.folder("wo1-x360"), folders.folder("wo2-x360"), folders.folder("wo2-psp")
     moz = moz_scripts(stock / "LINKDATA2")
     wo2_donor = wo2_x360(wo2 / "linkdata_ens")
     linkdata1, linkdata2, wo1_ens = archive(stock / "LINKDATA1"), archive(stock / "LINKDATA2"), archive(wo1 / "linkdata_ens")

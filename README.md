@@ -199,14 +199,14 @@ To give everything in one command:
 
 ```
 wozmod install --game "<Musou Orochi Z folder>" \
-  --wo1-x360 <Warriors Orochi 360 .iso> --x360 <Warriors Orochi 2 360 .iso> \
-  --psp <Warriors Orochi 2 PSP .iso> \
+  --wo1-x360 <Warriors Orochi 360 .iso> --wo2-x360 <Warriors Orochi 2 360 .iso> \
+  --wo2-psp <Warriors Orochi 2 PSP .iso> \
   --x360-tool <decryption program for default.xex> \
   --psp-tool <decryption program for EBOOT.BIN>
 ```
 
-- **Already decrypted files:** use `--wo1-x360-file`, `--x360-file` or
-  `--psp-file` in place of `--x360-tool` or `--psp-tool`. Give one or the
+- **Already decrypted files:** use `--wo1-x360-file`, `--wo2-x360-file` or
+  `--wo2-psp-file` in place of `--x360-tool` or `--psp-tool`. Give one or the
   other: if you give a file and the program it stands in for, or a file your
   disc image already holds, wozmod says so and stops.
 - **Update:** run the same command with the new release. To reinstall the

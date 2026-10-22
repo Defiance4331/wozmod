@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from wozmod.donors import DISCS, check_disc_names
 from wozmod.formats.pe import pointer_strings
 from wozmod.progress import report
 from wozmod.runtime.english_runtime import (
@@ -19,7 +20,7 @@ if TYPE_CHECKING:
 
 NAME_TABLE = 0x6F6368
 NAME_PARTS = 890
-SOURCES = frozenset({"wo1-x360", "wo2-x360", "wo2-ps2", "wo2-psp", "edited", "authored"})
+SOURCES = frozenset(DISCS) | {"wo2-ps2", "edited", "authored"}
 FORMAT_SPEC = re.compile(rb"%[-+#0-9.]*[a-zA-Z]")
 PLACED_SPEC = re.compile(rb"%(?:(\d+)\$)?([-+#0-9.]*[a-zA-Z])")  # %2$d prints the second argument
 ENGLISH_FORMAT_SPEC = re.compile(rb"%%|%s|%d|%02d")
@@ -164,6 +165,10 @@ def _load_data(path: Path) -> dict:
     data = json.loads((path / "table.json" if path.is_dir() else path).read_text(encoding="utf-8"))
     if data.get("version") != 1 or not isinstance(data.get("rows"), list) or not isinstance(data.get("name_parts"), list):
         raise TableBuildError("unsupported text data schema")
+    try:
+        check_disc_names(data, "text data")
+    except ValueError as error:
+        raise TableBuildError(str(error)) from error
     keys = set()
     for row in data["rows"]:
         key = row.get("key", "")

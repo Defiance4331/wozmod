@@ -44,7 +44,7 @@ class Donor:
 
 
 
-X360 = Donor(
+WO2_X360 = Donor(
     'wo2-x360', 'xdvdfs', (
         DonorFile('default.xex', 'default.xex', 5451776,
                   '5a99bd246d56e3a2362a65f1a617ebd427cc84b1c6468eb4f187496f7758f506'),
@@ -108,7 +108,7 @@ WO1_X360 = Donor(
 )
 
 
-PSP = Donor(
+WO2_PSP = Donor(
     'wo2-psp', 'iso9660', (
         DonorFile('PSP_GAME/PARAM.SFO', 'PSP_GAME/PARAM.SFO', 472,
                   '279068f106f67d9838c75b9f33b6708dc9b4ed3bd7f95a5c92a707d94d9fbad6'),
@@ -134,4 +134,4 @@ PSP = Donor(
 )
 
 
-DONORS = {donor.name: donor for donor in (WO1_X360, X360, PSP)}
+DONORS = {donor.name: donor for donor in (WO1_X360, WO2_X360, WO2_PSP)}

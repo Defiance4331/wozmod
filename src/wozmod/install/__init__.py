@@ -139,11 +139,11 @@ INPUTS = {
                        "A decryption program you already have for default.xex, the encrypted file on both Xbox 360 discs."),
     "psp-tool": Input("PSP decryption program", "a decryption program you already have, for the PSP EBOOT.BIN", "file",
                       "A decryption program you already have for EBOOT.BIN, the PSP game's encrypted file."),
-    "x360-file": _decrypted("x360", "x360-tool", "program file", "program file",
+    "wo2-x360-file": _decrypted("wo2-x360", "x360-tool", "program file", "program file",
                             "The decrypted program inside its default.xex (about 18 MB). Use it instead of the program above."),
     "wo1-x360-file": _decrypted("wo1-x360", "x360-tool", "program file", "program file",
                                 "The decrypted program inside its default.xex (about 17 MB). Use it instead of the program above."),
-    "psp-file": _decrypted("psp", "psp-tool", "EBOOT", "EBOOT.BIN",
+    "wo2-psp-file": _decrypted("wo2-psp", "psp-tool", "EBOOT", "EBOOT.BIN",
                            "The decrypted PSP_GAME/SYSDIR/EBOOT.BIN. Use it instead of the program above."),
     "lettering": Input("lettering.zip", None),  # for development: the release lettering bundle
     "dll": Input("d3d9.dll", None),  # for development: the release d3d9.dll
@@ -491,7 +491,7 @@ def _menu_art(game: Path, donors: Path, lettering: Path, staging: Path, out: Pat
     folders = DonorsFolder(donors)
     try:
         art = compose(game, {"wo1-x360": folders.folder("wo1-x360") / "linkdata_ens",
-                             "x360": folders.folder("x360") / "linkdata_ens", "text": donors},
+                             "wo2-x360": folders.folder("wo2-x360") / "linkdata_ens", "text": donors},
                       lettering, staging, True, jobs)
     except ArtError as error:
         disc = next((f"{disc.title} disc: " for disc in DISCS.values() if disc.donor == error.donor), "")
@@ -606,12 +606,11 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
     folders = DonorsFolder(donors)
     sources = {"game": game, "donors": donors, **inputs}
     movies_kept = cache is not None and cache.fetch("movies", sources, donors / "movie")
-    reads = {"wo1-x360": VOICE_DONOR_FILES, "x360": VOICE_DONOR_FILES, "psp": PSP_VOICE_FILES}
-    plan = [(flag, DISCS[flag].donor, folders.folder(flag), files, f"reading the {DISCS[flag].title} disc")
-            for flag, files in reads.items()]
-    flags = {disc.donor.name: flag for flag, disc in DISCS.items()}
+    reads = {"wo1-x360": VOICE_DONOR_FILES, "wo2-x360": VOICE_DONOR_FILES, "wo2-psp": PSP_VOICE_FILES}
+    plan = [(disc, DISCS[disc].donor, folders.folder(disc), files, f"reading the {DISCS[disc].title} disc")
+            for disc, files in reads.items()]
     if not movies_kept:
-        plan += [(flags[name], donor, donors / "movie", None, "copying the English movies")
+        plan += [(name, donor, donors / "movie", None, "copying the English movies")
                  for name, donor in movie_donors().items()]
     sizes = [sum(m.size for m in donor.files if files is None or m.path in files) for _, donor, _, files, _ in plan]
     progress.begin("discs")

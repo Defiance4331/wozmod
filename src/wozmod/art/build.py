@@ -20,7 +20,7 @@ from wozmod import resources
 from wozmod.progress import report as report_progress
 from . import lettering, words
 from wozmod.runtime.latin_font import CELL, LATIN_GLYPH
-from wozmod.donors import WO1_X360, X360, extract_donor, verify_file
+from wozmod.donors import WO1_X360, WO2_X360, extract_donor, verify_file
 from wozmod.formats.textures import (
     G1T_HEADER, G1T_TEXTURE_HEADER, PIXEL_FORMAT_BGRA8, G1tFile, parse_g1t, parse_texture_package,
 )
@@ -690,9 +690,9 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
     except ValueError as error:
         raise ArtError(str(error), WO1_X360) from error
     try:
-        wo2 = donor_stem(wo2, None, X360, None)
+        wo2 = donor_stem(wo2, None, WO2_X360, None)
     except ValueError as error:
-        raise ArtError(str(error), X360) from error
+        raise ArtError(str(error), WO2_X360) from error
     mapping = words.load(MAPPING)
     edits: dict[int, list[dict]] = {}
     for edit in mapping["textures"]:  
@@ -796,7 +796,7 @@ def main(argv: list[str] | None = None) -> int:
                              "the art letters resolve from its programs and archives")
     parser.add_argument("--latin-cells", type=Path, default=os.environ.get("WOZMOD_LATIN_CELLS"),
                         help="24-pixel vector Latin cells; generated when omitted")
-    parser.add_argument("--wo2-donor", type=Path, default=os.environ.get("WOZMOD_X360_DONOR"),
+    parser.add_argument("--wo2-x360-donor", type=Path, default=os.environ.get("WOZMOD_WO2_X360_DONOR"),
                         help="WO2 Xbox 360 USA linkdata_ens path without its .lnk/.idx suffix")
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--jobs", type=int, default=os.process_cpu_count(), help="entries rebuilt in parallel")
@@ -811,7 +811,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="developer oracle only: keep full-width vector lettering")
     parser.add_argument("--game", type=Path, default=os.environ.get("WOZMOD_GAME"))
     parser.add_argument("--wo1-x360-iso", type=Path, default=os.environ.get("WOZMOD_WO1_X360_ISO"))
-    parser.add_argument("--wo2-iso", type=Path, default=os.environ.get("WOZMOD_X360_ISO"))
+    parser.add_argument("--wo2-x360-iso", type=Path, default=os.environ.get("WOZMOD_WO2_X360_ISO"))
     parser.add_argument("--font-python", default=lettering.FONT_PYTHON)
     parser.add_argument("--cache-dir", type=Path)
     args = parser.parse_args(argv)
@@ -826,19 +826,19 @@ def main(argv: list[str] | None = None) -> int:
     try:  # build_art checks the archives against their pins; a --hires-only run never calls it
         args.wo1_x360_donor = donor_stem(args.wo1_x360_donor, args.wo1_x360_iso, WO1_X360,
                                          working / "donors/wo1-x360", check=args.hires_only)
-        args.wo2_donor = donor_stem(args.wo2_donor, args.wo2_iso, X360, working / "donors/wo2-x360",
-                                    check=args.hires_only)
+        args.wo2_x360_donor = donor_stem(args.wo2_x360_donor, args.wo2_x360_iso, WO2_X360,
+                                         working / "donors/wo2-x360", check=args.hires_only)
     except ValueError as error:
         parser.error(str(error))
     lzp2_cache = args.cache_dir or working / "lzp2-cache"
     if args.hires_only:
         packing.LZP2_CACHE = lzp2_cache
         words.use(args.text_donors)
-        write_hires(args.output_dir, args.wo1_x360_donor, args.wo2_donor, not args.no_squish, args.jobs,
+        write_hires(args.output_dir, args.wo1_x360_donor, args.wo2_x360_donor, not args.no_squish, args.jobs,
                     review=True, fresh=False)
     else:
         try:
-            build_art(args.game, args.wo1_x360_donor, args.wo2_donor, args.text_donors, args.output_dir,
+            build_art(args.game, args.wo1_x360_donor, args.wo2_x360_donor, args.text_donors, args.output_dir,
                       hires=args.hires, squeeze=not args.no_squish, jobs=args.jobs, review=True,
                       lzp2_cache=lzp2_cache, latin_cells=args.latin_cells, preview_dir=args.preview_dir,
                       entries=args.entries)

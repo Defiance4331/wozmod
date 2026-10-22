@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from text_candidates import REVIEW, review_status
 
-REF = ["psp", "fns", 270, "dialog", 3]
+REF = ["wo2-psp", "fns", 270, "dialog", 3]
 
 
 def test_review_status_hides_settled_rows_and_never_lets_psp_outrank_an_xbox_row() -> None:
@@ -18,7 +18,7 @@ def test_review_status_hides_settled_rows_and_never_lets_psp_outrank_an_xbox_row
         (({"source": "wo2-psp", "ref": [*REF[:4], 2]}, REF, "Charge!", "Retreat!", "wo2-psp"), ("differs", True)),
         (({"source": "authored", "en": "Go!"}, REF, "Charge!", "Go!", "wo2-psp"), ("ours", True)),
         (({"source": "edited", "ref": REF}, [*REF[:4], 4], "Charge!", "Go!", "wo2-psp"), ("ours", True)),
-        (({"source": "wo2-x360", "ref": ["x360", "ens", 143, "dialog", 0]}, REF, "Charge!", "Go!", "wo2-psp"),
+        (({"source": "wo2-x360", "ref": ["wo2-x360", "ens", 143, "dialog", 0]}, REF, "Charge!", "Go!", "wo2-psp"),
          ("xbox", False)),
         (({"source": "wo1-x360", "ref": ["wo1-x360", "ens", 96, "dialog", 1]}, REF, "Charge!", "Go!", "wo2-psp"),
          ("xbox", False)),

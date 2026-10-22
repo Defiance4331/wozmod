@@ -77,7 +77,7 @@ def test_catalog_row_lookup_cannot_treat_explicit_keys_as_ordinals(tmp_path, mon
         references.load_catalog.cache_clear()
 
 
-OFFICIAL = {"donor": "x360", "kind": "official", "ens": [7, 2, 0], "crop": [0, 0, 512, 42]}
+OFFICIAL = {"donor": "wo2-x360", "kind": "official", "ens": [7, 2, 0], "crop": [0, 0, 512, 42]}
 WRONG_CATALOGS = {
     "unknown schema": {"schema": "other"},
     "a field beside textures": {"note": "x"},
@@ -96,7 +96,7 @@ WRONG_CATALOGS = {
     "an original with no crop": {"textures": {"3.2": {"rows": {"7": {"original": {
         name: value for name, value in OFFICIAL.items() if name != "crop"}}}}}},
     "a counterpart that names a donor": {"textures": {"3.2": {"rows": {"7": {"original": {
-        "kind": "no-official-counterpart", "donor": "x360"}}}}}},
+        "kind": "no-official-counterpart", "donor": "wo2-x360"}}}}}},
 }
 
 

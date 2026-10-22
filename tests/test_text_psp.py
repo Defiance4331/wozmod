@@ -19,22 +19,22 @@ def test_a_wrong_psp_program_cannot_supply_string_slots(tmp_path):
     (tmp_path / "wo2-psp/eboot.prx").write_bytes(b"\0Unrelated fixture\0")
 
     with pytest.raises(ProgramError, match="wrong size or SHA-256"):
-        DonorResolver(tmp_path).resolve(["psp", "prx", 0])
+        DonorResolver(tmp_path).resolve(["wo2-psp", "prx", 0])
 
 
 def test_the_psp_pool_reads_the_staged_program_without_its_tail(tmp_path, monkeypatch):
     """Bug: bytes after the pinned program are read as more string slots."""
     data = b"\0Alpha\0Bravo\0"
-    psp = DISCS["psp"]
+    psp = DISCS["wo2-psp"]
     pin = ProgramIdentity("test", len(data), hashlib.sha256(data).hexdigest(), "psp")
-    monkeypatch.setitem(DISCS, "psp", replace(psp, program=replace(psp.program, plain=pin)))
+    monkeypatch.setitem(DISCS, "wo2-psp", replace(psp, program=replace(psp.program, plain=pin)))
     (tmp_path / "wo2-psp").mkdir()
     (tmp_path / "wo2-psp/eboot.prx").write_bytes(data + b"Tail\0")
     resolver = DonorResolver(tmp_path)
 
-    assert resolver.resolve(["psp", "prx", 1]) == "Bravo"
+    assert resolver.resolve(["wo2-psp", "prx", 1]) == "Bravo"
     with pytest.raises(IndexError):
-        resolver.resolve(["psp", "prx", 2])
+        resolver.resolve(["wo2-psp", "prx", 2])
 
 
 def test_stock_pool_keeps_file_order_duplicates_and_the_400_byte_boundary():

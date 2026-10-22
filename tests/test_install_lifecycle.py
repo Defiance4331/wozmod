@@ -46,7 +46,7 @@ def game(tmp_path: Path, monkeypatch) -> Path:
 
 def _inputs(tmp_path: Path) -> dict[str, Path]:
     return {name: tmp_path / name for name in
-            ("wo1-x360", "x360", "psp", "x360-tool", "psp-tool", "lettering", "dll")}
+            ("wo1-x360", "wo2-x360", "wo2-psp", "x360-tool", "psp-tool", "lettering", "dll")}
 
 
 def test_every_missing_or_wrong_input_is_named_and_no_right_one(game, tmp_path, monkeypatch):
@@ -375,7 +375,7 @@ def test_the_art_stage_places_every_file_the_art_build_writes(tmp_path, monkeypa
 
 
 @pytest.mark.parametrize("wrong, title", [("wo1-x360", "Warriors Orochi (Xbox 360, USA)"),
-                                          ("x360", "Warriors Orochi 2 (Xbox 360, USA)")])
+                                          ("wo2-x360", "Warriors Orochi 2 (Xbox 360, USA)")])
 def test_a_wrong_donor_archive_ends_the_art_stage_with_an_install_error_naming_its_disc(tmp_path, monkeypatch,
                                                                                         wrong, title):
     """Bug: the art build reports a donor archive that fails its pin as a usage error (SystemExit), which neither the
@@ -397,7 +397,7 @@ def test_a_wrong_donor_archive_ends_the_art_stage_with_an_install_error_naming_i
     write_bundle(bundle, {"layer": (Image.new("L", (1, 1)), {})}, hashlib.sha256(recipe.read_bytes()).hexdigest(),
                  outlines=b"outlines")
     donors = DonorsFolder(tmp_path / "donors")
-    for disc, attribute in (("wo1-x360", "WO1_X360"), ("x360", "X360")):  # each disc's archive pinned to its bytes
+    for disc, attribute in (("wo1-x360", "WO1_X360"), ("wo2-x360", "WO2_X360")):  # each disc's archive pinned to its bytes
         stem = donors.folder(disc) / "linkdata_ens"
         stem.parent.mkdir(parents=True)
         pins = []

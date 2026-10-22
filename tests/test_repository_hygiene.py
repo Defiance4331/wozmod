@@ -180,8 +180,8 @@ def _donor_strings(root: Path) -> set[str]:
             if text:
                 found.add(" ".join(text.casefold().split()))
 
-    for donor, folder in (("wo1-x360", "wo1-x360"), ("x360", "wo2-x360")):
-        stem = root / folder / "linkdata_ens"
+    for donor in ("wo1-x360", "wo2-x360"):
+        stem = root / donor / "linkdata_ens"
         for ordinal in range(len(parse_wo1_index(stem.with_suffix(".idx").read_bytes(),
                                                  data_size=stem.with_suffix(".lnk").stat().st_size))):
             try:
