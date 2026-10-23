@@ -1,0 +1,97 @@
+{
+  "movies": [
+    {
+      "slot": "movie102",
+      "entry": 171,
+      "timing": [
+        "wo1-x360",
+        "fns",
+        369
+      ],
+      "cues": [
+        "Impossible...",
+        "Why?",
+        "Because you tried to go it alone.",
+        "You were strong, but you had a fatal flaw.",
+        "You trusted nobody.",
+        "Our lord fights alongside us as our equal.",
+        "And in turn, that makes us all strong.",
+        "There's nothing weak about needing one another.",
+        "That's right. It's... it's as my lord Shingen used to say,",
+        "\"The people are your castle, your ramparts, your moat.\"",
+        "Humans... Sentimental...",
+        "To the end...",
+        "It's over...",
+        [
+          "wo1-x360",
+          "ens",
+          159,
+          "event",
+          31
+        ]
+      ]
+    },
+    {
+      "slot": "movie103",
+      "entry": 172,
+      "timing": [
+        "wo1-x360",
+        "fns",
+        370
+      ],
+      "cues": [
+        "Orochi has fallen before the might of Cao Cao!",
+        "It's over.",
+        "Not just yet.",
+        "My quest is incomplete.",
+        "I must realize my dream.",
+        "Your dream?",
+        "I always meant to ask you...",
+        "Did you think you could realize that dream alone?",
+        "You're going to need everyone's help.",
+        "",
+        ""
+      ]
+    },
+    {
+      "slot": "movie104",
+      "entry": 173,
+      "timing": [
+        "wo1-x360",
+        "fns",
+        371
+      ],
+      "cues": [
+        "You could never break the bonds between us!",
+        "Or did you think otherwise?",
+        "In fact,",
+        "we should thank you for strengthening them!",
+        "That's right!",
+        "You will be punished for the suffering you have caused!",
+        "You are no match for the combined power of the Sun family!"
+      ]
+    },
+    {
+      "slot": "movie105",
+      "entry": 174,
+      "timing": [
+        "wo1-x360",
+        "fns",
+        372
+      ],
+      "cues": [
+        "Heh heh... This is just the beginning.",
+        "You are right. We are witnessing the beginning.",
+        "",
+        "Indeed.",
+        "You guys still haven't had enough?",
+        "Hey! Stop fighting already! I mean it!",
+        "This is the beginning of a new era...",
+        "Hmm.",
+        "This is our chance to rebuild!",
+        "A new era!",
+        "...of glorious war."
+      ]
+    }
+  ]
+}

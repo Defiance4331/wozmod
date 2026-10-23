@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import os
 import tempfile
-from contextlib import ExitStack
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -41,8 +40,15 @@ def check_donor_image(image: Path | str, donor: Donor | str) -> None:
     with _open_disc(image, donor) as disc:
         available = {member.path.casefold(): member.size for member in disc.files()}
     for member in donor.files:
-        if available.get(member.source.casefold()) != member.size:
+        if not _holds(available.get(member.source.casefold()), member):
             raise DiscError(f"Missing or wrong-sized donor member: {member.source}")
+
+
+def _holds(size: int | None, member: DonorFile) -> bool:
+    """Whether a disc file of size bytes is the member's file: its size, or long enough to hold its slice."""
+    if member.offset is None:
+        return size == member.size
+    return size is not None and member.offset + member.size <= size
 
 
 def read_disc_member(image: Path | str, donor: Donor | str, path: str) -> bytes | None:
@@ -55,6 +61,22 @@ def read_disc_member(image: Path | str, donor: Donor | str, path: str) -> bytes 
                 return stream.read()
         except FileNotFoundError:
             return None
+
+
+def _copy(source, output, member: DonorFile):
+    """Copy the member's bytes, the whole file or its slice, yielding each count written."""
+    if member.offset is None:
+        yield from source.copy_into(output)
+        return
+    source.seek(member.offset)
+    left = member.size
+    while left:
+        chunk = source.read(min(left, 1 << 20))
+        if not chunk:
+            raise DiscError(f"Short donor member: {member.source}")
+        output.write(chunk)
+        left -= len(chunk)
+        yield len(chunk)
 
 
 def _target(destination: Path, name: str) -> Path:
@@ -94,24 +116,20 @@ def extract_donor(
         resolved = {}
         for member in selected:
             actual = available.get(member.source.casefold())
-            if actual is None or actual.size != member.size:
+            if not _holds(actual and actual.size, member):
                 raise DiscError(f"Missing or wrong-sized donor member: {member.source}")
             resolved[member.source] = actual.path
         total, done = sum(member.size for member in selected), 0
-        with ExitStack() as stack:
-            outputs = {}
-            staged = {}
-            for member in selected:
-                path = Path(staging) / member.path
-                path.parent.mkdir(parents=True, exist_ok=True)
-                staged[member.path] = path
-                outputs[member.source.casefold()] = stack.enter_context(path.open("wb"))
-            for member in selected:
-                with disc.open(resolved[member.source]) as source:
-                    for count in source.copy_into(outputs[member.source.casefold()]):
-                        done += count
-                        if on_bytes:
-                            on_bytes(done, total)
+        staged = {}
+        for member in selected:
+            path = Path(staging) / member.path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            staged[member.path] = path
+            with path.open("wb") as output, disc.open(resolved[member.source]) as source:
+                for count in _copy(source, output, member):
+                    done += count
+                    if on_bytes:
+                        on_bytes(done, total)
         for member in selected:
             verify_file(staged[member.path], member)
         for member, target in zip(selected, targets, strict=True):

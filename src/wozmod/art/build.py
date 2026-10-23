@@ -14,7 +14,7 @@ from pathlib import Path
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 from wozmod.formats.linkdata import (
-    parse_index, parse_lzp2, wo1_entries,
+    LINKDATA2_FIRST, parse_index, parse_lzp2, wo1_entries,
 )
 from wozmod import resources
 from wozmod.progress import report as report_progress
@@ -598,7 +598,6 @@ def read_members(stream, entry) -> list[bytes]:
     return [allocation[m.relative_offset:m.relative_offset + m.stored_bytes] for m in entry.members]
 
 # Shares of the art stage (measured): loading the donors 0 to 0.5, the entries to 0.65, the large plates to 0.95.
-LINKDATA2_FIRST = 4251  
 
 def archive(key: int) -> tuple[Path, object]:
 

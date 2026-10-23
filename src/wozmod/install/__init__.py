@@ -28,6 +28,7 @@ from wozmod.progress import Cancelled, Progress
 MANIFEST = "wozmod/install.json"
 RUNTIME_FILES = ("wozmod/settings.ini", "wozmod/runtime.log", "wozmod/runtime.crash.log")  # written by the game, not by the installer
 TEXT_DATA = resources.root() / "data/text/table.json"
+DUB_CAPTIONS = resources.root() / "data/text/dub_captions.json"
 
 # Stock files the build reads: (size, SHA-256) of the supported Japanese PC release.
 STOCK_FILES = {
@@ -40,7 +41,7 @@ STOCK_FILES = {
 }
 # Release assets built by us; a release updates both pins with the files it ships.
 LETTERING = (18_399_206, "5c45d5a0d200c3fe55f31140285f9ac6c22cff172850a79484fe3dbb5a4c6ec0")
-DLL = (221_819, "0726cb088159ac7c503739c1b0f8137861d0c7c7771547f9fd082166fdc7eb59")
+DLL = (222_397, "5f974c193c870d8156a08ae9b6ee0c8ddf6023e1deaea05818f4d6ce6865ff11")
 
 _MOD_PATH = re.compile(r"d3d9\.dll|wozmod(/[A-Za-z0-9_][A-Za-z0-9_.-]*)+")
 
@@ -479,8 +480,11 @@ def _place_programs(inputs: dict[str, Path | None], donors: Path) -> None:
 def _text_table(game: Path, donors: Path, out: Path) -> None:
     from wozmod.text import DonorResolver
     from wozmod.text.build import build_table
+    from wozmod.text.dub_captions import build_dub_schedules
 
-    build_table(game, DonorResolver(donors), TEXT_DATA, out / "wozmod/table.bin")
+    resolver = DonorResolver(donors)
+    build_table(game, resolver, TEXT_DATA, out / "wozmod/table.bin")
+    build_dub_schedules(resolver, DUB_CAPTIONS, out)
 
 
 def _menu_art(game: Path, donors: Path, lettering: Path, staging: Path, out: Path, jobs: int) -> None:
@@ -600,13 +604,15 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
     as the game folder, but for "movies", whose folder is wozmod/movie. Nothing is kept before the checks pass.
     """
     from wozmod.movies import movie_donors
+    from wozmod.text.dub_captions import DUB_SCHEDULE_FILES
     from wozmod.voices import PSP_VOICE_FILES, VOICE_DONOR_FILES
 
     donors, out = staging / "donors", staging / "out"
     folders = DonorsFolder(donors)
     sources = {"game": game, "donors": donors, **inputs}
     movies_kept = cache is not None and cache.fetch("movies", sources, donors / "movie")
-    reads = {"wo1-x360": VOICE_DONOR_FILES, "wo2-x360": VOICE_DONOR_FILES, "wo2-psp": PSP_VOICE_FILES}
+    reads = {"wo1-x360": VOICE_DONOR_FILES + DUB_SCHEDULE_FILES, "wo2-x360": VOICE_DONOR_FILES,
+             "wo2-psp": PSP_VOICE_FILES}
     plan = [(disc, DISCS[disc].donor, folders.folder(disc), files, f"reading the {DISCS[disc].title} disc")
             for disc, files in reads.items()]
     if not movies_kept:

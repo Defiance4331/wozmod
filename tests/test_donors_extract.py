@@ -4,7 +4,7 @@ import struct
 import pytest
 
 from wozmod.discs import DiscError
-from wozmod.donors import Donor, DonorFile, extract_donor
+from wozmod.donors import Donor, DonorFile, check_donor_image, extract_donor
 
 
 def _disc(tmp_path, content=b"authored"):
@@ -63,6 +63,19 @@ def test_source_member_is_written_to_its_manifest_destination(tmp_path):
     assert outputs == (destination / "nested/result",)
     assert {p.relative_to(destination).as_posix(): p.read_bytes()
             for p in destination.rglob("*") if p.is_file()} == {"nested/result": b"authored"}
+
+
+def test_two_slices_of_one_disc_file_are_written_from_their_offsets(tmp_path):
+    # Bug: a slice is copied from the file's start, or the whole-file size check refuses a slice of a longer file.
+    image = _disc(tmp_path, b"0123456789")
+    slices = {"first.bin": (1, b"12"), "second.bin": (6, b"678")}
+    donor = Donor("synthetic", "xdvdfs", tuple(
+        DonorFile(name, "item", len(data), hashlib.sha256(data).hexdigest(), offset)
+        for name, (offset, data) in slices.items()))
+    destination = tmp_path / "output"
+    check_donor_image(image, donor)
+    extract_donor(image, donor, destination)
+    assert {p.name: p.read_bytes() for p in destination.iterdir()} == {"first.bin": b"12", "second.bin": b"678"}
 
 
 def test_casefolded_iso_member_lookup_opens_the_actual_disc_spelling(tmp_path):

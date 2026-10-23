@@ -14,17 +14,20 @@ def _relative_path(value: str) -> None:
 
 @dataclass(frozen=True)
 class DonorFile:
+    """A disc file, or with an offset the size bytes of it that start there, extracted as path."""
+
     path: str
     source: str
     size: int
     sha256: str
+    offset: int | None = None
 
     def __post_init__(self) -> None:
         _relative_path(self.path)
         _relative_path(self.source)
         if self.size < 0 or len(self.sha256) != 64 or any(
             c not in "0123456789abcdef" for c in self.sha256
-        ):
+        ) or (self.offset is not None and self.offset < 0):
             raise ValueError("Invalid member identity")
 
 
@@ -37,8 +40,8 @@ class Donor:
     def __post_init__(self) -> None:
         if self.format not in ("iso9660", "xdvdfs"):
             raise ValueError("Unknown donor disc format")
-        for field in ("path", "source"):
-            names = [getattr(file, field).casefold() for file in self.files]
+        for names in ([file.path.casefold() for file in self.files],
+                      [(file.source.casefold(), file.offset) for file in self.files]):
             if len(set(names)) != len(names):
                 raise ValueError("Duplicate member identity")
 
@@ -84,6 +87,15 @@ WO1_X360 = Donor(
                   '6df832e16b6d8208b6701718767d4d6255dff9fe393fdafaf6584bf3fd449451'),
         DonorFile('linkdata_ens.lnk', 'data/LINKDATA_ENS.LNK', 484016128,
                   '1f6cc306c4912c536c1cfb3a070ec5c32dd594373a58d720e225bb4beba105bf'),
+        # Entries 369 to 372 of the French text archive: the caption schedules of mev02 to mev05, timed to the dub.
+        DonorFile('linkdata_fns/369.bin', 'data/LINKDATA_FNS.LNK', 600,
+                  '2aae3d78e54b7de2194e21d7c5fdc3a58d3e96d155b37ba1be98c77d994394d2', 482185216),
+        DonorFile('linkdata_fns/370.bin', 'data/LINKDATA_FNS.LNK', 374,
+                  '79387d05f3180b5e9a8dd7813e735d0d7cd7d3817c6f189455e3e33325f1706e', 482187264),
+        DonorFile('linkdata_fns/371.bin', 'data/LINKDATA_FNS.LNK', 319,
+                  'bc857a92a52e63e707a81fe15ba53715bf69e3e11ec04f5d3239996beb853d7a', 482189312),
+        DonorFile('linkdata_fns/372.bin', 'data/LINKDATA_FNS.LNK', 400,
+                  '392212bb001853d3c430c1d4402d202ae2d0061f4bf4aea1f059770d0af3b805', 482191360),
         DonorFile('movie/mev01.wmv', 'data/movie/mev01.wmv', 72429463,
                   'b9605b0bcb544018e9c28715c29ed2ee170d1efcf963832e632b6c8cdfe76671'),
         DonorFile('movie/mev02.wmv', 'data/movie/mev02.wmv', 44195468,

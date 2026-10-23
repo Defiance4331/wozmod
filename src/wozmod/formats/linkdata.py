@@ -21,6 +21,7 @@ MAX_BACK_REFERENCE_BYTES = 18
 MAX_BACK_REFERENCE_DISTANCE = 0x800
 MAX_REPEAT_BYTES = 0x3F03
 SECTOR_SIZE = 2_048
+LINKDATA2_FIRST = 4_251  # the game numbers LINKDATA1 entries from 0, then LINKDATA2 entries from here
 RECORD = struct.Struct("<III")
 WORD = struct.Struct("<I")
 SM4L_HEADER = struct.Struct(">4sIII")

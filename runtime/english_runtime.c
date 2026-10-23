@@ -1619,8 +1619,11 @@ static void reload(void)
 
 
 
-static struct loose { u32 key, size; } loose[256];
+/* An archive entry the installer wrote: wozmod/entries/<key>.bin, or wozmod/voice/entries/<key>.bin, which takes
+ * its place while the voices are English (the caption schedules of the WO1 dub movies). */
+static struct loose { u32 key, size, voice; } loose[256];
 static u32 loose_count;
+static const WCHAR *const loose_dirs[2] = {L"entries\\", L"voice\\entries\\"};
 #define ARCHIVE_WHOLE ((u32 (__attribute__((thiscall)) *)(u32, u32))0x5D0540)
 #define GAME_HEAP ((u32 (*)(void))0x5D3670)
 #define HEAP_ALLOC ((u8 *(__attribute__((thiscall)) *)(u32, u32, u32))0x5D3500)
@@ -1630,28 +1633,37 @@ static void index_entries(void)
 {
     WCHAR name[MAX_PATH];
     WIN32_FIND_DATAW found;
-    HANDLE find = FindFirstFileW(path(name, L"entries\\*.bin"), &found);
-    if (find == INVALID_HANDLE_VALUE)
-        return;
-    do {
-        const WCHAR *c = found.cFileName;
-        u32 key = 0;
-        for (; *c >= '0' && *c <= '9'; c++)
-            key = key * 10 + *c - '0';
-        if (c != found.cFileName && !lstrcmpiW(c, L".bin") && (english || key == FONT_ENTRY) && loose_count < 256)
-            loose[loose_count].key = key, loose[loose_count++].size = found.nFileSizeLow;
-    } while (FindNextFileW(find, &found));
-    FindClose(find);
+    HANDLE find;
+    u32 voice;
+    for (voice = 0; voice < 2; voice++) {
+        if ((find = FindFirstFileW(lstrcatW(path(name, loose_dirs[voice]), L"*.bin"), &found)) == INVALID_HANDLE_VALUE)
+            continue;
+        do {
+            const WCHAR *c = found.cFileName;
+            u32 key = 0;
+            for (; *c >= '0' && *c <= '9'; c++)
+                key = key * 10 + *c - '0';
+            if (c != found.cFileName && !lstrcmpiW(c, L".bin") && (english || (!voice && key == FONT_ENTRY))
+                && loose_count < 256) {
+                loose[loose_count].key = key, loose[loose_count].voice = voice;
+                loose[loose_count++].size = found.nFileSizeLow;
+            }
+        } while (FindNextFileW(find, &found));
+        FindClose(find);
+    }
     note("entries served:", loose_count);
 }
 
+/* The entry served for key: the voice one while the voices are English, else the other. The voice setting can
+ * change between two reads, so each read asks again. */
 static struct loose *served(u32 key)
 {
+    struct loose *found = 0;
     u32 i;
     for (i = 0; i < loose_count; i++)
-        if (loose[i].key == key)
-            return &loose[i];
-    return 0;
+        if (loose[i].key == key && !(loose[i].voice && voice_saved) && (!found || loose[i].voice))
+            found = &loose[i];
+    return found;
 }
 
 
@@ -1779,7 +1791,7 @@ static u32 read_loose(struct frame *f)
     n = e->size - off;
     if (maxlen && n >= maxlen)
         n = maxlen;
-    p = path(name, L"entries\\");
+    p = path(name, loose_dirs[e->voice]);
     p += lstrlenW(p);
     for (digits = 1; key / digits >= 10; digits *= 10)
         ;
@@ -4111,7 +4123,7 @@ static u32 english_hook(u32 id, struct frame *f)
         u32 s = text(f->ecx, id, f), width, breaks;
         u8 w = FONT_CELL[0], h = FONT_CELL[1];
         const char *c;
-        if (s != f->ecx) {
+        if (s != f->ecx || text_fit_latin((const char *)s)) {  /* translated, or English in a served schedule */
             FONT_CELL[0] = FONT_CELL[1] = 28;
 
 

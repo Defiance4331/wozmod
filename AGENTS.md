@@ -19,6 +19,9 @@ copies.
   English stores a pointer to the donor string, never the text.
 - In docs, comments and tests, name game text by its id or pointer, not by
   quoting it.
+- One exception, by the owner's decision: `data/text/dub_captions.json` holds
+  word-for-word transcripts of the English dub in the four WO1 ending movies,
+  which no disc captions in English. Add no other transcript without asking.
 - `tests/test_repository_hygiene.py` goes red on game files, Japanese text and
   byte dumps. Fix the content that trips it rather than adding an exception.
 
