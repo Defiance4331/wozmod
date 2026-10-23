@@ -13,13 +13,13 @@ def test_letter_map_rebuilds_each_label_and_refuses_a_shifted_box(tmp_path):
     # Bug: a space lands after the wrong letter, an unlabelled line gains text, or a letter
     # moved to another box still gives a word (the fingerprint must catch it).
     labels = ["Ab  c", None, "dA"]
-    row = {"donor": [1, 2, 0],
+    row = {"wo1-x360": [1, 2, 0],
            "letters": {"A": "0:0 2:1", "b": "0:1", "c": "0:2", "d": "2:0"},
            "texts": [{"boxes": 3, "spaces": [1, 1], "sha256": words.sha256(labels[0])}, None,
                      {"boxes": 2, "sha256": words.sha256(labels[2])}]}
     path = tmp_path / "art.json"
     path.write_text(json.dumps({"faces": {"f": {"rows": [row]}}}))
-    assert words.load(path)["faces"]["f"]["rows"][0] == {"donor": [1, 2, 0], "texts": labels}
+    assert words.load(path)["faces"]["f"]["rows"][0] == {"wo1-x360": [1, 2, 0], "texts": labels}
 
     row["letters"] |= {"A": "0:0 2:0", "d": "2:1"}
     path.write_text(json.dumps({"faces": {"f": {"rows": [row]}}}))

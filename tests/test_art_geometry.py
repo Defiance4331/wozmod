@@ -23,7 +23,7 @@ def test_header_compaction_does_not_move_other_rows_or_clip_alpha_origin(monkeyp
     letters(rendered_label)
     edit = {"entry": 4060, "item": 33, "face": "header",
             "bands": [(56 * row, 56 * (row + 1)) for row in range(4)],
-            "rows": [[{"donor": [493, 13, 0], "row": row}] for row in range(4)]}
+            "rows": [[{"wo1-x360": [493, 13, 0], "row": row}] for row in range(4)]}
     texts = [None, None, None, "Alder horizon"]
     compact = vector.vector_art(edit, served, texts, 2)
     ordinary = vector.vector_art(dict(edit, entry=4080, item=38), served, texts, 2)

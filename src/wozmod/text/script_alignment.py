@@ -7,6 +7,7 @@ from functools import partial
 from pathlib import Path
 from typing import Callable
 
+from wozmod.donors import WO1_X360, WO2_X360
 from wozmod.formats.linkdata import (
     archive, decoded_member,
 )
@@ -15,7 +16,7 @@ from wozmod.formats.scripts import (
     event_lines, mesc_blocks, parse_script, quote_tables, quote_text,
 )
 
-# WO1 X360 ENS ordinals, as are the other "wo1" entries below. Its loader 0x822A28C0 reads ENS k as archive id 0xA53 + k;
+# WO1 X360 ENS ordinals, as are the other WO1 X360 entries below. Its loader 0x822A28C0 reads ENS k as archive id 0xA53 + k;
 # 0x8219D948 loads the stage script ENS 88 + stage id.
 WO1_SCRIPTS = range(88, 148)
 
@@ -36,15 +37,15 @@ MIN_SHARED_VOICES = 0.9
 
 
 # WO1 X360 loads its still pages ENS 6 (0x8226F09C) and camp talk ENS 18 (0x822912DC).
-NARRATION = ((4071, "wo2", 60), (4073, "wo1", 6), (4103, "wo2", 59), (4105, "wo1", 18))
+NARRATION = ((4071, WO2_X360.name, 60), (4073, WO1_X360.name, 6), (4103, WO2_X360.name, 59), (4105, WO1_X360.name, 18))
 
 
 BRIEFINGS = (4190, range(101, 129))
 
 
 # A WO1 event slot s loads the entry 0x82293F60 gives it, and MOZ slot s + 68 (0x49A9B0) loads the stock one.
-EVENTS = ((range(177, 239), "wo2", 2692), (range(245, 283), "wo1", -96),
-          (range(283, 384), "wo1", -18), (range(401, 402), "wo1", -35))
+EVENTS = ((range(177, 239), WO2_X360.name, 2692), (range(245, 283), WO1_X360.name, -96),
+          (range(283, 384), WO1_X360.name, -18), (range(401, 402), WO1_X360.name, -35))
 
 
 QUOTES = (4084, 21, 45)
@@ -194,43 +195,43 @@ def official_pairs(stock: Path, wo1: Path, wo2_donor: Wo2Donor) -> dict[bytes, t
     moz = moz_scripts(stock / "LINKDATA2")
     wo1_by_ordinal, wo2 = wo1_scripts(wo1), wo2_donor.scripts()
     wo1_ids = {id(d) for d in wo1_by_ordinal.values()}
-    found = [(pairs, "wo1" if id(d) in wo1_ids else "wo2") for pairs, d in (
+    found = [(pairs, WO1_X360.name if id(d) in wo1_ids else WO2_X360.name) for pairs, d in (
         (record_pairs(moz[o], d), d)
         for o, d in pair_scripts(moz, [*wo1_by_ordinal.values(), *wo2.values()]).items())]
-    found += [(prefix_pairs(moz[o], wo2[m]), "wo2") for o, m in DREAM_SCRIPTS]
+    found += [(prefix_pairs(moz[o], wo2[m]), WO2_X360.name) for o, m in DREAM_SCRIPTS]
     events = [(o, source, o + shift) for ordinals, source, shift in EVENTS for o in ordinals]
     briefing_entry, briefing_members = BRIEFINGS
     quotes_entry, wo1_quotes, wo2_quotes = QUOTES
-    wanted = {"wo1": {wo1_quotes}, "wo2": {*briefing_members, wo2_quotes}}
+    wanted = {WO1_X360.name: {wo1_quotes}, WO2_X360.name: {*briefing_members, wo2_quotes}}
     for _, source, entry in [*NARRATION, *events]:
         wanted[source].add(entry)
-    donor = {("wo1", k): v for k, v in archive(wo1).read(sorted(wanted["wo1"])).items()}
-    donor |= {("wo2", k): v for k, v in wo2_donor.members(sorted(wanted["wo2"])).items()}
+    donor = {(WO1_X360.name, k): v for k, v in archive(wo1).read(sorted(wanted[WO1_X360.name])).items()}
+    donor |= {(WO2_X360.name, k): v for k, v in wo2_donor.members(sorted(wanted[WO2_X360.name])).items()}
     narration = linkdata1.read([*(n for n, _, _ in NARRATION), briefing_entry, quotes_entry])
     found += [(narration_pairs(narration[n], donor[s, d]), s) for n, s, d in NARRATION]
                                                                                              
-    found += [(quote_pairs(narration[quotes_entry], donor["wo1", wo1_quotes], officers=False, order=">",
-                           insert=WO1_QUOTE_INSERT), "wo1"),
-              (quote_pairs(narration[quotes_entry], donor["wo2", wo2_quotes], order=wo2_donor.order), "wo2")]
+    found += [(quote_pairs(narration[quotes_entry], donor[WO1_X360.name, wo1_quotes], officers=False, order=">",
+                           insert=WO1_QUOTE_INSERT), WO1_X360.name),
+              (quote_pairs(narration[quotes_entry], donor[WO2_X360.name, wo2_quotes], order=wo2_donor.order), WO2_X360.name)]
     found.append((narration_pairs(narration[briefing_entry], b"".join(
-        decoded_member(donor["wo2", m]) for m in briefing_members)), "wo2"))
+        decoded_member(donor[WO2_X360.name, m]) for m in briefing_members)), WO2_X360.name))
     scenes = linkdata2.read([o for o, _, _ in events])
-    found += [(event_pairs(scenes[o], donor[s, d], wo2_donor.order if s == "wo2" else ">"), s) for o, s, d in events]
+    found += [(event_pairs(scenes[o], donor[s, d], wo2_donor.order if s == WO2_X360.name else ">"), s) for o, s, d in events]
     movies = linkdata2.read(CAPTIONS)
     captions = wo2_donor.members([o + CAPTION_MEMBER for o in CAPTIONS])
-    found += [(_decoded(caption_pairs(movies[o], captions[o + CAPTION_MEMBER])), "wo2") for o in CAPTIONS]
+    found += [(_decoded(caption_pairs(movies[o], captions[o + CAPTION_MEMBER])), WO2_X360.name) for o in CAPTIONS]
     votes: dict[bytes, dict[str, list]] = {}
     for pairs, source in found:
         for japanese, english in pairs:
             vote = votes.setdefault(japanese, {}).setdefault(english, [0, set()])
             vote[0] += 1
             vote[1].add(source)
-    official = {japanese: (english, "wo1-x360" if "wo1" in sources else wo2_donor.source)
+    official = {japanese: (english, WO1_X360.name if WO1_X360.name in sources else wo2_donor.source)
                 for japanese, counts in votes.items()
                 for english, (_, sources) in [max(counts.items(), key=lambda item: item[1][0])]}
                                                                                                   
                                                                                                         
-    tables = paired_quote_tables(narration[quotes_entry], donor["wo2", wo2_quotes], wo2_donor.order)[2:]
+    tables = paired_quote_tables(narration[quotes_entry], donor[WO2_X360.name, wo2_quotes], wo2_donor.order)[2:]
     for m, d in ((m, d) for ours, theirs in tables for m, d in zip(ours, theirs, strict=False)):
         for japanese, english in _decoded([(quote_text(m), quote_text(d))]):
             if m[2:] != japanese and english != official[japanese][0]:

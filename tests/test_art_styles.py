@@ -60,7 +60,7 @@ def test_ability_colour_roles_cannot_reuse_direct_donor_payload(monkeypatch):
     }
     failures = []
     for item, role in families:
-        edit = {"entry": 4079, "item": item, "texture": 0, "donor": [507, item - 1, 0]}
+        edit = {"entry": 4079, "item": item, "texture": 0, "wo1-x360": [507, item - 1, 0]}
         image = build.payload(target, edit, donors, None)
         if not isinstance(image, Image.Image):
             failures.append((item, role, "returned donor payload", image))

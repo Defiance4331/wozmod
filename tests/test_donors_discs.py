@@ -24,7 +24,9 @@ def test_each_discs_program_pins_belong_to_its_donor():
 def test_every_data_loader_refuses_a_disc_name_that_is_not_a_disc_key(tmp_path, monkeypatch):
     """Bug: a pointer or donor in data/ keeps a retired or misspelt disc name (the short "x360" and "psp" of
     v0.1.0), and its loader takes it: code that compares names (`== "wo2-x360"`) then matches nothing and falls
-    back quietly, or the install stops at that row minutes in. Each loader is given one stale name."""
+    back quietly, or the install stops at that row minutes in. Likewise an art pointer under its retired key
+    ("donor" or "wo2"), from a branch older than the keys: the build finds no pointer there and ships the stock art.
+    Each loader is given one stale name."""
     from wozmod.art import words
     from wozmod.fonts import menu_references
     from wozmod.text.build import _load_data
@@ -57,6 +59,8 @@ def test_every_data_loader_refuses_a_disc_name_that_is_not_a_disc_key(tmp_path, 
         "a catalog word's pointer": (catalog, {"pc_text": {"ref": ["psp", "prx", 0], "sha256": key}}, "psp"),
         "a catalog original's donor": (catalog, {"original": {"donor": "x360", "kind": "official",
                                                               "ens": [7, 2, 0], "crop": [0, 0, 1, 1]}}, "x360"),
+        "an art recipe's WO1 X360 pointer under its retired key": (art, {"entry": 1, "donor": [15, 9, 0]}, "donor"),
+        "an art recipe's WO2 X360 pointer under its retired key": (art, {"entry": 1, "wo2": [3, 0, 0]}, "wo2"),
     }
     taken = []
     for case, (load, value, name) in cases.items():

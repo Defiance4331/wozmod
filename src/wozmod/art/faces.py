@@ -8,6 +8,7 @@ from statistics import fmean, median, mode
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 from wozmod.progress import report as report_progress
+from wozmod.donors import WO1_X360, WO2_X360
 from .imaging import keyed, rgba, unglowed
 from .packing import worker_pool
 
@@ -436,7 +437,7 @@ def _face(name: str) -> Face:
     if name == "title":
         titles = stages["titles"]
         title = Face([row for k, text in enumerate(stages["rows"]) if k not in titles["skip"]
-                      for row in face_rows(rgba(donors[titles["donor"]][k].textures[0]), [text])])
+                      for row in face_rows(rgba(donors[titles[WO1_X360.name]][k].textures[0]), [text])])
         title.synthesize(titles["synth"])
         return title
     spec = mapping["faces"][name]
@@ -505,11 +506,11 @@ def source_image(spec: dict, donors: dict, stock: Image.Image) -> Image.Image:
     if "moz" in spec:
         item, index = spec["moz"]
         return rgba(donors["stock"].items[item].g1t.textures[index])
-    if "wo2" in spec:
-        entry, item, index = spec["wo2"]
-        return rgba(donors["wo2", entry][item].textures[index])
-    if "donor" in spec:
-        entry, item, index = spec["donor"]
+    if WO2_X360.name in spec:
+        entry, item, index = spec[WO2_X360.name]
+        return rgba(donors[WO2_X360.name, entry][item].textures[index])
+    if WO1_X360.name in spec:
+        entry, item, index = spec[WO1_X360.name]
         return rgba(donors[entry][item].textures[index])
     return stock
 

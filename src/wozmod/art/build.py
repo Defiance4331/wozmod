@@ -50,18 +50,18 @@ PACKAGE_MAGIC = 0x33B59
 SHARED: dict = {}  
 
 def expanded(edit: dict):
-    """Each (entry, recipe) a texture recipe stands for: its count steps the item and its donor or wo2 source alike."""
+    """Each (entry, recipe) a texture recipe stands for: its count steps the item and its WO1 X360 or WO2 X360 pointer alike."""
     for entry, first in [(edit["entry"], edit.get("item")), *edit.get("also", [])]:
         for k in range(edit.get("count", 1)):
             step = dict(edit, entry=entry, item=first + k) if first is not None else dict(edit, entry=entry)
-            for key in ("donor", "wo2"):
+            for key in (WO1_X360.name, WO2_X360.name):
                 if k and key in edit:
                     step[key] = [edit[key][0], edit[key][1] + k, edit[key][2]]
             yield entry, step
 
 def native_officer_source(edit: dict) -> tuple[int, int, int] | None:
     """The WO2 X360 member an officer banner is served whole from, if its recipe names one."""
-    return tuple(edit["wo2"]) if edit.get("entry") == 4063 and "wo2" in edit else None
+    return tuple(edit[WO2_X360.name]) if edit.get("entry") == 4063 and WO2_X360.name in edit else None
 
 def officer_name_role(edit: dict, row: int = 0) -> str | None:
 
@@ -74,11 +74,11 @@ def officer_name_role(edit: dict, row: int = 0) -> str | None:
 def native_dream_card(g1t: G1tFile, edit: dict, donors: dict) -> G1tFile | None:
 
     spec = edit.get("card", {})
-    if "wo2" not in spec:
+    if WO2_X360.name not in spec:
         return None
     original = (reference(f"{edit['entry']}.{edit['item']}", 0) or {}).get("original", {})
-    if (edit.get("entry") != 4095 or original.get("ens") != spec["wo2"]
-            or spec["wo2"][0] != 27):
+    if (edit.get("entry") != 4095 or original.get("ens") != spec[WO2_X360.name]
+            or spec[WO2_X360.name][0] != 27):
         raise ValueError("native Dream card must use its paired ENS27 portrait")
     box = spec["box"]
     if (len(box) != 4 or box[0] != 0 or box[2] != 196
@@ -321,8 +321,8 @@ def payload(target, edit: dict, donors: dict, package) -> bytes:
         image, top = donors["faces"]["title"].render(edit["stage_title"])
         box = image.getbbox()
         image = placed(Image.new("RGBA", (target.width, target.height)), image.crop(box), 0, edit["baseline"] - top + box[1])
-        if "wo1" in edit:
-            entry, item, index = edit["wo1"]
+        if WO1_X360.name in edit:
+            entry, item, index = edit[WO1_X360.name]
             source = donors[entry][item].textures[index]
             if (ink(rgba(source))[2] >= ink(image)[2] - 2 and source.pixel_format == target.pixel_format
                     and len(source.payload) == len(target.payload)):  
@@ -367,7 +367,7 @@ def payload(target, edit: dict, donors: dict, package) -> bytes:
         image = mirrored(image, navy_mask(image, spec["rows"]))
         drop = CARD_DROP
         lines = []  
-        if "donor" in spec:  
+        if WO1_X360.name in spec:  
             
             layer = lettering_layer(source_image(spec, donors, None), stock_image(spec["against"], donors), spec["box"])
             grey = layer.convert("L")
@@ -455,9 +455,9 @@ def payload(target, edit: dict, donors: dict, package) -> bytes:
         image = composed(rgba(target), edit["rows"], donors, edit.get("align", "centre"), edit.get("gap", 0),
                          edit.get("bands"))
         return target.encode_rgba(recoloured(image, edit).tobytes())
-    if "donor" in edit or "wo2" in edit:
-        entry, item, index = edit.get("donor") or edit["wo2"]
-        source = donors[entry if "donor" in edit else ("wo2", entry)][item].textures[index]
+    if WO1_X360.name in edit or WO2_X360.name in edit:
+        entry, item, index = edit.get(WO1_X360.name) or edit[WO2_X360.name]
+        source = donors[entry if WO1_X360.name in edit else (WO2_X360.name, entry)][item].textures[index]
         if (source.width, source.height) == (target.width, target.height) and "box" not in edit:
             if source.pixel_format == target.pixel_format and len(source.payload) == len(target.payload):
                 return source.payload
@@ -503,7 +503,7 @@ def edited_entry(data: bytes, edits: list[dict], donors: dict, preview: Path | N
         if native_source := native_officer_source(edit):
             entry, member, _ = native_source
 
-            g1t = donors[("wo2", entry)][member]
+            g1t = donors[(WO2_X360.name, entry)][member]
         elif (dream := native_dream_card(package.items[edit["item"]].g1t, edit, donors)) is not None:
             g1t = dream
         else:
@@ -707,7 +707,7 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
     titles = stages["titles"]
     edits.setdefault(titles["entry"], []).extend(
         {"item": k, "texture": 0, "stage_title": name, "baseline": titles["baseline"],
-         **({"wo1": [titles["donor"], stages["rows"].index(name), 0]} if name in stages["rows"] else {})}
+         **({WO1_X360.name: [titles[WO1_X360.name], stages["rows"].index(name), 0]} if name in stages["rows"] else {})}
         for k, name in enumerate(stages["names"]))
     flat = [e for group in edits.values() for e in group]
     flat += [piece for e in flat for piece in [*sum(e.get("rows", []), []), *e.get("draw", []), e.get("plate"),
@@ -718,15 +718,15 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
         if missing := set(entries) - edits.keys():
             raise ArtError(f"entries without edits: {sorted(missing)}")
         edits = {ordinal: edits[ordinal] for ordinal in entries}
-    donors = wo1_donors(wo1_x360, {e["donor"][0] for e in flat if "donor" in e} | {stages["font"][0], titles["donor"]})
+    donors = wo1_donors(wo1_x360, {e[WO1_X360.name][0] for e in flat if WO1_X360.name in e} | {stages["font"][0], titles[WO1_X360.name]})
     try:
         donors["latin"] = lettering.latin(latin_cells or working / "latin-cells.png", latin_cells is None)
     except ValueError as error:
         raise ArtError(str(error)) from error
-    donors |= {("wo2", k): wo2_g1ts(v) for k, v in wo1_entries(
+    donors |= {(WO2_X360.name, k): wo2_g1ts(v) for k, v in wo1_entries(
         wo2.with_suffix(".lnk"), wo2.with_suffix(".idx"),
-        sorted({e["wo2"][0] for e in flat if "wo2" in e}
-               | {s["wo2"][0] for e in flat for s in e.get("draw", []) if "wo2" in s}
+        sorted({e[WO2_X360.name][0] for e in flat if WO2_X360.name in e}
+               | {s[WO2_X360.name][0] for e in flat for s in e.get("draw", []) if WO2_X360.name in s}
                | {3} | native_reference_entries(mapping))).items()}
     donors["squish"] = squeeze
     base_bin = game / "LINKDATA1.BIN"
@@ -866,8 +866,8 @@ def write_hires(output_dir: Path, wo1_x360: Path | None, wo2: Path | None, squee
             old.unlink()
     pieces = [p for e in mapping["textures"] if (e["entry"], e.get("item")) in {h[:2] for h in HIRES} | set(DARK)
               for row in e.get("rows") or [e.get("draw", [])] for p in row]
-    donors = wo1_donors(wo1_x360, {p["donor"][0] for p in pieces if "box" in p and "donor" in p} | {1, 16})
-    donors |= {("wo2", k): x360_members(v) for k, v in wo1_entries(
+    donors = wo1_donors(wo1_x360, {p[WO1_X360.name][0] for p in pieces if "box" in p and WO1_X360.name in p} | {1, 16})
+    donors |= {(WO2_X360.name, k): x360_members(v) for k, v in wo1_entries(
         wo2.with_suffix(".lnk"), wo2.with_suffix(".idx"),
         sorted(set(X360_PLATE_ENTRIES) | native_reference_entries(mapping))).items()}
     donors["menu_labels"] = prepare_menu_labels(mapping)

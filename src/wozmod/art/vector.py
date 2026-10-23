@@ -15,6 +15,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 from wozmod.formats.linkdata import parse_lzp2
 from wozmod import native
+from wozmod.donors import WO1_X360, WO2_X360
 from wozmod.progress import report as report_progress
 from . import lettering, words
 from .hires import HIRES_SCALE, HiresRow, hires_bank, hires_blocks
@@ -39,13 +40,13 @@ def menu_render_options(entry: int, item: int, row: int, piece: dict, style: str
 
     from wozmod.fonts.menu_styles import help_treatment
 
-    menu_style = "dark.camp-light" if piece.get("donor", [])[:2] == [1, 17] else MENU_STYLE[style]
+    menu_style = "dark.camp-light" if piece.get(WO1_X360.name, [])[:2] == [1, 17] else MENU_STYLE[style]
     record = reference(f"{entry}.{item}", row) or {}
     role = record.get("role_variant")
     if menu_style == "dark.help":
         role = help_treatment(entry, item, row)
     elif not role and menu_style in {"dark.pause", "dark.camp"}:
-        role = "blue" if piece.get("donor", [])[:2] in [[1, 18], [1, 19]] else "purple"
+        role = "blue" if piece.get(WO1_X360.name, [])[:2] in [[1, 18], [1, 19]] else "purple"
     time_key = (entry, item) if destination is None else destination
     if time_key in TIME_LABEL_LAYOUT:
         role = TIME_LABEL_LAYOUT[time_key][0]
@@ -115,7 +116,7 @@ def squished_native_label(donors: dict, style: str, text: str, role=None,
     geometry = None
     if wo2_x360 and original.get("donor") == "wo2-x360" and original.get("ens"):
         ens, member, texture = original["ens"]
-        source = rgba(donors[("wo2", ens)][member].textures[texture])
+        source = rgba(donors[(WO2_X360.name, ens)][member].textures[texture])
         source = source.crop(original.get("crop"))
         geometry = row_geometry(source, lambda r, g, b, a:
                                 a / 255 * max(0, (max(r, g, b) - 100) / 140))
@@ -364,7 +365,7 @@ STYLE = {(4069, 2): "501.3", (4060, 14): "493.9", (4060, 44): "493.9", (4060, 45
          (4098, 14): "493.9", (4080, 0): "508.0", (4080, 44): "508.0", (4079, 223): "508.0", (4081, 0): "508.0"}
 
 def row_track(entry: int, item: int, piece: dict) -> float:
-    return TRACK.get((piece.get("donor") or [None])[0], TRACK_AUTHORED)
+    return TRACK.get((piece.get(WO1_X360.name) or [None])[0], TRACK_AUTHORED)
 
 def solved_track(text: str, natural: dict, geometry, scale: int, mean: float) -> float | None:
 
@@ -431,19 +432,19 @@ def row_offset(geometry, metrics: dict, scale: int, align: str) -> tuple[int, in
 
 def sheet_key(spec: dict) -> tuple:
     """The sheet a piece names: WO1 entries as numbered, WO2 X360 ones marked apart (their numbers overlap)."""
-    return ("wo2", *spec["wo2"]) if "wo2" in spec else tuple(spec["donor"])
+    return (WO2_X360.name, *spec[WO2_X360.name]) if WO2_X360.name in spec else tuple(spec[WO1_X360.name])
 
 def donor_texts(mapping: dict) -> dict:
 
     texts = {sheet_key(s): s["texts"] for f in mapping["faces"].values() for s in f["rows"]
-             if "texts" in s and ("donor" in s or "wo2" in s)}
-    labels = {tuple(s["donor"]): s["texts"] for group in mapping.get("labels", {}).values() for s in group}
+             if "texts" in s and (WO1_X360.name in s or WO2_X360.name in s)}
+    labels = {tuple(s[WO1_X360.name]): s["texts"] for group in mapping.get("labels", {}).values() for s in group}
     return texts | HEADER_TEXTS | labels
 
 def hires_texts(edit: dict, mapping: dict, donors: dict) -> list[str | None]:
 
     texts, out = donor_texts(mapping), []
-    named = lambda p: "donor" in p or "wo2" in p and "row" in p  # a donor piece, or a header band of a WO2 sheet
+    named = lambda p: WO1_X360.name in p or WO2_X360.name in p and "row" in p  # a donor piece, or a header band of a WO2 sheet
     for row in edit.get("rows") or [edit["draw"]]:  
         piece = next((p for p in row if "text" in p or named(p)), row[0])
         if "text" in piece:
@@ -453,10 +454,10 @@ def hires_texts(edit: dict, mapping: dict, donors: dict) -> list[str | None]:
         elif "row" in piece:
             out.append(texts.get(sheet_key(piece), [None] * (piece["row"] + 1))[piece["row"]])
         else:
-            entry, item, index = piece["donor"]
+            entry, item, index = piece[WO1_X360.name]
             bands = ink_rows(rgba(donors[entry][item].textures[index]))
             y0, y1 = piece["box"][1], piece["box"][3]
-            out.append(next(t for (top, bottom), t in zip(bands, texts[tuple(piece["donor"])], strict=True) if y0 <= top and bottom <= y1))
+            out.append(next(t for (top, bottom), t in zip(bands, texts[tuple(piece[WO1_X360.name])], strict=True) if y0 <= top and bottom <= y1))
 
     if edit.get("style") == "results":
         out = [words.resolved((reference(f"{edit['entry']}.{edit['item']}", row) or {}).get("pc_text")) or text
@@ -483,13 +484,14 @@ def rows_edit(entry: int, item: int, mapping: dict, served: Image.Image, **face)
     edit = next((e for e in edits if (e["entry"], e.get("item")) == (entry, item) or [entry, item] in e.get("also", [])), None)
     if not edit:  
         edit = next(e for e in edits if e["entry"] == entry and 0 < item - e["item"] < e.get("count", 1))
-        edit = dict(edit, donor=[edit["donor"][0], edit["donor"][1] + item - edit["item"], edit["donor"][2]])
+        sheet = edit[WO1_X360.name]
+        edit = {**edit, WO1_X360.name: [sheet[0], sheet[1] + item - edit["item"], sheet[2]]}
     if "rows" in edit:
         rows = edit["rows"]
     elif "draw" in edit:
-        rows = [[p] for p in edit["draw"] if "text" in p or "donor" in p]
+        rows = [[p] for p in edit["draw"] if "text" in p or WO1_X360.name in p]
     else:
-        rows = [[{"donor": edit["donor"], "row": k}] for k in range(len(donor_texts(mapping).get(tuple(edit["donor"]), [None])))]
+        rows = [[{WO1_X360.name: edit[WO1_X360.name], "row": k}] for k in range(len(donor_texts(mapping).get(tuple(edit[WO1_X360.name]), [None])))]
     bands = [(max(top - 2, 0), min(bottom + 2, served.height)) for top, bottom in ink_rows(served)]
     if (entry, item) in DARK_PLATE or face.get("style") == "attributes":
         bands = [(0, served.height)]
@@ -509,14 +511,14 @@ def header_edit(edit: dict, mapping: dict, served: Image.Image) -> dict:
     if "rows" in edit:
         rows = edit["rows"]
     elif "draw" in edit:  
-        sheet, rows = {k: v for k, v in edit["draw"][0].items() if k in ("donor", "wo2")}, []
+        sheet, rows = {k: v for k, v in edit["draw"][0].items() if k in (WO1_X360.name, WO2_X360.name)}, []
         # the sheet's own bands, in order; a line its face leaves unread is lettered by an into piece
         lines = [k for k, text in enumerate(texts[sheet_key(sheet)]) if text is not None]
         for top, bottom in bands:
             into = next((p for p in edit["draw"] if "into" in p and p["into"][1] <= top and bottom <= p["into"][3]), None)
             rows.append([into] if into else [dict(sheet, row=lines[sum("into" not in r[0] for r in rows)])])
     else:
-        rows = [[{"donor": edit["donor"], "row": i}] for i in range(len(texts[tuple(edit["donor"])]))]
+        rows = [[{WO1_X360.name: edit[WO1_X360.name], "row": i}] for i in range(len(texts[tuple(edit[WO1_X360.name])]))]
     return dict(edit, rows=rows, bands=bands, align="left", face="header")
 
 def stock_split(band: Image.Image, gap: int) -> int:
@@ -547,7 +549,7 @@ def vector_art(edit: dict, served: Image.Image, texts: list, scale: int, window=
     header = edit.get("face") == "header"
     official_left = next((row_geometry(served.crop((0, top, served.width, bottom)), header_cover)[0]
                           for (top, bottom), row in zip(edit.get("bands", []), edit.get("rows", []), strict=True)
-                          if ("donor" in row[0] or "wo2" in row[0]) and "box" not in row[0]), None) if header else None
+                          if (WO1_X360.name in row[0] or WO2_X360.name in row[0]) and "box" not in row[0]), None) if header else None
     help_labels = {}
     help_right = None
     if edit.get("style") == "help":
@@ -581,7 +583,7 @@ def vector_art(edit: dict, served: Image.Image, texts: list, scale: int, window=
             continue
         row = (edit.get("rows") or [edit["draw"]])[k]
         piece, split = row[0], 0
-        if header and "donor" not in piece and "wo2" not in piece and "text" not in piece:
+        if header and WO1_X360.name not in piece and WO2_X360.name not in piece and "text" not in piece:
             split = stock_split(band_1x, edit.get("gap", 9))
             art.paste(band_1x.crop((0, 0, split, band_1x.height)).resize((split * scale, band_1x.height * scale),
                                                                           Image.Resampling.NEAREST), (0, top * scale))
@@ -597,7 +599,7 @@ def vector_art(edit: dict, served: Image.Image, texts: list, scale: int, window=
         if (edit["entry"], edit["item"]) in TIME_LABEL_LAYOUT:
             _, left, baseline = TIME_LABEL_LAYOUT[(edit["entry"], edit["item"])]
             geometry = (left, left, baseline - top)
-        ref = ["--ref", "{}.{}".format(*piece["donor"][:2])] if "donor" in piece else []
+        ref = ["--ref", "{}.{}".format(*piece[WO1_X360.name][:2])] if WO1_X360.name in piece else []
         if look or style:  
             if look:
                 label, metrics = value_label(text, scale, look, *ref)
@@ -667,7 +669,7 @@ def vector_art(edit: dict, served: Image.Image, texts: list, scale: int, window=
             art.paste(band, (0, top * scale))
             continue
         track = row_track(edit["entry"], edit["item"], piece)
-        if "donor" in piece:  
+        if WO1_X360.name in piece:  
             label, metrics = lettering.button(text, scale, 0.0, STYLE.get((edit["entry"], edit["item"]), "501.3"))
             solved = solved_track(text, metrics, geometry, scale, track)
             if solved is None:
@@ -793,7 +795,7 @@ def plate_art(entry: int, item: int, g1t, edit: dict, text: str, scale: int,
     spec = X360_PLATES.get((entry, item)) if donors is not None else None
     if spec:
         ens, member, index = spec.reference
-        served = rgba(donors[("wo2", ens)][member].textures[index])
+        served = rgba(donors[(WO2_X360.name, ens)][member].textures[index])
     badge = (entry, item) == (4094, 16)
     cover = (lambda r, g, b, a: min(r, g, b) / 255 if a > 204 else 0) if badge else plate_cover
     geometry = tuple(edit["geometry"]) if "geometry" in edit else row_geometry(served, cover)  # a recipe's own room
@@ -821,7 +823,7 @@ def plate_art(entry: int, item: int, g1t, edit: dict, text: str, scale: int,
         background = None
         if getattr(spec, "cleanup_reference", None):
             ens, member, index = spec.cleanup_reference
-            background = rgba(donors[("wo2", ens)][member].textures[index])
+            background = rgba(donors[(WO2_X360.name, ens)][member].textures[index])
         clean, mask, cleanup = clean_substrate(
             served, canvas_size=(canvas_width, served.height), minimum_right=width,
             background_reference=background, left_bevel=getattr(spec, "left_bevel", 2),
@@ -864,7 +866,8 @@ def native_menu_art(entry: int, item: int, served: Image.Image, mapping: dict,
     if edit is None:
         edit = next(e for e in mapping["textures"] if e["entry"] == entry
                     and 0 < item - e["item"] < e.get("count", 1))
-        edit = dict(edit, donor=[edit["donor"][0], edit["donor"][1] + item - edit["item"], 0])
+        sheet = edit[WO1_X360.name]
+        edit = {**edit, WO1_X360.name: [sheet[0], sheet[1] + item - edit["item"], 0]}
     edit = dict(edit, entry=entry, item=item)
     layout = native_menu_layout(edit, donors)
     options = ["--style", layout["style"]]

@@ -6,7 +6,7 @@ import struct
 from dataclasses import dataclass
 from pathlib import Path
 
-from wozmod.donors import DonorsFolder
+from wozmod.donors import WO1_X360, WO2_X360, DonorsFolder
 from wozmod.formats.audio import (
     MOZ_VOICE_IDS, SE_BANKS, WO1_EVENT_VOICES, WO2_EVENT_VOICES, english_se_bank, english_voice_bank,
     english_voice_clips,
@@ -77,10 +77,10 @@ def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | N
     voice_path = destination / "Voice.bin"
     voice_path.write_bytes(english_voice_bank(clips))
     stock_events = linkdata2.read([o for ordinals, _, _ in EVENTS for o in ordinals])
-    wo1_events = wo1_ens.read([o + shift for ordinals, source, shift in EVENTS if source == "wo1" for o in ordinals])
-    wo2_events = wo2_donor.members([o + shift for ordinals, source, shift in EVENTS if source == "wo2" for o in ordinals])
+    wo1_events = wo1_ens.read([o + shift for ordinals, source, shift in EVENTS if source == WO1_X360.name for o in ordinals])
+    wo2_events = wo2_donor.members([o + shift for ordinals, source, shift in EVENTS if source == WO2_X360.name for o in ordinals])
     lips, lip_tiers = english_lips(clips, sources, stock_lips(
-        [(WO2_EVENT_VOICES[0] if source == "wo2" else WO1_EVENT_VOICES[0], stock_events[o])
+        [(WO2_EVENT_VOICES[0] if source == WO2_X360.name else WO1_EVENT_VOICES[0], stock_events[o])
          for ordinals, source, _ in EVENTS for o in ordinals]), {
         "wo1-x360": (one, donor_lips(wo1_events.values(), ">", *WO1_LINES), wo1_fits),
         "wo2-x360": (two, donor_lips(wo2_events.values(), wo2_donor.order, *X360_LINES), x360_fits),

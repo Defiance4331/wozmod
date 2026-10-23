@@ -32,11 +32,11 @@ def test_native_rounded_row_does_not_keep_overflowing_lettering_at_full_width(mo
     target = Texture(Image.new("RGBA", (64, 32)))
     donor = SimpleNamespace(textures=[Texture(source)])
     donors = {
-        5: {0: donor}, ("wo2", 1): {0: donor},
+        5: {0: donor}, ("wo2-x360", 1): {0: donor},
         "menu_labels": {vector.menu_label_key("rounded.ability", "Fixture", "blue"):
                         (label, metrics)},
     }
-    edit = {"entry": 4079, "item": 60, "texture": 0, "donor": [5, 0, 0]}
+    edit = {"entry": 4079, "item": 60, "texture": 0, "wo1-x360": [5, 0, 0]}
     full = vector.native_menu_payload(target, edit, dict(donors, squish=False))
     expected = Image.new("RGBA", (64, 32))
     expected.paste((16, 64, 240, 255), (3, 5, 37, 9))
@@ -58,7 +58,7 @@ def test_stage_strip_name_condenses_only_where_it_overflows_its_own_strip(monkey
         label = Image.new("RGBA", (480, 30))
         label.paste((240, 200, 40, 255), (0, 2, width, 26))
         metrics = {"baseline": 26, "ink": [0, 2, width, 26]}
-        donors = {"squish": True, ("wo2", 1): {0: SimpleNamespace(textures=[Texture(source)])},
+        donors = {"squish": True, ("wo2-x360", 1): {0: SimpleNamespace(textures=[Texture(source)])},
                   "menu_labels": {vector.menu_label_key("stage.stage", "Fixture"): (label, metrics)}}
         target = Texture(Image.new("RGBA", (512, 64)))
         edit = {"entry": 4077, "item": 30, "texture": 0, "stage_name": "Fixture"}

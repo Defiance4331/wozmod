@@ -112,10 +112,10 @@ def test_each_narration_donor_entry_has_the_stock_pages_block_for_block():
 
     donors, game = Path(os.environ["WOZMOD_DONORS"]), Path(os.environ["WOZMOD_GAME"])
     stock = archive(game / "LINKDATA1").read(n for n, _, _ in NARRATION)
-    wo1 = archive(donors / "wo1-x360/linkdata_ens").read(e for _, s, e in NARRATION if s == "wo1")
-    wo2 = x360_members(donors / "wo2-x360/linkdata_ens", [e for _, s, e in NARRATION if s == "wo2"])
+    wo1 = archive(donors / "wo1-x360/linkdata_ens").read(e for _, s, e in NARRATION if s == "wo1-x360")
+    wo2 = x360_members(donors / "wo2-x360/linkdata_ens", [e for _, s, e in NARRATION if s == "wo2-x360"])
     unequal = [n for n, s, e in NARRATION if [len(b) for b in mesc_blocks(stock[n])]
-               != [len(b) for b in mesc_blocks((wo1 if s == "wo1" else wo2)[e])]]
+               != [len(b) for b in mesc_blocks((wo1 if s == "wo1-x360" else wo2)[e])]]
     assert unequal == []
 
 

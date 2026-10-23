@@ -92,9 +92,9 @@ def test_dream_donor_crop_is_not_shifted_or_resampled():
     source = Image.frombytes("RGBA", (256, 512), bytes(
         channel for y in range(512) for x in range(256)
         for channel in (x, y % 256, (3 * x + 7 * y) % 256, 255)))
-    donors = {("wo2", 27): {105: build.parse_g1t(texture(source))}}
+    donors = {("wo2-x360", 27): {105: build.parse_g1t(texture(source))}}
     edit = {"entry": 4095, "item": 64, "texture": 0,
-            "card": {"wo2": [27, 105, 0], "box": [0, 40, 196, 236]}}
+            "card": {"wo2-x360": [27, 105, 0], "box": [0, 40, 196, 236]}}
     result = build.parse_texture_package(build.edited_entry(package, [edit], donors))
     served = result.items[64].g1t.textures[0]
     expected = Image.new("RGBA", (256, 256))
@@ -116,7 +116,7 @@ def test_stage_title_redraws_only_a_condensed_donor():
         texture.payload = b"wo1!!"
         return {"faces": {"title": face}, 5: {0: type("G1t", (), {"textures": [texture]})}}
 
-    edit, target = {"stage_title": "Title", "baseline": 22, "wo1": [5, 0, 0]}, Target(Image.new("RGBA", (64, 32)))
+    edit, target = {"stage_title": "Title", "baseline": 22, "wo1-x360": [5, 0, 0]}, Target(Image.new("RGBA", (64, 32)))
     assert build.payload(target, edit, donors(30), None) == b"wo1!!"
     drawn = build.payload(target, edit, donors(24), None)
     assert drawn.getbbox() == (0, 10, 30, 22)
@@ -141,7 +141,7 @@ def test_composed_row_does_not_drop_prefix_strokes():
     word = Image.new("RGBA", (16, 32))
     word.paste(FILL, (0, 10, 10, 18))
     donors = {1: {2: type("G1t", (), {"textures": [Texture(word)]})}}
-    rows = [[{"box": (0, 0, 64, 32), "strokes": 2}, {"donor": [1, 2, 0], "box": (0, 0, 16, 32)}]]
+    rows = [[{"box": (0, 0, 64, 32), "strokes": 2}, {"wo1-x360": [1, 2, 0], "box": (0, 0, 16, 32)}]]
     alpha = build.composed(stock, rows, donors, "centre", 3).getchannel("A")
     assert alpha.getbbox() == (14, 10, 39, 18)
     assert [alpha.getpixel((x, 12)) for x in (14, 18, 22, 26, 29, 38)] == [255, 0, 255, 0, 255, 255]
@@ -235,7 +235,7 @@ def test_serif_renderer_does_not_alias_distinct_donor_references(letters):
         served = Image.new("RGBA", (128, 56))
         served.paste(references[ref], (10, 8, 50, 32))
         donor = [*map(int, ref.split(".")), 0]
-        edit = {"entry": entry, "item": item, "rows": [[{"donor": donor, "row": 0}]],
+        edit = {"entry": entry, "item": item, "rows": [[{"wo1-x360": donor, "row": 0}]],
                 "bands": [(0, 56)], **face}
         art = vector.vector_art(edit, served, ["Alder" if "face" in face else "Birch"], 2)
         assert {pixel for pixel in art.get_flattened_data() if pixel[3]} == {references[ref]}, ref
@@ -518,7 +518,7 @@ def test_the_command_line_refuses_a_wrong_donor_archive_on_each_path(tmp_path, m
 
 
 def test_officer_banner_recipe_serves_each_banner_its_own_whole_x360_member():
-    """Goes red if the count stops stepping the wo2 member (every banner shows the first) or the member is copied
+    """Goes red if the count stops stepping the WO2 X360 member (every banner shows the first) or the member is copied
     into the stock texture instead of replacing it (the 8x4 X360 art squeezed into the 4x4 stock one)."""
     def texture(width, height, colour):
         pixels = bytes((colour[2], colour[1], colour[0], colour[3])) * (width * height)
@@ -530,8 +530,8 @@ def test_officer_banner_recipe_serves_each_banner_its_own_whole_x360_member():
     package = (stock + bytes(2048 - len(stock))) * 2
     green = (5, 180, 7, 255)
     red = (190, 10, 15, 255)
-    donors = {("wo2", 3): {0: build.parse_g1t(texture(8, 4, red)), 1: build.parse_g1t(texture(8, 4, green))}}
-    recipe = {"entry": 4063, "item": 0, "texture": 0, "wo2": [3, 0, 0], "count": 2}
+    donors = {("wo2-x360", 3): {0: build.parse_g1t(texture(8, 4, red)), 1: build.parse_g1t(texture(8, 4, green))}}
+    recipe = {"entry": 4063, "item": 0, "texture": 0, "wo2-x360": [3, 0, 0], "count": 2}
     edited = build.parse_texture_package(build.edited_entry(
         package, [step for _, step in build.expanded(recipe)], donors))
     served = [(t.width, t.height, t.decode_rgba()) for t in (item.g1t.textures[0] for item in edited.items)]
@@ -555,10 +555,10 @@ def test_count_neighbor_uses_its_own_donor_item():
     served = Image.new("RGBA", (64, 32))
     served.paste((205, 205, 205, 255), (4, 4, 40, 24))
     mapping = {"faces": {}, "textures": [
-        {"entry": 11, "item": 3, "donor": [7, 10, 0], "count": 2},
+        {"entry": 11, "item": 3, "wo1-x360": [7, 10, 0], "count": 2},
     ]}
     edit = vector.rows_edit(11, 4, mapping, served, look="confirm_lit")
-    assert edit["donor"] == [7, 11, 0]
+    assert edit["wo1-x360"] == [7, 11, 0]
 
 
 def test_help_rows_take_the_treatment_of_their_own_screen(letters):
@@ -711,8 +711,8 @@ def test_every_official_sheet_a_face_names_is_a_donor_the_recipes_pass() -> None
     X360 entry) never meets the --ref the build passes, so its fitted variant (NORMAL@15.9) silently drops."""
     def donors(node):
         if isinstance(node, dict):
-            if isinstance(node.get("donor"), list):
-                yield "{}.{}".format(*node["donor"][:2])
+            if isinstance(node.get("wo1-x360"), list):
+                yield "{}.{}".format(*node["wo1-x360"][:2])
             node = list(node.values())
         if isinstance(node, list):
             for child in node:
@@ -764,19 +764,19 @@ def test_header_sheet_bands_keep_their_words_past_a_line_the_face_leaves_unread(
         served.paste((156, 156, 156, 255), (10, row * 42 + 10, 50, row * 42 + 30))
     sheet = [7, 24, 0]
     mapping = {"faces": {"header": {"rows": [
-        {"wo2": sheet, "texts": ["Alder", None, "Cedar", "Dogwood"]},
-        {"donor": sheet, "texts": ["Wrong", "Wrong", "Wrong", "Wrong"]}]}}}
+        {"wo2-x360": sheet, "texts": ["Alder", None, "Cedar", "Dogwood"]},
+        {"wo1-x360": sheet, "texts": ["Wrong", "Wrong", "Wrong", "Wrong"]}]}}}
     edit = vector.header_edit({"entry": 11, "item": 0, "draw": [
-        {"wo2": sheet, "box": [0, 0, 64, 40], "at": [0, 0]},
+        {"wo2-x360": sheet, "box": [0, 0, 64, 40], "at": [0, 0]},
         {"face": "header", "text": "Birch", "into": [0, 42, 64, 82]},
-        {"wo2": sheet, "box": [0, 84, 64, 168], "at": [0, 84]}]}, mapping, served)
+        {"wo2-x360": sheet, "box": [0, 84, 64, 168], "at": [0, 84]}]}, mapping, served)
     assert vector.hires_texts(edit, mapping, {}) == ["Alder", "Birch", "Cedar", "Dogwood"]
 
 
 def _wo1_pc_pointers(value, path=""):
     """WO1 PC pointers: art donors numbered from WO1_PC_ENTRIES on (the repository hygiene test finds the "wo1" name)."""
     if isinstance(value, dict):
-        donor = value.get("donor")
+        donor = value.get("wo1-x360")
         if isinstance(donor, list) and donor[0] >= build.WO1_PC_ENTRIES:
             yield f"{path}: donor {donor}"
         for key, item in value.items():
@@ -792,7 +792,7 @@ def test_art_data_names_no_warriors_orochi_pc_art():
     stages = mapping["stage_names"]
     found = [*(f"{path.name}{found}" for path in sorted(build.MAPPING.parent.glob("*.json"))
                for found in _wo1_pc_pointers(json.loads(path.read_text(encoding="utf-8")))),
-             *(f"stage {name}: {entry}" for name, entry in (("font", stages["font"][0]), ("titles", stages["titles"]["donor"]))
+             *(f"stage {name}: {entry}" for name, entry in (("font", stages["font"][0]), ("titles", stages["titles"]["wo1-x360"]))
                if entry >= build.WO1_PC_ENTRIES)]
     assert found == []
 

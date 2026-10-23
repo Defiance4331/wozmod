@@ -39,16 +39,25 @@ DISCS = {disc.donor.name: disc for disc in (
 )}
 
 
+# The short keys the art data once used for an art pointer, and the disc name that keys it now.
+RETIRED_POINTER_KEYS = {"donor": WO1_X360.name, "wo2": WO2_X360.name}
+
+
 def check_disc_names(value, where: str) -> None:
     """Raise ValueError at the first disc name in JSON data that is no key of DISCS: the first item of a donor
-    pointer (a "ref", or an edit's replacement that inserts a donor string) and a "donor" that is a name. Data
-    loaders call it once, so a misspelt or retired name stops the load instead of matching no branch later on."""
+    pointer (a "ref", or an edit's replacement that inserts a donor string) and a "donor" that is a name; and at
+    an art pointer under a retired key (a "wo2", or a "donor" that holds a pointer). Data loaders call it once, so
+    a misspelt or retired name stops the load instead of matching no branch later on."""
     if isinstance(value, list):
         for item in value:
             check_disc_names(item, where)
         return
     if not isinstance(value, dict):
         return
+    for key, disc in RETIRED_POINTER_KEYS.items():
+        if key in value and not (key == "donor" and (value[key] is None or isinstance(value[key], str))):
+            raise ValueError(f"{where}: {key!r} is a retired key for a pointer into {DISCS[disc].title}; "
+                             f"key it {disc!r}")
     named = [value["donor"]] if isinstance(value.get("donor"), str) else []
     if isinstance(value.get("ref"), list) and value["ref"]:
         named.append(value["ref"][0])
