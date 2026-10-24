@@ -24,7 +24,10 @@ from wozmod.formats.pe import pointer_strings
 WIDE = 1024  # wide_text in english_runtime.c
 MESSAGES, MESSAGE_COUNT = 0x6DE4F0, 911  # the message table 0x47D060 reads
 NAME_TABLE, NAME_PARTS = 0x6F6368, 890
-CAST = 65  # LINKDATA1 entry: 36-byte officer records, the first two words their surname and given-name parts
+# LINKDATA1 entry 65: a u32 record count, then 36-byte officer records whose first two words are the surname and
+# given-name parts. The loader 0x4F8D60 (push 0x41; call 0x5D9A70) keeps the entry at 0x9C8FCC and entry + 4, the
+# first record, at 0x9C8FD0: the pointer the name wrapper 0x58CE50 and the runtime's CAST_RECORDS index by 36.
+CAST, CAST_HEADER, CAST_RECORD = 65, 4, 36
 TABLES = {0x6FD310: 15, 0x6FD4E0: 20}  # string tables a format's %s takes an entry of
 
 
@@ -101,14 +104,22 @@ def compose(parts: list[bytes], surname: int, given: int) -> bytes:
     return a if surname == given else a + b if a.endswith(b" ") else b + b" " + a
 
 
-def english_inputs(stock: Path, pairs: dict[bytes, bytes], parts: list[bytes | None]):
-    """``overruns``' inputs from the stock game, the table's stock-to-English pairs and its name parts."""
+def cast_names(cast: bytes, parts: list[bytes]) -> list[bytes]:
+    """Every officer record's composed name, read as the game reads entry 65: the records after its count."""
+    count = int.from_bytes(cast[:CAST_HEADER], "little")
+    if len(cast) != CAST_HEADER + CAST_RECORD * count:
+        raise ValueError(f"cast entry is {len(cast)} bytes, not a count of {count} and its {CAST_RECORD}-byte records")
+    records = (cast[at:at + 4] for at in range(CAST_HEADER, len(cast), CAST_RECORD))
+    return [compose(parts, int.from_bytes(r[:2], "little"), int.from_bytes(r[2:], "little")) for r in records]
+
+
+def english_inputs(stock: Path, pairs: dict[bytes, bytes], parts: tuple[list[bytes | None], list[int]]):
+    """``overruns``' inputs from the stock game, the table's stock-to-English pairs and its part slots (build's
+    table_parts: the name parts come first)."""
     exe = (stock / "OROCHI_Z.exe").read_bytes()
     messages = [pairs.get(s, s) for s in pointer_strings(exe, MESSAGES, MESSAGE_COUNT, 4)]
     stock_parts = pointer_strings(exe, NAME_TABLE, NAME_PARTS, 8)
-    english = [en if en is not None else ja for en, ja in zip(parts, stock_parts, strict=True)]
-    cast = archive(stock / "LINKDATA1")[CAST]
-    names = [compose(english, int.from_bytes(cast[at:at + 2], "little"), int.from_bytes(cast[at + 2:at + 4], "little"))
-             for at in range(0, len(cast) - 35, 36)]
+    english = [en if en is not None else ja for en, ja in zip(parts[0][:NAME_PARTS], stock_parts, strict=True)]
+    names = cast_names(archive(stock / "LINKDATA1")[CAST], english)
     tables = {va: [pairs.get(s, s) for s in pointer_strings(exe, va, count, 4)] for va, count in TABLES.items()}
     return messages, names, tables

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import struct
 
-from synthetic import mesc, pe_image
+from synthetic import container, mesc, pe_image
 
 from wozmod.text.narration_voices import PAGE_TABLE, SCENE_TABLE, camp_voices, page_voices
 
@@ -27,23 +27,12 @@ def _exe(*tables: tuple[int, list[int], int]) -> bytes:
     return bytes(image)
 
 
-def _container(*entries: bytes) -> bytes:
-    """A LINKDATA1 container: magic, count, 8 bytes, (offset, size) pairs in 16-byte units, each entry 16-aligned."""
-    head = 16 + 8 * len(entries)
-    at, pairs, body = -(-head // 16), [], b""
-    for entry in entries:
-        pairs += [at + len(body) // 16, len(entry)]
-        body += entry + bytes(-len(entry) % 16)
-    return (struct.pack(f"<4I{2 * len(entries)}I", 0x33B59, len(entries), 0, 0, *pairs) + bytes(at * 16 - head)
-            + body)
-
-
 def _camp_talk() -> tuple[bytes, bytes]:
     """56 scenes, scene s starting at voice offset 10s: one line each, but scene 0x25 with 23 lines."""
     counts = [23 if s == 0x25 else 1 for s in range(56)]
     scenes = [bytes([n]) + bytes(15) for n in counts]
     return _exe((SCENE_TABLE[0], [10 * s for s in range(56)], SCENE_TABLE[1])), \
-        _container(*scenes, mesc(*(b"x" for _ in range(sum(counts)))))
+        container(*scenes, mesc(*(b"x" for _ in range(sum(counts)))))
 
 
 def test_camp_talk_lines_play_their_scene_table_voice_and_scene_37_repeats_line_19():

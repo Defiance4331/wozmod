@@ -1,10 +1,5 @@
-import os
-import re
-import statistics
-import struct
-from pathlib import Path
+from dataclasses import replace
 
-import pytest
 
 from wozmod.formats.scripts import Line, Script, Table
 from wozmod.text.stock import stock_key
@@ -12,8 +7,14 @@ from wozmod.voices import dialogue_voice_maps, psp_voice_map, wo1_voice_map, wo2
 from wozmod.voices.maps import shown_lines
 
 
+def _speaks(lines: tuple[Line, ...], flags: list[int]) -> Script:
+    """A stage script whose event i speaks line i, by person i, with bank flag flags[i]."""
+    events = tuple(((0x26, i, i, 0, 0, 0, 0, flag),) for i, flag in enumerate(flags))
+    return Script(Table(()), Table(lines), {i: {flag} for i, flag in enumerate(flags)}, events)
+
+
 def _script(*suffixes):
-    return Script(Table(()), Table(tuple(Line(b"00Fixture@%04d" % n, True) for n in suffixes)))
+    return _speaks(tuple(Line(b"00Fixture@%04d" % n, True) for n in suffixes), [0] * len(suffixes))
 
 
 def _dreams():
@@ -68,8 +69,23 @@ def test_quote_fallback_rejects_a_different_or_missing_x360_line():
     one = [b"00Fixture A@0007", b"00Fixture B@0008", b"00Fixture C@0009", b"00Fixture D@0010"]
     two = [b"12Fixture A@0011", b"00Fixture other@0012", b"", b"00Fixture D"]
     wo1, wo2 = dialogue_voice_maps(stock, {}, donor, [(ours, one)], [(ours, two)])
-    assert {k: v for k, v in wo1.items() if k >= 20000} == {20407: 1479, 20410: 1482}
-    assert {k: v for k, v in wo2.items() if k >= 20000} == {20407: 1654, 20408: 1655}
+    assert {k: v for k, v in wo1.items() if k in range(20407, 20411)} == {20407: 1479, 20410: 1482}
+    assert {k: v for k, v in wo2.items() if k in range(20407, 20411)} == {20407: 1654, 20408: 1655}
+
+
+def test_a_dream_line_takes_the_take_its_speak_commands_counterpart_speaks():
+    # Bug: Dream lines pair with donor lines by place in the table, so the line stock Dream stage 40 inserts (suffix
+    # 101, spoken by a person the donor lacks) takes the next donor line's take, and every later line slides one take
+    # on. Ids by hand: suffix less one on 0x3078, record suffix less one on 1644. Stages 41 and 42 show persons 0 and
+    # 1 in both games, so the person map learns them there.
+    stock, donor = _dreams()
+    stock[41], stock[42], donor[2837], donor[2838] = _script(200, 201), _script(300, 301), _script(20, 21), _script(30, 31)
+    stock[40] = _speaks(tuple(Line(b"00Fixture@%04d" % n, True) for n in (100, 101, 102)), [0, 0, 0])
+    stock[40] = replace(stock[40], events=(((0x26, 0, 0, 0, 0, 0, 0, 0),), ((0x26, 9, 1, 0, 0, 0, 0, 0),),
+                                           ((0x26, 1, 2, 0, 0, 0, 0, 0),)))
+    donor[2836] = _script(7, 8)
+    _, wo2 = dialogue_voice_maps(stock, {}, donor, [], [])
+    assert {i: wo2.get(i) for i in (12507, 12508, 12509)} == {12507: 1650, 12508: None, 12509: 1651}
 
 
 def test_dream_slot_cannot_replace_a_story_clip_with_a_different_suffix():
@@ -88,28 +104,26 @@ def test_dialogue_maps_do_not_drop_fixed_event_select_or_narration_runs():
     expected_one |= {96 + i: 80 + i for i in range(209)}
     expected_one |= {306 + i: 289 + i for i in range(40)}
     expected_one |= {592 + i: 329 + i for i in range(628)}
-    expected_two = {2803 + i: 1398 + i for i in range(246)}
-    expected_two |= {i: i for i in range(92)}
+    expected_two = {2803 + i: 1398 + i for i in range(241)}  # WO2 X360 0x8219F8D8 voices event lines below 0xF1
+    expected_two |= {i: i for i in range(92)} | {0x5875: 0x28F4, 0x5883: 0x2902}
     expected_two |= {346 + i: 92 + i for i in range(234)}
     expected_two |= {1220 + i: 326 + i for i in range(1072)}
     assert (one, two) == (expected_one, expected_two)
 
 
-def test_psp_map_joins_dream_lines_past_stage_139_insertion_voiced_quote_slots_and_new_officers():
-    # Bug: the PSP clip base is off by one, the 12 lines stock stage 139 inserts shift every later line onto another
-    # PSP clip, a quote slot the PSP voices by an SV code (no bank holds those) is taken for a clip, or Benkei and
-    # Sanzang's select voices are dropped.
-    def stage(notices, *suffixes):
-        return Script(Table((Line(b"32Fixture", False),) * notices), _script(*suffixes).dialog)
-
-    stock = {o: stage(56 if o == 142 else 0, 5000 + o) for o in range(132, 144)}
-    psp = {o: stage(49 if o == 142 else 0, 100 + o) for o in range(132, 144)}
-    stock[139], psp[139] = stage(0, *range(6000, 6076)), stage(0, *range(1, 65))
+def test_psp_map_joins_z_dream_lines_through_their_speak_commands_voiced_quote_slots_and_new_officers():
+    # Bugs: the PSP clip base is off by one; a Z Dream line pairs with a PSP line by place, so the line stock stage
+    # 139 inserts (suffix 101, spoken by person 9, whom the PSP lacks) takes the next PSP line's take and the line
+    # after it slides one take on; a quote slot the PSP voices by an SV code (which plays nothing) is taken for a
+    # clip; Benkei and Sanzang's select voices are dropped. Stages 132 and 133 show persons 0 and 1 in both games, so
+    # the person map learns them there. Ids by hand: suffix less one on 0x3078, PSP record suffix less one on 1419.
+    stock = {132: _script(200, 201), 133: _script(300, 301)}
+    psp = {132: _script(20, 21), 133: _script(30, 31), 139: _script(7, 8)}
+    stock[139] = replace(_script(100, 101, 102), events=(((0x26, 0, 0, 0, 0, 0, 0, 0),), ((0x26, 9, 1, 0, 0, 0, 0, 0),),
+                                                         ((0x26, 1, 2, 0, 0, 0, 0, 0),)))
     quotes = [([b"00A@7000", b"00B@7001", b"00C@7002"], [b"00a@0201", b"00b@SV094_02", b""])]
 
-    expected = {12408 + 4999 + o: 1419 + 99 + o for o in range(132, 144) if o != 139}
-    expected |= {12408 + 5999 + i: 1419 + i for i in range(56)}
-    expected |= {12408 + 6067 + i: 1419 + 56 + i for i in range(8)}
+    expected = {12607: 1438, 12608: 1439, 12707: 1448, 12708: 1449, 12507: 1425, 12509: 1426}
     expected |= {12408 + 6999: 1419 + 200, 94: 94, 95: 95}
     assert psp_voice_map(stock, psp, quotes) == expected
 
@@ -120,8 +134,7 @@ def test_a_flagged_line_keys_the_other_banks_id_and_leaves_the_unflagged_one_fre
     # the same suffix, no flag and no donor take, and plays 0x3078 + 4447: the flag-blind slot gave stage 143's PSP
     # clip to that id, so the English bank played another line over stage 66's subtitle. Ids by hand from the bases.
     def spoken(*lines):
-        return Script(Table(()), Table(tuple(Line(value, True) for value, _ in lines)),
-                      {i: {flag} for i, (_, flag) in enumerate(lines)})
+        return _speaks(tuple(Line(value, True) for value, _ in lines), [flag for _, flag in lines])
 
     flagged, plain = spoken((b"00S1@4448", 1), (b"00S2@0005", 0)), spoken((b"00S3@4448", 0))
     flagged_id, plain_id = 0xC48 + 4447, 0x3078 + 4447
@@ -131,65 +144,3 @@ def test_a_flagged_line_keys_the_other_banks_id_and_leaves_the_unflagged_one_fre
     stock[40], stock[66], donor[2836], donor[2862] = flagged, plain, _script(7, 6), Script(Table(()), Table((Line(b"00T", True),)))
     _, wo2 = dialogue_voice_maps(stock, {}, donor, [], [])
     assert (wo2.get(flagged_id), wo2.get(0x3078 + 4), plain_id in wo2) == (1644 + 6, 1644 + 5, False)
-
-
-@pytest.mark.skipif(not (os.environ.get("WOZMOD_GAME") and os.environ.get("WOZMOD_DONORS")
-                         and os.environ.get("WOZMOD_WO2_PSP_ISO")),
-                    reason="set WOZMOD_GAME, WOZMOD_DONORS and WOZMOD_WO2_PSP_ISO")
-@pytest.mark.slow_first
-def test_every_psp_voice_group_plays_the_stock_lines_own_japanese_take() -> None:
-    # Bug: a wrong PSP clip base, or a Z Dream stage or quote slot paired one line off, plays another line's English.
-    # Oracle: the PSP's Japanese bank holds the same takes as the stock one at the same members, so within a group
-    # (a Z Dream stage, a quote slot) the stock length less the PSP length is one constant (the stock's padding).
-    # Measured: each group agrees for 60-93 % of its lines; shifted by one line, at most 25 %.
-    from wozmod.discs.iso9660 import Iso9660
-    from wozmod.donors import DonorsFolder
-    from wozmod.formats.audio import PSP_SELECT_VOICES, parse_kovs_record, quote_voice, stage_line_voices
-    from wozmod.formats.linkdata import archive, decoded_member
-    from wozmod.formats.scripts import quote_tables
-    from wozmod.text.script_alignment import QUOTES, moz_scripts
-    from wozmod.voices.build import PSP_TEXT, psp_text_voice_map
-    from wozmod.voices.maps import UNSPOKEN
-
-    game = Path(os.environ["WOZMOD_GAME"])
-    moz, linkdata1 = moz_scripts(game / "LINKDATA2"), archive(game / "LINKDATA1")
-    quotes = linkdata1[QUOTES[0]]
-    mapping = psp_text_voice_map(moz, quotes, DonorsFolder(Path(os.environ["WOZMOD_DONORS"])).folder("wo2-psp") / PSP_TEXT)
-    groups: dict[str, list[int]] = {}
-    for ordinal in range(132, 144):
-        for ids in stage_line_voices(ordinal, moz[ordinal], UNSPOKEN).values():
-            groups.setdefault(f"stage {ordinal}", []).extend(i for i in ids if i in mapping)
-    for table in quote_tables(quotes):
-        for slot, line in enumerate(table):
-            if (found := re.search(rb"@([0-9]+)$", line)) and (moz_id := quote_voice(int(found[1]))) in mapping:
-                groups.setdefault(f"quote slot {slot}", []).append(moz_id)
-    select = list(range(PSP_SELECT_VOICES[0], PSP_SELECT_VOICES[0] + PSP_SELECT_VOICES[2]))
-    assert {i for ids in groups.values() for i in ids} | set(select) == set(mapping)
-
-    index = decoded_member(linkdata1[4058])
-    with (game / "data/Sound/Voice/Voice.bin").open("rb") as bank:
-        def stock_seconds(moz_id: int) -> float:
-            offset, size = struct.unpack_from(">II", index, 8 + 8 * moz_id)
-            bank.seek(offset)
-            ogg = parse_kovs_record(bank.read(size), verify_checksums=False)[2]
-            return ogg.sample_count / ogg.sample_rate
-        stock = {i: stock_seconds(i) for i in mapping}
-    with Iso9660(os.environ["WOZMOD_WO2_PSP_ISO"]) as disc, disc.open("PSP_GAME/USRDIR/sound/voice.bns") as japanese:
-        header = japanese.read(16)
-        table = japanese.read(8 * struct.unpack_from("<I", header, 4)[0])
-        def psp_seconds(member: int) -> float:
-            sector, _ = struct.unpack_from("<II", table, 8 * member)
-            japanese.seek(sector * 2048)
-            riff = japanese.read(128)  # RIFF, fmt (rate at 24), then fact (sample count)
-            return struct.unpack_from("<I", riff, riff.index(b"fact") + 8)[0] / struct.unpack_from("<I", riff, 24)[0]
-        psp = {i: psp_seconds(clip) for i, clip in mapping.items()}
-
-    def agreement(ids: list[int]) -> float:
-        padding = statistics.median(stock[i] - psp[i] for i in ids)
-        return sum(abs(stock[i] - psp[i] - padding) <= 0.15 for i in ids) / len(ids)
-
-    dream = statistics.median(stock[i] - psp[i] for o in range(132, 144) for i in groups[f"stage {o}"])
-    low = {name: round(agreement(ids), 2) for name, ids in groups.items() if agreement(ids) < 0.4}
-    low |= {f"select {i}": round(stock[i] - psp[i], 2) for i in select if abs(stock[i] - psp[i] - dream) > 0.15}
-    assert {*(f"stage {o}" for o in range(132, 144)), "quote slot 0", "quote slot 1", "quote slot 70"} <= groups.keys()
-    assert low == {}

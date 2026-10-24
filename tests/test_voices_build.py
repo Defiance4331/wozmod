@@ -45,7 +45,8 @@ def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_unde
     placeholder = b"Fixture"
     hdx = b"SDsdVers" + bytes(8) + b"SDsdSmpl" + struct.pack("<II", 0, 1)
     hdx += struct.pack("<18I", 0, *([0] * 12), 48000, 0, 0, 0, 2)
-    for folder, records, banks in ((one, 1473, 181), (two, 1644, 217)):  # every voice record a placeholder, as in the PSP bank
+    # Every voice record a placeholder, as in the PSP bank; the WO2 bank reaches the select clip of officer 93 (0x2902).
+    for folder, records, banks in ((one, 1473, 181), (two, 0x2903, 217)):
         (folder / "linkdata_ans.idx").write_bytes(struct.pack(">II", records, 0) + b"".join(
             struct.pack(">5I", i, i, 1, len(placeholder), 48000) for i in range(records)))
         (folder / "link_vodat.bdx").write_bytes((placeholder + bytes(2048 - len(placeholder))) * records)

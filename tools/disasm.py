@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import struct
 import sys
-import tomllib
 from pathlib import Path
 
 import capstone
@@ -27,8 +26,7 @@ REL32 = {b"\xe8": 5, b"\xe9": 5, **{bytes([0x0F, op]): 6 for op in range(0x80, 0
 
 
 def stock_exe() -> Path:
-    tests = tomllib.loads(checkout.config().read_text())["tests"]
-    return Path(tests["WOZMOD_GAME"]) / "OROCHI_Z.exe"
+    return Path(checkout.inputs()["WOZMOD_GAME"]) / "OROCHI_Z.exe"
 
 
 def code_sections(image: bytes, layout: dict) -> list[tuple[int, bytes]]:

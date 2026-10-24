@@ -73,6 +73,9 @@ static const u32 *enrt_table;
 #define NARRATION_DRAW 0x561111
 #define STILL_DRAW 0x59C7BD
 #define STILL_PLATE 0x59C4B3
+/* Camp talk name plate: the stock plate (4104.0) widened to 616 (runtime_edits X360_LAYOUT); its dark box spans x 23
+   to 583, wider than any speaker's name. The stock code centres the name at plate - 8 + (616 - 24 * cells) / 2
+   (0x59C481-0x59C4A7, width edited at 0x59C48E). */
 /* Z-story still name plate: the stock 406x70 plates (4102.0/1); their dark box is 183 wide over the name
    rows, centred where the stock centres the name by its Japanese glyph count (28 px each). */
 #define STILL_Z_PLATE 0x59A3E2
@@ -685,6 +688,7 @@ static void test_frame(void)
 #endif
 
 static const char *event_line(const char *s, u32 ret);
+static const char *overridden_part(const char *s);
 
 static u32 text(u32 s, u32 id, const struct frame *f)
 {
@@ -693,6 +697,8 @@ static u32 text(u32 s, u32 id, const struct frame *f)
     if (inner || !s || !*(const u8 *)s)
         return s;
     own = event_line((const char *)s, f->ret);
+    if (!own)
+        own = overridden_part((const char *)s);
     en = own ? (u32)own : (u32)enrt_translate((const char *)s);
 #ifdef ENRT_LOG
 
@@ -1140,7 +1146,13 @@ static const char *wrap(const char *s, u32 width, char *out, u32 size)
     return out;
 }
 
+/* table.bin's part slots (wozmod.text.build.PART_TABLES): the English of every name part, then of every weapon,
+   and after them the slots a per-index override gives. One stock string can fill several slots (two officers' names
+   spelled alike, two weapons named alike), so an override is served by the slot's own stock pointer. */
 #define NAMES ((const u32 *)((const u8 *)enrt_table + enrt_table[1]))
+#define OVERRIDES (NAMES + 1 + NAMES[0])
+#define NAME_PARTS 890
+#define WEAPON_PART(i) (*(const char *const *)(0x6FA5F8 + 8 * (i)))
 
 static const char *part(u32 i)
 {
@@ -1151,10 +1163,22 @@ static const char *part(u32 i)
 static u32 part_index(u32 p)
 {
     u32 i;
-    for (i = 0; i < NAMES[0]; i++)
+    for (i = 0; i < NAME_PARTS && i < NAMES[0]; i++)
         if ((u32)NAME_PART(i) == p)
             return i;
     return -1;
+}
+
+
+static const char *overridden_part(const char *s)
+{
+    u32 i, slot;
+    for (i = 0; i < OVERRIDES[0]; i++) {
+        slot = OVERRIDES[1 + i];
+        if ((slot < NAME_PARTS ? NAME_PART(slot) : WEAPON_PART(slot - NAME_PARTS)) == s)
+            return (const char *)enrt_table + NAMES[1 + slot];
+    }
+    return 0;
 }
 
 
@@ -1204,7 +1228,7 @@ static int listed(u32 ret, const u32 *sites, u32 count)
 #define WIDE_WRITE(ret) listed(ret, enrt_wide_writes, sizeof enrt_wide_writes / sizeof *enrt_wide_writes)
 #define WIDE_READ(ret) listed(ret, enrt_wide_reads, sizeof enrt_wide_reads / sizeof *enrt_wide_reads)
 #define CAST_SLOT ((u32 (*)(u32))0x4F8CB0)
-#define CAST_RECORDS (*(const u8 *const *)0x9C8FD0)
+#define CAST_RECORDS (*(const u8 *const *)0x9C8FD0)  /* entry 65 + 4, past its record count (loader 0x4F8D60) */
 
 
 static const u32 boxed[][2] = {
@@ -1281,7 +1305,7 @@ static const char *flat(const char *s)
    cell and pitch and centres the lines on y (the MOZ narration). */
 static const u32 pages[][8] = {
     {NARRATION_DRAW, 0, 0, 0, 160, 535, 960, 960},
-    {STILL_DRAW, 25, 21, 28, 150, 531, 972, 980},
+    {STILL_DRAW, 28, 28, 42, 150, 466, 972, 980},  /* stock cell, pitch, y 96 below the bar (runtime_edits CAMP_) */
     {NARRATION_Z_DRAW, 24, 25, 35, 200, 507, 742, 757},
     {STILL_Z_DRAW, 25, 21, 28, 150, 531, 972, 980},
     {BRIEFING_DRAW, 24, 24, 34, 248, 486, 784, 784},
@@ -2218,8 +2242,9 @@ static void camera_default(u32 player)
 #define WIDE_LAST_DRAW 0x54BAE1     /* last double-advance icon code: draw, then measure */
 #define WIDE_LAST_MEASURE 0x54C041
 #define KEYS_HELD ((const volatile u8 *)0x140C4E0)
-static const u8 prompt_slot[19] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 44, 178, 179};
-static unsigned long long prompt_handle[2][19];
+/* The 4079 slots prompts-xbox.bin replaces: PROMPT_SLOT_LIST (enrt_data.h) is wozmod.runtime.prompts' list. */
+static const u8 prompt_slot[PROMPT_SLOTS] = {PROMPT_SLOT_LIST};
+static unsigned long long prompt_handle[2][PROMPT_SLOTS];
 static int prompts_ready, prompt_set;
 static int pad_last;
 
@@ -4336,14 +4361,10 @@ static u32 english_hook(u32 id, struct frame *f)
             int glyphs = (int)(NAME_GLYPHS(f->arg[0]) + NAME_GLYPHS(f->arg[1])) * 28;
             x += (f->arg[0] == f->arg[1] ? glyphs / 2 : glyphs) / 2 - (int)measure(name) / 2;
         }
-        if (f->ret == STILL_PLATE) {
-            /* X360 616-wide plates at x 26 and 640; the name is drawn at cell 28 and centred on plate+284 or plate+332. */
-            FONT_CELL[0] = 34, FONT_CELL[1] = 28;
-            x += 8 - (266 - cells * 24) / 2;
-            x += (x < 640 ? 284 : 332) - (int)measure(name) / 2;
-        }
+        if (f->ret == STILL_PLATE)  /* the stock centring, by the name's own width instead of whole cells */
+            x += (cells * 24 - (int)measure(name)) / 2;
         draw_fit(name, x, f->arg[3], f->arg[4], 0,
-                 f->ret == STILL_PLATE ? 400 : f->ret == STILL_Z_PLATE ? STILL_Z_LANE
+                 f->ret == STILL_PLATE ? 0 : f->ret == STILL_Z_PLATE ? STILL_Z_LANE
                  : f->ret == BANNER_NAME_DRAW ? banner_width : single_width(f->ret),
                  f->ret == STILL_PLATE || f->ret == STILL_Z_PLATE);
         FONT_CELL[0] = cell_w, FONT_CELL[1] = cell_h;

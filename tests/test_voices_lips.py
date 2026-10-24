@@ -1,8 +1,8 @@
 import struct
 
-from wozmod.formats.audio import build_synthetic_kovs_record
+from wozmod.formats.audio import WO1_EVENT_VOICES, WO2_EVENT_VOICES, build_synthetic_kovs_record
 from wozmod.voices.lips import (
-    TAG, WO1_LINES, X360_LINES, X360_TAG, donor_lips, english_lips, lip_bank, stock_lips, wo1_fits, x360_fits,
+    TAG, X360_TAG, donor_lips, english_lips, lip_bank, stock_lips, wo1_fits, x360_fits,
 )
 
 
@@ -42,8 +42,8 @@ def test_each_english_clip_gets_the_block_its_donor_plays_with_it_or_one_stretch
     sources = {100: "wo2-x360", 101: "wo2-x360", 200: "wo1-x360", 201: "wo1-x360"}
 
     lips, tiers = english_lips(clips, sources, stock_lips([(196, stock)]), {
-        "wo2-x360": ({100: 1401, 101: 1402}, donor_lips([x360], ">", *X360_LINES), x360_fits),
-        "wo1-x360": ({200: 960, 201: 961}, donor_lips([wo1], ">", *WO1_LINES), wo1_fits),
+        "wo2-x360": ({100: 1401, 101: 1402}, donor_lips([x360], ">", *WO2_EVENT_VOICES[1:]), x360_fits),
+        "wo1-x360": ({200: 960, 201: 961}, donor_lips([wo1], ">", *WO1_EVENT_VOICES[1:]), wo1_fits),
     })
 
     assert lips == {

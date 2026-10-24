@@ -9,7 +9,10 @@ def _cp932(ordinal):
 
 
 def _script(notice, spoken):
-    return script(strings(b"32" + notice, b"00ASCII", b"00\x81\x40 \n"), strings(b"00" + spoken + b"@0042"))
+    """A stage whose one event shows notice 0 and speaks line 0; notice 3 and line 1 (Japanese) no command shows."""
+    return script(strings(b"32" + notice, b"00ASCII", b"00\x81\x40 \n", b"32" + _cp932(32)),
+                  strings(b"00" + spoken + b"@0042", b"00" + _cp932(33)),
+                  events=(((0x25, 0, 0, 0, 0, 0, 0, 0), (0x26, 1, 0, 0, 0, 0, 0, 0)),))
 
 
 def _exe(messages):
@@ -24,7 +27,7 @@ def _exe(messages):
 
 
 def test_inventory_reads_the_supplied_root_without_dropping_boundary_rows(tmp_path):
-    values = [_cp932(i) for i in range(20)]
+    values = [_cp932(i) for i in range(22)]
     cue = lambda text: struct.pack("<3I", 1, 5, 9) + text + b"\0" + _cp932(30) + b"\0"
     event = lambda text: b"\xff" * 4 + text + _cp932(31) + b"\0"
     write_stock_archive(tmp_path, "LINKDATA2", {
@@ -37,7 +40,9 @@ def test_inventory_reads_the_supplied_root_without_dropping_boundary_rows(tmp_pa
     })
     quotes = spans([
         strings(b"33" + values[13]), strings(b"32" + values[14]),
-        spans([strings(b"00" + values[15] + b"@0099"), strings(b"00" + values[16])]),
+        spans([strings(b"00" + values[15] + b"@0099"), strings(b"00" + values[16]),  # slot 16: no game reads it
+               strings(*[b"00" + values[20] if k == 16 else b"00" + values[21] if k == 22 else b"00ASCII"
+                         for k in range(23)])]),
     ], struct.pack("<I", 3))
     write_stock_archive(tmp_path, "LINKDATA1", {
         4071: (mesc(values[8]),), 4073: (mesc(values[9]),),
@@ -55,6 +60,6 @@ def test_inventory_reads_the_supplied_root_without_dropping_boundary_rows(tmp_pa
         "mesc 4103": {values[10]: 0x59C7BD}, "mesc 4105": {values[11]: 0x59C7BD},
         "briefings": {values[12]: 0x548F52},
         "quote formats": {values[13]: ("window", 2), values[14]: ("window", 2)},
-        "officer quotes": {values[15]: ("window", 1), values[16]: ("window", 1)},
+        "officer quotes": {values[15]: ("window", 1), values[16]: ("window", 1), values[21]: ("window", 1)},
         "exe messages": {values[17]: None, values[18]: None, values[19]: None},
     }

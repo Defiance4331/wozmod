@@ -51,11 +51,12 @@ class Table:
 class Script:
     """A stage script's battle notices (section 2) and spoken lines (section 3). speaks holds, for a stock script read
     by script_alignment.moz_scripts, each dialog line its speak commands speak with their bank flags (speak_flags);
-    it is empty for a donor script."""
+    it is empty for a donor script. events holds section 1's event scripts (script_events)."""
 
     notices: Table
     dialog: Table
     speaks: dict[int, set[int]] = field(default_factory=dict, compare=False)
+    events: tuple[tuple[tuple[int, ...], ...], ...] = field(default=(), compare=False)
 
 
 def _table(data: bytes, spoken: bool, order: str = "<") -> Table:
@@ -99,30 +100,44 @@ def parse_script(data: bytes, order: str = "<") -> Script:
         raise ScriptError("script does not start with four sections")
     if any(b <= a for a, b in pairwise(offsets)) or offsets[-1] >= len(data) or any(o % 4 for o in offsets):
         raise ScriptError("script section offsets are invalid")
-    return Script(_table(data[offsets[2]:offsets[3]], False, order), _table(data[offsets[3]:], True, order))
+    return Script(_table(data[offsets[2]:offsets[3]], False, order), _table(data[offsets[3]:], True, order),
+                  events=script_events(data, order))
 
 
-SPEAK = 0x26  # the speak command: the dispatcher 0x4F3AB0 sends opcode 38 to 0x4F17E0
+# The commands that show a stage script's records, by the dispatchers MOZ 0x4F3AB0 (table 0x4F3CEC), WO2 X360
+# 0x821BC1E4 (table 0x821BC208) and WO1 X360 0x8219FD28 (table 0x8219FD60). A notice shows the notice record in word 1
+# (MOZ 0x4F1890, WO2 X360 0x821BCB94, WO1 X360 0x821A0768); a speak has its speaker in word 1 and speaks the dialog
+# record in word 2 (MOZ 0x4F17E0, WO2 X360 0x821BCBA8, WO1 X360 0x821A077C).
+NOTICE = 0x25
+SPEAK = 0x26
+
+
+def script_events(data: bytes, order: str = "<") -> tuple[tuple[tuple[int, ...], ...], ...]:
+    """Each event script of a stage script's section 1, as its commands of eight words: the opcode, then its
+    arguments.
+
+    Section 1 is u32 count, two u32, then count u32 script offsets from the section start. A script is bytes flags,
+    kind, setup, imm, condition count c, command count n, then c 18-byte conditions and n commands of eight u16."""
+    try:
+        base = struct.unpack_from(f"{order}5I", data)[2]
+        count = struct.unpack_from(f"{order}I", data, base)[0]
+        events = []
+        for start in struct.unpack_from(f"{order}{count}I", data, base + 12):
+            at = base + start
+            conditions, commands = data[at + 4], data[at + 5]
+            events.append(tuple(struct.unpack_from(f"{order}8H", data, at + 6 + 18 * conditions + 16 * k)
+                                for k in range(commands)))
+    except (struct.error, IndexError) as exc:
+        raise ScriptError("event scripts are truncated") from exc
+    return tuple(events)
 
 
 def speak_flags(data: bytes) -> dict[int, set[int]]:
     """Each dialog line a stock stage script's speak commands speak, with their bank flags (1 when the command's
-    eighth word is set: the handler's `cmp word [esi+0xC], 0` at 0x4F1848, esi at word 1).
-
-    Section 1 is u32 count, two u32, then count u32 script offsets from the section start. A script is bytes flags,
-    kind, setup, imm, condition count c, command count n, then c 18-byte conditions and n commands of eight u16:
-    opcode, then for a speak an unused word and the dialog line index."""
-    _, *offsets = struct.unpack_from("<5I", data)
-    base = offsets[1]
-    count = struct.unpack_from("<I", data, base)[0]
+    eighth word is set: the handler's `cmp word [esi+0xC], 0` at 0x4F1848, esi at word 1)."""
     found: dict[int, set[int]] = {}
-    for start in struct.unpack_from(f"<{count}I", data, base + 12):
-        at = base + start
-        conditions, commands = data[at + 4], data[at + 5]
-        for k in range(commands):
-            command = struct.unpack_from("<8H", data, at + 6 + 18 * conditions + 16 * k)
-            if command[0] == SPEAK:
-                found.setdefault(command[2], set()).add(int(command[7] != 0))
+    for command in (c for event in script_events(data) for c in event if c[0] == SPEAK):
+        found.setdefault(command[2], set()).add(int(command[7] != 0))
     return found
 
 

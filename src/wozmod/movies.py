@@ -16,9 +16,14 @@ DATA = "data/movies.json"  # under resources.root(), read at call time: a frozen
 LANGUAGES = ("voice", "text")
 
 
+def movie_rows(data: Path | None = None) -> list[dict]:
+    """The rows of data/movies.json: each slot's donor movie file."""
+    return json.loads((data or resources.root() / DATA).read_text(encoding="utf-8"))["movies"]
+
+
 def movie_donors(data: Path | None = None) -> dict[str, Donor]:
     """One extraction per donor disc, its members named by where the game folder gets them under wozmod/movie."""
-    rows = json.loads((data or resources.root() / DATA).read_text(encoding="utf-8"))["movies"]
+    rows = movie_rows(data)
     by_donor: dict[str, list[DonorFile]] = {}
     for row in rows:
         if row["language"] not in LANGUAGES:

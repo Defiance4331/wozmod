@@ -27,6 +27,7 @@ wozmod-native = { path = "native" }
 dev = [
     "capstone>=5,<6",
     "hypothesis>=6,<7",
+    "numpy>=2,<3",
     "pytest>=9.0.2,<10",
     "pytest-xdist>=3.8,<4",
     "ruff>=0.15.12,<1",

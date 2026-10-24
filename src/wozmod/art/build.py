@@ -20,6 +20,8 @@ from wozmod import resources
 from wozmod.progress import report as report_progress
 from . import lettering, words
 from wozmod.runtime.latin_font import CELL, LATIN_GLYPH
+from wozmod.runtime import camp_plate
+from wozmod.runtime.prompts import PROMPT_ENTRY, XBOX_PROMPTS
 from wozmod.donors import WO1_X360, WO2_X360, extract_donor, verify_file
 from wozmod.formats.textures import (
     G1T_HEADER, G1T_TEXTURE_HEADER, PIXEL_FORMAT_BGRA8, G1tFile, parse_g1t, parse_texture_package,
@@ -31,9 +33,10 @@ from wozmod.fonts.menu_references import reference, x360_members
 from wozmod.fonts.glyph_outlines import from_json
 from .imaging import (
     fitted, glowed, greyed, hue_shifted, ink, keyed, lettering_mask, mirrored, navy_mask, placed, plated, refilled,
-    restriped, rgba, spliced, tinted, unlettered,
+    restriped, rgba, rows_stretched, spliced, tinted, unlettered,
 )
 from . import packing
+from .stage_titles import title_members, title_sources
 from .packing import packed_lzp2, worker_pool
 from .faces import (
     BANNER_LINES, BANNER_SAMPLE_WIDTH, BANNER_SINGLE_CENTRE, BASELINE, CARD_CENTRE, CARD_DROP, DREAM_NAME_BASELINES,
@@ -311,21 +314,36 @@ def native_menu_widths(mapping: dict, donors: dict) -> dict:
                                            and row["placement_delta"][1]],
             "note": "Natural public-render fill and full alpha bounds; no row condensation. Banner windows are authored lettering boxes; other widths are the statically proven source windows. Texture growth alone does not widen a sampled quad."}
 
+def whole_copy_fits(edit: dict, source, stock) -> None:
+    """A row that serves a donor texture whole names one of the stock texture's size or of the size the row declares
+    (its "size"): a donor of any other size is a wrong pointer, which would otherwise be re-placed into the stock
+    art's ink box without a word."""
+    sizes = {(stock.width, stock.height), tuple(edit.get("size", (stock.width, stock.height)))}
+    if (source.width, source.height) not in sizes:
+        pointer = edit.get(WO1_X360.name) or edit[WO2_X360.name]
+        raise ValueError(f"{edit.get('entry')}.{edit.get('item')}: donor {pointer} is {source.width}x{source.height}, "
+                         f"the stock texture {stock.width}x{stock.height} and the row's size {edit.get('size')}")
+
 def payload(target, edit: dict, donors: dict, package) -> bytes:
     if edit.get("blank"):
         return target.encode_rgba(bytes(4 * target.width * target.height))
     native = native_menu_payload(target, edit, donors)
     if native is not None:
         return native
+    if edit.get("camp_plate"):  # wozmod.runtime.camp_plate: the stock plate, as wide as the longest speaker's name
+        stock = rgba(target)
+        return target.encode_rgba(camp_plate.widened(stock, camp_plate.width(stock)).tobytes())
     if "stage_title" in edit:  
         image, top = donors["faces"]["title"].render(edit["stage_title"])
         box = image.getbbox()
         image = placed(Image.new("RGBA", (target.width, target.height)), image.crop(box), 0, edit["baseline"] - top + box[1])
-        if WO1_X360.name in edit:
-            entry, item, index = edit[WO1_X360.name]
-            source = donors[entry][item].textures[index]
+        for donor in (WO2_X360.name, WO1_X360.name):  # the menu-art donor order; a condensed title is passed over
+            if donor not in edit:
+                continue
+            entry, item, index = edit[donor]
+            source = donors[(WO2_X360.name, entry) if donor == WO2_X360.name else entry][item].textures[index]
             if (ink(rgba(source))[2] >= ink(image)[2] - 2 and source.pixel_format == target.pixel_format
-                    and len(source.payload) == len(target.payload)):  
+                    and len(source.payload) == len(target.payload)):
                 return source.payload
         return target.encode_rgba(image.tobytes())
     if "grey_of" in edit:
@@ -405,6 +423,9 @@ def payload(target, edit: dict, donors: dict, package) -> bytes:
             if "erase" in spec:  
                 image = restriped(image, spec["erase"][:4], spec["erase"][4])
                 continue
+            if "stretch" in spec:  # [row, extra]: the art taller by repeating one uniform row
+                image = rows_stretched(image, *spec["stretch"])
+                continue
             if "refill" in spec:  
                 (cx, cy, r), disk = spec["refill"], Image.new("L", image.size)
                 ImageDraw.Draw(disk).ellipse((cx - r, cy - r, cx + r, cy + r), 255)
@@ -458,6 +479,9 @@ def payload(target, edit: dict, donors: dict, package) -> bytes:
     if WO1_X360.name in edit or WO2_X360.name in edit:
         entry, item, index = edit.get(WO1_X360.name) or edit[WO2_X360.name]
         source = donors[entry if WO1_X360.name in edit else (WO2_X360.name, entry)][item].textures[index]
+        if "box" not in edit:
+            stock = donors["stock"].items[edit["item"]].g1t.textures[edit["texture"]] if "stock" in donors else target
+            whole_copy_fits(edit, source, stock)
         if (source.width, source.height) == (target.width, target.height) and "box" not in edit:
             if source.pixel_format == target.pixel_format and len(source.payload) == len(target.payload):
                 return source.payload
@@ -561,9 +585,6 @@ def glyphs_bin(atlas: bytes, outlines: bytes) -> bytes:
     header = glyph_sheet_header(atlas)
     return struct.pack("<I", len(header)) + header + outlines
 
-PROMPT_ENTRY = 4079  
-
-XBOX_PROMPTS = {**{slot: slot for slot in range(16)}, 11: 2, 12: 3, 44: 44, 178: 178, 179: 179}
 XBOX_PROMPT_SIZE = {3: (64, 32)}  
 TWO_P_SLOT, TWO_P_ROWS = 44, 56  
 
@@ -704,10 +725,13 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
              **({"size": strips["size"]} if "size" in strips else {})}
             for k, name in enumerate(stages["names"][:strips["count"]]))
     titles = stages["titles"]
+    raw_names = json.loads(MAPPING.read_text(encoding="utf-8"))["stage_names"]["names"]
+    titles["members"] = title_members(raw_names, words.DONORS.program(WO1_X360.name))
     edits.setdefault(titles["entry"], []).extend(
         {"item": k, "texture": 0, "stage_title": name, "baseline": titles["baseline"],
-         **({WO1_X360.name: [titles[WO1_X360.name], stages["rows"].index(name), 0]} if name in stages["rows"] else {})}
-        for k, name in enumerate(stages["names"]))
+         **{donor: [titles[donor], member, 0] for donor, member in sources.items()}}
+        for k, (name, sources) in enumerate(zip(stages["names"], title_sources(
+            raw_names, words.DONORS.program(WO1_X360.name)), strict=True)))
     flat = [e for group in edits.values() for e in group]
     flat += [piece for e in flat for piece in [*sum(e.get("rows", []), []), *e.get("draw", []), e.get("plate"),
                                                e.get("banner", {}).get("badge"), e.get("card")] if piece]

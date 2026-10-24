@@ -17,9 +17,11 @@ from wozmod.install import STOCK_FILES
 from wozmod.runtime import build, layout
 from wozmod.runtime import english_runtime as runtime
 from wozmod.runtime.latin_font import LATIN_GLYPH
+from wozmod.runtime.prompts import XBOX_PROMPTS
 from wozmod.runtime.runtime_edits import (
-    CODE_EDITS, FONT_ROUTE, PAD_CAMERA, STANDARD_CAMERA, VOICE_EDITS, settings_rows,
+    CODE_EDITS, FONT_ROUTE, PAD_CAMERA, STANDARD_CAMERA, VOICE_EDITS, camp_plate_edits, settings_rows,
 )
+from wozmod.runtime import camp_plate
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -38,8 +40,9 @@ def test_colliding_keys_keep_both_rows_and_aligned_shared_name_pointers() -> Non
         + bytes(12 * 2)
         + b"a\0left\0i\0right\0\0"
         + struct.pack("<4I", 3, 113, 0, 106)
+        + struct.pack("<2I", 1, 2)
     )
-    assert runtime.table_blob({b"a": b"left", b"i": b"right"}, [b"right", None, b"left"]) == expected
+    assert runtime.table_blob({b"a": b"left", b"i": b"right"}, [b"right", None, b"left"], [2]) == expected
 
 
 def test_data_header_keeps_group_lengths_terminator_and_hook_return_flags() -> None:
@@ -62,7 +65,8 @@ def test_data_header_keeps_group_lengths_terminator_and_hook_return_flags() -> N
     )
     assert bytes(layout.c_array("enrt_stock_sha256", header)) == bytes([0x12]) * 32
     assert bytes(layout.c_array("enrt_widths", header)) == b"\x05\x07"
-    assert layout.defines(header) == {"WIDTH_POINTER": 0x79BAC0, "GLYPH_LATIN": LATIN_GLYPH, "WIDE_TEXT": 1024}
+    assert layout.defines(header) == {"WIDTH_POINTER": 0x79BAC0, "GLYPH_LATIN": LATIN_GLYPH, "WIDE_TEXT": 1024,
+                                      "PROMPT_SLOTS": len(XBOX_PROMPTS)}
     # The runtime matches the return address of each widened write and draw, as read in the stock code.
     wide = dict(re.findall(r"enrt_wide_(\w+)\[\] = \{([^}]*)\}", header))
     assert {name: sorted(int(v, 16) for v in values.split(",")) for name, values in wide.items()} == {
@@ -148,7 +152,9 @@ def test_build_puts_each_edit_list_in_its_text_mode_group(stock_builds, variant:
     lists = {"FONT_ROUTE": (FONT_ROUTE, {0}), "CODE_EDITS": (CODE_EDITS, {0}),
              "one-row settings": (settings_rows(1, *rows), {1}), "two-row settings": (settings_rows(2, *rows), {2}),
              "PAD_CAMERA": (PAD_CAMERA, {1, 2}), "STANDARD_CAMERA": (STANDARD_CAMERA, {1, 2}),
-             "VOICE_EDITS": (VOICE_EDITS, {2})}
+             "VOICE_EDITS": (VOICE_EDITS, {2}),
+             "camp plate": (camp_plate_edits(camp_plate.width(camp_plate.stock_plate(Path(os.environ["WOZMOD_GAME"])))),
+                            {0})}
     groups = {group: set(edits) for group, edits in edit_groups(header).items()}
     assert {name: {group for group, edits in groups.items() if set(edit_list) <= edits}
             for name, (edit_list, _) in lists.items()} == {name: where for name, (_, where) in lists.items()}
@@ -164,7 +170,8 @@ SYNTHETIC_HEADER = "\n".join([
     "static const struct site enrt_hooks[] = {{0x5c9fd0, 0, 24, 0, 5, {0x83,0xec,0x1c,0x53,0x55}}};",
     "static const u8 enrt_widths[1] = {24};",
     "#define WIDTH_POINTER 0x79bac0", f"#define GLYPH_LATIN {LATIN_GLYPH}",
-    "#define WIDE_TEXT 1024", "static const u32 enrt_wide_writes[] = {0};", "static const u32 enrt_wide_reads[] = {0};", "",
+    "#define WIDE_TEXT 1024", "static const u32 enrt_wide_writes[] = {0};", "static const u32 enrt_wide_reads[] = {0};",
+    "#define PROMPT_SLOTS 1", "#define PROMPT_SLOT_LIST 0", "",
 ])
 
 

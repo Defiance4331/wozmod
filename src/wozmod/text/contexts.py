@@ -26,7 +26,7 @@ from pathlib import Path
 
 from wozmod.donors import DonorsFolder
 from wozmod.formats.audio import (
-    PSP_CLIP_BASE, WO1_EVENT_VOICES, WO1_NARRATION_VOICES, WO1_RECORD_BASE, WO2_CLIP_BASE, WO2_EVENT_VOICES,
+    MOZ_EVENT_LINES, PSP_CLIP_BASE, WO1_EVENT_VOICES, WO1_NARRATION_VOICES, WO1_RECORD_BASE, WO2_CLIP_BASE, WO2_EVENT_VOICES,
     WO2_NARRATION_VOICES, donor_voice_choice, ps2_extents, quote_voice, stage_line_voices, wo2_voice_records,
 )
 from wozmod.formats.linkdata import LINKDATA2_FIRST, archive, decoded_member, ps2_members
@@ -34,7 +34,8 @@ from wozmod.formats.scripts import (
     caption_cues, donor_text, event_lines, mesc_blocks, quote_tables, quote_text,
 )
 from wozmod.runtime.english_runtime import decode_english, table_lookup
-from wozmod.text.narration_voices import VOICE_KEYED, line_voices
+from wozmod.text.narration_voices import VOICE_KEYED, camp_lines_drawn, line_voices
+from wozmod.text.script_alignment import NARRATION, X360_ENS, quote_slot_read
 
 MODES = ("english", "japanese")  # the voice language; the text is English throughout
 CUE_TICKS = 29.97  # a movie caption schedule counts 29.97 a second (MovieTelop counter 0x5E91F0)
@@ -95,15 +96,22 @@ def shown_text(table: bytes, kind: str, raw: bytes, voice_id: int | None = None)
 # ---------------------------------------------------------------------------------------------------------------
 # Voice ids, as the stock game numbers them.
 
-# Narration and camp talk: LINKDATA1 entry -> the donor and its ENS entry holding the same lines in the same blocks.
-# Each plays the ids narration_voices gives it; a donor line plays the record the installer's narration block maps
-# its line's id to (formats.audio *_NARRATION_VOICES; inference: the donor game numbers them as the stock does, which
-# the duration fits of work/handbacks/shared-voice-research.md support).
-DONOR_MESC = {4071: ("wo2-x360", 8), 4073: ("wo1-x360", 6), 4103: ("wo2-x360", 32), 4105: ("wo1-x360", 18)}
+CAMP_TALK = 4105  # the LINKDATA1 entry of the WO1 still events
+# Narration and camp talk: LINKDATA1 entry -> the donor and its ENS entry holding the same lines in the same blocks
+# (script_alignment.NARRATION). Each plays the ids narration_voices gives it; the donor line in the same place plays
+# the record the installer's narration block maps that id to (formats.audio *_NARRATION_VOICES), as both programs
+# pick the line and its voice by the same page, scene or record (tests/test_voice_blocks.py).
+DONOR_MESC = {stock: (donor, X360_ENS[member] if donor == "wo2-x360" else member)
+              for stock, donor, member in NARRATION}
 QUOTES_ENTRY, WO1_QUOTES, WO2_QUOTES, PSP_QUOTES = 4084, 21, 17, 27
 WO1_SCRIPTS = range(88, 148)  # WO1 X360 ENS: the stage scripts (loader 0x8219D948 reads ENS 88 + stage)
 WO2_SCRIPTS = range(103, 171)  # WO2 X360 ENS: the stage scripts, PS2 members 2796-2863
 PSP_SCRIPTS = range(270, 282)  # WO2 PSP FNS: the Z Dream stage scripts
+# The WO2 PSP plays the Z Dream scenes (stock events 402-413) as movies GEV_201 to GEV_212 and loads the caption
+# schedule FNS member GEV - 0x2B (EBOOT loader 0x5BA64, vaddr; 0x5BB18), and its movies 30 and 31 load member
+# n + 0xAA - 4 (0x5BB64, 0x5BB68), the scenes of stock schedules 175 and 176 (movie200, movie201). No number links a
+# stock event to a GEV file: the scenes pair by time (every PSP cue starts where a stock line's window starts,
+# tests/test_text_psp_alignment.py), and lines pair with cues by time within a scene (psp_line_cues).
 PSP_EVENT_CAPTIONS = {**{402 + i: 164 + i for i in range(6)}, **{408 + i: 158 + i for i in range(6)}}
 PSP_MOVIE_CAPTIONS = {175: 196, 176: 197}
 
@@ -112,9 +120,9 @@ def event_voice(ordinal: int, index: int) -> int | None:
     """An event line's voice id: index + 0xAF3, or + 0x8F4 when [0x801F24] is set (0x513731), which it is for the
     WO1 scenes 245-383 and 401. For 384-400 and 402-413 the mode is not known."""
     if 177 <= ordinal < 245:
-        return WO2_EVENT_VOICES[0] + index if index < WO2_EVENT_VOICES[2] else None
+        return WO2_EVENT_VOICES[0] + index if index < MOZ_EVENT_LINES["wo2-x360"] else None
     if 245 <= ordinal < 384 or ordinal == 401:
-        return WO1_EVENT_VOICES[0] + index if index < WO1_EVENT_VOICES[2] else None
+        return WO1_EVENT_VOICES[0] + index if index < MOZ_EVENT_LINES["wo1-x360"] else None
     return None
 
 
@@ -300,6 +308,18 @@ def event_records(donor: str, entries: dict[int, bytes], order: str, first: int,
                     yield (donor, first + index), line
 
 
+def drawn_mesc_lines(entry: int, data: bytes, voices: list[int]) -> Iterator[tuple[int, bytes, int]]:
+    """(MESC position, stock text, voice id) of each line a narration entry draws: not blank, and in camp talk (4105)
+    not a filler line the advance skips (narration_voices.camp_lines_drawn)."""
+    drawn = camp_lines_drawn(data) if entry == CAMP_TALK else None
+    position = 0
+    for block in mesc_blocks(data):
+        for raw in block:
+            if raw.strip(b" \n\x81\x40") and (drawn is None or drawn[position]):
+                yield position, raw, voices[position]
+            position += 1
+
+
 def mesc_records(donor: str, entry: int, blocks: list[list[bytes]], voices: list[int],
                  ) -> Iterator[tuple[Clip, DonorLine]]:
     """A donor narration entry's lines by clip: the line at each place plays the stock line's voice id there
@@ -319,20 +339,38 @@ def _english_cues(data: bytes) -> list[tuple[int, int, str | None]]:
     return [(start, end, donor_text(raw)) for start, end, raw in caption_cues(data)]
 
 
+# The donors' movie caption loaders (VA = 0x82000000 + default.pe offset; tests/test_text_movie_schedules.py reads
+# the immediates). WO2 X360 0x822B9EB0, gated at 0x822B9FA8/0x822B9FB0 to movies 1-25 (from the movie start
+# 0x821A072C), loads archive id nn + 0xFDF (0x822B9EEC); its archive loader 0x822F3F70 numbers ENS k as id 0xEEA + k
+# (0x822B9EF0, 0x821871B4-0x821871C4). WO1 X360 0x822754A0, gated at 0x822754B4/0x822754B8 to mev02-05, loads id
+# nn + 0xBC2 (0x822754F8) with ENS k at id 0xA53 + k (0x822754FC; loader 0x822A28C0), and reads it from FNS or GNS
+# on French or German consoles (0x82174744). (movies, caption id, first ENS id) per donor:
+MOVIE_CAPTION_LOADERS = {"wo2-x360": (range(1, 26), 0xFDF, 0xEEA, "ens"), "wo1-x360": (range(2, 6), 0xBC2, 0xA53, "fns")}
+
+
 def movie_schedule(row: dict) -> tuple[str, str, int] | None:
-    """The donor caption schedule timed to the movie file a data/movies.json row plays, from its file name: WO2
-    X360 data/movie/MEVnn.wmv has its English captions in ENS 245 + nn; WO1 X360 mev02 to mev05 have none in
-    English, and their French ones (timed to the same dub) are FNS 367 + nn."""
-    name = Path(row["source"]).stem
-    number = re.fullmatch(r"(?i)mev([0-9]+)", name)
-    if not number:
+    """The donor caption schedule timed to the movie file a data/movies.json row plays, by the donor's own loader
+    (MOVIE_CAPTION_LOADERS) for the number in its file name: WO2 X360 MEVnn's English captions; WO1 X360 mev02 to
+    mev05 have none in English, so their French ones (timed to the same dub)."""
+    number = re.fullmatch(r"(?i)mev([0-9]+)", Path(row["source"]).stem)
+    if not number or row["donor"] not in MOVIE_CAPTION_LOADERS:
         return None
+    movies, caption_id, first_id, archive_name = MOVIE_CAPTION_LOADERS[row["donor"]]
     nn = int(number.group(1))
-    if row["donor"] == "wo2-x360" and 1 <= nn <= 25:
-        return "wo2-x360", "ens", 245 + nn
-    if row["donor"] == "wo1-x360" and 2 <= nn <= 5:
-        return "wo1-x360", "fns", 367 + nn
-    return None
+    return (row["donor"], archive_name, nn + caption_id - first_id) if nn in movies else None
+
+
+def x360_schedules(movies: list[dict]) -> dict[int, int]:
+    """Stock schedule entry -> the WO2 X360 ENS schedule of the movie data/movies.json plays in that slot."""
+    found = {}
+    for row in movies:
+        entry, source = movie_slot_entry(row["slot"]), movie_schedule(row)
+        if entry is not None and source is not None and source[:2] == ("wo2-x360", "ens"):
+            found[entry] = source[2]
+    return found
+
+
+MOZ_CAPTION_KEY = 0x112C  # the stock loader 0x56A2C0 reads key index + 0x112C (0x56A319)
 
 
 def movie_slot_entry(slot: str) -> int | None:
@@ -341,7 +379,7 @@ def movie_slot_entry(slot: str) -> int | None:
     index = number if number < 36 else 36 + number - 100 if number < 200 else 46 + number - 200
     if index == 0 or 26 <= index <= 37 or 42 <= index <= 45 or index >= 48:
         return None
-    return 145 + (index - 12 if 38 <= index <= 41 else index - 16 if index >= 46 else index)
+    return MOZ_CAPTION_KEY - LINKDATA2_FIRST + (index - 12 if 38 <= index <= 41 else index - 16 if index >= 46 else index)
 
 
 def overlapping_cues(cues: list[tuple], donor: list[tuple]) -> list[list[int]]:
@@ -352,6 +390,27 @@ def overlapping_cues(cues: list[tuple], donor: list[tuple]) -> list[list[int]]:
         if overlap > 0:
             joined[at].append(k)
     return joined
+
+
+def psp_line_cues(scene: EventScene, cues: list[tuple[int, int, bytes]]) -> dict[int, list[list[int]]]:
+    """Each stock event line's cues in the WO2 PSP caption schedule of the same scene, by time: the PSP plays the
+    scene as a movie and shows cue k from its start to its end (CUE_TICKS a second); MOZ shows the line from its
+    speak to what ends it (EVENT_TICKS a second, runner 0x49D9A0). The movie is the sub-scene that speaks the lines,
+    so both clocks start together; a cue joins the window it overlaps most. A line spoken twice may have two."""
+    if len({w.sub for w in scene.windows}) > 1:
+        raise ValueError("lines spoken in more than one sub-scene: the PSP movie's clock is not known")
+    seconds = [(w.start / EVENT_TICKS, w.end / EVENT_TICKS, None) for w in scene.windows]
+    found: dict[int, list[list[int]]] = {}
+    for w, joined in zip(scene.windows, overlapping_cues(seconds, [(s / CUE_TICKS, e / CUE_TICKS, None)
+                                                                   for s, e, _ in cues]), strict=True):
+        if joined and joined not in found.setdefault(w.index, []):
+            found[w.index].append(joined)
+    return {index: joined for index, joined in found.items() if joined}
+
+
+def joined_cue_text(cues: list[tuple[int, int, bytes]], joined: list[int]) -> bytes:
+    """The words of the cues joined to one place, as the resolver reads a ["captions", joined] pointer."""
+    return b" ".join(word for k in joined for word in cues[k][2].split())
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -389,25 +448,20 @@ class Context:
         return decode_english(self.shown, "replace")
 
 
-DonorCues = tuple[tuple[str, str, int], list[tuple[int, int, str | None]], bool]
+DonorCues = tuple[tuple[str, str, int], list[tuple[int, int, str | None]]]
 
 
 def cue_contexts(slot: str, mode: str, cues: list[tuple[int, int, bytes]], donor: DonorCues | None, shown,
                  movie: str, stock: list[tuple[int, int, bytes]] | None = None) -> list[Context]:
-    """One context per cue a movie shows. donor is (donor schedule, its cues with their English, whether its cues
-    pair by time; else cue by cue); shown(kind, raw) is (what the player reads, key, row); stock, the stock schedule,
-    names the stock cue each served cue stands in for (by greatest time overlap)."""
+    """One context per cue a movie shows. donor is (donor schedule, its cues with their English), paired with the
+    cues by time; shown(kind, raw) is (what the player reads, key, row); stock, the stock schedule, names the stock
+    cue each served cue stands in for (by greatest time overlap)."""
     own = [raw for _, _, raw in cues]
     if stock is not None:
         for k, served in enumerate(overlapping_cues(stock, cues)):
             for c in served:
                 own[c] = stock[k][2]
-    if donor is None:
-        joined = [[] for _ in cues]
-    elif donor[2]:
-        joined = overlapping_cues(cues, donor[1])
-    else:
-        joined = [[k] for k in range(len(cues))] if len(donor[1]) == len(cues) else [[] for _ in cues]
+    joined = overlapping_cues(cues, donor[1]) if donor else [[] for _ in cues]
     found = []
     for c, (start, end, raw) in enumerate(cues):
         english, key, row = shown("movie", raw)
@@ -599,21 +653,21 @@ class World:
         return found
 
     def _movie_donor_cues(self, row: dict | None, entry: int):
-        """((donor, archive, entry), donor cues, paired by time) for the movie that plays in a slot: the donor movie's
-        own English schedule; for a stock movie the X360 movie of the same scene (by time) or the PSP schedule of
-        the same movie (cue by cue)."""
+        """((donor, archive, entry), donor cues) for the movie that plays in a slot, paired with its cues by time:
+        the donor movie's own English schedule; for a stock movie the schedule of the X360 movie data/movies.json
+        plays there, or the PSP schedule of the same movie."""
         if row:
             source = movie_schedule(row)
             if source is None:
                 return None
             if source[1] == "fns":
-                return source, self.dub_cues(source[2]), True
-            return source, _english_cues(self.wo2_ens[source[2]]), True
-        if 146 <= entry <= 170:
-            return ("wo2-x360", "ens", entry + 100), _english_cues(self.wo2_ens[entry + 100]), True
+                return source, self.dub_cues(source[2])
+            return source, _english_cues(self.wo2_ens[source[2]])
+        if (ordinal := x360_schedules(self.movies).get(entry)) is not None:
+            return ("wo2-x360", "ens", ordinal), _english_cues(self.wo2_ens[ordinal])
         if entry in PSP_MOVIE_CAPTIONS:
             member = PSP_MOVIE_CAPTIONS[entry]
-            return ("wo2-psp", "fns", member), _english_cues(self.psp[member]), False
+            return ("wo2-psp", "fns", member), _english_cues(self.psp[member])
         return None
 
     def dub_cues(self, entry: int) -> list[tuple[int, int, str]]:
@@ -645,7 +699,7 @@ class World:
             stock_windows = dict(zip(_window_ids(ordinal, stock.windows),
                                      (Window(w.start, w.end, EVENT_TICKS, w.end_by, w.in_block) for w in stock.windows), strict=False))
             donor_windows = self._donor_windows(ordinal, stock) if event_voice(ordinal, 0) is not None else {}
-            psp_lines = self._psp_event_lines(ordinal, texts)
+            psp_lines = self._psp_event_lines(ordinal, stock)
             ids = _window_ids(ordinal, windows)
             for k, w in enumerate(windows):
                 raw = w.text
@@ -709,18 +763,16 @@ class World:
                     found[(sub, w.index)] = Window(w.start, w.end, EVENT_TICKS, w.end_by, w.in_block)
         return found
 
-    def _psp_event_lines(self, ordinal: int, texts: dict[int, bytes]) -> dict[int, tuple[DonorLine, ...]]:
-        """The PSP plays events 402-413 as movies with caption schedules; their cues follow the stock lines in index
-        order (line 81 has no cue) when the counts agree."""
+    def _psp_event_lines(self, ordinal: int, stock: EventScene) -> dict[int, tuple[DonorLine, ...]]:
+        """The PSP caption of each line of a stock event the PSP plays as a movie, by time (psp_line_cues)."""
         member = PSP_EVENT_CAPTIONS.get(ordinal)
         if member is None:
             return {}
         cues = caption_cues(self.psp[member])
-        indices = sorted(i for i in texts if i != 81)
-        if len(indices) != len(cues):
-            return {}
-        return {i: (line,) for k, i in enumerate(indices)
-                if (line := _line("wo2-psp", ("wo2-psp", "fns", member, "captions", [k]), cues[k][2]))}
+        found = {index: tuple(line for k in joined if (line := _line(
+                     "wo2-psp", ("wo2-psp", "fns", member, "captions", k), joined_cue_text(cues, k))))
+                 for index, joined in psp_line_cues(stock, cues).items()}
+        return {index: lines for index, lines in found.items() if lines}
 
     def stage_contexts(self, mode: str) -> list[Context]:
         """One context per stage line and the bank flag of each speak command that speaks it (no stock line has
@@ -745,7 +797,7 @@ class World:
         found = []
         for t, table in enumerate(quote_tables(archive(self.stock / "LINKDATA1")[QUOTES_ENTRY])):
             for k, line in enumerate(table):
-                if (suffix := _suffix(line)) is None:
+                if not quote_slot_read(t, k) or (suffix := _suffix(line)) is None:  # never shown, or no voice
                     continue
                 voice_id = quote_voice(suffix)
                 clip, lines = self.clip_lines(voice_id, mode)
@@ -763,16 +815,11 @@ class World:
         found = []
         linkdata1 = archive(self.stock / "LINKDATA1")
         for entry, voices in self.narration_voices.items():
-            position = 0
-            for block in mesc_blocks(linkdata1[entry]):
-                for raw in block:
-                    if raw.strip(b" \n\x81\x40"):
-                        voice_id = voices[position]
-                        clip, lines = self.clip_lines(voice_id, mode)
-                        shown, key, row = self._shown("mesc", raw, voice_id if entry in VOICE_KEYED_MESC else None)
-                        found.append(Context(f"mesc{entry}.{position}", "mesc", mode, raw, voice_id, clip, shown, key,
-                                             row, lines))
-                    position += 1
+            for position, raw, voice_id in drawn_mesc_lines(entry, linkdata1[entry], voices):
+                clip, lines = self.clip_lines(voice_id, mode)
+                shown, key, row = self._shown("mesc", raw, voice_id if entry in VOICE_KEYED_MESC else None)
+                found.append(Context(f"mesc{entry}.{position}", "mesc", mode, raw, voice_id, clip, shown, key, row,
+                                     lines))
         return found
 
 

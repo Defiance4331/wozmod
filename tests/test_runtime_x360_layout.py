@@ -14,8 +14,7 @@ X360_BASE = 0x82000000
 
 # Our edit VA -> the X360 instruction (or data word) that holds the same value.
 EDITS = {
-    0x59C728: 0x822DDCE8, 0x59C723: 0x822DDCF0, 0x59C71C: 0x822DDCFC, 0x59C717: 0x822DDD00,
-    0x59C433: 0x822DD940, 0x59C4A2: 0x822DDA20,
+    0x59C728: 0x822DDCE8, 0x59C71C: 0x822DDCFC,
     0x53A631: 0x82294AEC, 0x53A62C: 0x82294AE8, 0x53A625: 0x82294ADC, 0x53A663: 0x82294B24,
     0x53A65E: 0x82294B20, 0x53A676: 0x82294B30, 0x53A764: 0x82294B30, 0x53A68B: 0x82294B6C,
     0x53A73D: 0x82294C44, 0x539F94: 0x82294200, 0x53A686: 0x82294B5C,
@@ -51,9 +50,8 @@ PANEL_EDITS = {
     0x53670E: 0x8229054C, 0x536791: 0x822905CC, 0x536828: 0x822906AC, 0x5368C4: 0x8229073C,
     0x5368F3: 0x8229078C, 0x536970: 0x82290874, 0x536984: 0x8229087C, 0x53699B: 0x82290888,
     0x535E6C: 0x8228FD74, 0x535E5D: 0x8228FD64, 0x535EDB: 0x8228FDB8, 0x538CB0: 0x8229362C,
-    0x538CA3: 0x82293614, 0x538C9C: 0x8229360C, 0x59C3DF: 0x822DD854, 0x59C3E6: 0x822DD7D4,
-    0x59C41F: 0x822DD79C, 0x59C42A: 0x822DD958, 0x59C42C: 0x822DD950, 0x56A160: 0x822B9C14,
-    0x56A1A8: 0x822B9C1C}
+    0x538CA3: 0x82293614, 0x538C9C: 0x8229360C, 0x56A160: 0x822B9C14, 0x56A1A8: 0x822B9C1C,
+    0x59C3DF: 0x822DD854}  # the left camp-talk plate's x
 # Panel values computed from X360 values; x reads an X360 immediate.
 DERIVED = {
     0x529587: lambda x: x(0x82282094) + x(0x822D91B8),  # slide travel = resting x + panel width
@@ -67,11 +65,10 @@ DERIVED = {
     **{va: (lambda x: x(0x822A9C3C) + 24) for va in (0x5577C0, 0x557AE8, 0x557B92, 0x557BA9)},
 }
 # Detour sites -> cave, and the cave values: (offset in the cave, size, value).
-DETOURS = {0x55B58C: 0x5F5E00, 0x55BBA3: 0x5F5E20, 0x59C421: 0x5F5E40, 0x49EAE4: 0x5F5F00, 0x49EB1F: 0x5F5F40}
+DETOURS = {0x55B58C: 0x5F5E00, 0x55BBA3: 0x5F5E20, 0x49EAE4: 0x5F5F00, 0x49EB1F: 0x5F5F40}
 CAVES = {
     0x5F5E00: [(1, 1, lambda x: x(0x822AB404)), (5, 4, lambda x: x(0x822AB408))],
     0x5F5E20: [(1, 4, lambda x: x(0x822AC0D4)), (7, 4, lambda x: x(0x822AC09C))],
-    0x5F5E40: [(1, 4, lambda x: x(0x822DD798))],
     0x5F5F00: [(6, 1, lambda x: round(x(0x822EA258) * 24 / 20))],
     0x5F5F40: [(6, 1, lambda x: round(x(0x822EA2E8) * 24 / 20))]}
 # The officer card's reading-line call, which the X360 card does not make.
@@ -81,6 +78,9 @@ NOPS = {0x535EC1}
 PAGES = {
     "STILL_DRAW": (0x822DDD3C, 0x822DDD40, 0x822DDD44, 0x822DDD94, 0x822DDD90, 0x822DDD7C, 0x822DDD3C),
     "STILL_Z_DRAW": (0x822DDD3C, 0x822DDD40, 0x822DDD44, 0x822DDD94, 0x822DDD90, 0x822DDD7C, 0x822DDD3C)}
+# Camp talk keeps the stock cell and pitch (0x59C773, 0x59C77D) and its first line 96 below the bar's top, as the stock
+# y 508 sits below the stock bar at 412 (0x59C7AD, 0x59C723); the bar is runtime_edits.CAMP_BAR_Y.
+STOCK_PAGE = {"STILL_DRAW": {0: 28, 1: 28, 2: 42, 4: runtime_edits.CAMP_BAR_Y + 508 - 412}}
 # Site: the X360 wrap width and the cell w it wraps at; the box is that width unless our art moves it.
 WRAPS = {
     0x595F93: (0x822D974C, 0x822D972C, True), 0x5975C6: (0x822DB240, 0x822DB224, False),
@@ -117,6 +117,11 @@ def ours(edit: tuple) -> int:
     return struct.unpack("<i", patched[-4:])[0]
 
 
+def test_the_camp_talk_right_plate_ends_where_the_x360_one_does(x360: bytes) -> None:
+    # Bug: the right plate's anchor drifts from the X360 plate it replaces, so a widened plate runs off screen.
+    assert runtime_edits.X360_RIGHT_PLATE == (immediate(x360, 0x822DD7D4), immediate(x360, 0x822DD950))
+
+
 def test_layout_values_do_not_drift_from_the_x360_screens(x360: bytes) -> None:
     panels = {edit[0]: edit for edit in runtime_edits.X360_LAYOUT + runtime_edits.X360_PANELS}
     edits = {va: ours(edit) for va, edit in panels.items()}
@@ -127,6 +132,7 @@ def test_layout_values_do_not_drift_from_the_x360_screens(x360: bytes) -> None:
         w, h, pitch, x, y, width, cell = (immediate(x360, at) for at in refs)
         ours_w = round(w * 24 / 20)
         expected = (ours_w, h, pitch, x, y, round(width * 20 / cell * ours_w / 24), round(width * w / cell))
+        expected = tuple(STOCK_PAGE.get(name, {}).get(k, v) for k, v in enumerate(expected))
         rows.append((name, pages[layout.DEFINES[name]], expected))
     for site, (width_at, cell_at, boxed) in WRAPS.items():
         width, cell = immediate(x360, width_at), immediate(x360, cell_at)

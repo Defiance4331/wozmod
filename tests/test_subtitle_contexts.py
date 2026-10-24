@@ -238,37 +238,27 @@ def test_contexts_cover_every_subtitle_and_every_english_clip(world, contexts) -
     assert not lost, f"{len(lost)} English clips of script lines or quotes have no context: {lost[:50]}"
 
 
-@pytest.mark.skipif(os.environ.get("WOZMOD_ASR") != "1", reason="set WOZMOD_ASR=1 (reads tools/asr_audit.py's verdicts)")
+@pytest.mark.skipif(os.environ.get("WOZMOD_ASR") != "1", reason="set WOZMOD_ASR=1 (reads tools/asr_audit.py's transcripts)")
 def test_no_reviewed_voice_shows_a_neighbours_line(world, contexts) -> None:
     # Bug: the voice map plays a neighbour's clip (stage 107.31/32 before the fix) while the text and the donor pairing
-    # agree with each other, which no text-only check can see. Oracle: speech recognition of each English clip, run by
-    # tools/asr_audit.py into work/asr/ (its transcripts are game text and stay there); this test reads only its
-    # verdicts and refuses a verdict file made from other clips than the bank holds now.
+    # agree with each other, which no text-only check can see. Oracle: speech recognition of each English clip, cached
+    # by tools/asr_audit.py in work/asr/ (its transcripts are game text and stay there). The verdicts are recomputed
+    # here against today's contexts, so a changed subtitle is judged anew; a clip with no transcript is stale.
     import hashlib
 
-    import checkout
-    from wozmod.formats.audio import _read_at
+    import asr_audit
 
-    path = Path(os.environ.get("WOZMOD_ASR_VERDICTS") or checkout.work() / "asr/verdicts.json")
-    assert path.is_file(), f"no verdicts at {path}: run tools/asr_audit.py"
-    verdicts = json.loads(path.read_text(encoding="utf-8"))["verdicts"]
-    failing, stale = {}, []
-    by_voice = defaultdict(list)
-    for context in contexts["english"]:
-        if context.voice:
-            by_voice[context.voice_id].append(context)
-    for voice_id, verdict in verdicts.items():
-        clip = world.voices.get(int(voice_id))
-        if clip is None:
-            stale.append(voice_id)
-            continue
-        records, bank = world.banks[clip[0]]
-        with bank.open("rb") as stream:
-            if hashlib.sha256(_read_at(stream, *records[clip[1]])).hexdigest() != verdict["clip_sha256"]:
-                stale.append(voice_id)
-                continue
-        if verdict["verdict"] == "crossed":
-            for context in by_voice[int(voice_id)]:
-                failing[f"{context.id} english"] = f"crossed: the clip's words score higher on {verdict.get('best')}"
-    assert not stale, f"{len(stale)} verdicts are for clips the bank no longer holds: rerun tools/asr_audit.py"
-    _verdict("ASR", failing, len(verdicts))
+    cache, digests = asr_audit.transcripts(), {}
+
+    def heard(context) -> str | None:
+        if context.voice not in digests:
+            digests[context.voice] = hashlib.sha256(asr_audit.clip_riff(world, context.voice)).hexdigest()
+        cached = cache / f"{digests[context.voice]}.txt"
+        return cached.read_text(encoding="utf-8") if cached.is_file() else None
+
+    found = asr_audit.verdicts(contexts["english"], heard)
+    stale = [c.id for c in contexts["english"] if c.voice and c.id not in found]
+    assert not stale, f"{len(stale)} voiced contexts play a clip with no transcript: run tools/asr_audit.py ({stale[:20]})"
+    failing = {f"{where} english": f"crossed: the clip's words score higher on {best}"
+               for where, (kind, best, _) in found.items() if kind == "crossed"}
+    _verdict("ASR", failing, len(found))

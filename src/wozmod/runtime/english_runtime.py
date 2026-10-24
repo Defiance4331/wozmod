@@ -13,6 +13,7 @@ from wozmod.formats import pe
 
 from .latin_font import LATIN_GLYPH, SURROGATE_CODE, SURROGATE_LETTERS
 from .layout import C_SOURCE
+from .prompts import XBOX_PROMPTS
 from .text_room import ROOMS, WIDE
 
 COMPILER = "i686-w64-mingw32-gcc"
@@ -232,6 +233,8 @@ def data_header(exe: bytes, edits: dict[int, list[tuple[int, bytes, bytes]]], ho
         f"#define WIDE_TEXT {WIDE}",
         f"static const u32 enrt_wide_writes[] = {{{', '.join(f'{r.call + 5:#x}' for r in ROOMS if r.room == WIDE)}}};",
         f"static const u32 enrt_wide_reads[] = {{{', '.join(f'{r.read + 5:#x}' for r in ROOMS if r.read)}}};",
+        f"#define PROMPT_SLOTS {len(XBOX_PROMPTS)}",
+        f"#define PROMPT_SLOT_LIST {', '.join(map(str, XBOX_PROMPTS))}",
         "",
     ])
 
@@ -255,8 +258,9 @@ def compile_dll(output: Path, header: str, defines: tuple[str, ...] = ()) -> Non
     output.write_bytes(dll)
 
 
-def table_blob(pairs: dict[bytes, bytes], names: list[bytes | None] = ()) -> bytes:
-    """Pack the runtime lookup table and name-part offsets."""
+def table_blob(pairs: dict[bytes, bytes], names: list[bytes | None] = (), overridden: list[int] = ()) -> bytes:
+    """Pack the runtime lookup table, the part slots' English offsets (build.PART_TABLES in order) and the slots a
+    per-index override gives, which the runtime serves by the slot's stock pointer."""
     size = 1
     while size < 2 * len(pairs) + 2:
         size *= 2
@@ -282,7 +286,8 @@ def table_blob(pairs: dict[bytes, bytes], names: list[bytes | None] = ()) -> byt
     pool.extend(bytes(-len(pool) % 4))
     return (struct.pack("<II", size - 1, header + len(pool))
             + b"".join(struct.pack("<3I", *s) for s in slots) + bytes(pool)
-            + struct.pack(f"<{len(names) + 1}I", len(names), *name_offsets))
+            + struct.pack(f"<{len(names) + 1}I", len(names), *name_offsets)
+            + struct.pack(f"<{len(overridden) + 1}I", len(overridden), *overridden))
 
 def fnv1a(value: bytes) -> int:
     h = 2166136261

@@ -36,6 +36,72 @@
    "check": "C3",
    "reason": "the PSP splits this scene's sentences differently: the cue at this place by order belongs to line 297",
    "ledger": null
+  },
+  {
+   "context": "event405.1.320",
+   "check": "C1",
+   "reason": "the PSP line differs in meaning from the Japanese voice these scenes keep, so the row stays authored",
+   "ledger": "donors.md row 7, text.md row 16"
+  },
+  {
+   "context": "event405.1.320",
+   "check": "C3",
+   "reason": "the PSP line differs in meaning from the Japanese voice these scenes keep, so the row stays authored",
+   "ledger": "donors.md row 7, text.md row 16"
+  },
+  {
+   "context": "event406.1.328",
+   "check": "C1",
+   "reason": "the PSP line differs in meaning from the Japanese voice these scenes keep, so the row stays authored",
+   "ledger": "donors.md row 7, text.md row 16"
+  },
+  {
+   "context": "event406.1.328",
+   "check": "C3",
+   "reason": "the PSP line differs in meaning from the Japanese voice these scenes keep, so the row stays authored",
+   "ledger": "donors.md row 7, text.md row 16"
+  },
+  {
+   "context": "event406.1.330",
+   "check": "C1",
+   "reason": "the PSP line differs in meaning from the Japanese voice these scenes keep, so the row stays authored",
+   "ledger": "donors.md row 7, text.md row 16"
+  },
+  {
+   "context": "event406.1.330",
+   "check": "C3",
+   "reason": "the PSP line differs in meaning from the Japanese voice these scenes keep, so the row stays authored",
+   "ledger": "donors.md row 7, text.md row 16"
+  },
+  {
+   "context": "event406.1.331",
+   "check": "C1",
+   "reason": "the PSP line differs in meaning from the Japanese voice these scenes keep, so the row stays authored",
+   "ledger": "donors.md row 7, text.md row 16"
+  },
+  {
+   "context": "event406.1.331",
+   "check": "C3",
+   "reason": "the PSP line differs in meaning from the Japanese voice these scenes keep, so the row stays authored",
+   "ledger": "donors.md row 7, text.md row 16"
+  },
+  {
+   "context": "event409.1.248",
+   "check": "C1",
+   "reason": "the PSP line differs in meaning from the Japanese voice these scenes keep, so the row stays authored",
+   "ledger": "donors.md row 7, text.md row 16"
+  },
+  {
+   "context": "event409.1.248",
+   "check": "C3",
+   "reason": "the PSP line differs in meaning from the Japanese voice these scenes keep, so the row stays authored",
+   "ledger": "donors.md row 7, text.md row 16"
+  },
+  {
+   "context": "stage41.notice49",
+   "check": "notice",
+   "reason": "MOZ-added notice, no donor has it; owner kept the borrowed official line of a similar notice (text ledger row 20)",
+   "ledger": "text.md row 20"
   }
  ]
 }

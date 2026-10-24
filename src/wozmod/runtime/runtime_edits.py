@@ -41,6 +41,28 @@ def detour(site: int, stock: bytes, cave: int, back: int, code: bytes, call: int
     return [(site, stock, rel32(b"\xe9", site, cave) + b"\x90" * (len(stock) - 5)),
             (cave, b"\xcc" * len(moved), moved)]
 
+# The camp-talk bar (4104.1, stock 262 rows) holds two lines of its stock text (cell 28, pitch 42, first line 96 rows
+# down) between its edge lines with equal margins. English camp talk wraps to at most three (data/text, block 4105,
+# at the stock cell and the 972-px wrap; the widest of them, MESC line 510, sets the count): the art build repeats one
+# row of the bar's uniform middle (row 190) one pitch more, and the game draws the taller bar 1:1. The bar grows
+# upward, so its bottom edge stays where the stock game has it, clear of the prompt bar; the name plate, the name and
+# the text (STILL_DRAW in english_runtime.c) keep their stock places relative to the bar's top (-14, 0, +96).
+# The X360 right name plate: x 640, 616 wide (0x822DD7D4, 0x822DD950), so its right edge is at 1256.
+X360_RIGHT_PLATE = (640, 616)
+
+
+def camp_plate_edits(width: int) -> list:
+    """The camp-talk plate drawn `width` wide (wozmod.runtime.camp_plate: source and drawn width, and the width the
+    stock code centres the name on, 0x59C48E), the right plate ending where the X360 right plate ends."""
+    x, x360_width = X360_RIGHT_PLATE
+    return [*widths(0x59C421, 0x59C42C, stock=266, wide=width), immediate(0x59C48E, "b8", 266, width),
+            immediate(0x59C3E6, "bf", 787, x + x360_width - width)]
+
+
+CAMP_PITCH, CAMP_LINES_STOCK, CAMP_LINES_MOST = 42, 2, 3
+CAMP_GROWTH = CAMP_PITCH * (CAMP_LINES_MOST - CAMP_LINES_STOCK)
+CAMP_BAR_ROWS, CAMP_BAR_Y = 262 + CAMP_GROWTH, 412 - CAMP_GROWTH
+
 def widths(*sites: int, stock: int, wide: int) -> list:
     """Return checked push-immediate width edits."""
     return [(va, b"\x68" + struct.pack("<I", stock), b"\x68" + struct.pack("<I", wide)) for va in sites]
@@ -282,10 +304,10 @@ CODE_EDITS = [
     (0x54EC48, bytes.fromhex("83c208"), bytes.fromhex("83c209")),
     (0x54EF45, bytes.fromhex("83c208"), bytes.fromhex("83c209")),
 
-    *widths(0x59C421, 0x59C42C, stock=266, wide=366),
-    (0x59C48E, bytes.fromhex("b80a010000"), bytes.fromhex("b86e010000")),
-    (0x59C3DF, bytes.fromhex("bfe8000000"), bytes.fromhex("bfb6000000")),
-    (0x59C3E6, bytes.fromhex("bf13030000"), bytes.fromhex("bfe1020000")),
+    # Camp talk bar (0x59C709 source height, 0x59C717 drawn height, 0x59C723 y), plate y and name y: see CAMP_BAR_ROWS.
+    *widths(0x59C709, 0x59C717, stock=262, wide=CAMP_BAR_ROWS),
+    *widths(0x59C723, stock=412, wide=CAMP_BAR_Y), *widths(0x59C433, stock=398, wide=CAMP_BAR_Y - 14),
+    *widths(0x59C4A2, stock=412, wide=CAMP_BAR_Y),
 
     *widths(0x537C0F, 0x537C1C, stock=140, wide=208),
 
@@ -540,10 +562,10 @@ def cell_then(site: int, stock: str, cave: int, cell: int, field: int, skip: int
 
 # Panel geometry taken from the X360 build of the same screen.
 X360_LAYOUT = [
-    # Still-event bar x, y, width, height, and the name plate and name y above it.
-    immediate(0x59C728, "68", 232, 40), immediate(0x59C723, "68", 412, 503),
-    immediate(0x59C71C, "68", 756, 1200), immediate(0x59C717, "68", 262, 126),
-    immediate(0x59C433, "68", 398, 440), immediate(0x59C4A2, "68", 412, 454),
+    # Camp talk (WO1 still event): the bar at the X360 x and width; its height and y are CAMP_BAR_ROWS'. The left
+    # name plate at the X360 left plate's x; the plate's width and the right plate's x: camp_plate_edits.
+    immediate(0x59C728, "68", 232, 40), immediate(0x59C71C, "68", 756, 1200),
+    immediate(0x59C3DF, "bf", 232, 26),
     # Battle history: box, scroll bar, two entries, time and text x, lone entry, highlight, row table.
     immediate(0x53A631, "68", 293, 237), immediate(0x53A62C, "68", 424, 430), immediate(0x53A625, "68", 708, 812),
     immediate(0x53A663, "68", 292, 236), immediate(0x53A65E, "68", 426, 432),
@@ -670,14 +692,6 @@ X360_PANELS = [
     immediate(0x538C9C, "68", 318, 234),
     immediate(0x54FE19, "81c6", 409, 528),
     imm8(0x550821, "6a", 24, 22),
-    # Still-event plates (616x70, both X360 plates in one texture) and the scenario panel,
-    # RECORD at the top right.
-    immediate(0x59C3DF, "bf", 232, 26),
-    immediate(0x59C3E6, "bf", 787, 640),
-    imm8(0x59C41F, "6a", 52, 70),
-    imm8(0x59C42A, "6a", 52, 70),
-    immediate(0x59C42C, "68", 266, 616),
-    *detour(0x59C421, bytes.fromhex("680a0100006a006a00"), 0x5F5E40, 0x59C42A, bytes.fromhex("686802000031c083ff7f7c02b080506a00")),
     # Z-story still event bar at the X360 x and width (stock source rectangle stretched).
     immediate(0x59A712, "68", 192, 40), immediate(0x59A706, "68", 896, 1200),
     # Captions, movie title and body cells.
@@ -787,7 +801,6 @@ X360_REPLACED = {
     0x55B57B, 0x55B58C, 0x55B58F, 0x55B5AC, 0x5574DF, 0x5574E7, 0x5574F0, 0x55BB9A, 0x55BBA0, 0x55BBA8,
     0x52B5B7, 0x52B5DA, 0x52B5E1, 0x52B5F2, 0x52BB4A, 0x52BB52, 0x52BB5B,
     0x533315, 0x53332F, 0x533349, 0x533372, 0x533346, 0x533365, 0x53336D,
-    0x59C421, 0x59C42C, 0x59C48E, 0x59C3DF, 0x59C3E6,
 }
 CODE_EDITS = ([edit for edit in CODE_EDITS if edit[0] not in X360_REPLACED] + MOZ_LAYOUT + X360_LAYOUT + X360_PANELS
               + LAYOUT_TWEAKS + PAGE_ORIGIN + CAPTION_LINES + ATTRIBUTE_GRIDS + SKILL_TAGS)

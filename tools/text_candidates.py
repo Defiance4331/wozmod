@@ -18,7 +18,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import tomllib
 from collections import Counter
 from pathlib import Path
 
@@ -54,7 +53,7 @@ def review_status(row: dict | None, ref: list | None, english: str, shown: str |
 
 
 def _inputs(args) -> tuple[Path, Path]:
-    tests = tomllib.loads(checkout.config().read_text()).get("tests", {}) if checkout.config().is_file() else {}
+    tests = checkout.inputs()
     game, donors = args.game or tests.get("WOZMOD_GAME"), args.donors or tests.get("WOZMOD_DONORS")
     if not game or not donors:
         sys.exit("name the stock game and donor folder: --game and --donors, or [tests] in work/harness.toml")

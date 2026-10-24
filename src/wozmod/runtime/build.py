@@ -14,7 +14,10 @@ from .english_runtime import (
     hook_sites,
 )
 from .latin_font import WIDTHS
-from .runtime_edits import CODE_EDITS, FONT_ROUTE, PAD_CAMERA, STANDARD_CAMERA, VOICE_EDITS, settings_rows
+from . import camp_plate
+from .runtime_edits import (
+    CODE_EDITS, FONT_ROUTE, PAD_CAMERA, STANDARD_CAMERA, VOICE_EDITS, camp_plate_edits, settings_rows,
+)
 
 
 def build_dll(
@@ -36,7 +39,8 @@ def build_dll(
         for va in (0x57296B, 0x572991, 0x5729B4, 0x5729DA, 0x572A01)
     ]
     edits = {
-        ENGLISH: FONT_ROUTE + CODE_EDITS + unlocks * preview,
+        ENGLISH: (FONT_ROUTE + CODE_EDITS + camp_plate_edits(camp_plate.width(camp_plate.stock_plate(stock_exe.parent)))
+                  + unlocks * preview),
         # one of the row groups installs in either text mode; TWO_ROWS with the English voice banks
         ONE_ROW: settings_rows(1, render_distance, moving_fix) + PAD_CAMERA + STANDARD_CAMERA,
         TWO_ROWS: settings_rows(2, render_distance, moving_fix) + PAD_CAMERA + STANDARD_CAMERA + VOICE_EDITS,

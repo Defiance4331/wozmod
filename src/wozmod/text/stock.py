@@ -5,10 +5,10 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from wozmod.formats.audio import WO1_EVENT_VOICES, WO2_EVENT_VOICES
+from wozmod.formats.audio import MOZ_EVENT_LINES, WO1_EVENT_VOICES, WO2_EVENT_VOICES
 from wozmod.formats.linkdata import archive
 from wozmod.formats.pe import pointer_strings
-from wozmod.formats.scripts import EVENT_TEXT, event_lines, mesc_blocks, quote_tables
+from wozmod.formats.scripts import EVENT_TEXT, event_lines, mesc_blocks, quote_tables, quote_text
 
 from .build import NAME_PARTS, NAME_TABLE, TableBuildError
 from .inventory import EVENTS, inventory
@@ -37,7 +37,7 @@ def event_voices(linkdata2) -> dict[int, tuple[int, int]]:
     """Stock event ordinal to (voice id of line 0, voiced line count): the voice start adds a line's index to its
     story's base."""
     blocks = {"wo1-x360": WO1_EVENT_VOICES, "wo2-x360": WO2_EVENT_VOICES}
-    return {o: (blocks[source][0], blocks[source][2]) for ordinals, source, _ in PAIRED_EVENTS for o in ordinals
+    return {o: (blocks[source][0], MOZ_EVENT_LINES[source]) for ordinals, source, _ in PAIRED_EVENTS for o in ordinals
             if o in linkdata2}
 
 
@@ -75,7 +75,10 @@ def stock_strings(stock: Path) -> dict[str, bytes]:
             for value, voice in zip(lines, line_voices(exe, entry, data), strict=True):
                 add(event_voice_form(value, voice))
     for script in moz_scripts(stock / "LINKDATA2").values():
+        for record in script.notices.records:  # every record, also those no command shows (the inventory's are shown)
+            add(record.text_bytes)
         for record in script.dialog.records:
+            add(record.text_bytes)
             if record.dialog_suffix:
                 add(record.value[2:])
     for match in EXE_STRING.finditer(exe):
@@ -84,8 +87,9 @@ def stock_strings(stock: Path) -> dict[str, bytes]:
         add(value)
     quote_data = archive(stock / "LINKDATA1")[QUOTES[0]]
     for table in quote_tables(quote_data):
-        for line in table:
+        for line in table:  # every slot, also those no game shows (the inventory lists only the shown ones)
             add(line[2:])
+            add(quote_text(line))
     return found
 
 

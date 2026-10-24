@@ -121,3 +121,138 @@ def test_series_titles_use_the_western_number():
         if int(title[2] or 1) != japanese + SERIES_OFFSET[title[1]]:
             wrong.append((row["key"], title[0]))
     assert checked and wrong == []
+
+
+@pytest.mark.skipif(not (os.environ.get("WOZMOD_DONORS") and os.environ.get("WOZMOD_GAME")),
+                    reason="set WOZMOD_DONORS and WOZMOD_GAME")
+@pytest.mark.slow_first
+def test_each_shown_notice_and_dream_line_takes_the_donor_record_its_command_shows():
+    # Bugs: a notice or Dream line row paired by its place in its table, so a record MOZ inserts or drops (Dream stage
+    # 46's notices) puts every later row one donor record off; a pointer typed one record off; a shared string's row
+    # (one that points into another donor file than the stages that show it) whose words none of those stages gives.
+    # Oracle: stage_joins and notice_join, which pair records through the commands that show them, never through the
+    # tables. Each site (stage, record) a command shows is checked whose row points into a donor stage table. The row's
+    # words must be what the join gives that site or another site of the same stock string. Where the join gives a
+    # site of the string nothing, the row must not take a donor record the join gives another stock string. Story
+    # lines pair by voice suffix (C1) instead.
+    from wozmod.donors import DonorsFolder
+    from wozmod.formats.linkdata import decoded_member, ps2_members
+    from wozmod.formats.scripts import NOTICE, SPEAK, donor_text, parse_script
+    from wozmod.text.resolver import DonorResolver
+    from wozmod.text.script_alignment import DREAM_SCRIPTS, PSP_STAGE_MEMBERS, moz_scripts, stage_joins, wo1_scripts, wo2_x360
+    from wozmod.text.stock import stock_key
+    from wozmod.voices.build import PSP_TEXT
+
+    folders = DonorsFolder(Path(os.environ["WOZMOD_DONORS"]))
+    moz = moz_scripts(Path(os.environ["WOZMOD_GAME"]) / "LINKDATA2")
+    members = ps2_members(folders.folder("wo2-psp") / PSP_TEXT, list(PSP_STAGE_MEMBERS.values()))
+    psp = {o: parse_script(decoded_member(members[m])) for o, m in PSP_STAGE_MEMBERS.items()}
+    joins = stage_joins(moz, wo1_scripts(folders.folder("wo1-x360") / "linkdata_ens"),
+                        wo2_x360(folders.folder("wo2-x360") / "linkdata_ens").scripts(), psp)
+    rows = {row["key"]: row for row in json.loads(TABLE.read_text())["rows"]}
+    resolver = DonorResolver(Path(os.environ["WOZMOD_DONORS"]))
+    dream = {o for o, _ in DREAM_SCRIPTS} | set(psp)
+
+    sites, backs, claims = [], {}, {}
+    for o, join in joins.items():
+        pairs = join.pairs | join.notices
+        shown = {("notices", c[1]) if c[0] == NOTICE else ("dialog", c[2])
+                 for event in moz[o].events for c in event if c[0] in (NOTICE, SPEAK)}
+        by_voice = {}
+        for record in join.donor.dialog.records:
+            by_voice.setdefault(record.dialog_suffix, []).append(record.text_bytes)
+        for table in ("notices", "dialog"):
+            theirs = getattr(join.donor, table).records
+            site = [join.source, "fns" if join.source == "wo2-psp" else "ens", join.entry, table]
+            for r, line in enumerate(getattr(moz[o], table).records):
+                key = next((k[0] for raw in (line.value[2:], line.text_bytes) if (k := stock_key(raw)) and k[0] in rows),
+                           None)
+                ref = rows[key].get("ref") if key else None
+                if o not in dream and table == "dialog":
+                    if key and line.dialog_suffix and len(voiced := by_voice.get(line.dialog_suffix, ())) == 1:
+                        backs.setdefault(key, set()).add(donor_text(voiced[0]))  # a story line, by voice suffix (C1)
+                    continue
+                if (table, r) not in shown or not ref or len(ref) != 5 or ref[3] not in ("notices", "dialog"):
+                    continue
+                joined = pairs.get((table, r))
+                sites.append((f"{table} {o}.{r} {key[:12]}", key, ref, ref[:4] == site, joined,
+                              f"stage{o}.{table[:-1]}{r}"))
+                if joined is not None:
+                    backs.setdefault(key, set()).add(donor_text(theirs[joined].text_bytes))
+                    claims.setdefault((*site, joined), set()).add(key)
+    # A reviewed site keeps its row although the join disputes it (data/text/context_exceptions.json, check "notice");
+    # an entry whose site no longer fails is stale.
+    reviewed = {e["context"] for e in json.loads((TABLE.parent / "context_exceptions.json").read_text())["exceptions"]
+                if e["check"] == "notice"}
+    wrong, excepted = [], set()
+    for name, key, ref, own, joined, context in sites:
+        if resolver.resolve(ref) in backs.get(key, ()):
+            continue
+        failure = None
+        if key in backs and (joined is not None or not own):
+            failure = f"{name}: row {ref[2]}.{ref[4]}, " + (f"join {joined}" if own else "in another file")
+        elif claims.get(tuple(ref), {key}) - {key}:
+            failure = f"{name}: row {ref[2]}.{ref[4]}, which the join gives another string"
+        if failure and context in reviewed:
+            excepted.add(context)
+        elif failure:
+            wrong.append(failure)
+    assert not wrong, f"{len(wrong)} sites: " + "; ".join(wrong)
+    assert reviewed <= excepted, f"stale reviewed notices: {sorted(reviewed - excepted)}"
+
+
+@pytest.mark.skipif(not (os.environ.get("WOZMOD_DONORS") and os.environ.get("WOZMOD_GAME")),
+                    reason="set WOZMOD_DONORS and WOZMOD_GAME")
+def test_each_briefing_takes_the_donor_string_its_stage_shows():
+    # Bugs: a briefing paired by its place among the 40 blocks, so a count one off where the PSP blocks start (block
+    # 28, PSP member 61) gives every PSP stage its neighbour's briefing; a briefing pointer typed into the wrong entry.
+    # Oracle: the stage each program shows a briefing for, read from the programs: MOZ block s - 0x28, or s - 0x68
+    # from 0x84 (0x548C4F to 0x548C5B); WO2 X360 ENS s + 0xF0D - 0xEEA (0x822B05D0); WO2 PSP member s - 11 for its
+    # stages from 0x48 (0x2111CC, 0x2111DC), its stage s being the one whose script is member s + 198 (0x1524E4).
+    import struct
+
+    from wozmod.formats.linkdata import archive
+    from wozmod.formats.scripts import mesc_blocks
+    from wozmod.text.script_alignment import PSP_STAGE_MEMBERS
+    from wozmod.text.resolver import DonorResolver
+    from wozmod.text.stock import stock_key
+
+    donors, game = Path(os.environ["WOZMOD_DONORS"]), Path(os.environ["WOZMOD_GAME"])
+    exe = (game / "OROCHI_Z.exe").read_bytes()
+    x360, psp = (donors / "wo2-x360/default.pe").read_bytes(), (donors / "wo2-psp/eboot.prx").read_bytes()
+
+    def moz(va: int, size: int) -> int:  # the immediate ending a MOZ instruction of `size` bytes
+        from wozmod.formats import pe
+        at = pe.file_offset(pe.layout(exe), va)
+        return int.from_bytes(exe[at + size - (4 if size == 5 else 1):at + size], "little")
+
+    def ppc(va: int) -> int:  # addi's signed immediate in the flat X360 image
+        word = struct.unpack_from(">I", x360, va - 0x82000000)[0]
+        assert word >> 26 == 14, hex(va)
+        return (word & 0xFFFF) - ((word & 0x8000) << 1)
+
+    def mips(va: int, opcode: int) -> int:  # the signed immediate of a PSP instruction (code segment at file 0x54)
+        word = struct.unpack_from("<I", psp, 0x54 + va)[0]
+        assert word >> 26 == opcode, hex(va)
+        return (word & 0xFFFF) - ((word & 0x8000) << 1)
+
+    split, late, early = moz(0x548C4F, 5), moz(0x548C56, 3), moz(0x548C5B, 3)
+    x360_shift = ppc(0x822B05D0) - ppc(0x822B05D4)
+    psp_split, psp_late, psp_script = mips(0x2111CC, 10), mips(0x2111DC, 9), mips(0x1524E4, 9)
+    rows = {row["key"]: row for row in json.loads(TABLE.read_text())["rows"]}
+    resolver = DonorResolver(donors)
+    blocks = mesc_blocks(archive(game / "LINKDATA1").read([4190])[4190])
+    stages = [*range(early, early + 28), *range(split, split + 12)]
+    assert [s - (late if s >= split else early) for s in stages] == list(range(len(blocks)))
+    wrong = []
+    for e, (block, stage) in enumerate(zip(blocks, stages, strict=True)):
+        if stage < split:
+            shown = ["wo2-x360", "ens", stage + x360_shift, "mesc", 0, 0]
+        else:
+            psp_stage = PSP_STAGE_MEMBERS[stage] - psp_script
+            assert psp_stage >= psp_split
+            shown = ["wo2-psp", "fns", psp_stage + psp_late, "mesc", 0, 0]
+        row = rows.get(next((k[0] for k in [stock_key(block[0])] if k), None))
+        if row is None or "ref" not in row or resolver.resolve(row["ref"]) != resolver.resolve(shown):
+            wrong.append(f"block {e} (stage {stage}): row {row and row.get('ref')}, the donor shows {shown}")
+    assert not wrong, "; ".join(wrong)

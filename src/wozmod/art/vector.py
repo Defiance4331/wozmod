@@ -229,6 +229,13 @@ def rekeyed(g1t: G1tFile) -> G1tFile:
     data = g1t.encode()
     return parse_g1t(data[:4] + struct.pack("<I", zlib.crc32(data)) + data[8:])
 
+# The header sheets: their rows letter in the header face.
+HEADER_HIRES = [(4060, 33, 1024, 1024, 56, 0), (4064, 4, 1024, 392, 56, 0), (4069, 26, 512, 512, 56, 0),
+                (4080, 38, 1024, 1024, 56, 0), (4079, 221, 512, 64, 56, 0), (4079, 222, 512, 64, 56, 0),
+                (4098, 10, 512, 64, 56, 0), (4094, 5, 512, 64, 56, 0), (4081, 18, 512, 224, 56, 0),
+                (4082, 31, 512, 64, 56, 0), (4077, 168, 1024, 512, 56, 0), (4061, 12, 1024, 256, 56, 0),
+                (4061, 13, 1024, 64, 56, 0), (4061, 14, 1024, 64, 56, 0), (4061, 15, 1024, 64, 56, 0),
+                (4061, 16, 1024, 64, 56, 0), (4099, 17, 1024, 64, 56, 0), (4074, 0, 512, 512, 56, 0)]
 HIRES = [(4069, 2, 512, 1596, 42, 19), (4079, 43, 512, 256, 35, 0), (4085, 16, 512, 256, 35, 0),
          
          (4060, 14, 512, 630, 42, 0), (4064, 5, 512, 420, 42, 0), (4080, 0, 256, 462, 42, 0),
@@ -236,12 +243,7 @@ HIRES = [(4069, 2, 512, 1596, 42, 19), (4079, 43, 512, 256, 35, 0), (4085, 16, 5
          (4079, 223, 256, 64, 64, 0), (4098, 14, 256, 128, 64, 0),
          (4060, 44, 256, 64, 64, 0), (4060, 45, 256, 64, 64, 0),
          
-         (4060, 33, 1024, 1024, 56, 0), (4064, 4, 1024, 392, 56, 0), (4069, 26, 512, 512, 56, 0),
-         (4080, 38, 1024, 1024, 56, 0), (4079, 221, 512, 64, 56, 0), (4079, 222, 512, 64, 56, 0),
-         (4098, 10, 512, 64, 56, 0), (4094, 5, 512, 64, 56, 0), (4081, 18, 512, 224, 56, 0),
-         (4082, 31, 512, 64, 56, 0), (4077, 168, 1024, 512, 56, 0), (4061, 12, 1024, 256, 56, 0),
-         (4061, 13, 1024, 64, 56, 0), (4061, 14, 1024, 64, 56, 0), (4061, 15, 1024, 64, 56, 0),
-         (4061, 16, 1024, 64, 56, 0), (4099, 17, 1024, 64, 56, 0), (4074, 0, 512, 512, 56, 0),
+         *HEADER_HIRES,
 
          (4085, 5, 1024, 756, 84, 0), (4085, 6, 1024, 756, 84, 0), (4085, 7, 1024, 756, 84, 0),
          (4085, 8, 1024, 756, 84, 0),
@@ -252,13 +254,15 @@ HIRES = [(4069, 2, 512, 1596, 42, 19), (4079, 43, 512, 256, 35, 0), (4085, 16, 5
          (4079, 21, 128, 128, 128, 0), (4080, 40, 128, 84, 42, 0),
          (4080, 41, 128, 84, 42, 0)]
 
-HEADER = {h[:2] for h in HIRES[13:31]}
+HEADER = {h[:2] for h in HEADER_HIRES}
 HEADER_RASTER = "wozmod.fonts.headerraster"
 
 COMPACT_HEADER = {(4060, 33, 3): ("CHARACTER GROWTH", 0.774252, 1.5)}
 
 MAIN = {(4085, 5): "lit", (4085, 6): "dim", (4085, 7): "lit2", (4085, 8): "dim2"}
 MAIN_RASTER = "wozmod.fonts.mainraster"
+# The main menu (loop 0x568F40) draws sheet row r of 4085.5-8 at r * 84 (imul 0x54 at 0x5694BA), r taken from its
+# slot array (filled at 0x569E2C): so main_rows[r] letters sheet row r. Which mode each row opens is not traced.
 MAIN_PITCH, MAIN_STREAK_END, MAIN_EDGE_FADE = 84, 506, 8
 
 HEADER_TEXTS = {(12, 0, 0): ["NEW CHARACTER", "RESULTS", "ABILITY ACQUIRED", "WEAPON ACQUIRED", "ITEM ACQUIRED",
@@ -293,8 +297,9 @@ DARK |= DARK_PLATE | {(4079, i): "attributes" for i in range(83, 97)}
 
 # Attribute labels condense only past this room: the effect plate and the weapon card cell before its value.
 ATTRIBUTE_ROOM = 96
-ATTRIBUTE_QUAD_MINIMUM = {(4079, 83 + offset): width for offset, width in enumerate(
-    [76, 48, 52, 72, 56, 68, 92, 52, 76, 80, 64, 80, 72, 68])}
+ATTRIBUTE_QUAD_MINIMUM = {(4079, 83): 76, (4079, 84): 48, (4079, 85): 52, (4079, 86): 72, (4079, 87): 56,
+                          (4079, 88): 68, (4079, 89): 92, (4079, 90): 52, (4079, 91): 76, (4079, 92): 80,
+                          (4079, 93): 64, (4079, 94): 80, (4079, 95): 72, (4079, 96): 68}
 MENU_RASTER = "wozmod.fonts.menu"
 MENU_STYLE = {name: f"dark.{name}" for name in
               ("pause", "help", "controls", "plate", "records", "results", "camp", "attributes")}
@@ -438,7 +443,7 @@ def donor_texts(mapping: dict) -> dict:
 
     texts = {sheet_key(s): s["texts"] for f in mapping["faces"].values() for s in f["rows"]
              if "texts" in s and (WO1_X360.name in s or WO2_X360.name in s)}
-    labels = {tuple(s[WO1_X360.name]): s["texts"] for group in mapping.get("labels", {}).values() for s in group}
+    labels = {sheet_key(s): s["texts"] for group in mapping.get("labels", {}).values() for s in group}
     return texts | HEADER_TEXTS | labels
 
 def hires_texts(edit: dict, mapping: dict, donors: dict) -> list[str | None]:
@@ -491,7 +496,8 @@ def rows_edit(entry: int, item: int, mapping: dict, served: Image.Image, **face)
     elif "draw" in edit:
         rows = [[p] for p in edit["draw"] if "text" in p or WO1_X360.name in p]
     else:
-        rows = [[{WO1_X360.name: edit[WO1_X360.name], "row": k}] for k in range(len(donor_texts(mapping).get(tuple(edit[WO1_X360.name]), [None])))]
+        donor = WO2_X360.name if WO2_X360.name in edit else WO1_X360.name
+        rows = [[{donor: edit[donor], "row": k}] for k in range(len(donor_texts(mapping).get(sheet_key(edit), [None])))]
     bands = [(max(top - 2, 0), min(bottom + 2, served.height)) for top, bottom in ink_rows(served)]
     if (entry, item) in DARK_PLATE or face.get("style") == "attributes":
         bands = [(0, served.height)]

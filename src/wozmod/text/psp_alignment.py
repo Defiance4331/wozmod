@@ -7,21 +7,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from wozmod.formats.linkdata import archive, decoded_member, ps2_members
-from wozmod.formats.scripts import (
-    Script, caption_cues, donor_text, event_lines, mesc_blocks, parse_script,
-    quote_tables, quote_text,
-)
+from wozmod.formats.scripts import caption_cues, donor_text, event_lines, mesc_blocks, parse_script, quote_text
 
-from .script_alignment import BRIEFINGS, QUOTES
+from .contexts import PSP_EVENT_CAPTIONS, PSP_MOVIE_CAPTIONS, event_scenes, joined_cue_text, overlapping_cues, psp_line_cues
+from .script_alignment import (
+    BRIEFINGS, PSP_QUOTE_INSERT, PSP_QUOTES, PSP_STAGE_MEMBERS, QUOTES, paired_quote_tables, stage_joins,
+)
 
 
 PSP_QUOTE_SUFFIX = re.compile(rb"@SV[0-9]+_[0-9]+$")
-PSP_STAGE_MEMBERS = {ordinal: ordinal + 138 for ordinal in range(132, 144)}
-PSP_EVENT_MEMBERS = {
-    **{402 + index: 164 + index for index in range(6)},
-    **{408 + index: 158 + index for index in range(6)},
-}
-PSP_MOVIE_MEMBERS = {175: 196, 176: 197}
 
 
 @dataclass(frozen=True)
@@ -44,45 +38,11 @@ def psp_quote_text(line: bytes) -> bytes:
     return text[:at] if at == match.start() else text
 
 
-def stage_slots(ordinal: int, stock: Script, donor: Script) -> list[tuple[str, int, int]]:
-    """Pair stage slots by ordinal, omitting the two stock-only additions."""
-    pairs = []
-    for view in ("notices", "dialog"):
-        ours = getattr(stock, view).records
-        theirs = getattr(donor, view).records
-        indices = list(range(len(ours)))
-        if ordinal == 139 and view == "dialog":
-            if (len(ours), len(theirs)) != (76, 64):
-                raise ValueError("PSP stage 139 dialog counts differ from the insertion layout")
-            indices = indices[:56] + indices[68:]
-        elif ordinal == 142 and view == "notices":
-            if (len(ours), len(theirs)) != (56, 49):
-                raise ValueError("PSP stage 142 notice counts differ from the appended layout")
-            indices = indices[:49]
-        if len(indices) != len(theirs):
-            raise ValueError(f"PSP stage {ordinal} {view} counts differ")
-        for donor_index, stock_index in enumerate(indices):
-            if ours[stock_index].value[:2] != theirs[donor_index].value[:2]:
-                raise ValueError(f"PSP stage {ordinal} {view} control prefixes differ")
-            pairs.append((view, stock_index, donor_index))
-    return pairs
-
-
-def event_caption_slots(
-    stock: dict[int, bytes], donor: list[tuple[int, int, bytes]],
-) -> list[tuple[int, int]]:
-    """Pair sorted event ids to cue ordinals only when counts agree."""
-    indices = sorted(index for index in stock if index != 81)
-    if len(indices) != len(donor):
-        return []
-    return list(zip(indices, range(len(donor)), strict=True))
-
-
 def paired_psp_rows(stock_dir: Path, fns_path: Path) -> list[PspPair]:
     """Return candidate occurrences without choosing translation sources."""
     members = ps2_members(fns_path, sorted({
-        27, *range(61, 73), *PSP_STAGE_MEMBERS.values(),
-        *PSP_EVENT_MEMBERS.values(), *PSP_MOVIE_MEMBERS.values(),
+        PSP_QUOTES, *BRIEFINGS[2], *PSP_STAGE_MEMBERS.values(),
+        *PSP_EVENT_CAPTIONS.values(), *PSP_MOVIE_CAPTIONS.values(),
     }))
     rows = []
 
@@ -93,46 +53,40 @@ def paired_psp_rows(stock_dir: Path, fns_path: Path) -> list[PspPair]:
             rows.append(PspPair(stock, ["wo2-psp", "fns", member, view, *indices], group, location))
 
     linkdata2 = archive(stock_dir / "LINKDATA2")
-    stages = linkdata2.read(PSP_STAGE_MEMBERS)
-    for ordinal, member in PSP_STAGE_MEMBERS.items():
-        stock, donor = parse_script(stages[ordinal]), parse_script(decoded_member(members[member]))
-        for view, stock_index, donor_index in stage_slots(ordinal, stock, donor):
-            ours, theirs = getattr(stock, view).records, getattr(donor, view).records
-            add(ours[stock_index].text_bytes, theirs[donor_index].text_bytes, member, view,
-                [donor_index], "Z Dream stage lines", ["linkdata2", ordinal, view, stock_index])
+    stages = {o: parse_script(data) for o, data in linkdata2.read(PSP_STAGE_MEMBERS).items()}
+    joins = stage_joins(stages, {}, {}, {o: parse_script(decoded_member(members[m])) for o, m in PSP_STAGE_MEMBERS.items()})
+    for ordinal, join in joins.items():  # the records a command shows, paired through the commands (stage_join)
+        pairs = join.pairs | join.notices
+        for (view, stock_index), donor_index in sorted(pairs.items(), key=lambda p: (p[0][0] == "dialog", p[0][1])):
+            add(getattr(stages[ordinal], view).records[stock_index].text_bytes,
+                getattr(join.donor, view).records[donor_index].text_bytes, join.entry, view, [donor_index],
+                "Z Dream stage lines", ["linkdata2", ordinal, view, stock_index])
 
     text_entries = archive(stock_dir / "LINKDATA1").read([BRIEFINGS[0], QUOTES[0]])
     briefings = mesc_blocks(text_entries[BRIEFINGS[0]])
-    for row in range(28, 40):
-        member = 33 + row
-        blocks = mesc_blocks(decoded_member(members[member]))
-        if len(blocks) != 1 or len(briefings[row]) != len(blocks[0]):
-            raise ValueError(f"PSP briefing {row} counts differ")
-        for slot, (stock, donor) in enumerate(zip(briefings[row], blocks[0], strict=True)):
-            add(stock, donor, member, "mesc", [0, slot], "Z Dream briefings",
-                ["linkdata1", BRIEFINGS[0], "mesc", row, slot])
+    for row, member in enumerate(BRIEFINGS[2], start=len(BRIEFINGS[1])):
+        add(briefings[row][0], mesc_blocks(decoded_member(members[member]))[0][0], member, "mesc", [0, 0],
+            "Z Dream briefings", ["linkdata1", BRIEFINGS[0], "mesc", row, 0])
 
-    stock_quotes, donor_quotes = quote_tables(text_entries[QUOTES[0]]), quote_tables(members[27])
-    if len(stock_quotes) != 109 or len(donor_quotes) != 109:
-        raise ValueError("PSP quote table counts differ from the officer layout")
-    for table, (ours, theirs) in enumerate(zip(stock_quotes, donor_quotes, strict=True)):
-        if len(ours) != len(theirs):
-            raise ValueError(f"PSP quote table {table} slot counts differ")
+    # Stock table t, slot k pairs with PSP table t, slot k (script_alignment.PSP_QUOTE_INSERT and QUOTE_SLOTS).
+    paired = paired_quote_tables(text_entries[QUOTES[0]], members[PSP_QUOTES], insert=PSP_QUOTE_INSERT)
+    for table, (ours, theirs) in enumerate(paired):
         group = "New officers' quotes" if table - 2 in (94, 95) else "Other quotes"
-        for slot, (stock, donor) in enumerate(zip(ours, theirs, strict=True)):
-            add(quote_text(stock), psp_quote_text(donor), 27, "quotes", [table, slot], group,
+        for slot, (stock, donor) in enumerate(zip(ours, theirs, strict=False)):
+            add(quote_text(stock), psp_quote_text(donor), PSP_QUOTES, "quotes", [table, slot], group,
                 ["linkdata1", QUOTES[0], "quotes", table, slot])
 
-    scenes = linkdata2.read([*PSP_EVENT_MEMBERS, *PSP_MOVIE_MEMBERS])
-    for ordinal, member in PSP_EVENT_MEMBERS.items():
+    scenes = linkdata2.read([*PSP_EVENT_CAPTIONS, *PSP_MOVIE_CAPTIONS])
+    for ordinal, member in PSP_EVENT_CAPTIONS.items():
         stock, donor = event_lines(scenes[ordinal]), caption_cues(members[member])
-        for line_id, cue in event_caption_slots(stock, donor):
-            add(stock[line_id], donor[cue][2], member, "captions", [[cue]], "Event subtitles",
-                ["linkdata2", ordinal, "event", line_id])
-    for ordinal, member in PSP_MOVIE_MEMBERS.items():
+        for line_id, joins in psp_line_cues(event_scenes(scenes[ordinal]), donor).items():
+            for joined in joins if line_id in stock else ():
+                add(stock[line_id], joined_cue_text(donor, joined), member, "captions", [joined], "Event subtitles",
+                    ["linkdata2", ordinal, "event", line_id])
+    for ordinal, member in PSP_MOVIE_CAPTIONS.items():  # the same movie: both schedules count CUE_TICKS a second
         stock, donor = caption_cues(scenes[ordinal]), caption_cues(members[member])
-        if len(stock) == len(donor):
-            for cue, (ours, theirs) in enumerate(zip(stock, donor, strict=True)):
-                add(ours[2], theirs[2], member, "captions", [[cue]], "Movie captions",
+        for cue, joined in enumerate(overlapping_cues(stock, donor)):
+            if joined:
+                add(stock[cue][2], joined_cue_text(donor, joined), member, "captions", [joined], "Movie captions",
                     ["linkdata2", ordinal, "captions", cue])
     return rows

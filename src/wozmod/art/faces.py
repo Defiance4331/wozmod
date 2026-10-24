@@ -436,8 +436,11 @@ def _face(name: str) -> Face:
         return stage
     if name == "title":
         titles = stages["titles"]
-        title = Face([row for k, text in enumerate(stages["rows"]) if k not in titles["skip"]
-                      for row in face_rows(rgba(donors[titles[WO1_X360.name]][k].textures[0]), [text])])
+        # member j shows the stage whose WO1 name the titles with member j letter (wozmod.art.stage_titles)
+        drawn = dict(sorted((j, name) for name, j in zip(stages["names"], titles["members"], strict=True)
+                            if j is not None))
+        title = Face([row for j, text in drawn.items() if j not in titles["skip"]
+                      for row in face_rows(rgba(donors[titles[WO1_X360.name]][j].textures[0]), [text])])
         title.synthesize(titles["synth"])
         return title
     spec = mapping["faces"][name]

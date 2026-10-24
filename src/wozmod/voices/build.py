@@ -14,14 +14,14 @@ from wozmod.formats.audio import (
     english_voice_clips,
 )
 from wozmod.formats.linkdata import archive, decoded_member, ps2_members
-from wozmod.formats.scripts import Script, parse_script, quote_tables
-from wozmod.text.psp_alignment import PSP_STAGE_MEMBERS
+from wozmod.formats.scripts import Script, parse_script
 from wozmod.text.script_alignment import (
-    EVENTS, QUOTES, WO1_QUOTE_INSERT, donor_event_entries, moz_scripts, paired_quote_tables, wo1_scripts, wo2_x360,
+    EVENTS, PSP_QUOTE_INSERT, PSP_QUOTES, PSP_STAGE_MEMBERS, QUOTES, WO1_QUOTE_INSERT, donor_event_entries, moz_scripts,
+    paired_quote_tables, wo1_scripts, wo2_x360,
 )
 
 from .events import build_event_schedules
-from .lips import WO1_LINES, X360_LINES, donor_lips, english_lips, lip_bank, stock_lips, wo1_fits, x360_fits
+from .lips import donor_lips, english_lips, lip_bank, stock_lips, wo1_fits, x360_fits
 from .maps import dialogue_voice_maps, psp_voice_map, shown_lines
 
 
@@ -37,9 +37,9 @@ TEXT_TABLE = resources.root() / "data/text/table.json"
 
 def psp_text_voice_map(moz: dict[int, Script], quotes: bytes, fns: Path) -> dict[int, int]:
     """Stock voice id to WO2 PSP clip, from the stock scripts and quote tables and the PSP text archive."""
-    psp = ps2_members(fns, [27, *PSP_STAGE_MEMBERS.values()])  # member 27, the quotes, is stored unpacked
+    psp = ps2_members(fns, [PSP_QUOTES, *PSP_STAGE_MEMBERS.values()])  # the quotes are stored unpacked
     return psp_voice_map(moz, {o: parse_script(decoded_member(psp[m])) for o, m in PSP_STAGE_MEMBERS.items()},
-                         list(zip(quote_tables(quotes), quote_tables(psp[27]), strict=True)))
+                         paired_quote_tables(quotes, psp[PSP_QUOTES], insert=PSP_QUOTE_INSERT))
 
 
 @dataclass(frozen=True)
@@ -97,8 +97,8 @@ def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | N
     lips, lip_tiers = english_lips(clips, sources, stock_lips(
         [(WO2_EVENT_VOICES[0] if source == WO2_X360.name else WO1_EVENT_VOICES[0], stock_events[o])
          for ordinals, source, _ in EVENTS for o in ordinals]), {
-        "wo1-x360": (one, donor_lips(wo1_events.values(), ">", *WO1_LINES), wo1_fits),
-        "wo2-x360": (two, donor_lips(wo2_events.values(), wo2_donor.order, *X360_LINES), x360_fits),
+        "wo1-x360": (one, donor_lips(wo1_events.values(), ">", *WO1_EVENT_VOICES[1:]), wo1_fits),
+        "wo2-x360": (two, donor_lips(wo2_events.values(), wo2_donor.order, *WO2_EVENT_VOICES[1:]), x360_fits),
         "wo2-psp": (three, {}, x360_fits),  # the PSP plays its scenes as movies: no voiced line has a lip block
     })
     (destination / "Lips.bin").write_bytes(lip_bank(lips))

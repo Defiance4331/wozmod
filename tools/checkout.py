@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -23,3 +24,10 @@ def work() -> Path:
 def config() -> Path:
     """The machine's harness.toml: the file WOZMOD_HARNESS_CONFIG names, else work()/harness.toml."""
     return Path(os.environ.get("WOZMOD_HARNESS_CONFIG", work() / "harness.toml"))
+
+
+def inputs() -> dict[str, str]:
+    """The machine's input paths: the [tests] table of config(), under any WOZMOD_ variable the environment sets."""
+    found = config()
+    table = tomllib.loads(found.read_text(encoding="utf-8")).get("tests", {}) if found.is_file() else {}
+    return {name: os.environ.get(name, str(value)) for name, value in table.items()}

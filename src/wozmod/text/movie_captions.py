@@ -27,7 +27,9 @@ from wozmod.formats.linkdata import LINKDATA2_FIRST, archive
 from wozmod.formats.scripts import caption_cues
 from wozmod.runtime.english_runtime import encode_english
 
-from .script_alignment import CAPTION_MEMBER, CAPTIONS, X360_ENS
+from wozmod.movies import movie_rows
+
+from .contexts import x360_schedules
 from .stock import stock_key
 
 if TYPE_CHECKING:
@@ -36,7 +38,6 @@ if TYPE_CHECKING:
 PAL_TICKS = 25  # a French or German schedule counts 25 ticks a second
 STOCK_TICKS = 29.97  # the stock schedule counts 29.97, as do the WO2 X360 ones
 SCHEDULES = range(146, 177)  # the captioned movies; entry 145 has no cue
-X360_SCHEDULES = {entry: X360_ENS[entry + CAPTION_MEMBER] for entry in CAPTIONS}  # entry -> WO2 X360 ENS ordinal
 FNS_ENTRIES = range(369, 373)
 DUB_SCHEDULE_FILES = tuple(f"linkdata_fns/{entry}.bin" for entry in FNS_ENTRIES)
 FOLDER, VOICE_FOLDER = "wozmod/captions", "wozmod/captions/voice"
@@ -75,7 +76,7 @@ def _place(item: dict, kind: str) -> tuple[int, int]:
     return entry, cue
 
 
-def _rows(data: Path) -> tuple[dict, dict]:
+def _rows(data: Path, x360: dict[int, int]) -> tuple[dict, dict]:
     """The cues with a row of their own, and the English-voice cues that show a stock cue's English, by place."""
     payload = json.loads(data.read_text(encoding="utf-8"))
     if payload.get("version") != 1:
@@ -88,7 +89,7 @@ def _rows(data: Path) -> tuple[dict, dict]:
         own[place] = row
     for row in payload["voice_cues"]:
         place = _place(row, "voice cue")
-        if place in voice or place[0] not in X360_SCHEDULES or type(row.get("stock_cue")) is not int:
+        if place in voice or place[0] not in x360 or type(row.get("stock_cue")) is not int:
             raise MovieCaptionError(f"voice cue {row['slot']}.{row['cue']}: duplicate, or no stock cue")
         voice[place] = row["stock_cue"]
     return own, voice
@@ -97,7 +98,8 @@ def _rows(data: Path) -> tuple[dict, dict]:
 def build_movie_schedules(stock: Path, resolver: DonorResolver, pairs: dict[bytes, bytes], data: Path,
                           dub: Path, out: Path) -> None:
     """Write both schedules of every captioned movie under out. pairs is the text table: stock bytes to English."""
-    own, voice = _rows(data)
+    x360 = x360_schedules(movie_rows())  # entry -> the WO2 X360 ENS schedule of the movie that plays there
+    own, voice = _rows(data, x360)
     folder, voice_folder = out / FOLDER, out / VOICE_FOLDER
     voice_folder.mkdir(parents=True, exist_ok=True)
     shown: dict[int, list[bytes]] = {}
@@ -117,7 +119,7 @@ def build_movie_schedules(stock: Path, resolver: DonorResolver, pairs: dict[byte
         (folder / f"{LINKDATA2_FIRST + entry}.bin").write_bytes(schedule([cue[:2] for cue in cues], texts))
     if own:
         raise MovieCaptionError(f"rows for cues the stock movies lack: {sorted(own)}")
-    for entry, ordinal in X360_SCHEDULES.items():
+    for entry, ordinal in x360.items():
         if not (cues := caption_cues(resolver.entry("wo2-x360", ordinal))) or entry not in shown:
             continue
         texts = []

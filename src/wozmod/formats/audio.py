@@ -329,26 +329,43 @@ MOZ_VOICE_IDS = 22_665
 SLOT_BYTES = 0x4EF84
 WO1_STAGES = range(0x48, 0x84)
 WO1_SUFFIX_BASE = 0xC48
-WO1_RECORD_BASE = 1473  # WO1 X360 0x82188998 plays record 0x5C1 + (@NNNN - 1)
+# A story line's voice on the X360: the speak command parses @NNNN and stores NNNN - 1 (WO1 0x821A11F4, WO2
+# 0x821BD5DC), and the player adds the record base below the id limit (WO1 0x82188998: 0x5C1 under 0x1E5A; WO2
+# 0x8219F980: 0x66C under 0x229C). Base plus limit is each disc's voice index count (9,243 and 10,504).
+WO1_RECORD_BASE = 0x5C1
 WO2_STAGES = range(0x28)
 WO2_SUFFIX_BASE = 0x3078
-WO2_CLIP_BASE = 1644
+WO2_CLIP_BASE = 0x66C
 WO2_VORBIS_QUALITY = 7
-# WO2 PSP 0x156788 plays sound/voice_na.bns member 0x58B + a line's voice index, and the index is @NNNN - 1: with
+# WO2 PSP 0x1BE014 plays sound/voice_na.bns member 0x58B + a line's voice index (0x1BE03C), and the index is @NNNN - 1
+# (0x1568C4 stores it at 0x1569A4..0x1569C0): with
 # that base the Japanese bank's take of every Z Dream line has the stock take's length less Z's 0.5 s of padding.
 PSP_CLIP_BASE = 1419
 
 
-WO1_EVENT_VOICES = (0x8F4, 957, 511)
-WO2_EVENT_VOICES = (0xAF3, 1398, 246)
+# Event lines: (MOZ voice of line 0, donor record of line 0, lines the donor voices). MOZ plays 0x8F4 + index below
+# 0x1FF in the WO1 voice mode, else 0xAF3 + index below 0x150 (0x513731); WO1 X360 0x821888F0 plays record 0x3BD +
+# index below 0x1FF, WO2 X360 0x8219F8D8 plays 0x576 + index below 0xF1.
+WO1_EVENT_VOICES = (0x8F4, 0x3BD, 0x1FF)
+WO2_EVENT_VOICES = (0xAF3, 0x576, 0xF1)
+MOZ_EVENT_LINES = {"wo1-x360": 0x1FF, "wo2-x360": 0x150}  # by the donor whose events the voice mode plays
 
 
 WO2_SELECT_VOICES = (0, 0, 92)
+# Officers 92 and 93 have select voices of their own in both programs: MOZ 0x512B20 plays 0x5875 and 0x5883 (pushed at
+# 0x512B29, 0x512B3E), and WO2 X360 0x8229C89C plays clip 0x28F4 for 92 and 0x2902 for 93 (0x8229C8A0, 0x8229C8A8).
+WO2_NEW_OFFICER_SELECT_VOICES = {0x5875: 0x28F4, 0x5883: 0x2902}
 # MOZ plays select voice = officer id (0x512B20). The X360 lacks officers 94 and 95; the PSP bank holds their voices
 # at 94 and 95 (inferred: its first 76 clips are the stock takes, and 94 and 95 are the stock ones less the padding).
 PSP_SELECT_VOICES = (94, 94, 2)
 
 
+# Narration, still events and briefings: the donor game picks the same page, scene, record or stage as MOZ
+# (text.narration_voices) and plays its own base on the same offset; tests/test_voice_blocks.py joins them item by
+# item. WO1 pages: 0x8226E778(page) = table + 0x50, MOZ's table less 1 from its entry 209 on (MOZ adds a slot there).
+# WO1 camp talk: 0x8228F958(scene) = table + 0x149, MOZ's table. WO2 Z pages: record word 0 + 0x5C (0x822B09E4),
+# and from 92 + 166 the stage briefings, stage + 0x102 (0x8229F6D4), Dream 40-67 included. WO2 Z stills: command
+# word 2 + 0x146 (0x822DC8F4).
 WO1_NARRATION_VOICES = ((96, 80, 209), (306, 289, 40), (592, 329, 628))
 WO2_NARRATION_VOICES = ((346, 92, 234), (1220, 326, 1072))
 
@@ -403,9 +420,12 @@ def quote_voice(suffix: int) -> int:
 
 
 def quote_slots(tables: list[tuple[list[bytes], list[bytes]]]) -> list[tuple[int, bytes]]:
-    """Each suffixed stock quote's voice id beside the donor line in its slot."""
-    return [(quote_voice(s), b) for ours, theirs in tables for a, b in zip(ours, theirs, strict=False)
-            if (s := _suffix(a))]
+    """Each suffixed stock quote's voice id beside the donor line in its slot, tables indexed as the stock's, for the
+    slots the quote code reads (script_alignment.quote_slot_read): a voice no game plays needs no clip."""
+    from wozmod.text.script_alignment import quote_slot_read
+
+    return [(quote_voice(s), b) for t, (ours, theirs) in enumerate(tables)
+            for k, (a, b) in enumerate(zip(ours, theirs, strict=False)) if quote_slot_read(t, k) and (s := _suffix(a))]
 
 
 def slot_voice_map(slots: list[tuple[int, bytes]], record_base: int) -> dict[int, int]:

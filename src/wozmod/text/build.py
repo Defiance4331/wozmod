@@ -20,6 +20,10 @@ if TYPE_CHECKING:
 
 NAME_TABLE = 0x6F6368
 NAME_PARTS = 890
+# Program tables whose slots a per-index override can give their own English where one stock string fills several
+# slots: (table, stock VA, slots, stride). Name parts (two officers' names spelled alike) and weapons (two weapons
+# named alike in Japanese, apart in every donor). table.bin lists their slots in this order.
+PART_TABLES = (("names", NAME_TABLE, NAME_PARTS, 8), ("weapons", 0x6FA5F8, 384, 8))
 SOURCES = frozenset(DISCS) | {"wo2-ps2", "edited", "authored"}
 FORMAT_SPEC = re.compile(rb"%[-+#0-9.]*[a-zA-Z]")
 PLACED_SPEC = re.compile(rb"%(?:(\d+)\$)?([-+#0-9.]*[a-zA-Z])")  # %2$d prints the second argument
@@ -154,16 +158,22 @@ def table_pairs(rows: list[dict]) -> dict[bytes, bytes]:
     return {stock: english for stock, (english, _) in table_index(rows).items()}
 
 
-def name_parts(stock: bytes, pairs: dict[bytes, bytes], overrides: list[dict]) -> list[bytes | None]:
-    """Resolve all name slots, retaining per-index overrides and exact stock bytes."""
-    names = pointer_strings(stock, NAME_TABLE, NAME_PARTS, 8)
-    by_index = {entry["index"]: encode_english(entry["en"]) for entry in overrides}
-    return [by_index.get(index) or pairs.get(name) for index, name in enumerate(names)]
+def table_parts(stock: bytes, pairs: dict[bytes, bytes], overrides: list[dict]) -> tuple[list[bytes | None], list[int]]:
+    """Every part slot's English, PART_TABLES in order (a per-index override, else the row of its stock string), and
+    the slots an override gives."""
+    english, overridden = [], []
+    for table, va, count, stride in PART_TABLES:
+        by_index = {entry["index"]: encode_english(entry["en"]) for entry in overrides if entry["table"] == table}
+        for index, value in enumerate(pointer_strings(stock, va, count, stride)):
+            if by_index.get(index):
+                overridden.append(len(english))
+            english.append(by_index.get(index) or pairs.get(value))
+    return english, overridden
 
 
 def _load_data(path: Path) -> dict:
     data = json.loads((path / "table.json" if path.is_dir() else path).read_text(encoding="utf-8"))
-    if data.get("version") != 1 or not isinstance(data.get("rows"), list) or not isinstance(data.get("name_parts"), list):
+    if data.get("version") != 1 or not isinstance(data.get("rows"), list) or not isinstance(data.get("parts"), list):
         raise TableBuildError("unsupported text data schema")
     try:
         check_disc_names(data, "text data")
@@ -179,36 +189,37 @@ def _load_data(path: Path) -> dict:
         keys.add(key)
         if row.get("source") not in SOURCES or row.get("todo") not in (None, "wo2-psp"):
             raise TableBuildError(f"row {key}: invalid source")
-    indexes = set()
-    for row in data["name_parts"]:
-        index = row.get("index")
-        if type(index) is not int or not 0 <= index < NAME_PARTS or index in indexes:
-            raise TableBuildError(f"invalid or duplicate name-part index {index!r}")
-        indexes.add(index)
+    counts, slots = {table: count for table, _, count, _ in PART_TABLES}, set()
+    for row in data["parts"]:
+        table, index = row.get("table"), row.get("index")
+        if table not in counts or type(index) is not int or not 0 <= index < counts[table] or (table, index) in slots:
+            raise TableBuildError(f"invalid or duplicate part {table!r} {index!r}")
+        slots.add((table, index))
         if row.get("source") not in SOURCES:
-            raise TableBuildError(f"name part {index}: invalid source")
+            raise TableBuildError(f"part {table} {index}: invalid source")
     return data
 
 
 def build_table(stock: Path, donors: DonorResolver, data: Path, output: Path) -> dict:
     """Build table.bin from player inputs and version-1 hash/pointer data."""
-    rows, pairs, names = resolved_text(stock, donors, data)
-    return {"rows": len(rows), **write_table(pairs, names, output)}
+    rows, pairs, parts = resolved_text(stock, donors, data)
+    return {"rows": len(rows), **write_table(pairs, parts, output)}
 
 
-def write_table(pairs: dict[bytes, bytes], names: list, output: Path) -> dict:
-    """Write table.bin from resolved_text's pairs and name parts."""
-    blob = table_blob(pairs, names)
+def write_table(pairs: dict[bytes, bytes], parts: tuple[list, list[int]], output: Path) -> dict:
+    """Write table.bin from resolved_text's pairs and part slots."""
+    names, overridden = parts
+    blob = table_blob(pairs, names, overridden)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(blob)
     return {
-        "pairs": len(pairs), "name_parts": sum(name is not None for name in names),
+        "pairs": len(pairs), "parts": sum(name is not None for name in names), "overrides": len(overridden),
         "sha256": hashlib.sha256(blob).hexdigest(), "bytes": len(blob),
     }
 
 
-def resolved_text(stock: Path, donors: DonorResolver, data: Path) -> tuple[list[dict], dict[bytes, bytes], list]:
-    """The data's rows with their stock and English text, the stock-to-English pairs, and the English name parts."""
+def resolved_text(stock: Path, donors: DonorResolver, data: Path) -> tuple[list[dict], dict[bytes, bytes], tuple]:
+    """The data's rows with their stock and English text, the stock-to-English pairs, and table_parts."""
     from .stock import resolve_stock_ref, stock_strings
 
     payload = _load_data(data)
@@ -223,7 +234,6 @@ def resolved_text(stock: Path, donors: DonorResolver, data: Path) -> tuple[list[
         if stock_bytes is None:
             raise TableBuildError(f"stock string absent for row {row['key']}")
         rows.append({**row, "ja": stock_bytes.decode("cp932"), "en": donors.resolve_row(row)})
-    overrides = [{**row, "en": donors.resolve_row(row)} for row in payload["name_parts"]]
+    overrides = [{**row, "en": donors.resolve_row(row)} for row in payload["parts"]]
     pairs = table_pairs(rows)
-    names = name_parts((stock / "OROCHI_Z.exe").read_bytes(), pairs, overrides)
-    return rows, pairs, names
+    return rows, pairs, table_parts((stock / "OROCHI_Z.exe").read_bytes(), pairs, overrides)

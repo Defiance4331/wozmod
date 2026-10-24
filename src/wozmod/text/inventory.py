@@ -8,10 +8,10 @@ from pathlib import Path
 
 from wozmod.formats.linkdata import entry_bytes, moz_entries, parse_index
 from wozmod.formats.pe import pointer_strings
-from wozmod.formats.scripts import event_texts, mesc_blocks, parse_script, quote_tables, quote_text
+from wozmod.formats.scripts import NOTICE, SPEAK, event_texts, mesc_blocks, parse_script, quote_tables, quote_text
 from wozmod.runtime.layout import DEFINES
 
-from .script_alignment import BRIEFINGS, QUOTES
+from .script_alignment import BRIEFINGS, QUOTE_SLOTS, QUOTES
 
 JAPANESE = re.compile(rb"[\x81-\x9f\xe0-\xfc]")
 EVENTS = range(177, 414)
@@ -55,10 +55,15 @@ def inventory(stock: Path) -> dict[str, dict[bytes, object]]:
                 script = parse_script(data)
             except ValueError:
                 continue
-            for record in script.notices.records:
-                add("notices", record.text_bytes, ("window", 2))
-            for record in script.dialog.records:
-                add("spoken", record.text_bytes, ("window", 1))
+            # A stage shows a notice or a line only through a command (scripts.NOTICE, SPEAK), so a record no command
+            # shows is never seen and needs no row.
+            shown = {(c[0], c[1] if c[0] == NOTICE else c[2]) for event in script.events for c in event}
+            for r, record in enumerate(script.notices.records):
+                if (NOTICE, r) in shown:
+                    add("notices", record.text_bytes, ("window", 2))
+            for r, record in enumerate(script.dialog.records):
+                if (SPEAK, r) in shown:
+                    add("spoken", record.text_bytes, ("window", 1))
     data = moz_entries(stock / "LINKDATA1.BIN", stock / "LINKDATA1.IDX", [*MESC_SITES, QUOTES[0]])
     for ordinal, site in MESC_SITES.items():
         for block in mesc_blocks(data[ordinal]):
@@ -67,7 +72,7 @@ def inventory(stock: Path) -> dict[str, dict[bytes, object]]:
     formats, notices, *officers = quote_tables(data[QUOTES[0]])
     for line in formats + notices:
         add("quote formats", quote_text(line), ("window", 2))
-    for line in (line for table in officers for line in table):
+    for line in (table[k] for table in officers for k in QUOTE_SLOTS if k < len(table)):  # the slots a game shows
         add("officer quotes", quote_text(line), ("window", 1))
     exe = (stock / "OROCHI_Z.exe").read_bytes()
     for value in pointer_strings(exe, MESSAGES, MESSAGE_COUNT, 4):

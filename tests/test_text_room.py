@@ -1,6 +1,7 @@
 """English text against the room the game leaves for it (wozmod.runtime.text_room): an overrun ends the game."""
 
 import os
+import struct
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,15 @@ def test_a_site_is_flagged_exactly_when_its_longest_text_and_terminator_outgrow_
                                                    for at, (room, formats, fills, digits, _) in enumerate(rows)))
     flagged = {int(line.split(":")[0], 16) for line in overruns(messages, names, tables)}
     assert [at in flagged for at in range(len(rows))] == [not fits for *_, fits in rows]
+
+
+def test_officer_names_are_read_from_the_records_after_the_cast_count() -> None:
+    # Bug: the records are read from the entry's first byte, over its u32 count, so each "record" is the last bytes of
+    # the one before and the longest name is never measured: an overrun passes unchecked.
+    parts = [b"Aa", b"Bb", b"Cc ", b"Longest-name-part"]
+    record = lambda surname, given: struct.pack("<HH", surname, given) + bytes(32)
+    cast = struct.pack("<I", 3) + record(3, 3) + record(0, 1) + record(2, 1)
+    assert text_room.cast_names(cast, parts) == [b"Longest-name-part", b"Bb Aa", b"Cc Bb"]
 
 
 @pytest.mark.skipif(not (os.environ.get("WOZMOD_TEXT_ROOM") and os.environ.get("WOZMOD_GAME")

@@ -15,51 +15,10 @@ import pytest
 from wozmod.formats.audio import WO1_EVENT_VOICES
 from wozmod.runtime.english_runtime import table_blob
 from wozmod.text import contexts
+from synthetic import container, mesc, spans, strings, write_stock_archive
+from synthetic import timed_event as event_file
 
 RUNTIME = Path(__file__).resolve().parents[1] / "runtime"
-
-
-def event_file(lines: list[tuple[float, float, int, bytes]], length: float, order: str = "<",
-               captions: tuple[tuple[float, bytes], ...] = ()) -> bytes:
-    """One sub-scene: for each (speak tick, clear tick, line index, text) a gate, a speak, a gate and a clear, and for
-    each (tick, text) a gate and a place caption, in tick order; then its length and the end record. The line records
-    follow the chain, each at an offset 12 past a 16 boundary as the stock files have them."""
-    f32, u16, u32 = (lambda v: struct.pack(f"{order}f", v)), (lambda v: struct.pack(f"{order}H", v)), \
-        (lambda v: struct.pack(f"{order}I", v))
-    events = sorted([(t, 1, i, text) for t, _, i, text in lines] + [(t, 2, 0, b"") for _, t, _, _ in lines]
-                    + [(t, 0, 0, text) for t, text in captions])
-    base, chain, tail, _texts = 16, [], bytearray(), []
-    for tick, what, index, text in events:
-        chain.append(("gate", tick))
-        chain.append(("speak" if what == 1 else "clear" if what == 2 else "caption", (index, text)))
-    chain += [("length", length), ("end", None)]
-    sizes = {"gate": 16, "speak": 20, "clear": 8, "caption": 16, "length": 16, "end": 8}
-    at = [0]
-    for kind, _ in chain:
-        at.append(at[-1] + sizes[kind])
-    strings = at[-1] + (12 - (base + at[-1]) % 16) % 16  # the first line record, 12 past a 16 boundary
-    out = bytearray()
-    for n, (kind, value) in enumerate(chain):
-        following = at[n + 1] if kind != "end" else 0
-        if kind in ("gate", "length"):
-            body = bytes([0, 0 if kind == "gate" else 1, 1, 6, 5, 4, 0, 0]) + f32(value)
-        elif kind == "clear":
-            body = bytes([5, 1, 0, 0])
-        elif kind == "end":
-            body = bytes([0xFF, 0, 0, 0])
-        else:
-            index, text = value
-            offset = strings + len(tail)
-            record = (b"\xff" * 4 + (u16(index) + u16(0) if kind == "speak" else b"") + text + b"\0")
-            tail += record + bytes((12 - (base + strings + len(tail) + len(record)) % 16) % 16)
-            if kind == "speak":
-                body = bytes([5, 5, 2, 4, 8, 5, 4, 0]) + u16(0) + bytes(2) + u32(offset)
-            else:
-                body = bytes([5, 0, 1, 7, 5, 4, 0, 0]) + u32(offset)
-        out += u32(following) + body
-        assert len(u32(0) + body) == sizes[kind], kind
-    out += bytes(strings - len(out)) + tail
-    return u32(1) + u32(base) + bytes(base - 8) + bytes(out)
 
 
 def test_an_event_window_runs_from_its_speak_to_the_next_text_record() -> None:
@@ -93,7 +52,7 @@ def test_two_cues_with_one_stock_string_are_two_contexts_with_their_own_donor_li
     shown = lambda kind, raw: (*contexts.shown_text(table, kind, raw), None)  # noqa: E731
     english = contexts.shown_text(table, "movie", b"\x82\xa0")[0]  # the cue as the schedule serves it either way
     cues = [(10, 50, english), (60, 90, english)]
-    donor = (("wo2-x360", "ens", 266), [(12, 48, "First line"), (61, 91, "Second line")], True)
+    donor = (("wo2-x360", "ens", 266), [(12, 48, "First line"), (61, 91, "Second line")])
     found = contexts.cue_contexts("movie021", "japanese", cues, donor, shown, "stock")
     assert [(c.id, [line.text for line in c.candidates]) for c in found] == [
         ("movie021.c0", ["First line"]), ("movie021.c1", ["Second line"])]
@@ -182,8 +141,8 @@ def test_each_text_hook_looks_up_the_key_the_context_model_uses(tmp_path: Path) 
     # (the Japanese voice served the English-voice schedule, or the voice folder losing to the other), or a still
     # event's or WO1 page's draw stops trying its line with the voice key (camp talk then shows the shared row's
     # English) while VOICE_KEYED_MESC says it does. The C under test is the runtime's own enrt_translate, text,
-    # event_line, voiced_line and served, compiled from english_runtime.c; page_voice, which reads the game's memory,
-    # is a stub.
+    # event_line, overridden_part, voiced_line and served, compiled from english_runtime.c; page_voice, which reads
+    # the game's memory, is a stub.
     if not (shutil.which("i686-w64-mingw32-gcc") and shutil.which("wine")):
         pytest.skip("i686-w64-mingw32-gcc or wine absent")
     source = (RUNTIME / "english_runtime.c").read_text()
@@ -209,6 +168,10 @@ def test_each_text_hook_looks_up_the_key_the_context_model_uses(tmp_path: Path) 
         _c_function(source, r"struct frame \{").replace("\n}\n", "\n}"), ";",
         *(_c_function(source, rf"static \w+ \**{name}\(") for name in ("fnv", "same", "len", "copy")),
         _c_function(source, r"const char \*enrt_translate\("),
+        # A part override (served by its stock pointer, before the row): none in this table, so no game memory is read.
+        *(re.search(rf"^#define {macro}\b.*$", source, re.M).group(0)
+          for macro in ("NAME_PART", "NAMES", "OVERRIDES", "NAME_PARTS", "WEAPON_PART")),
+        _c_function(source, r"static const char \*overridden_part\(const char \*s\)\n\{"),
         "static u32 voice_mode; static struct frame no_frame;", "#define VOICE_MODE voice_mode",
         *(re.search(rf"^#define {site} .*$", source, re.M).group(0) for site in ("STILL_DRAW", "STILL_Z_DRAW", "NARRATION_DRAW")),
         "static u32 page_voice(u32 ret) { return ret == STILL_Z_DRAW ? 1480 : 942; }",
@@ -256,3 +219,38 @@ def test_each_text_hook_looks_up_the_key_the_context_model_uses(tmp_path: Path) 
         found = contexts.served_entry(mod, 4396, mode)
         expected.append(found.decode() if found is not None else "-1")
     assert served == expected
+
+
+def test_a_camp_talk_filler_line_the_game_skips_has_no_context() -> None:
+    # Bug: mesc_contexts keeps a camp-talk line the game never draws (stock scene 0x25 line 19, a copy of line 18's
+    # text over line 20's voice), so every context check judges a line no player sees, or the skip catches officer
+    # 0x4E too. Expected by hand from the advance 0x59C8D0: a line whose record names officer 0x4F or above is
+    # never drawn; the others are, in MESC order with their voice ids.
+    def scene(*officers: int) -> bytes:
+        return b"".join(bytes([len(officers), officer]) + bytes(14) for officer in officers)
+
+    data = container(scene(0x06, 0x4F, 0x4E), *(scene(0x06) for _ in range(55)), mesc(*(b"x" for _ in range(58))))
+    voices = [100 + i for i in range(58)]
+    drawn = [(position, voice) for position, _, voice in contexts.drawn_mesc_lines(contexts.CAMP_TALK, data, voices)]
+    assert drawn == [(0, 100)] + [(i, 100 + i) for i in range(2, 58)]
+
+
+def test_an_officer_quote_slot_no_game_reads_neither_shows_nor_voices(tmp_path: Path) -> None:
+    # Bug: quote contexts and the voice map keep officer slots 16-21, which no game's quote code reads
+    # (script_alignment.QUOTE_SLOTS), so the checks judge lines no player sees and the bank carries clips nothing
+    # plays (137 wordless WO1 X360 ones), or the cut is one slot off at either end. Expected by hand from QUOTE_SLOTS.
+    from wozmod.formats.audio import WO2_SUFFIX_BASE, quote_slots
+
+    suffixed = {15: 501, 16: 502, 21: 503, 22: 504}
+    officer = [b"00q@%d" % suffixed[k] if k in suffixed else b"" for k in range(23)]
+    quotes = spans([strings(b"33F1"), strings(b"32N1"),
+                    spans([strings(*officer)])], struct.pack("<I", 3))
+    write_stock_archive(tmp_path, "LINKDATA1", {contexts.QUOTES_ENTRY: quotes})
+    world = contexts.World(tmp_path, tmp_path, tmp_path, tmp_path)
+    world.clip_lines = lambda voice_id, mode: (None, ())
+    world._shown = lambda kind, raw, voice_id=None: (raw, None, None)
+    found = world.quote_contexts("japanese")
+    assert [(c.id, c.voice_id) for c in found] == [("quote2.15", WO2_SUFFIX_BASE + 500),
+                                                   ("quote2.22", WO2_SUFFIX_BASE + 503)]
+    tables = [([b"33F1"], [b"x"]), ([b"32N1"], [b"y"]), (officer, [b"d@%d" % k for k in range(23)])]
+    assert [voice for voice, _ in quote_slots(tables)] == [WO2_SUFFIX_BASE + 500, WO2_SUFFIX_BASE + 503]

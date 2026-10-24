@@ -34,7 +34,7 @@ def test_every_data_loader_refuses_a_disc_name_that_is_not_a_disc_key(tmp_path, 
     key = "0" * 64
 
     def text(row):
-        (tmp_path / "table.json").write_text(json.dumps({"version": 1, "rows": [{"key": key, **row}], "name_parts": []}))
+        (tmp_path / "table.json").write_text(json.dumps({"version": 1, "rows": [{"key": key, **row}], "parts": []}))
         _load_data(tmp_path / "table.json")
 
     def art(value):

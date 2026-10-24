@@ -16,7 +16,6 @@ import os
 import re
 import shutil
 import subprocess
-import tomllib
 from pathlib import Path
 
 import checkout
@@ -25,10 +24,8 @@ import pytest
 RUNTIME = Path(__file__).resolve().parents[1] / "runtime"
 CONFIG = checkout.config()
 REQUIRE_INPUTS = os.environ.get("WOZMOD_REQUIRE_INPUTS") == "1"
-INPUTS = tomllib.loads(CONFIG.read_text(encoding="utf-8")).get("tests", {}) if CONFIG.is_file() else {}
-
-for name, value in INPUTS.items():
-    os.environ.setdefault(name, str(value))
+INPUTS = checkout.inputs()
+os.environ.update(INPUTS)
 
 
 def pytest_configure(config) -> None:

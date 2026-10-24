@@ -10,14 +10,14 @@ from pathlib import Path
 
 import pytest
 
-from wozmod.text.build import TableBuildError, _load_data, build_table, name_parts, table_index, table_pairs
+from wozmod.text.build import TableBuildError, _load_data, build_table, table_index, table_pairs, table_parts
 from synthetic import pe_image, script as synthetic_script
 from wozmod.text.stock import resolve_stock_ref, stock_key, stock_strings
 
 TABLE = Path(__file__).resolve().parents[1] / "data/text/table.json"
 # The shipped table's rows: their count and the SHA-256 of their sorted keys, one per line.
-ROW_COUNT = 23988
-ROW_KEYS_SHA256 = "62f77340cf6253ccc44d69627274e9efaa5a8578686b9acd3ccb5a2185d48574"
+ROW_COUNT = 23919
+ROW_KEYS_SHA256 = "6b4ca1a7599bfbd42d1de2e2791a10e980b76e9b78cb455fc703bef49ea55d6d"
 
 
 def test_shipped_table_is_valid_and_keeps_every_row() -> None:
@@ -64,7 +64,7 @@ def _archive(directory: Path, number: int, payloads: dict[int, bytes]) -> None:
 
 
 def _stock_pe(common: bytes, missing: bytes, message: bytes) -> bytes:
-    image = pe_image(0x1A200, (b".text", 0x1A000, 0x2DE000, 0x1A000, 0x200), optional_size=0x60)
+    image = pe_image(0x1E200, (b".text", 0x1E000, 0x2DE000, 0x1E000, 0x200), optional_size=0x60)
     cursor = 0x1600
     pointers = []
     for value in (common, missing, message, _token("scanner")):
@@ -75,6 +75,8 @@ def _stock_pe(common: bytes, missing: bytes, message: bytes) -> bytes:
         struct.pack_into("<I", image, 0x6F0 + 4 * index, pointers[2])
     for index in range(890):
         struct.pack_into("<II", image, 0x18568 + 8 * index, pointers[index == 2], 0)
+    for index in range(384):  # the weapons, 0x6FA5F8
+        struct.pack_into("<II", image, 0x1C7F8 + 8 * index, pointers[0], 0)
     return bytes(image)
 
 
@@ -176,12 +178,17 @@ def test_icon_check_does_not_read_the_start_icon_argument_or_a_trail_byte_as_an_
         (start + "Stock").encode("cp932"): english.encode("cp932")}
 
 
-def test_name_override_does_not_replace_another_identical_stock_name() -> None:
+def test_part_override_gives_only_its_own_slot_where_one_stock_string_fills_several() -> None:
+    # Bug: an override keyed by the stock string (or by the wrong table, or shifted by the name table's length) also
+    # renames every other name part or weapon that shares the string, or misses its own slot.
     common = _token("common")
-    names = name_parts(_stock_pe(common, _token("missing"), _token("message")), {common: b"Common"}, [
-        {"index": 1, "en": "Override"}, {"index": 3, "en": ""},
+    parts, overridden = table_parts(_stock_pe(common, _token("missing"), _token("message")), {common: b"Common"}, [
+        {"table": "names", "index": 1, "en": "Override"}, {"table": "names", "index": 3, "en": ""},
+        {"table": "weapons", "index": 5, "en": "Fixture weapon"},
     ])
-    assert names == [b"Common", b"Override", None, *([b"Common"] * 887)]
+    assert parts == [b"Common", b"Override", None, *([b"Common"] * 887), *([b"Common"] * 5), b"Fixture weapon",
+                     *([b"Common"] * 378)]
+    assert overridden == [1, 895]
 
 
 class _SyntheticResolver:
@@ -212,13 +219,13 @@ def test_hashed_builder_does_not_drop_a_pointer_row_or_shift_name_overrides(synt
     view = {"key": hashlib.sha256(substring).hexdigest(), "source": "authored", "en": "Authored substring", "key_ref": ["exe", len(old_exe) + 6, len(substring)]}
     data = tmp_path / "data"
     data.mkdir()
-    (data / "table.json").write_text(json.dumps({"version": 1, "rows": [pointer, authored, view], "name_parts": [{"index": 1, "source": "authored", "en": "Override"}]}))
+    (data / "table.json").write_text(json.dumps({"version": 1, "rows": [pointer, authored, view], "parts": [{"table": "names", "index": 1, "source": "authored", "en": "Override"}]}))
     output = tmp_path / "built" / "table.bin"
     result = build_table(stock, _SyntheticResolver(), data, output)
     pairs, names = _table_values(output.read_bytes())
     assert pairs == {_token("name"): b"Resolved pointer", _token("message"): b"Authored message", substring: b"Authored substring"}
-    assert names == [b"Resolved pointer", b"Override", None, *([b"Resolved pointer"] * 887)]
-    assert result == {"rows": 3, "pairs": 3, "name_parts": 889, "bytes": output.stat().st_size, "sha256": hashlib.sha256(output.read_bytes()).hexdigest()}
+    assert names[:890] == [b"Resolved pointer", b"Override", None, *([b"Resolved pointer"] * 887)]
+    assert result == {"rows": 3, "pairs": 3, "parts": 1273, "overrides": 1, "bytes": output.stat().st_size, "sha256": hashlib.sha256(output.read_bytes()).hexdigest()}
 
 
 def test_voiced_line_keeps_its_own_english_where_another_voice_shares_its_text(synthetic_stock, tmp_path: Path) -> None:
@@ -230,7 +237,7 @@ def test_voiced_line_keeps_its_own_english_where_another_voice_shares_its_text(s
     rows = [{"key": hashlib.sha256(text).hexdigest(), "source": "authored", "en": "Shared wording"},
             {"key": hashlib.sha256(voiced).hexdigest(), "source": "authored", "en": "This voice's wording"}]
     data = tmp_path / "table.json"
-    data.write_text(json.dumps({"version": 1, "rows": rows, "name_parts": []}))
+    data.write_text(json.dumps({"version": 1, "rows": rows, "parts": []}))
     output = tmp_path / "table.bin"
     build_table(stock, _SyntheticResolver(), data, output)
     pairs, _ = _table_values(output.read_bytes())
@@ -240,7 +247,7 @@ def test_voiced_line_keeps_its_own_english_where_another_voice_shares_its_text(s
 @pytest.mark.parametrize("fault", ["hash", "duplicate-row", "source", "name-index", "duplicate-name", "version"])
 def test_bad_schema_cannot_drop_or_overwrite_a_row(fault: str, tmp_path: Path) -> None:
     row = {"key": "0" * 64, "source": "authored", "en": "Authored"}
-    payload = {"version": 1, "rows": [row], "name_parts": []}
+    payload = {"version": 1, "rows": [row], "parts": []}
     if fault == "hash":
         row["key"] = "0" * 63
     elif fault == "duplicate-row":
@@ -248,9 +255,9 @@ def test_bad_schema_cannot_drop_or_overwrite_a_row(fault: str, tmp_path: Path) -
     elif fault == "source":
         row["source"] = "absent"
     elif fault == "name-index":
-        payload["name_parts"] = [{"index": 890, "source": "authored", "en": "Authored"}]
+        payload["parts"] = [{"table": "names", "index": 890, "source": "authored", "en": "Authored"}]
     elif fault == "duplicate-name":
-        payload["name_parts"] = [{"index": 1, "source": "authored", "en": "Authored"}] * 2
+        payload["parts"] = [{"table": "names", "index": 1, "source": "authored", "en": "Authored"}] * 2
     else:
         payload["version"] = 2
     data = tmp_path / "data.json"
@@ -265,7 +272,7 @@ def test_missing_stock_hash_cannot_silently_drop_a_translation(synthetic_stock, 
     stock, _ = synthetic_stock
     key = "0" * 64
     data = tmp_path / "table.json"
-    data.write_text(json.dumps({"version": 1, "rows": [{"key": key, "source": "authored", "en": "Authored"}], "name_parts": []}))
+    data.write_text(json.dumps({"version": 1, "rows": [{"key": key, "source": "authored", "en": "Authored"}], "parts": []}))
     output = tmp_path / "table.bin"
     with pytest.raises(TableBuildError, match=key):
         build_table(stock, _SyntheticResolver(), data, output)

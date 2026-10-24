@@ -122,6 +122,45 @@ def test_stage_title_redraws_only_a_condensed_donor():
     assert drawn.getbbox() == (0, 10, 30, 22)
 
 
+def test_stage_title_takes_wo2_first_and_wo1_when_wo2_is_condensed():
+    # Bug: the donor order is reversed (a WO2 stage shows the WO1 picture), or a condensed WO2 title drops straight
+    # to our lettering although the WO1 picture of the same name fits.
+    line = Image.new("RGBA", (30, 20))
+    line.paste(FILL, (0, 4, 30, 16))
+    face = type("Face", (), {"render": lambda self, text: (line, 16)})()
+
+    def art(width, payload):
+        image = Image.new("RGBA", (64, 32))
+        image.paste(FILL, (0, 10, width, 22))
+        texture = Target(image)
+        texture.payload = payload
+        return type("G1t", (), {"textures": [texture]})()
+
+    def served(wo2_width):
+        donors = {"faces": {"title": face}, ("wo2-x360", 11): {3: art(wo2_width, b"wo2!!")}, 14: {7: art(30, b"wo1!!")}}
+        edit = {"stage_title": "Title", "baseline": 22, "wo2-x360": [11, 3, 0], "wo1-x360": [14, 7, 0]}
+        return build.payload(Target(Image.new("RGBA", (64, 32))), edit, donors, None)
+
+    assert (served(30), served(24)) == (b"wo2!!", b"wo1!!")  # payloads as long as the target's
+
+
+def test_a_whole_copy_row_refuses_a_donor_of_a_size_neither_the_stock_nor_the_row_declares():
+    # Bug: a pointer shifted onto a neighbouring donor texture of another size is silently re-placed into the stock
+    # art's ink box, so a menu shows the wrong picture and nothing fails.
+    from types import SimpleNamespace
+
+    donor = Target(Image.new("RGBA", (128, 32)))
+    donor.payload = b"donor"
+    stock = Target(Image.new("RGBA", (64, 32)))
+    donors = {5: {0: SimpleNamespace(textures=[donor])},
+              "stock": SimpleNamespace(items={151: SimpleNamespace(g1t=SimpleNamespace(textures=[stock]))})}
+    row = {"entry": 4079, "item": 151, "texture": 0, "wo1-x360": [5, 0, 0]}
+    with pytest.raises(ValueError, match=r"4079\.151: donor \[5, 0, 0\] is 128x32"):
+        build.payload(stock, row, donors, None)
+    # The row declares the donor's size: the stock texture is enlarged to it and the donor served whole.
+    assert build.payload(Target(Image.new("RGBA", (128, 32))), row | {"size": [128, 32]}, donors, None) == b"donor"
+
+
 def test_shadow_does_not_paint_under_antialiased_border_or_opening():
     white, dark = (240, 240, 240, 255), (49, 52, 49, 255)
     art = Image.new("RGBA", (4, 5), white)
@@ -905,3 +944,24 @@ def test_every_spacing_table_key_is_a_word_its_face_draws() -> None:
             if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", None) in tables:
                 keys = {key.value for key in node.value.keys}
                 assert keys and keys <= drawn, (face, node.targets[0].id, keys - drawn)
+
+
+def test_rows_stretched_repeats_the_one_row_and_moves_the_rest_down():
+    # Bug: the repeat starts a row late or the rows below land one row off, so a stretched box shows a seam or loses
+    # its edge line.
+    from wozmod.art.imaging import rows_stretched
+
+    image = Image.new("L", (2, 8))
+    image.putdata([v for y in range(8) for v in (y, y)])
+    out = rows_stretched(image, 3, 2)
+    assert [out.getpixel((0, y)) for y in range(8)] == [0, 1, 2, 3, 3, 3, 4, 5]
+
+
+def test_the_camp_talk_bar_art_grows_by_the_rows_the_runtime_draws():
+    # Bug: the bar's drawn height (runtime) and its stretched art (art data) disagree, so the game samples past the
+    # art's bottom edge or squeezes it.
+    from wozmod.runtime.runtime_edits import CAMP_BAR_ROWS
+
+    mapping = json.loads(build.MAPPING.read_text(encoding="utf-8"))
+    bar = next(e for e in mapping["textures"] if (e["entry"], e.get("item")) == (4104, 1))
+    assert 262 + sum(piece["stretch"][1] for piece in bar["draw"] if "stretch" in piece) == CAMP_BAR_ROWS
