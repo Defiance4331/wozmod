@@ -289,3 +289,19 @@ def fnv1a(value: bytes) -> int:
     for b in value:
         h = ((h ^ b) * 16777619) & 0xFFFFFFFF
     return h
+
+
+def table_lookup(blob: bytes, key: bytes) -> bytes | None:
+    """The English table_blob holds for key, found as enrt_translate finds it: start at hash & mask and step one slot
+    (wrapping) until the key or an empty slot."""
+    mask = struct.unpack_from("<I", blob)[0]
+    h = fnv1a(key)
+    i = h & mask
+    for _ in range(mask + 1):  # a table with no empty slot would loop forever in the game; here it fails
+        slot_hash, jp, en = struct.unpack_from("<3I", blob, 8 + 12 * i)
+        if not jp:
+            return None
+        if slot_hash == h and blob[jp:blob.index(b"\0", jp)] == key:
+            return blob[en:blob.index(b"\0", en)]
+        i = (i + 1) & mask
+    raise ValueError("the table has no empty slot")

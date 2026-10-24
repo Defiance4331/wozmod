@@ -193,11 +193,16 @@ def _load_data(path: Path) -> dict:
 def build_table(stock: Path, donors: DonorResolver, data: Path, output: Path) -> dict:
     """Build table.bin from player inputs and version-1 hash/pointer data."""
     rows, pairs, names = resolved_text(stock, donors, data)
+    return {"rows": len(rows), **write_table(pairs, names, output)}
+
+
+def write_table(pairs: dict[bytes, bytes], names: list, output: Path) -> dict:
+    """Write table.bin from resolved_text's pairs and name parts."""
     blob = table_blob(pairs, names)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(blob)
     return {
-        "rows": len(rows), "pairs": len(pairs), "name_parts": sum(name is not None for name in names),
+        "pairs": len(pairs), "name_parts": sum(name is not None for name in names),
         "sha256": hashlib.sha256(blob).hexdigest(), "bytes": len(blob),
     }
 

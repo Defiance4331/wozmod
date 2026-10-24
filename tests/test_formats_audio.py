@@ -18,8 +18,10 @@ from wozmod.formats.audio import (
     kovs_record,
     moz_se_banks,
     parse_kovs_record,
+    quote_slots,
     se_bank,
     se_entries,
+    se_plan,
     slot_voice_map,
     wo2_se_entries,
     wo2_voice_records,
@@ -134,6 +136,40 @@ def test_se_index_reads_header_and_data_as_pairs_without_swapping_offsets() -> N
     assert moz_se_banks(index, body) == [(b"head!", b"clip")] + [(b"", b"")] * 121
 
 
+def _shout_fixture(wo2_entries: int = 16):
+    """MOZ banks like the stock ones (9-104 officers, 105-121 generic units), and donor banks each laid out as its
+    disc's: a bank's clips are (officer, entry) offsets, and the other-unit banks repeat the officers' (WO2 X360
+    102-195 = 8-101, WO1 X360 87-165 = 8-86)."""
+    stock = [(b"", b"")] * 9 + [(_se_header([bytes(40)] * (16 if b < 105 else 11)), b"") for b in range(9, 122)]
+    clips = lambda officer, n: [(1000 * officer + k, 1, 48_000) for k in range(n)]
+    wo2 = [[]] * 8 + [clips(u, wo2_entries if u == 5 else 16) for u in range(94)] * 2
+    wo2 += [clips(u, 11) for u in range(94, 111)] + [[]] * 4
+    wo1 = [[]] * 8 + [clips(50_000 + u, 13) for u in range(79)] * 2 + [clips(50_000 + u, 24) for u in range(79, 94)]
+    psp = [[]] * 8 + [clips(90_000 + u, 16) for u in range(96)] + [[]] * 113
+    return stock, {"wo1-x360": wo1, "wo2-x360": wo2, "wo2-psp": psp}
+
+
+def test_se_banks_pair_by_officer_where_a_donor_repeats_its_officers_banks() -> None:
+    # Bug: pairing MOZ bank n with WO2 X360 bank n - 1 puts San Zang's bank 103 on WO2 102, a repeat of Zhao Yun's
+    # bank 8, so switching to San Zang plays Zhao Yun's shouts. No two MOZ officers may play the same clips.
+    stock, donors = _shout_fixture()
+    plan = se_plan(stock, donors)
+    played = {}
+    for moz, sources in plan.items():
+        played.setdefault(tuple(donors[disc][bank][j] for disc, bank, j in sources), []).append(moz)
+
+    assert [banks for banks in played.values() if len(banks) > 1] == []
+
+
+def test_se_bank_whose_officer_bank_has_another_entry_count_stops_the_build() -> None:
+    # Bug: a bank whose officer's donor bank has another entry count is skipped and silently stays Japanese (how
+    # Benkei escaped the wrong pairing), or is filled entry by entry from a bank laid out for other shouts.
+    stock, donors = _shout_fixture(wo2_entries=17)
+
+    with pytest.raises(VoiceBankError, match="SE bank 14 has 16 entries"):
+        se_plan(stock, donors)
+
+
 def test_wo2_se_entries_use_record_words_and_accumulate_unaligned_bank_sizes() -> None:
     def bank(records: list[tuple[int, int]]) -> bytes:
         sample = b"SDsdSmpl" + struct.pack("<II", 0, len(records)) + b"".join(struct.pack("<18I", offset, *([0] * 12), 48_000, 0, 0, 0, size) for offset, size in records)
@@ -146,7 +182,7 @@ def test_wo2_se_entries_use_record_words_and_accumulate_unaligned_bank_sizes() -
 def test_slot_voice_map_drops_ambiguous_ids_and_unsuffixed_slots_without_shifting() -> None:
     tables = [([b"a@100", b"b", b"c@102"], [b"d@7", b"e@8", b"f@9"]), ([b"g@100", b"h@103"], [b"i@11", b"j@12"])]
 
-    assert slot_voice_map(tables, 1644) == {0x3078 + 101: 1652, 0x3078 + 102: 1655}
+    assert slot_voice_map(quote_slots(tables), 1644) == {0x3078 + 101: 1652, 0x3078 + 102: 1655}
 
 
 def test_block_voice_map_does_not_drop_the_last_id_in_a_run() -> None:

@@ -27,8 +27,9 @@ def spans(parts, head: bytes = b"", order: str = "<") -> bytes:
 
 
 def script(notices: bytes, dialog: bytes, order: str = "<") -> bytes:
-    """A stage script: four section offsets, two filler sections, the notice table padded to 4, the dialog table."""
-    sections = [b"HEAD", b"TAIL", notices + bytes(-len(notices) % 4), dialog]
+    """A stage script: four section offsets, a filler section, an empty speak-command section (u32 count 0 and two
+    u32), the notice table padded to 4, the dialog table."""
+    sections = [b"HEAD", struct.pack(f"{order}3I", 0, 0, 0), notices + bytes(-len(notices) % 4), dialog]
     offsets = [20 + sum(map(len, sections[:i])) for i in range(4)]
     return struct.pack(f"{order}5I", 4, *offsets) + b"".join(sections)
 
@@ -40,6 +41,25 @@ def mesc(*lines: bytes) -> bytes:
         offsets.append(12 + 4 * len(lines) + len(body))
         body += line + b"\0"
     return b"MESC" + struct.pack(f"<II{len(lines)}I", len(lines), 12 + 4 * len(lines) + len(body), *offsets) + body
+
+
+def event_file(*scenes: list[tuple[int, int, bytes]], order: str = "<", gap: int = 0) -> tuple[bytes, list[int]]:
+    """An event file of sub-scenes, each a chain of (type, kind, text) records with one u32 field, the offset of a
+    0xFFFFFFFF mask and the text, from the sub-scene start; gap zero bytes sit before each sub-scene. Returns the
+    file and the file offset of each text, in order."""
+    head = 4 + 4 * len(scenes)
+    body, bases, texts = b"", [], []
+    for records in scenes:
+        body += bytes(gap)
+        base, chain, tail = head + len(body), b"", b""
+        start = 16 * len(records) + 8  # the records, then the 0xFF record that ends the chain
+        for i, (kind, sub, text) in enumerate(records):
+            chain += struct.pack(f"{order}I4B2BxxI", 16 * (i + 1), kind, sub, 1, 7, 5, 4, start + len(tail))
+            texts.append(base + start + len(tail) + 4)
+            tail += b"\xff" * 4 + text + b"\0"
+        bases.append(base)
+        body += chain + struct.pack(f"{order}I4B", 0, 0xFF, 0, 0, 0) + tail
+    return struct.pack(f"{order}{len(scenes) + 1}I", len(scenes), *bases) + body, texts
 
 
 def write_stock_archive(folder: Path, stem: str, entries: dict, count: int | None = None) -> None:

@@ -29,6 +29,7 @@ MANIFEST = "wozmod/install.json"
 RUNTIME_FILES = ("wozmod/settings.ini", "wozmod/runtime.log", "wozmod/runtime.crash.log")  # written by the game, not by the installer
 TEXT_DATA = resources.root() / "data/text/table.json"
 DUB_CAPTIONS = resources.root() / "data/text/dub_captions.json"
+MOVIE_CAPTIONS = resources.root() / "data/text/movie_captions.json"
 
 # Stock files the build reads: (size, SHA-256) of the supported Japanese PC release.
 STOCK_FILES = {
@@ -41,7 +42,7 @@ STOCK_FILES = {
 }
 # Release assets built by us; a release updates both pins with the files it ships.
 LETTERING = (18_399_206, "5c45d5a0d200c3fe55f31140285f9ac6c22cff172850a79484fe3dbb5a4c6ec0")
-DLL = (222_397, "5f974c193c870d8156a08ae9b6ee0c8ddf6023e1deaea05818f4d6ce6865ff11")
+DLL = (224_200, "2653a88cef0d21f9ddbc597738f93ec703e63d413c9d734c03af607a09303a80")
 
 _MOD_PATH = re.compile(r"d3d9\.dll|wozmod(/[A-Za-z0-9_][A-Za-z0-9_.-]*)+")
 
@@ -479,12 +480,13 @@ def _place_programs(inputs: dict[str, Path | None], donors: Path) -> None:
 
 def _text_table(game: Path, donors: Path, out: Path) -> None:
     from wozmod.text import DonorResolver
-    from wozmod.text.build import build_table
-    from wozmod.text.dub_captions import build_dub_schedules
+    from wozmod.text.build import resolved_text, write_table
+    from wozmod.text.movie_captions import build_movie_schedules
 
     resolver = DonorResolver(donors)
-    build_table(game, resolver, TEXT_DATA, out / "wozmod/table.bin")
-    build_dub_schedules(resolver, DUB_CAPTIONS, out)
+    _, pairs, names = resolved_text(game, resolver, TEXT_DATA)
+    write_table(pairs, names, out / "wozmod/table.bin")
+    build_movie_schedules(game, resolver, pairs, MOVIE_CAPTIONS, DUB_CAPTIONS, out)
 
 
 def _menu_art(game: Path, donors: Path, lettering: Path, staging: Path, out: Path, jobs: int) -> None:
@@ -604,7 +606,7 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
     as the game folder, but for "movies", whose folder is wozmod/movie. Nothing is kept before the checks pass.
     """
     from wozmod.movies import movie_donors
-    from wozmod.text.dub_captions import DUB_SCHEDULE_FILES
+    from wozmod.text.movie_captions import DUB_SCHEDULE_FILES
     from wozmod.voices import PSP_VOICE_FILES, VOICE_DONOR_FILES
 
     donors, out = staging / "donors", staging / "out"

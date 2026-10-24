@@ -11,13 +11,13 @@ from pathlib import Path
 import pytest
 
 from wozmod.text.build import TableBuildError, _load_data, build_table, name_parts, table_index, table_pairs
-from synthetic import pe_image
+from synthetic import pe_image, script as synthetic_script
 from wozmod.text.stock import resolve_stock_ref, stock_key, stock_strings
 
 TABLE = Path(__file__).resolve().parents[1] / "data/text/table.json"
 # The shipped table's rows: their count and the SHA-256 of their sorted keys, one per line.
-ROW_COUNT = 23949
-ROW_KEYS_SHA256 = "7283569d53e3c558d530544ad92265581918ec323a1ef570e8c94f45d92db89b"
+ROW_COUNT = 23988
+ROW_KEYS_SHA256 = "62f77340cf6253ccc44d69627274e9efaa5a8578686b9acd3ccb5a2185d48574"
 
 
 def test_shipped_table_is_valid_and_keeps_every_row() -> None:
@@ -85,12 +85,12 @@ def synthetic_stock(tmp_path: Path) -> tuple[Path, list[bytes]]:
     roles = ["notice", "dialog", "caption", "event", "narration", "format", "quote-notice", "officer", "briefing", "name", "unmapped", "message", "scanner"]
     values = {role: _token(role) for role in roles}
     notices = _strings(b"32" + values["notice"])
-    sections = [b"AAAA", b"BBBB", notices + bytes(-len(notices) % 4), _strings(b"00" + values["dialog"] + b"@0001")]
-    offsets = [20 + sum(map(len, sections[:index])) for index in range(4)]
-    script = struct.pack("<5I", 4, *offsets) + b"".join(sections)
+    script = synthetic_script(notices, _strings(b"00" + values["dialog"] + b"@0001"))
     indexed = _token("indexed")
     event = bytes(12) + b"\xff" * 4 + struct.pack("<HH", 0x281, 32) + indexed + b"\0"
     event += bytes(-len(event) % 16) + b"\xff" * 4 + chr(0x3042).encode("cp932") + b"\0"
+    voiced = _token("voiced")  # a WO2 event line with a voice: index 5, voice id 0xAF3 + 5
+    event += bytes(-(len(event) - 12) % 16) + b"\xff" * 4 + struct.pack("<HH", 5, 32) + voiced + b"\0"
     _archive(stock, 2, {
         0: script,
         145: struct.pack("<III", 1, 1, 2) + values["caption"] + b"\0",
@@ -103,10 +103,13 @@ def synthetic_stock(tmp_path: Path) -> tuple[Path, list[bytes]]:
     ], struct.pack("<I", 3))
     _archive(stock, 1, {4071: _mesc(values["narration"]), 4084: quote, 4190: _mesc(values["briefing"])})
     (stock / "OROCHI_Z.exe").write_bytes(_stock_pe(values["name"], values["unmapped"], values["message"]))
-    return stock, [*values.values(), values["officer"] + b"@1234", indexed, chr(0x3042).encode("cp932")]
+    return stock, [*values.values(), values["officer"] + b"@1234", indexed, chr(0x3042).encode("cp932"), voiced,
+                   voiced + b"@V2808"]
 
 
 def test_stock_catalog_does_not_drop_archive_keys_or_quote_voice_suffixes(synthetic_stock) -> None:
+    # Bugs: a dropped archive key; a quote or stage line listed without its @NNNN voice suffix; an event line not
+    # listed with its "@V" voice id, so a row keyed by an event line's voice cannot build.
     stock, values = synthetic_stock
     catalog = stock_strings(stock)
     missing = [hashlib.sha256(value).hexdigest() for value in values

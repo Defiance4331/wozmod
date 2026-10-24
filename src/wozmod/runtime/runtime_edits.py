@@ -834,9 +834,9 @@ def settings_rows(rows: int, distance: bool = False, moving_fix: bool = False) -
 
 # The game sizes its sound pool once at boot (_aligned_malloc at 0x5C9E43, the pool's allocator at 0x5CA4D8), and
 # every loaded sound-effect bank stays in it (0x66DCC0). 0x6300000 holds the stock ADPCM banks; the English banks
-# are 16-bit PCM, up to 0x6B0E0D0 bytes more if all were loaded, and a full pool crashes the game at battle start.
+# are 16-bit PCM, up to 0x6C039A0 bytes more if all were loaded, and a full pool crashes the game at battle start.
 STOCK_SOUND_POOL = 0x6300000
-SOUND_POOL = 0xCF00000
+SOUND_POOL = 0xD000000
 VOICE_EDITS = [(va, b"\x68" + p32(STOCK_SOUND_POOL), b"\x68" + p32(SOUND_POOL)) for va in (0x5C9E43, 0x5CA4D8)]
 
 # The Xbox defaults (the pad auto-setting's layout 3, block 0x5E378D) bind Camera Up, Down, Left and Right (actions

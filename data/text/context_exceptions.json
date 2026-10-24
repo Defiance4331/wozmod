@@ -1,0 +1,41 @@
+{
+ "version": 1,
+ "exceptions": [
+  {
+   "context": "mesc4103.9",
+   "check": "C1",
+   "reason": "edited row: the voice's own donor line with a typo corrected",
+   "ledger": "text.md row 1"
+  },
+  {
+   "context": "mesc4103.619",
+   "check": "C1",
+   "reason": "edited row: the voice's own donor line with a typo corrected",
+   "ledger": "text.md row 1"
+  },
+  {
+   "context": "movie005.c4",
+   "check": "C1",
+   "reason": "edited row: the cue's own X360 caption with its punctuation corrected",
+   "ledger": "text.md row 1"
+  },
+  {
+   "context": "movie017.c7",
+   "check": "C1",
+   "reason": "edited row: the cue's own X360 caption with its punctuation corrected",
+   "ledger": "text.md row 1"
+  },
+  {
+   "context": "event402.1.298",
+   "check": "C1",
+   "reason": "the PSP splits this scene's sentences differently: the cue at this place by order belongs to line 297",
+   "ledger": null
+  },
+  {
+   "context": "event402.1.298",
+   "check": "C3",
+   "reason": "the PSP splits this scene's sentences differently: the cue at this place by order belongs to line 297",
+   "ledger": null
+  }
+ ]
+}

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 from typing import Callable
@@ -12,8 +13,8 @@ from wozmod.formats.linkdata import (
     archive, decoded_member,
 )
 from wozmod.formats.scripts import (
-    Script, ScriptError, caption_cues, donor_text,
-    event_lines, mesc_blocks, parse_script, quote_tables, quote_text,
+    LEAD, Script, ScriptError, caption_cues, donor_text, event_captions,
+    event_lines, mesc_blocks, parse_script, quote_tables, quote_text, speak_flags,
 )
 
 # WO1 X360 ENS ordinals, as are the other WO1 X360 entries below. Its loader 0x822A28C0 reads ENS k as archive id 0xA53 + k;
@@ -48,6 +49,18 @@ EVENTS = ((range(177, 239), WO2_X360.name, 2692), (range(245, 283), WO1_X360.nam
           (range(283, 384), WO1_X360.name, -18), (range(401, 402), WO1_X360.name, -35))
 
 
+# Every WO1 X360 event file: 0x82293F60 gives each slot one of ENS 149 to 366. Slot 0x25 loads ENS 187 + b, b the
+# player's officer (0 to 78), a variant per officer of one scene; MOZ plays one fixed file there (stock 283) that
+# holds lines of several variants.
+WO1_EVENT_ENTRIES = range(149, 367)
+
+
+def donor_event_entries(source: str) -> list[int]:
+    """Every event file of a donor (WO1 X360 ENS ordinals, WO2 X360 PS2 member ids), the ones EVENTS pairs first."""
+    paired = sorted({o + shift for ordinals, name, shift in EVENTS if name == source for o in ordinals})
+    return paired + [e for e in WO1_EVENT_ENTRIES if e not in paired] if source == WO1_X360.name else paired
+
+
 QUOTES = (4084, 21, 45)
 
 
@@ -64,7 +77,7 @@ X360_ENS = {45: 17, 59: 32, 60: 8, **{m: m - 26 for m in range(101, 129)},
 
 def _parse(data: bytes) -> Script | None:
     try:
-        return parse_script(data)
+        return replace(parse_script(data), speaks=speak_flags(data))
     except ScriptError:
         return None
 
@@ -156,10 +169,28 @@ def narration_pairs(moz: bytes, donor: bytes) -> list[tuple[bytes, str]]:
                     if len(a) == len(b) for pair in zip(a, b, strict=True))
 
 
-def event_pairs(moz: bytes, donor: bytes, order: str = "<") -> list[tuple[bytes, str]]:
-    """Pair event subtitles by line index using the donor word order."""
-    english = event_lines(donor, order)
-    return _decoded((t, english[i]) for i, t in event_lines(moz).items() if i in english)
+def donor_event_lines(events, order: str) -> dict[int, bytes]:
+    """Donor event subtitles by line index over all of the donor's event files. An event line plays voice record
+    base + index in whichever file shows it (WO1 X360 0x821888F0, WO2 X360 0x8219F8D8), so the index names one line
+    game-wide; an index carrying two texts is dropped."""
+    lines: dict[int, bytes | None] = {}
+    for data in events:
+        for index, text in event_lines(data, order).items():
+            lines[index] = text if lines.get(index, text) == text else None
+    return {i: t for i, t in lines.items() if t is not None}
+
+
+def event_pairs(moz: bytes, english: dict[int, bytes]) -> list[tuple[bytes, str]]:
+    """Pair event subtitles with the donor line of the same index (donor_event_lines), the line its voice plays.
+    A stock line without Japanese is no text (MOZ leaves a 0x08 byte at index 81 of its WO1 events)."""
+    return _decoded((t, english[i]) for i, t in event_lines(moz).items() if i in english and re.search(LEAD, t))
+
+
+def event_caption_pairs(moz: bytes, donor: bytes, order: str = "<") -> list[tuple[bytes, str]]:
+    """Pair the place captions of a stock event and its donor event by sub-scene and order inside it."""
+    english = {(scene, ordinal): text for scene, ordinal, _, text in event_captions(donor, order)}
+    return _decoded((text, english[scene, ordinal]) for scene, ordinal, _, text in event_captions(moz)
+                    if (scene, ordinal) in english)
 
 
 def caption_pairs(moz: bytes, donor: bytes) -> list[tuple[bytes, bytes]]:
@@ -203,8 +234,10 @@ def official_pairs(stock: Path, wo1: Path, wo2_donor: Wo2Donor) -> dict[bytes, t
     briefing_entry, briefing_members = BRIEFINGS
     quotes_entry, wo1_quotes, wo2_quotes = QUOTES
     wanted = {WO1_X360.name: {wo1_quotes}, WO2_X360.name: {*briefing_members, wo2_quotes}}
-    for _, source, entry in [*NARRATION, *events]:
+    for _, source, entry in NARRATION:
         wanted[source].add(entry)
+    for source in wanted:
+        wanted[source].update(donor_event_entries(source))
     donor = {(WO1_X360.name, k): v for k, v in archive(wo1).read(sorted(wanted[WO1_X360.name])).items()}
     donor |= {(WO2_X360.name, k): v for k, v in wo2_donor.members(sorted(wanted[WO2_X360.name])).items()}
     narration = linkdata1.read([*(n for n, _, _ in NARRATION), briefing_entry, quotes_entry])
@@ -216,10 +249,18 @@ def official_pairs(stock: Path, wo1: Path, wo2_donor: Wo2Donor) -> dict[bytes, t
     found.append((narration_pairs(narration[briefing_entry], b"".join(
         decoded_member(donor[WO2_X360.name, m]) for m in briefing_members)), WO2_X360.name))
     scenes = linkdata2.read([o for o, _, _ in events])
-    found += [(event_pairs(scenes[o], donor[s, d], wo2_donor.order if s == WO2_X360.name else ">"), s) for o, s, d in events]
+    lines = {s: donor_event_lines((donor[s, e] for e in donor_event_entries(s)), wo2_donor.order if s == WO2_X360.name
+                                  else ">") for s in wanted}
+    found += [(event_pairs(scenes[o], lines[s]), s) for o, s, _ in events]
+    # WO1 X360 holds German, not English, at many of its caption sites, so only the WO2 X360 captions pair.
+    found += [(event_caption_pairs(scenes[o], donor[s, d], wo2_donor.order), s) for o, s, d in events if s == WO2_X360.name]
     movies = linkdata2.read(CAPTIONS)
     captions = wo2_donor.members([o + CAPTION_MEMBER for o in CAPTIONS])
-    found += [(_decoded(caption_pairs(movies[o], captions[o + CAPTION_MEMBER])), WO2_X360.name) for o in CAPTIONS]
+    # A movie cue takes its English by its place (text.movie_captions), so a movie caption votes only for a string
+    # no other site shows: the row of a shared string serves the other sites.
+    elsewhere = {japanese for pairs, _ in found for japanese, _ in pairs}
+    found += [([pair for pair in _decoded(caption_pairs(movies[o], captions[o + CAPTION_MEMBER]))
+                if pair[0] not in elsewhere], WO2_X360.name) for o in CAPTIONS]
     votes: dict[bytes, dict[str, list]] = {}
     for pairs, source in found:
         for japanese, english in pairs:

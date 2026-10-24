@@ -26,7 +26,9 @@ def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_unde
     se_header = b"_HBW0000" + struct.pack("<IHHI", 20, 0x3200, 0, 0)
     seidx = struct.pack(">II", 244, 0) + (struct.pack(">II", 0, 20) + struct.pack(">II", 20, 0)) * 122
     write_stock_archive(stock, "LINKDATA1", {4056: seidx, 4057: se_header, 4058: voiceidx, 4084: _quotes("<")}, 4085)
-    events = {o: b"no lip blocks" for o in range(177, 402)}
+    # event files with one empty sub-scene (count, offset, a chain end) and no lip blocks
+    events = {o: struct.pack("<III", 1, 8, 0) + b"\xff\0\0\0" for o in range(177, 402)}
+    donor_event = struct.pack(">III", 1, 8, 0) + b"\xff\0\0\0"
     def dream(notices, lines):  # a Z Dream stage with the line counts the PSP pairing expects
         return script(strings(*[b"32Fixture"] * notices), strings(*[b"00Fixture@0001"] * lines))
 
@@ -35,10 +37,11 @@ def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_unde
     write_ps2_archive(psp / "LINKDATA_NA.FNS", {27: _quotes("<"), **{
         o + 138: dream(49 if o == 142 else 1, 64 if o == 139 else 1) for o in range(132, 144)}}, 282)
     write_ps2_archive(psp / "sound/voice_na.bns", dict.fromkeys(range(1420), b"RIFF fixture"))
+    write_ps2_archive(psp / "LINKDATA.ENS", {1: struct.pack("<4I", 0, 16, 0, 0x800)})  # an English sound pack, no banks
     write_ens(one, {21: _quotes(">"), **{o: _script(">") for o in range(88, 148)},
-               **{o: events[177] for o in range(149, 367)}}, 367)
+               **{o: donor_event for o in range(149, 367)}}, 367)
     write_ens(two, {17: _quotes(">"), **{o: _script(">") for o in range(103, 171)},
-               **{o: events[177] for o in range(176, 238)}}, 238)
+               **{o: donor_event for o in range(176, 238)}}, 238)
     placeholder = b"Fixture"
     hdx = b"SDsdVers" + bytes(8) + b"SDsdSmpl" + struct.pack("<II", 0, 1)
     hdx += struct.pack("<18I", 0, *([0] * 12), 48000, 0, 0, 0, 2)
@@ -60,7 +63,7 @@ def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_unde
     assert (result.voice, result.se) == (output / "voice/Voice.bin", output / "voice/SE.bin")
     assert (result.dialogue_tiers, result.attack_tiers, result.japanese_fallback, result.english_se_banks,
             result.lip_tiers) == (
-        {"wo1-x360": 0, "wo2-x360": 0, "wo2-psp": 0}, {"wo1-x360": 0, "wo2-x360": 0}, 22665, 0,
+        {"wo1-x360": 0, "wo2-x360": 0, "wo2-psp": 0}, {"wo1-x360": 0, "wo2-x360": 0, "wo2-psp": 0}, 22665, 0,
         {"donor": 0, "stretched": 0},
     )
     assert all(hashlib.sha256(p.read_bytes()).digest() == digest for p, digest in before.items())

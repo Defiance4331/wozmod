@@ -23,6 +23,7 @@
 #include "voice_play.h"
 #include "device_hooks.h"
 #include "crash_log.h"
+#include "event_line.h"
 
 typedef unsigned int u32;
 typedef unsigned short u16;
@@ -683,12 +684,16 @@ static void test_frame(void)
 }
 #endif
 
+static const char *event_line(const char *s, u32 ret);
+
 static u32 text(u32 s, u32 id, const struct frame *f)
 {
     u32 en;
+    const char *own;
     if (inner || !s || !*(const u8 *)s)
         return s;
-    en = (u32)enrt_translate((const char *)s);
+    own = event_line((const char *)s, f->ret);
+    en = own ? (u32)own : (u32)enrt_translate((const char *)s);
 #ifdef ENRT_LOG
 
     log_line(id | (en != s) << 7, f, (const u8 *)s, fnv((const u8 *)s));
@@ -1619,11 +1624,13 @@ static void reload(void)
 
 
 
-/* An archive entry the installer wrote: wozmod/entries/<key>.bin, or wozmod/voice/entries/<key>.bin, which takes
- * its place while the voices are English (the caption schedules of the WO1 dub movies). */
-static struct loose { u32 key, size, voice; } loose[256];
+/* An archive entry the installer wrote, by folder: wozmod/entries/<key>.bin (menu art, the font), wozmod/captions
+ * (the movie caption schedules), or wozmod/captions/voice, whose schedule takes the place of the other while the
+ * voices are English (the English-voice movies' own caption times). */
+static struct loose { u32 key, size, dir; } *loose;
 static u32 loose_count;
-static const WCHAR *const loose_dirs[2] = {L"entries\\", L"voice\\entries\\"};
+static const WCHAR *const loose_dirs[3] = {L"entries\\", L"captions\\", L"captions\\voice\\"};
+#define VOICE_DIR 2
 #define ARCHIVE_WHOLE ((u32 (__attribute__((thiscall)) *)(u32, u32))0x5D0540)
 #define GAME_HEAP ((u32 (*)(void))0x5D3670)
 #define HEAP_ALLOC ((u8 *(__attribute__((thiscall)) *)(u32, u32, u32))0x5D3500)
@@ -1634,18 +1641,29 @@ static void index_entries(void)
     WCHAR name[MAX_PATH];
     WIN32_FIND_DATAW found;
     HANDLE find;
-    u32 voice;
-    for (voice = 0; voice < 2; voice++) {
-        if ((find = FindFirstFileW(lstrcatW(path(name, loose_dirs[voice]), L"*.bin"), &found)) == INVALID_HANDLE_VALUE)
+    u32 dir, room = 0;
+    for (dir = 0; dir < 3; dir++) {
+        if ((find = FindFirstFileW(lstrcatW(path(name, loose_dirs[dir]), L"*.bin"), &found)) == INVALID_HANDLE_VALUE)
             continue;
         do {
             const WCHAR *c = found.cFileName;
             u32 key = 0;
             for (; *c >= '0' && *c <= '9'; c++)
                 key = key * 10 + *c - '0';
-            if (c != found.cFileName && !lstrcmpiW(c, L".bin") && (english || (!voice && key == FONT_ENTRY))
-                && loose_count < 256) {
-                loose[loose_count].key = key, loose[loose_count].voice = voice;
+            if (c != found.cFileName && !lstrcmpiW(c, L".bin") && (english || (!dir && key == FONT_ENTRY))) {
+                /* The table grows with the scan: every file found is served, however many the installer wrote. */
+                if (loose_count == room) {
+                    void *grown = loose ? HeapReAlloc(GetProcessHeap(), 0, loose, 2 * room * sizeof *loose)
+                                        : HeapAlloc(GetProcessHeap(), 0, 256 * sizeof *loose);
+                    if (!grown) {
+                        FindClose(find);
+                        note("entries not served (out of memory) from:", loose_count);
+                        return;
+                    }
+                    room = loose ? 2 * room : 256;
+                    loose = grown;
+                }
+                loose[loose_count].key = key, loose[loose_count].dir = dir;
                 loose[loose_count++].size = found.nFileSizeLow;
             }
         } while (FindNextFileW(find, &found));
@@ -1661,7 +1679,8 @@ static struct loose *served(u32 key)
     struct loose *found = 0;
     u32 i;
     for (i = 0; i < loose_count; i++)
-        if (loose[i].key == key && !(loose[i].voice && voice_saved) && (!found || loose[i].voice))
+        if (loose[i].key == key && !(loose[i].dir == VOICE_DIR && voice_saved)
+            && (!found || loose[i].dir == VOICE_DIR))
             found = &loose[i];
     return found;
 }
@@ -1674,6 +1693,53 @@ static struct loose *served(u32 key)
 #define VOICE_SLOT 0x4EF84
 #define VOICE_TAG 0x80000000u
 #define VOICE_MODE (*(volatile u32 *)0x801F24)
+
+/* The narration pages' and still events' states ([0xC2F250]; the still loaders 0x59CE6B, 0x59A7CD). WO1 pages (4073):
+   page at +0xB4, line byte at +0xB9; its draw (0x5610DF) and its voice start (0x5617AE) both read them. WO1 still
+   event (camp talk, 4105): scene at +0x30, line byte at +0x35; its draw (0x59C784) and voice start (0x59CB8F) both
+   read them. Z still event (4103): text index at +0x30, copied with the voice start (0x59AD19) from the command whose
+   voice it plays. */
+#define NARRATION_STATE (*(const u8 *volatile *)0xC2F250)
+#define NARRATION_PAGES 60u  /* the entries of 0x560600's table */
+#define NARRATION_VOICE_START ((u32 (*)(u32))0x560600)  /* page: its first voice id */
+#define STILL_STATE (*(const u8 *volatile *)0xC5D528)
+#define STILL_Z_STATE (*(const u8 *volatile *)0xC5D504)
+#define STILL_SCENES 56u  /* the entries of 0x59B420's table */
+#define STILL_VOICE_START ((u32 (__attribute__((regparm(1))) *)(u32))0x59B420)  /* scene in eax: its first voice id */
+#define STORY_KIND (*(volatile u32 *)0x801A9C)
+
+/* The voice id the page or still event drawn at ret plays with the line it draws, or 10000 (no key) when it has
+   none: what its voice start plays for the drawn page or scene and line. Z: the start routine 0x59AEB0 takes voice
+   [command+8] + 0x4C4 (0x250 in WO1 voice mode, unless STORY_KIND is 4) and text [command+0xC], equal in every stock
+   command (wozmod.text.narration_voices), so the drawn index gives the voice. */
+static u32 page_voice(u32 ret)
+{
+    const u8 *state = ret == NARRATION_DRAW ? NARRATION_STATE : ret == STILL_DRAW ? STILL_STATE : STILL_Z_STATE;
+    u32 at;
+    if (!state)
+        return 10000;
+    at = *(const u32 *)(state + (ret == NARRATION_DRAW ? 0xB4 : 0x30));
+    if (ret == NARRATION_DRAW)
+        return at < NARRATION_PAGES ? NARRATION_VOICE_START(at) + state[0xB9] : 10000;
+    if (ret == STILL_Z_DRAW)
+        return (STORY_KIND == 4 || !VOICE_MODE ? 0x4C4u : 0x250u) + at;
+    return at < STILL_SCENES ? STILL_VOICE_START(at) + still_voice_line(at, state[0x35]) : 10000;
+}
+
+/* An event subtitle drawn (0x49DACE) or measured (0x49DB4C), or a narration page's or still event's line drawn, by
+   its own English for its voice, if it has one. */
+static const char *event_line(const char *s, u32 ret)
+{
+    static char key[512];
+    const char *en;
+    if (ret == NARRATION_DRAW || ret == STILL_DRAW || ret == STILL_Z_DRAW) {
+        if (!voice_key(s, page_voice(ret), key, sizeof key))
+            return 0;
+    } else if ((ret != 0x49DACE && ret != 0x49DB4C) || !event_line_key(s, VOICE_MODE, key, sizeof key))
+        return 0;
+    en = enrt_translate(key);
+    return en == key ? 0 : en;
+}
 #define VOICE_STAGE (*(volatile u8 *)0x801AA0)
 #define VOICE_PLAY ((void (__attribute__((thiscall)) *)(const u8 *, u32, u32, u32, u32))0x5D7BF0)
 static HANDLE voice_bank = INVALID_HANDLE_VALUE;
@@ -1791,7 +1857,7 @@ static u32 read_loose(struct frame *f)
     n = e->size - off;
     if (maxlen && n >= maxlen)
         n = maxlen;
-    p = path(name, loose_dirs[e->voice]);
+    p = path(name, loose_dirs[e->dir]);
     p += lstrlenW(p);
     for (digits = 1; key / digits >= 10; digits *= 10)
         ;
@@ -4120,10 +4186,10 @@ static u32 english_hook(u32 id, struct frame *f)
     }
     case 44: {
         static char cue[512];
-        u32 s = text(f->ecx, id, f), width, breaks;
+        u32 s = f->ecx, width, breaks;  /* each cue's own English: the installer writes every captioned schedule */
         u8 w = FONT_CELL[0], h = FONT_CELL[1];
         const char *c;
-        if (s != f->ecx || text_fit_latin((const char *)s)) {  /* translated, or English in a served schedule */
+        if (text_fit_latin((const char *)s)) {
             FONT_CELL[0] = FONT_CELL[1] = 28;
 
 

@@ -436,8 +436,8 @@ class Archive(Mapping):
     def parts(self, ordinal: int) -> int:
         return len(self._entries[ordinal][1])
 
-    def read(self, ordinals) -> dict[int, bytes]:
-        """Several entries with one open, in the order asked."""
+    def read(self, ordinals, unpack: bool = True) -> dict[int, bytes]:
+        """Several entries with one open, in the order asked; with unpack False, as stored (LZP2 left packed)."""
         found = {}
         with self.path.open("rb") as stream:
             for ordinal in ordinals:
@@ -447,7 +447,7 @@ class Archive(Mapping):
                 parts = []
                 for size in sizes:
                     stream.seek(offset)
-                    parts.append(unpacked(stream.read(size)))
+                    parts.append(unpacked(stream.read(size)) if unpack else stream.read(size))
                     offset += align(size)
                 found[ordinal] = b"".join(parts)
         return found

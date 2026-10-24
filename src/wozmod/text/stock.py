@@ -5,13 +5,16 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+from wozmod.formats.audio import WO1_EVENT_VOICES, WO2_EVENT_VOICES
 from wozmod.formats.linkdata import archive
 from wozmod.formats.pe import pointer_strings
-from wozmod.formats.scripts import EVENT_TEXT, event_lines, quote_tables
+from wozmod.formats.scripts import EVENT_TEXT, event_lines, mesc_blocks, quote_tables
 
 from .build import NAME_PARTS, NAME_TABLE, TableBuildError
 from .inventory import EVENTS, inventory
+from .narration_voices import VOICE_KEYED, line_voices
 from .psp_exe import EXE_STRING
+from .script_alignment import EVENTS as PAIRED_EVENTS
 from .script_alignment import QUOTES, moz_scripts
 
 
@@ -24,12 +27,27 @@ def stock_key(raw: bytes) -> tuple[str, bytes] | None:
     return hashlib.sha256(canonical).hexdigest(), canonical
 
 
+def event_voice_form(text: bytes, voice: int) -> bytes:
+    """An event, narration page or still event line with its voice id, as the runtime looks it up before the text alone
+    (runtime event_line)."""
+    return text + b"@V%04d" % voice
+
+
+def event_voices(linkdata2) -> dict[int, tuple[int, int]]:
+    """Stock event ordinal to (voice id of line 0, voiced line count): the voice start adds a line's index to its
+    story's base."""
+    blocks = {"wo1-x360": WO1_EVENT_VOICES, "wo2-x360": WO2_EVENT_VOICES}
+    return {o: (blocks[source][0], blocks[source][2]) for ordinals, source, _ in PAIRED_EVENTS for o in ordinals
+            if o in linkdata2}
+
+
 def stock_strings(stock: Path) -> dict[str, bytes]:
     """SHA-256 of canonical CP932 bytes mapped to those bytes, without donors.
 
     A spoken line or officer quote is also listed with its @NNNN voice suffix: the runtime looks the whole line up
     first (runtime voiced_line), so a row keyed that way gives one voiced line its own English where another line
-    with the same text is voiced from another donor."""
+    with the same text is voiced from another donor. An event line, a WO1 narration page line and a still event's
+    line (camp talk) are listed with their voice id the same way."""
     found: dict[str, bytes] = {}
 
     def add(value: bytes) -> None:
@@ -45,11 +63,21 @@ def stock_strings(stock: Path) -> dict[str, bytes]:
             add(value)
         for match in EVENT_TEXT.finditer(data):
             add(match.group(1) or match.group(2))
+    for ordinal, (base, count) in event_voices(linkdata2).items():
+        for index, value in event_lines(linkdata2[ordinal]).items():
+            if index < count:
+                add(event_voice_form(value, base + index))
+    linkdata1 = archive(stock / "LINKDATA1")
+    exe = (stock / "OROCHI_Z.exe").read_bytes()
+    for entry in (e for e in VOICE_KEYED if e in linkdata1):
+        data = linkdata1[entry]
+        if lines := [line for block in mesc_blocks(data) for line in block]:
+            for value, voice in zip(lines, line_voices(exe, entry, data), strict=True):
+                add(event_voice_form(value, voice))
     for script in moz_scripts(stock / "LINKDATA2").values():
         for record in script.dialog.records:
             if record.dialog_suffix:
                 add(record.value[2:])
-    exe = (stock / "OROCHI_Z.exe").read_bytes()
     for match in EXE_STRING.finditer(exe):
         add(match.group())
     for value in pointer_strings(exe, NAME_TABLE, NAME_PARTS, 8):

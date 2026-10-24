@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import pairwise
 
 
@@ -49,10 +49,13 @@ class Table:
 
 @dataclass(frozen=True)
 class Script:
-    """A stage script's battle notices (section 2) and spoken lines (section 3)."""
+    """A stage script's battle notices (section 2) and spoken lines (section 3). speaks holds, for a stock script read
+    by script_alignment.moz_scripts, each dialog line its speak commands speak with their bank flags (speak_flags);
+    it is empty for a donor script."""
 
     notices: Table
     dialog: Table
+    speaks: dict[int, set[int]] = field(default_factory=dict, compare=False)
 
 
 def _table(data: bytes, spoken: bool, order: str = "<") -> Table:
@@ -99,6 +102,30 @@ def parse_script(data: bytes, order: str = "<") -> Script:
     return Script(_table(data[offsets[2]:offsets[3]], False, order), _table(data[offsets[3]:], True, order))
 
 
+SPEAK = 0x26  # the speak command: the dispatcher 0x4F3AB0 sends opcode 38 to 0x4F17E0
+
+
+def speak_flags(data: bytes) -> dict[int, set[int]]:
+    """Each dialog line a stock stage script's speak commands speak, with their bank flags (1 when the command's
+    eighth word is set: the handler's `cmp word [esi+0xC], 0` at 0x4F1848, esi at word 1).
+
+    Section 1 is u32 count, two u32, then count u32 script offsets from the section start. A script is bytes flags,
+    kind, setup, imm, condition count c, command count n, then c 18-byte conditions and n commands of eight u16:
+    opcode, then for a speak an unused word and the dialog line index."""
+    _, *offsets = struct.unpack_from("<5I", data)
+    base = offsets[1]
+    count = struct.unpack_from("<I", data, base)[0]
+    found: dict[int, set[int]] = {}
+    for start in struct.unpack_from(f"<{count}I", data, base + 12):
+        at = base + start
+        conditions, commands = data[at + 4], data[at + 5]
+        for k in range(commands):
+            command = struct.unpack_from("<8H", data, at + 6 + 18 * conditions + 16 * k)
+            if command[0] == SPEAK:
+                found.setdefault(command[2], set()).add(int(command[7] != 0))
+    return found
+
+
 def mesc_blocks(data: bytes) -> list[list[bytes]]:
     """The strings of each MESC block (u32 count, u32 size, u32 offsets[count]) in data."""
     blocks, at = [], data.find(b"MESC")
@@ -119,6 +146,29 @@ def event_lines(data: bytes, order: str = "<") -> dict[int, bytes]:
             text = match.group(3)
             lines[index] = text if lines.get(index, text) == text else None
     return {i: t for i, t in lines.items() if t is not None}
+
+
+def event_captions(data: bytes, order: str = "<") -> list[tuple[int, int, int, bytes]]:
+    """An event file's place captions as (sub-scene, ordinal among its captions, text offset, text).
+
+    The file starts with u32 count and count u32 sub-scene offsets. A sub-scene is a chain of records: u32 offset
+    of the next record from the sub-scene start (0 on the last), u8 type (0xFF ends the chain), u8 kind, u8 field
+    count n, n field types, u8 field start (from byte 7), n field sizes. A caption is type 5 kind 0; its first field
+    is the sub-scene offset of a 0xFFFFFFFF mask and the caption text after it, which carries no line index.
+    """
+    count = struct.unpack_from(f"{order}I", data)[0]
+    found = []
+    for scene, base in enumerate(struct.unpack_from(f"{order}{count}I", data, 4)):
+        at, ordinal = base, 0
+        while data[at + 4] != 0xFF:
+            if data[at + 4:at + 6] == b"\x05\x00":
+                text = base + struct.unpack_from(f"{order}I", data, at + 7 + data[at + 7 + data[at + 6]])[0] + 4
+                found.append((scene, ordinal, text, data[text:data.index(b"\0", text)]))
+                ordinal += 1
+            if not (step := struct.unpack_from(f"{order}I", data, at)[0]):
+                break
+            at = base + step
+    return found
 
 
 def caption_cues(data: bytes) -> list[tuple[int, int, bytes]]:

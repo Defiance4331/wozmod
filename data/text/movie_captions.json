@@ -1,0 +1,44 @@
+{
+  "about": "Movie caption cues that do not take their English from the text table (see src/wozmod/text/movie_captions.py). cues: a stock cue whose string the game also shows elsewhere gets a row of its own, keyed by its movie, its cue and the SHA-256 of its stock string. voice_cues: a cue of a WO2 Xbox 360 caption schedule, shown with the English voices, that shows the English of a stock cue instead of its own (an edited official line, or our line where the Xbox 360 cue is blank).",
+  "version": 1,
+  "cues": [
+    {
+      "slot": "movie002",
+      "entry": 147,
+      "cue": 0,
+      "key": "1f13b5047384c386d2a6c069ff978d9374f10978174ee3714fbad257063ab3eb",
+      "source": "wo2-x360",
+      "ref": ["wo2-x360", "ens", 247, "captions", [0]]
+    },
+    {
+      "slot": "movie021",
+      "entry": 166,
+      "cue": 0,
+      "key": "0092f7b6f03aa58cb9a70c57d9df726f20c629c49872f8d5d9d4bc8773b76436",
+      "source": "wo2-x360",
+      "ref": ["wo2-x360", "ens", 266, "captions", [0]]
+    },
+    {
+      "slot": "movie021",
+      "entry": 166,
+      "cue": 1,
+      "key": "0092f7b6f03aa58cb9a70c57d9df726f20c629c49872f8d5d9d4bc8773b76436",
+      "source": "wo2-x360",
+      "ref": ["wo2-x360", "ens", 266, "captions", [1]]
+    },
+    {
+      "slot": "movie102",
+      "entry": 171,
+      "cue": 11,
+      "key": "7b6b1a84385048f654e0f68da65070fcc8e9210b9c51b5367196cc54d37e2ef8",
+      "source": "wo1-x360",
+      "ref": ["wo1-x360", "ens", 159, "event", 31]
+    }
+  ],
+  "voice_cues": [
+    {"slot": "movie005", "entry": 150, "cue": 4, "stock_cue": 4},
+    {"slot": "movie017", "entry": 162, "cue": 4, "stock_cue": 4},
+    {"slot": "movie017", "entry": 162, "cue": 7, "stock_cue": 7},
+    {"slot": "movie017", "entry": 162, "cue": 8, "stock_cue": 8}
+  ]
+}

@@ -6,14 +6,16 @@ from wozmod.formats.scripts import (
     ScriptError,
     caption_cues,
     donor_text,
+    event_captions,
     event_lines,
     event_texts,
     mesc_blocks,
     parse_script,
     quote_tables,
     quote_text,
+    speak_flags,
 )
-from synthetic import mesc, script, spans, strings
+from synthetic import event_file, mesc, script, spans, strings
 
 
 def _table(*records, order="<"):
@@ -140,6 +142,15 @@ def test_quote_text_keeps_cp932_trail_at_bytes_and_non_numeric_suffixes():
     assert [(value, quote_text(value)) for value, _ in cases] == cases
 
 
+def test_event_captions_read_each_caption_record_by_sub_scene_with_its_text_offset():
+    # Bugs: the mask offset taken from the file start instead of the sub-scene start (a shifted text), an ordinal
+    # that counts other records, a text offset at the mask (a cstr pointer that resolves to no English).
+    for order in "<>":
+        data, texts = event_file([(5, 0, b"A"), (5, 1, b"x"), (5, 0, b"B")], [(3, 0, b"y"), (5, 0, b"C")],
+                                 order=order, gap=6)
+        assert event_captions(data, order) == [(0, 0, texts[0], b"A"), (0, 1, texts[2], b"B"), (1, 0, texts[4], b"C")]
+
+
 def test_event_texts_reads_direct_captions_and_indexed_subtitles():
     direct = b"\x82\xa0\x82\xa2"
     indexed = b"\x82\xa4\n\x82\xa6"
@@ -161,3 +172,23 @@ def test_donor_text_rejects_unmapped_high_bytes_and_preserves_mapped_letters():
         for value in range(256)
     ]
     assert [(value, donor_text(b"A" + bytes([value]) + b"B")) for value in range(256)] == expected
+
+
+def test_speak_flags_reads_each_speak_commands_line_and_eighth_word():
+    # Bugs: the flag is read from another word than the eighth (the handler's [esi+0xC], esi at word 1), the
+    # conditions before a script's commands are skipped at another size than 18 bytes, a script offset is taken from
+    # the file start instead of section 1's, or a command that is not opcode 38 counts as speaking its word 2. Each
+    # turns a line's voice into the other bank's clip in the context model. Expected by hand from the layout below.
+    def command(opcode, line, flag, sixth=0):
+        return struct.pack("<8H", opcode, 0, line, 0, 0, 0, sixth, flag)
+
+    scripts = [
+        bytes([0, 1, 0, 0, 2, 3]) + bytes([0xAA] * 36)  # two conditions, then three commands
+        + command(0x26, 3, 0, sixth=1) + command(0x26, 5, 1) + command(0x25, 7, 1),
+        bytes([0, 1, 0, 0, 0, 1]) + command(0x26, 3, 4),  # line 3 again, from another script, flag set
+    ]
+    offsets = [12 + 4 * len(scripts)]
+    offsets.append(offsets[0] + len(scripts[0]))
+    section = struct.pack("<3I2I", len(scripts), 0, 0, *offsets) + b"".join(scripts)
+    head = struct.pack("<5I", 4, 20, 24, 24 + len(section), 24 + len(section)) + b"HEAD"
+    assert speak_flags(head + section) == {3: {0, 1}, 5: {1}}

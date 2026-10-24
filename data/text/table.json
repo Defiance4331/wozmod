@@ -20308,8 +20308,14 @@
     },
     {
       "key": "d91ca67c81614105694fabd5c20f4152ba211c4d682a0a6598d3e1a0084ebfde",
-      "source": "authored",
-      "en": "He Fei Castle - Front Inner Gate"
+      "source": "wo2-x360",
+      "ref": [
+        "wo2-x360",
+        "ens",
+        218,
+        "cstr",
+        678544
+      ]
     },
     {
       "key": "a92891009a0cb862530317a54b3d1b86d76c478316946a77f03229f449ac6ccd",
@@ -257376,23 +257382,47 @@
     },
     {
       "key": "9f57d81821da458074bb66bedec68b5e374c14af9072a91eff22b183d5c39d97",
-      "source": "authored",
-      "en": "I will hold them here, even if it costs my life! You must both escape!"
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        249,
+        "event",
+        150
+      ]
     },
     {
       "key": "ede1c7f4b52a0b5efbbd400571baa273a323d42f59340b3c4658c43f9813c700",
-      "source": "authored",
-      "en": "Why, Lord Sun Jian?!"
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        249,
+        "event",
+        153
+      ]
     },
     {
       "key": "c70e28d46ccbb3683bf57506083130bd854f876475df1a9151da619862d90c71",
-      "source": "authored",
-      "en": "Lord Sun Ce!"
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        249,
+        "event",
+        179
+      ]
     },
     {
       "key": "dcfdb95189bedc5294748007b2b1438e11a19db77c80260873f7ba097b8de3c8",
-      "source": "authored",
-      "en": "Well, it can't be helped. I'll hold them off here."
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        257,
+        "event",
+        200
+      ]
     },
     {
       "key": "b1a891dd314c7b6117ee90c166e0a126fafae210079ef3305163f9f48d73da2d",
@@ -257400,15 +257430,21 @@
       "ref": [
         "wo1-x360",
         "ens",
-        190,
-        "cstr",
-        1410020
+        257,
+        "event",
+        202
       ]
     },
     {
       "key": "17c9b746737cf8eb250b39639a5d1df6c12de393e531940da3dfaf63f503d50f",
-      "source": "authored",
-      "en": "Tch... This is hard to stomach."
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        257,
+        "event",
+        203
+      ]
     },
     {
       "key": "8e9d3a3bf9607f700eb9510fa86a2e5a8f84d97d442e8597fc70f59d6605e959",
@@ -262480,6 +262516,444 @@
         277,
         "dialog",
         33
+      ]
+    },
+    {
+      "key": "ed56ad62f551378cde7b4e836240474ca759c9c73da9ef9eb830191168964522",
+      "source": "wo2-x360",
+      "ref": [
+        "wo2-x360",
+        "ens",
+        104,
+        "dialog",
+        60
+      ]
+    },
+    {
+      "key": "1b81f48b3948b133d94463eb39df4dd59e9d369bbfa5127021cc08e8a7581055",
+      "source": "wo2-x360",
+      "ref": [
+        "wo2-x360",
+        "ens",
+        125,
+        "dialog",
+        14
+      ]
+    },
+    {
+      "key": "81c2edc6ce5b24963e69124cf5d7fed14615900900a351576ddf96ea45ac03a4",
+      "source": "wo2-x360",
+      "ref": [
+        "wo2-x360",
+        "ens",
+        157,
+        "dialog",
+        19
+      ]
+    },
+    {
+      "key": "9042920d7caa5c579f99842f19d9df25b2d98e66be5e6dac68930a6b005aea3e",
+      "source": "wo2-x360",
+      "ref": [
+        "wo2-x360",
+        "ens",
+        167,
+        "dialog",
+        35
+      ]
+    },
+    {
+      "key": "4b84ba9b5e3ff62eafc7c6faa66fb7ed19f515fd583e69d6e86ef20a94540c14",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        96,
+        "dialog",
+        54
+      ]
+    },
+    {
+      "key": "04c63632ec08df169bb0fdd437105e8fbfaaa3ddeb04c850e1fd0143594c199a",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        104,
+        "dialog",
+        53
+      ]
+    },
+    {
+      "key": "fa4299a9aeed5dc14829aecd7513f52cdd097d7e83b341aa37312b757227a452",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        109,
+        "dialog",
+        102
+      ]
+    },
+    {
+      "key": "fd66721f246166954af25e8fd4a16e7861eb2ab4adc8b7f148de1495077aa131",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        109,
+        "dialog",
+        103
+      ]
+    },
+    {
+      "key": "aa2ea101689f63fc47e92446d4e70019d6eb58fc0977a12b1ca568f5815eae40",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        109,
+        "dialog",
+        104
+      ]
+    },
+    {
+      "key": "7f54c1a374dcc4460a092f3d239471721af20a6f33902aa11dd5f061184d6a04",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        113,
+        "dialog",
+        11
+      ]
+    },
+    {
+      "key": "64ba57eb2e78966f13ab8e172fb27d6c8b4d145e01dd6045904935efa47b5d6c",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        114,
+        "dialog",
+        64
+      ]
+    },
+    {
+      "key": "a08216bfe031f4c50b051dda822dcfa9ba3b2fa43a2eaadd34b309a2ff7c0c5d",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        132,
+        "dialog",
+        14
+      ]
+    },
+    {
+      "key": "2969666edf0a7d5f4d0adc58131dad2efc0aad1c8366deb1f09ceab17329492d",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        132,
+        "dialog",
+        15
+      ]
+    },
+    {
+      "key": "70e65bf04c34e213f6f906e051058a8b55e9163c050827b8f3f58f1b5419f9f4",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        132,
+        "dialog",
+        27
+      ]
+    },
+    {
+      "key": "a7aaeb3e1f872774358e0a3351e4925d2397b8465210b025c27515318663098c",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        132,
+        "dialog",
+        28
+      ]
+    },
+    {
+      "key": "4fac63cf500235e2e85cef7fad158490e85025fd952dd91828e18659d3715ad8",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        132,
+        "dialog",
+        29
+      ]
+    },
+    {
+      "key": "971022c7e1dc63f0079309d05b0fcffe4f845014841c4e9462bf270d4b44115c",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        132,
+        "dialog",
+        79
+      ]
+    },
+    {
+      "key": "4b567a2b2adc28952520d6f26bcab67b4e30bf9f78c7d5b233e4cb902bbf3eca",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        134,
+        "dialog",
+        42
+      ]
+    },
+    {
+      "key": "bebd3e037ef1102fb33f9960fdd4f6d41ffe51d6530313e77f50cd71885ac772",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        138,
+        "dialog",
+        29
+      ]
+    },
+    {
+      "key": "51f9913204f911a1f827f4e225cbec39dcd51d084cd61985386c8b0aca7ccd54",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        138,
+        "dialog",
+        30
+      ]
+    },
+    {
+      "key": "ba3f4b4fe10d32d24d06689d9d9b750291e30a9bd139f2f4f5aca4fd515065a4",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        139,
+        "dialog",
+        10
+      ]
+    },
+    {
+      "key": "26d0519aef8d183de478aabb5569e9f5c7a5d7057151e8149dc62e4993c8b2d7",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        146,
+        "dialog",
+        62
+      ]
+    },
+    {
+      "key": "8005664e397518c9f5c3c1693fafc86b63ca4461d55d92f1f134aff711fa8961",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        158,
+        "event",
+        438
+      ]
+    },
+    {
+      "key": "a1ad8ec15c8b83bfbf55dd1f31f3dc9b29a5e06b418c16e3afaf18f3ceec8c56",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        159,
+        "event",
+        36
+      ]
+    },
+    {
+      "key": "7a2cac91e428ad3fce1261e09ada9c53e35241f70851968ca9386516a26b4fed",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        159,
+        "event",
+        41
+      ]
+    },
+    {
+      "key": "96998d1cc6dad3deecddfa517b694f59bbbcdb66313013f3194e388c01812303",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        159,
+        "event",
+        42
+      ]
+    },
+    {
+      "key": "d954fce9e75186037c971bdc9eb1e9b90e85dc7525ac68460e67fe7b303064d7",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        161,
+        "event",
+        440
+      ]
+    },
+    {
+      "key": "b9cdf74da8d385f63bfa73427fe4893927d1b8dcc96c0f7188f9e6520176585c",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        172,
+        "event",
+        476
+      ]
+    },
+    {
+      "key": "430f5f173b5cec1eca362148999df591e97872aa594d7b2543f0303f6b28330f",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        285,
+        "event",
+        119
+      ]
+    },
+    {
+      "key": "e4e37533961d52fa518703f4a65d429cffb449d10994f57fb90038eefd69e6b2",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        366,
+        "event",
+        459
+      ]
+    },
+    {
+      "key": "3eb54cd04e34ef73418b0e26e2184daa49de5eda08c5e8de67c49bbaeda66fac",
+      "source": "wo2-x360",
+      "ref": [
+        "wo2-x360",
+        "ens",
+        32,
+        "mesc",
+        0,
+        260
+      ]
+    },
+    {
+      "key": "6831af30f651aae4f5f2f255eeda5406172678313f4096497e6edf816e6ad25c",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        18,
+        "mesc",
+        0,
+        162
+      ]
+    },
+    {
+      "key": "8c307dd587b031311edc3c215445b9cd6d157f2d10c549a167eef6a647048c8b",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        18,
+        "mesc",
+        0,
+        350
+      ]
+    },
+    {
+      "key": "7ede8142e7c191838ca3a21a89521b479692ec3875a405077ef929a3416dde12",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        18,
+        "mesc",
+        0,
+        352
+      ]
+    },
+    {
+      "key": "f4a62dd6c66c9ba8a661d8e37102bc6cbcf6bb824b3d59298e20353355ecdf2e",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        18,
+        "mesc",
+        0,
+        353
+      ]
+    },
+    {
+      "key": "9e38b7ff60121474e604aa196b8e14fb830292fd00afd670ad6bdfc0c4bd11ec",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        18,
+        "mesc",
+        0,
+        354
+      ]
+    },
+    {
+      "key": "7cd05cd5663b8799e80ac33f31ad51e29f9635809cff12ff6ae3ed1c102a2935",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        18,
+        "mesc",
+        0,
+        507
+      ]
+    },
+    {
+      "key": "cf6e2df42c166caebb98bd680030ed44874b6cc89a1ceda2a09d615b1d4e43e0",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        18,
+        "mesc",
+        0,
+        516
+      ]
+    },
+    {
+      "key": "3e728b3399e5572b7197440e063d4d08eb149f475c80a0d04bc43daa020d357e",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        6,
+        "mesc",
+        47,
+        1
       ]
     }
   ],

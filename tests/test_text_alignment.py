@@ -11,6 +11,8 @@ from wozmod.text.script_alignment import (
     WO1_QUOTE_INSERT,
     Script,
     caption_pairs,
+    donor_event_lines,
+    event_caption_pairs,
     event_pairs,
     moz_scripts,
     narration_pairs,
@@ -20,7 +22,7 @@ from wozmod.text.script_alignment import (
     record_pairs,
     x360_members,
 )
-from synthetic import mesc, script, spans, strings, write_ens
+from synthetic import event_file, mesc, script, spans, strings, write_ens
 
 
 def _script(notices=(), dialog=()):
@@ -119,11 +121,26 @@ def test_each_narration_donor_entry_has_the_stock_pages_block_for_block():
     assert unequal == []
 
 
-def test_event_pairing_joins_ids_instead_of_order_with_both_donor_word_orders():
-    stock = _event((5, b"S1"), (6, b"S2"), (7, b"S3"))
+def test_event_pairing_joins_line_ids_across_every_donor_event_file_with_both_word_orders():
+    # A line index names one voiced line game-wide. Bugs: joining only the one donor file paired with the stock event
+    # drops a line another file shows (MOZ event 283 merges WO1 officer variants); joining by order shifts lines;
+    # an index two donor files caption differently is paired at all; the 0x08 byte MOZ leaves at a line is paired.
+    stock = _event((5, b"\x82\xa01"), (6, b"\x82\xa02"), (7, b"\x82\xa03"), (9, b"\x82\xa04"), (4, b"\x82\xa05"), (8, b"\x08"))
     for order in "<>":
-        donor = _event((7, b"Fixture C"), (5, b"Fixture A"), (8, b"Fixture extra"), order=order)
-        assert event_pairs(stock, donor, order) == [(b"S1", "Fixture A"), (b"S3", "Fixture C")]
+        donor = [_event((7, b"Fixture C"), (5, b"Fixture A"), (4, b"Fixture D"), order=order),
+                 _event((9, b"Fixture B"), (5, b"Fixture A"), (8, b"Fixture extra"), (4, b"Fixture E"), order=order)]
+        assert event_pairs(stock, donor_event_lines(donor, order)) == [
+            (b"\x82\xa01", "Fixture A"), (b"\x82\xa03", "Fixture C"), (b"\x82\xa04", "Fixture B")]
+
+
+def test_event_caption_pairing_joins_place_captions_by_sub_scene_and_order_inside_it():
+    # Place captions carry no line index. Bugs: pairing by order over the whole file shifts every caption after a
+    # sub-scene where the donor has one more; a caption the donor left in Japanese is paired.
+    stock, _ = event_file([(5, 0, b"S1")], [(5, 0, b"S2"), (5, 0, b"S3")], [(5, 0, b"S4")])
+    donor, _ = event_file([(5, 0, b"Fixture A"), (5, 0, b"Fixture extra")],
+                          [(5, 0, b"Fixture B"), (3, 0, b"Fixture other"), (5, 0, b"Fixture C")],
+                          [(5, 0, b"\x82\xa0\x82\xa2")], order=">", gap=4)
+    assert event_caption_pairs(stock, donor, ">") == [(b"S1", "Fixture A"), (b"S2", "Fixture B"), (b"S3", "Fixture C")]
 
 
 def test_caption_pairing_merges_split_cues_using_greatest_overlap_and_later_ties():

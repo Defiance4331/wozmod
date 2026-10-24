@@ -9,11 +9,15 @@ import struct
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO
+from typing import TYPE_CHECKING, BinaryIO
 
 from wozmod import process, resources
 from wozmod.formats.linkdata import ps2_extents
 from wozmod.progress import report
+
+if TYPE_CHECKING:
+    from wozmod.formats.scripts import Script
+
 
 KOVS_HEADER_BYTES = 32
 VOICE_RECORD_ALIGNMENT = 16
@@ -373,13 +377,43 @@ def _suffix(line: bytes) -> int | None:
     return int(line[line.rindex(b"@") + 1:]) if re.search(rb"@[0-9]+$", line) else None
 
 
-def slot_voice_map(tables: list[tuple[list[bytes], list[bytes]]], record_base: int) -> dict[int, int]:
-    """Map matching table slots with unambiguous suffixes."""
+def stage_voice(ordinal: int, suffix: int, flag: int) -> int:
+    """A stage line's voice id, as the speak command plays it (opcode 38, handler 0x4F17E0): the suffix less one on
+    the base 0x5137F0 picks. Stages 72-131 run in the WO1 voice mode (0x4F06BB); there the base is 0xC48, or 0x3078
+    when the command's flag (scripts.speak_flags) is set, and an index from 0x1166 on always takes 0x3078
+    (0x4F4FBB); elsewhere the flag picks 0xC48 and its absence 0x3078."""
+    index = suffix - 1
+    if ordinal in WO1_STAGES:
+        return index + (WO2_SUFFIX_BASE if flag or index >= 0x1166 else WO1_SUFFIX_BASE)
+    return index + (WO1_SUFFIX_BASE if flag else WO2_SUFFIX_BASE)
+
+
+def stage_line_voices(ordinal: int, script: Script, unspoken: int | None = None) -> dict[int, tuple[int, ...]]:
+    """The voice ids each suffixed line of a stock stage script plays (script.speaks): one per bank flag of the speak
+    commands that speak it, in flag order. A line no command speaks plays none, or with unspoken the id that flag
+    gives its suffix."""
+    return {i: tuple(stage_voice(ordinal, suffix, flag)
+                     for flag in sorted(script.speaks.get(i) or ({unspoken} - {None})))
+            for i, line in enumerate(script.dialog.records) if (suffix := _suffix(line.value))}
+
+
+def quote_voice(suffix: int) -> int:
+    """A quote line's voice id: its suffix less one on 0x3078."""
+    return WO2_SUFFIX_BASE + suffix - 1
+
+
+def quote_slots(tables: list[tuple[list[bytes], list[bytes]]]) -> list[tuple[int, bytes]]:
+    """Each suffixed stock quote's voice id beside the donor line in its slot."""
+    return [(quote_voice(s), b) for ours, theirs in tables for a, b in zip(ours, theirs, strict=False)
+            if (s := _suffix(a))]
+
+
+def slot_voice_map(slots: list[tuple[int, bytes]], record_base: int) -> dict[int, int]:
+    """Map each stock voice id to the record of the suffixed donor line in its slot, unless its slots disagree."""
     found: dict[int, set[int]] = {}
-    for ours, theirs in tables:
-        for a, b in zip(ours, theirs, strict=False):
-            if (s := _suffix(a)) and (t := _suffix(b)):
-                found.setdefault(WO2_SUFFIX_BASE + s - 1, set()).add(t - 1 + record_base)
+    for moz_id, theirs in slots:
+        if t := _suffix(theirs):
+            found.setdefault(moz_id, set()).add(t - 1 + record_base)
     return {moz_id: clips.pop() for moz_id, clips in found.items() if len(clips) == 1}
 
 
@@ -430,20 +464,33 @@ def _ffmpeg_each(jobs: list[tuple[list[str], bytes, list[str]]], workers: int | 
         return [out for part in pool.map(batch, range(0, len(jobs), FFMPEG_BATCH)) for out in part]
 
 
-def donor_voice_clips(banks: list[tuple[str, dict[int, int], list[tuple[int, int]], Path]],
-                      jobs: int | None = None) -> tuple[dict[int, bytes], dict[int, str]]:
-    """Convert donor RIFF clips from (source, mapping, clip extents, bank) banks, an earlier bank first, excluding
-    repeated placeholders; with each clip's source. ffmpeg reads any RIFF codec the donors use (Xbox 360 XMA,
-    PSP ATRAC3plus) and every clip leaves as 48 kHz mono Vorbis."""
+def donor_voice_choice(banks: list[tuple[str, dict[int, int], list[tuple[int, int]], Path]],
+                       ) -> dict[int, tuple[str, int]]:
+    """Each stock voice id's (source, donor record) from (source, mapping, clip extents, bank) banks: the earliest
+    bank that maps it to a clip other than a placeholder, which is a clip repeated more than twice in its bank."""
     from collections import Counter
-    riffs, sources = {}, {}
+    chosen: dict[int, tuple[str, int]] = {}
     for source, mapping, records, bank in banks:
         with bank.open("rb") as stream:
-            copies = Counter(hashlib.sha256(_read_at(stream, *record)).digest() for record in records)
-            for moz_id, clip in mapping.items():
-                riff = _read_at(stream, *records[clip])
-                if moz_id not in riffs and copies[hashlib.sha256(riff).digest()] <= 2:
-                    riffs[moz_id], sources[moz_id] = riff, source
+            digests = [hashlib.sha256(_read_at(stream, *record)).digest() for record in records]
+        copies = Counter(digests)
+        for moz_id, clip in mapping.items():
+            if moz_id not in chosen and copies[digests[clip]] <= 2:
+                chosen[moz_id] = (source, clip)
+    return chosen
+
+
+def donor_voice_clips(banks: list[tuple[str, dict[int, int], list[tuple[int, int]], Path]],
+                      jobs: int | None = None) -> tuple[dict[int, bytes], dict[int, str]]:
+    """Convert the donor RIFF clips donor_voice_choice picks, with each clip's source. ffmpeg reads any RIFF codec
+    the donors use (Xbox 360 XMA, PSP ATRAC3plus) and every clip leaves as 48 kHz mono Vorbis."""
+    chosen = donor_voice_choice(banks)
+    riffs, sources = {}, {}
+    for source, _, records, bank in banks:
+        with bank.open("rb") as stream:
+            for moz_id, (picked, clip) in chosen.items():
+                if picked == source:
+                    riffs[moz_id], sources[moz_id] = _read_at(stream, *records[clip]), source
     def encode(moz_ids: list[int], quality: int, span: tuple[float, float]) -> dict[int, bytes]:
         # The Ogg granule positions, which the game reads as the clip's length, come from the frame timestamps.
         # ffmpeg's RIFF reader packs two ATRAC3plus frames per packet but stamps one frame's duration, so the PSP
@@ -510,20 +557,47 @@ SE_BANKS = 122
 SE_ENTRY_BYTES = 40
 
 
-SE_BANK_MAP = {**{b: b - 1 for b in range(9, 104)}, **{b: b + 91 for b in range(105, 122)}}
+# Every game plays a unit's attack shouts from the bank its unit type (the officer id, unit byte +5) gives. MOZ:
+# type + 9 for every unit, types up to 0x70 (0x5132D2 to 0x5132DE as a battle starts, 0x513363). WO2 X360: type
+# + 0x66, types up to 0x6E (0x821AA02C to 0x821AA044 as a battle starts, 0x821A8F08); its player plays type + 8
+# (0x821AACB4), a byte-identical copy for types 0-93. WO1 X360: type + 0x57, types up to 0x5D (0x82195FC0 to
+# 0x82195FCC); its player plays type + 8 (0x8219784C), a copy too. WO2 PSP: type + 8 for the player's team
+# (EBOOT 0x1BFBD0 to 0x1BFC2C), banks of LINKDATA.ENS member 1 with the English voice (0x1BEE48 to 0x1BEED0).
+SE_TYPE_BANKS = {"moz": (9, 0x70), "wo1-x360": (0x57, 0x5D), "wo2-x360": (0x66, 0x6E), "wo2-psp": (8, 95)}
+# The MOZ unit types a donor lacks, as (first type, count): past a gap, the donor's type is MOZ's less the gaps.
+# WO2 X360 lacks San Zang and Benkei (94, 95). Its per-type records (0x82007A10) equal MOZ's (0x6D4B10) for types
+# 0-91 and, past the gap, for MOZ 96-187; 92 and 93 differ in one byte but are the two officers both programs give
+# their own select voices (0x512B20, 0x8229C89C), and their name parts are the same table slots. WO1 X360 lacks
+# the officers WO2 added (MOZ 79-95) and two generic types (MOZ 105, 106): its banks hold WO2's clip bytes at types
+# 0-78, 79-87 (WO2 94-102) and 88-93 (WO2 105-110). WO2 PSP numbers its officers as MOZ does: its Japanese
+# bank (member 0) of each of the 96 holds that MOZ bank's recordings.
+SE_TYPE_GAPS = {"wo1-x360": ((79, 17), (105, 2)), "wo2-x360": ((94, 2),), "wo2-psp": ()}
+SE_DONORS = ("wo1-x360", "wo2-x360", "wo2-psp")  # the donor order for attack shouts
+
+
+def se_donor_bank(moz_bank: int, donor: str) -> int | None:
+    """The donor's bank for the unit type of MOZ bank moz_bank, or None when the donor lacks that type."""
+    unit = moz_bank - SE_TYPE_BANKS["moz"][0]
+    if not 0 <= unit <= SE_TYPE_BANKS["moz"][1]:
+        return None
+    theirs = unit
+    for first, count in SE_TYPE_GAPS[donor]:
+        if first <= unit < first + count:
+            return None
+        theirs -= count if unit >= first + count else 0
+    base, last = SE_TYPE_BANKS[donor]
+    return base + theirs if theirs <= last else None
 
 
 _SE_GENERIC = (0, 0, 2, 2, 4, 4, 2, 7, 7, 9, 10)
-# MOZ bank: (WO1 X360 bank, its entry for each MOZ entry). WO1 X360 plays bank officer id + 8 for the player
-# (0x82188E4C) and unit id + 0x57 for the others (0x821875CC); every entry used pairs by index (checked by audio).
-SE_WO1 = {
-    **{moz: (moz - 1, tuple(range(13))) for moz in range(9, 88) if moz != 86},
-    103: (8, tuple(range(13))),
-    105: (166, (1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)),
-    **{moz: (moz + 61, tuple(range(11))) for moz in range(106, 114)},
-    119: (178, _SE_GENERIC), 120: (179, _SE_GENERIC),
-    **{moz: (wo1, _SE_GENERIC + (None,) * 9 + (20, 21, 22, 23)) for moz, wo1 in ((116, 175), (118, 177), (121, 180))},
-    117: (176, _SE_GENERIC + (None,) * 9 + (20, 20, 22, 23)),
+# MOZ entry k plays WO1 X360 entry k (its action table 0x82214A28 equals MOZ's) while the WO1 bank has one, then
+# entry k of the first later donor with the officer (WO2 X360, then WO2 PSP). These MOZ banks take other WO1 entries, each byte-identical to the one it replaces,
+# or the WO2 entry (None).
+SE_WO1_ENTRIES = {
+    105: (1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10),
+    119: _SE_GENERIC, 120: _SE_GENERIC,
+    **{moz: _SE_GENERIC + (None,) * 9 + (20, 21, 22, 23) for moz in (116, 118, 121)},
+    117: _SE_GENERIC + (None,) * 9 + (20, 20, 22, 23),
 }
 
 
@@ -556,6 +630,43 @@ def wo2_se_entries(hdx: bytes) -> list[list[tuple[int, int, int]]]:
     return banks
 
 
+def psp_se_entries(pack: bytes) -> list[list[tuple[int, int, int] | None]]:
+    """Read the WO2 PSP sound pack (LINKDATA.ENS member 0 or 1): u32 0, size, bank count, 0x800, then each bank's
+    (offset, size). A bank is u32 2, its PPHD offset, its VAG body offset and size, then PPHD, PPPG, PPTN and
+    PPVA chunks; each PPVA record from byte 0x20 is (VAG offset in the body, rate, size, -1), all ones for an empty
+    slot. Returns each bank's VAGs as (offset in the pack, size, rate), None for an empty slot; the size leaves out
+    a closing 16-byte block of flag 7, which ends the sound rather than holding samples."""
+    zero, size, count, _ = struct.unpack_from("<4I", pack)
+    if zero or size != len(pack) or len(pack) < 16 + 8 * count:
+        raise VoiceBankError("not a WO2 PSP sound pack")
+    banks = []
+    for at, length in struct.iter_unpack("<II", pack[16:16 + 8 * count]):
+        bank = pack[at:at + length]
+        ppva = bank.find(b"PPVA")
+        records = []
+        if len(bank) >= 16 and ppva >= 0:
+            body = struct.unpack_from("<I", bank, 8)[0]
+            for r in range(ppva + 0x20, ppva + struct.unpack_from("<I", bank, ppva + 4)[0], 16):
+                offset, rate, clip, _ = struct.unpack_from("<IIIi", bank, r)
+                if not (offset or rate or clip):
+                    break
+                if offset == rate == clip == 0xFFFFFFFF:
+                    records.append(None)
+                    continue
+                if body + offset + clip > len(bank):
+                    raise VoiceBankError("a WO2 PSP sound bank's clip runs past the bank")
+                if clip >= 16 and bank[body + offset + clip - 15] == 7:
+                    clip -= 16
+                records.append((at + body + offset, clip, rate))
+        banks.append(records)
+    return banks
+
+
+def _vag(data: bytes, rate: int) -> bytes:
+    """Put a VAGp header (big-endian: version 0x20, data size, rate, a blank name) on PSP ADPCM data."""
+    return b"VAGp" + struct.pack(">III", 0x20, 0, len(data)) + struct.pack(">I", rate) + bytes(28) + data
+
+
 def _xma2_riff(packets: bytes, rate: int) -> bytes:
     """Wrap mono XMA2 packets in a RIFF container."""
     fmt = struct.pack("<HHIIHHH", 0x166, 1, rate, rate * 2, 2048, 16, 34)
@@ -564,10 +675,14 @@ def _xma2_riff(packets: bytes, rate: int) -> bytes:
     return b"RIFF" + struct.pack("<I", 4 + len(body)) + b"WAVE" + body
 
 
-def _pcm16(clips: list[tuple[bytes, int, int]], jobs: int | None) -> list[tuple[int, bytes]]:
-    """Decode (XMA2 packets, donor rate, rate) donor clips once, to 16-bit mono PCM at the entry's rate."""
-    pcms = _ffmpeg_each([(["-f", "wav"], _xma2_riff(clip, donor_rate), ["-ac", "1", "-ar", str(rate), "-f", "s16le"])
-                         for clip, donor_rate, rate in clips], jobs, "converting sound effects", (0.85, 1.0))
+def _pcm16(clips: list[tuple[str, bytes, int, int]], jobs: int | None) -> list[tuple[int, bytes]]:
+    """Decode (donor, clip, donor rate, rate) donor clips once, X360 XMA2 or PSP ADPCM, to 16-bit mono PCM at the
+    entry's rate."""
+    inputs = [(["-f", "vag"], _vag(clip, donor_rate)) if donor == "wo2-psp" else
+              (["-f", "wav"], _xma2_riff(clip, donor_rate)) for donor, clip, donor_rate, _ in clips]
+    pcms = _ffmpeg_each([(before, data, ["-ac", "1", "-ar", str(rate), "-f", "s16le"])
+                         for (before, data), (*_, rate) in zip(inputs, clips, strict=True)],
+                        jobs, "converting sound effects", (0.85, 1.0))
     return [(len(pcm) // 2, pcm) for pcm in pcms]
 
 
@@ -590,28 +705,54 @@ def se_bank(header: bytes, clips: list[tuple[int, bytes]]) -> tuple[bytes, bytes
     return bytes(out), b"_DBW0000" + struct.pack("<I", 12 + len(data)) + bytes(data)
 
 
+def se_plan(stock: list[tuple[bytes, bytes]], donors: dict[str, list[list[tuple[int, int, int]]]]
+            ) -> dict[int, list[tuple[str, int, int]]]:
+    """The donor (disc, bank, entry) of each entry of every MOZ bank whose unit type a donor has (se_donor_bank),
+    in SE_DONORS order: WO1 X360's entry as SE_WO1_ENTRIES pairs it, else entry k of the first later donor with
+    the type, whose bank must have as many entries as MOZ's. Banks of types no donor has stay out, and stock."""
+    plan = {}
+    for moz, (header, _) in enumerate(stock):
+        entries = len(se_entries(header)) if len(header) >= 20 else 0
+        banks = {disc: bank for disc in SE_DONORS if (bank := se_donor_bank(moz, disc)) is not None}
+        if not entries or not banks:
+            continue
+        one = banks.pop("wo1-x360", None)
+        pairs = () if one is None else SE_WO1_ENTRIES.get(moz, tuple(range(len(donors["wo1-x360"][one]))))
+        indexed = next(iter(banks.items()), None)  # the donor whose entry k plays MOZ entry k
+        if indexed and (len(donors[indexed[0]][indexed[1]]) != entries or None in donors[indexed[0]][indexed[1]]):
+            raise VoiceBankError(f"SE bank {moz} has {entries} entries and its officer's {indexed[0]} bank "
+                                 f"{indexed[1]} has {len(donors[indexed[0]][indexed[1]])}")
+        plan[moz] = []
+        for k in range(entries):
+            j = pairs[k] if k < len(pairs) else None
+            if j is None and indexed is None:
+                raise VoiceBankError(f"SE bank {moz} entry {k} has no donor entry")
+            plan[moz].append(("wo1-x360", one, j) if j is not None else (*indexed, k))
+    return plan
+
+
 def english_se_bank(seidx: bytes, se: bytes, wo1_hdx: bytes, wo1_bdx: Path, wo2_hdx: bytes,
-                    wo2_bdx: Path, jobs: int | None = None) -> tuple[bytes, dict[str, int]]:
-    """Assemble sound banks from paired donor entries; jobs is the ffmpeg process count (default: CPU count)."""
-    stock, wo1, wo2 = moz_se_banks(seidx, se), wo2_se_entries(wo1_hdx), wo2_se_entries(wo2_hdx)
-    for donor, bdx in ((wo1, wo1_bdx), (wo2, wo2_bdx)):
-        if max(o + n for bank in donor for o, n, _ in bank) > bdx.stat().st_size:
+                    wo2_bdx: Path, psp_pack: bytes, jobs: int | None = None) -> tuple[bytes, dict[str, int]]:
+    """Assemble sound banks from paired donor entries; psp_pack is WO2 PSP LINKDATA.ENS member 1 and jobs the
+    ffmpeg process count (default: CPU count)."""
+    stock = moz_se_banks(seidx, se)
+    donors = {"wo1-x360": wo2_se_entries(wo1_hdx), "wo2-x360": wo2_se_entries(wo2_hdx), "wo2-psp": psp_se_entries(psp_pack)}
+    files = {"wo1-x360": wo1_bdx, "wo2-x360": wo2_bdx}
+    for disc, bdx in files.items():
+        if max(o + n for bank in donors[disc] for o, n, _ in bank) > bdx.stat().st_size:
             raise VoiceBankError(f"{bdx.name} is shorter than its HDX describes")
-    work, tiers = {}, {"wo1-x360": 0, "wo2-x360": 0}
-    with wo1_bdx.open("rb") as one, wo2_bdx.open("rb") as two:
-        for moz, w in SE_BANK_MAP.items():
+    work, tiers = {}, dict.fromkeys(SE_DONORS, 0)
+    with files["wo1-x360"].open("rb") as one, files["wo2-x360"].open("rb") as two:
+        read = {"wo1-x360": lambda o, n: _read_at(one, o, n), "wo2-x360": lambda o, n: _read_at(two, o, n),
+                "wo2-psp": lambda o, n: psp_pack[o:o + n]}
+        for moz, sources in se_plan(stock, donors).items():
             header = stock[moz][0]
-            if len(se_entries(header)) != len(wo2[w]):
-                continue
-            wo1_bank, pairs = SE_WO1.get(moz, (None, ()))
             work[moz] = []
-            for k, at in enumerate(se_entries(header)):
-                rate = struct.unpack_from("<H", header, at + 4)[0]
-                j = pairs[k] if k < len(pairs) else None
-                offset, size, donor_rate = wo2[w][k] if j is None else wo1[wo1_bank][j]
-                clip = _read_at(two if j is None else one, offset, size)
-                work[moz].append((clip, donor_rate, rate))
-                tiers["wo2-x360" if j is None else "wo1-x360"] += 1
+            for at, (disc, bank, j) in zip(se_entries(header), sources, strict=True):
+                offset, size, donor_rate = donors[disc][bank][j]
+                work[moz].append((disc, read[disc](offset, size), donor_rate,
+                                  struct.unpack_from("<H", header, at + 4)[0]))
+                tiers[disc] += 1
     converted = iter(_pcm16([job for entries in work.values() for job in entries], jobs))
     banks = {moz: se_bank(stock[moz][0], [next(converted) for _ in entries]) for moz, entries in work.items()}
     table, body = bytearray(_aligned_size(4 + 16 * SE_BANKS)), bytearray()

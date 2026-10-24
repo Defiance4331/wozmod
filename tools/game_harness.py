@@ -1240,7 +1240,7 @@ def drive_step(root: Path, keys: list | dict, until: dict | None, every: float |
 ROUTE_SCREENS = {
     "boot": None,  # a fresh run, before any input
     "title": {"texture": "4085.0"},
-    **{f"menu@{item}": {"texture": MENU} for item in ("story", "option", "dream", "vs", "survival", "gallery")},
+    **{f"menu@{item}": {"texture": MENU} for item in ("story", "option", "free", "dream", "vs", "survival", "gallery")},
     "options": {"texture": "4079.171"},
     "game-settings": {"texture": "4069.14", "without": "4079.149"},  # the controller page draws 4069.14 too
     "options-controller": {"texture": "4069.14", "with": "4079.149"},
@@ -1291,6 +1291,7 @@ ROUTE_SCREENS = {
     "vs-course": {"caller": "0x5a6774"},  # the course blurb, hidden while the match-settings panel is open
     "vs-team-select": {"texture": "4098.11", "without_caller": "0x5a6774"},  # 4098.11 stays drawn after Escape
     "survival-members": {"caller": "0x54335f"},
+    "free-select": {"texture": "4061.18"},  # Free Mode's character select; its officer name is caller 0x543382
     "battle-camp": {"texture": "4079.170"},
     "briefing": {"caller": "0x548f52"},  # stock draw caller of the briefing text (its x moves with the build)
     "pre-battle": {"texture": "4079.168"},
@@ -1453,6 +1454,11 @@ ROUTE_EDGES = [
     ("vs-course", "menu@vs", ["Escape"]),
     ("vs-course", "vs-team-select", ["Return"]),
     ("vs-team-select", "vs-course", ["Escape"]),
+    # Free Mode, the item above DREAM MODE (runs sanzang-fix, 2026-10-24_1558-sanzang-route)
+    ("menu@dream", "menu@free", ["Up"]),
+    ("menu@free", "menu@dream", ["Down"]),
+    ("menu@free", "free-select", ["Return"]),
+    ("free-select", "menu@free", ["Escape"]),
     ("menu@survival", "survival-members", ["Return"]),
     ("survival-members", "menu@survival", ["Escape"]),
     ("options", "options-controller", ["Down", "Return", "Return"]),  # also 0207-B
