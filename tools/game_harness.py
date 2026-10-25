@@ -1494,6 +1494,9 @@ def story_keys(stage: int) -> tuple[list[str], list[str]]:
 
 def strip(stage: int) -> dict:
     return {"texture": f"4077.{30 + title_index(stage)}"}
+# Space skips a battle's opening and closing scenes (about 70 s and 25 s in chapter 107); it plays no battle action and
+# does not turn a talk page (run 2026-10-25_1512-skipkeys; Escape and Return skip neither)
+SKIP = ["space"]
 UNLOCK_STEP = {"action": "unlock"}  # every officer gets four weapons: the rest of the run is no longer the plain save
 # (from, to, steps): each step is (keys or one request, screen to wait for); a bare key list is one
 # step that waits for the destination screen. A move up a level that leaves a submenu cursor on the
@@ -1530,7 +1533,7 @@ ROUTE_EDGES = [
     ("battle-camp", "briefing", ["Up", "Return"]),  # NEXT
     ("briefing", "pre-battle", ["Escape"]),
     # FIGHT; the battle's fingerprint shows at its first frame, and the first Escape in the next seconds is lost
-    ("pre-battle", "battle", [(["Up", "Return"], slow("battle", 3.0))]),
+    ("pre-battle", "battle", [(["Up", "Return"], None), (SKIP, {**slow("battle", 3.0), "every": 3})]),
     ("battle", "pause", ["Escape"]),
     ("pause", "battle", ["Escape"]),
     # VS: a row refuses a character it already has; Down changes the force, so the third pick is another force's
@@ -1635,8 +1638,8 @@ ROUTE_EDGES = [
     ("story-wei-scenario", "story-narration", [(["Return"], None), (["Left", "Left", "Left", "Return"], None),
                                                (["Escape"], {**ROUTE_SCREENS["story-narration"], "every": 3})]),
     ("story-narration", "story-wei-pre-battle", ["Escape"]),  # End
-    ("story-wei-pre-battle", "story-wei-battle", [(["Up", "Return"], slow("story-wei-battle", 3.0))]),
-    ("story-wei-battle", "story-victory-still", [({"action": "win"}, ROUTE_SCREENS["story-victory-still"])]),
+    ("story-wei-pre-battle", "story-wei-battle", [(["Up", "Return"], None), (SKIP, {**slow("story-wei-battle", 3.0), "every": 3})]),
+    ("story-wei-battle", "story-victory-still", [({"action": "win"}, None), (SKIP, {**ROUTE_SCREENS["story-victory-still"], "every": 3})]),
     # the gallery's treasure guide, and movies by position (Left or Right x19 reaches the first or last of the 19)
     ("gallery", "gallery-treasure-guide", ["Down", "Down", "Down", "Down", "Return"]),
     ("gallery-treasure-guide", "gallery", ["Escape", "Up", "Up", "Up", "Up"]),
@@ -1672,14 +1675,14 @@ ROUTE_EDGES = [
     # difficulty page, EASY, then any opening movie, narration or still page until the pre-battle screen
     ("story-stage-scenario", "story-pre-battle", [(["Return"], None), (["Left", "Left", "Left", "Return"], None),
                                                   (["Escape"], {**ROUTE_SCREENS["story-pre-battle"], "every": 3})]),
-    ("story-pre-battle", "story-battle", [(["Up", "Return"], slow("story-battle", 3.0))]),
+    ("story-pre-battle", "story-battle", [(["Up", "Return"], None), (SKIP, {**slow("story-battle", 3.0), "every": 3})]),
     # Free Mode: three officers (each Return fills the next team slot), NEXT, the story and chapter, Return twice (the
     # second takes the difficulty the cursor starts on), then the battle (run 2026-10-25_1426-free1)
     ("free-select", "free-camp", [(OFFICER_STEP, None), ([], slow("free-camp", ARRIVE_GAP))]),
     ("free-camp", "free-stories", [(["Up", "Return"], slow("free-stories", ARRIVE_GAP))]),
     ("free-stories", "free-chapter", [(FREE_STAGE_STEP, None)]),
     ("free-chapter", "free-pre-battle", [(["Return"], None), (["Return"], slow("free-pre-battle", ARRIVE_GAP))]),
-    ("free-pre-battle", "free-battle", [(["Up", "Return"], slow("free-battle", 3.0))]),
+    ("free-pre-battle", "free-battle", [(["Up", "Return"], None), (SKIP, {**slow("free-battle", 3.0), "every": 3})]),
     # a chapter's pages: Escape skips any opening movie until the narration shows; Return (Next) pages through any
     # narration to the talk. Chapters differ: Z chapter 0 has a talk and no narration (run 2026-10-25_1413-ztalk)
     ("story-stage-scenario", "story-stage-narration", [(["Return"], None), (["Left", "Left", "Left", "Return"], None),
@@ -1689,7 +1692,7 @@ ROUTE_EDGES = [
     ("story-stage-narration", "story-stage-talk", [(["Return"], {**ROUTE_SCREENS["story-stage-talk"], "every": 2})]),
     ("story-stage-narration", "story-pre-battle", [(["Escape"], {**ROUTE_SCREENS["story-pre-battle"], "every": 3})]),
     ("story-stage-talk", "story-pre-battle", [(["Escape"], {**ROUTE_SCREENS["story-pre-battle"], "every": 3})]),
-    ("story-battle", "story-victory-talk", [({"action": "win"}, ROUTE_SCREENS["story-victory-talk"])]),
+    ("story-battle", "story-victory-talk", [({"action": "win"}, None), (SKIP, {**ROUTE_SCREENS["story-victory-talk"], "every": 3})]),
     # 2026-10-22_2103-route-ability: Ability Acquisition of the first officer (the save picks which ability shows:
     # work/saves/ability-next-N); TEAM INFO is the third item, so the way back moves the cursor up to the top
     ("story-pre-battle", "story-team-info", ["Down", "Down", "Return"]),
