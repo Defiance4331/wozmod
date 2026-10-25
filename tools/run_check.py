@@ -155,7 +155,8 @@ def staged_run(args: argparse.Namespace, dll: Path | None, to: str | None, spec:
             if up:
                 t = time.monotonic()
                 try:
-                    result = harness.route(root, to, args.stage) if to else harness.check(root, spec, only)
+                    result = harness.route(root, to, args.stage, getattr(args, "movie", None),
+                                           getattr(args, "officer", None)) if to else harness.check(root, spec, only)
                 except (OSError, ValueError, RuntimeError) as exc:
                     print(f"run_check: check failed: {exc}", file=sys.stderr)
                 phases["check"] += time.monotonic() - t
@@ -212,6 +213,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--to", metavar="SCREEN", help="instead of a spec: route to this screen (game_harness.py "
                         "route) and leave the game running")
     parser.add_argument("--stage", type=int, help="with --to: the story chapter or Dream stage the route picks")
+    parser.add_argument("--movie", type=int, help="with --to gallery-movie-play: the movie NNN to play")
+    parser.add_argument("--officer", action="append", default=[], metavar="NAME",
+                        help="with --to a Free Mode screen: an officer for the team (repeat, up to 3)")
     args = parser.parse_args(argv)
     try:
         return run_check(args)

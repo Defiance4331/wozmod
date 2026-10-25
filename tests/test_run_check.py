@@ -330,7 +330,7 @@ def test_run_routed_with_to_stays_up_unless_the_route_failed(tools, tmp_path, mo
     a failed route leaves its game holding a slot."""
     monkeypatch.setattr(tools.prepare_run, "WORK", tmp_path / "work")
     monkeypatch.setattr(tools.run_check, "wait_up", lambda root, proc: True)
-    monkeypatch.setattr(tools.run_check.harness, "route", lambda root, screen, stage: routed)
+    monkeypatch.setattr(tools.run_check.harness, "route", lambda root, screen, stage, movie=None, officers=None: routed)
     stops = []
     monkeypatch.setattr(tools.run_check, "stop", lambda root, proc: stops.append(root))
 
@@ -450,7 +450,7 @@ def test_video_reaches_the_supervisor(tools, tmp_path, monkeypatch, spec, video)
     monkeypatch.setattr(tools.prepare_run, "WORK", tmp_path / "work")
     monkeypatch.setattr(tools.run_check.subprocess, "Popen", lambda command, **_: commands.append(command))
     monkeypatch.setattr(tools.run_check, "wait_up", lambda root, proc: True)
-    monkeypatch.setattr(tools.run_check.harness, "route", lambda root, screen, stage: 0)
+    monkeypatch.setattr(tools.run_check.harness, "route", lambda root, screen, stage, movie=None, officers=None: 0)
 
     def stage(name, install, dll, save, settings=(), replace=(), art=None):
         (tmp_path / "work/runtime-tests" / name).mkdir(parents=True)

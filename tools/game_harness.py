@@ -1396,6 +1396,18 @@ ROUTE_SCREENS = {
     "story-battle": {"texture": "4079.148"},
     "story-team-info": {"texture": "4080.7"},  # TEAM INFO's officer list on the story pre-battle menu
     "story-officer-page": {"caller": "0x59538a"},  # an officer's page, cursor on ABILITY ACQUISITION
+    # the chapter's text pages, --stage picking the chapter: narration (WO1 4073 in chapters 72-131, WO2 4071 in 0-39),
+    # the WO2 talk scene after it (4103), and the WO1 camp talk after a won battle (4105)
+    # Free Mode (run 2026-10-25_1426-free1): the team's camp, the story list (4077.171 only there), a story's
+    # chapters (the armies' names, as on a story chapter), then the pre-battle map and the battle the story uses
+    "free-camp": {"texture": "4060.39"},
+    "free-stories": {"texture": "4077.171"},
+    "free-chapter": {"caller": "0x588ac8"},
+    "free-pre-battle": {"texture": "4079.168"},
+    "free-battle": {"texture": "4079.148"},
+    "story-stage-narration": {"any": [{"caller": "0x561111"}, {"caller": "0x55f31c"}]},
+    "story-stage-talk": {"caller": "0x59a785"},
+    "story-victory-talk": {"any": [{"caller": "0x59c7bd"}, {"caller": "0x59a785"}]},
     "ability-acquisition": {"texture": "4080.28"},  # the officer's next ability and its conditions
     # VS: character select (three picks a side, the player picks COM's too), its confirmation, the battle (stage 68,
     # TAG TEAM) and its menu (RETRY / CHANGE CHARACTER / MAIN MENU), which Escape opens mid-match (run vs-a)
@@ -1425,6 +1437,27 @@ STORIES = [(107, 121, 90, 96, 82, 79, 108, 130, 76, 117, 88, 98, 127, 72, 125),
            (93, 86, 110, 109, 118, 91, 116, 129, 80, 105, 103, 106, 122, 75, 87),
            (81, 124, 115, 89, 84, 94, 102, 131, 114, 83, 78, 120, 111, 113, 101)]
 DREAM_STEP, STORY_STEP, CHAPTER_STEP = {"stage": "dream"}, {"stage": "story"}, {"stage": "chapter"}  # filled by route
+MOVIE_STEP = {"pick": "movie"}  # filled by route: the cursor moves to --movie
+NARRATION_STEP = {"pick": "narration"}  # filled by route: wait for the chapter's narration, as its stage needs
+# The Gallery movie list (work/handbacks/route-cursors.md): its state at [0xC2E774] keeps the page (0-2) and the cell
+# (row * 5 + column) of the cursor; pages of 15, 15 and 6 cells; the table maps a list index to the movie id played.
+GALLERY_STATE, MOVIE_PAGE, MOVIE_CELL, MOVIE_IDS = 0xC2E774, 0x1A90, 0x1A8C, 0x713688
+MOVIE_PAGES = (15, 15, 6)
+DEFAULT_MOVIE = 102  # index 3, where the list's first route went
+OFFICER_STEP = {"pick": "officers"}  # filled by route: the team --officer names
+# Free Mode's character select (work/handbacks/route-cursors.md, read in run 2026-10-25_1426-free1): its state at
+# [0xC275C0] keeps 8 groups of up to 15 cells holding officer ids (0x60 locked, -1 empty), the cursor's group and each
+# group's remembered row, the hovered officer, and the three team slots each Return fills.
+FREE_STATE, FREE_HOVER, FREE_GROUP, FREE_ROWS, FREE_COUNTS, FREE_GRID = 0xC275C0, 0x3354, 0x35E4, 0x35E8, 0x35C0, 0x33E0
+FREE_NAME = "0x543382"  # the hovered officer's name
+FREE_STAGE_STEP = {"pick": "free stage"}  # filled by route: the story and chapter of --stage
+# Free Mode's stage select: Up and Down pick a story, Return opens its chapters; there the cursor index is at
+# [[0xC54AF0] + 0xB8] and the stage under it at [[0xC54AF0] + 0xFC + 4 * index] (0x58BF11 stores it on Return).
+STAGE_SELECT, STAGE_CURSOR, STAGE_LIST = 0xC54AF0, 0xB8, 0xFC
+FREE_STORIES = 10  # more than the select offers, so a full turn of Down comes back round
+# On the story list the chapter cursor reads 23, inside a story 0-22 (it moves the frame Return lands; run free15):
+# the help bar is no sign (two-row stories show the Up/Down icon too), nor are army names (Story Z previews them)
+STORY_LIST_CURSOR = 23
 
 
 def title_index(stage: int) -> int:
@@ -1607,8 +1640,8 @@ ROUTE_EDGES = [
     # the gallery's treasure guide, and movies by position (Left or Right x19 reaches the first or last of the 19)
     ("gallery", "gallery-treasure-guide", ["Down", "Down", "Down", "Down", "Return"]),
     ("gallery-treasure-guide", "gallery", ["Escape", "Up", "Up", "Up", "Up"]),
-    ("gallery-movies", "gallery-movie-play", [(["Left"] * 19 + ["Right"] * 3 + ["Return"],
-                                              {**ROUTE_SCREENS["gallery-movie-play"], "gap": 0})]),
+    ("gallery-movies", "gallery-movie-play", [(MOVIE_STEP, None),
+                                              (["Return"], {**ROUTE_SCREENS["gallery-movie-play"], "gap": 0})]),
     ("gallery-movies", "gallery-movie-two-line", [(["Right"] * 19 + ["Left"] * 3 + ["Return"],
                                                   {**ROUTE_SCREENS["gallery-movie-two-line"], "gap": 0})]),
     ("gallery-movie-play", "gallery-movies", ["Escape"]),
@@ -1640,6 +1673,23 @@ ROUTE_EDGES = [
     ("story-stage-scenario", "story-pre-battle", [(["Return"], None), (["Left", "Left", "Left", "Return"], None),
                                                   (["Escape"], {**ROUTE_SCREENS["story-pre-battle"], "every": 3})]),
     ("story-pre-battle", "story-battle", [(["Up", "Return"], slow("story-battle", 3.0))]),
+    # Free Mode: three officers (each Return fills the next team slot), NEXT, the story and chapter, Return twice (the
+    # second takes the difficulty the cursor starts on), then the battle (run 2026-10-25_1426-free1)
+    ("free-select", "free-camp", [(OFFICER_STEP, None), ([], slow("free-camp", ARRIVE_GAP))]),
+    ("free-camp", "free-stories", [(["Up", "Return"], slow("free-stories", ARRIVE_GAP))]),
+    ("free-stories", "free-chapter", [(FREE_STAGE_STEP, None)]),
+    ("free-chapter", "free-pre-battle", [(["Return"], None), (["Return"], slow("free-pre-battle", ARRIVE_GAP))]),
+    ("free-pre-battle", "free-battle", [(["Up", "Return"], slow("free-battle", 3.0))]),
+    # a chapter's pages: Escape skips any opening movie until the narration shows; Return (Next) pages through any
+    # narration to the talk. Chapters differ: Z chapter 0 has a talk and no narration (run 2026-10-25_1413-ztalk)
+    ("story-stage-scenario", "story-stage-narration", [(["Return"], None), (["Left", "Left", "Left", "Return"], None),
+                                                       (NARRATION_STEP, None)]),
+    ("story-stage-scenario", "story-stage-talk", [(["Return"], None), (["Left", "Left", "Left", "Return"], None),
+                                                  (["Return"], {**ROUTE_SCREENS["story-stage-talk"], "every": 2})]),
+    ("story-stage-narration", "story-stage-talk", [(["Return"], {**ROUTE_SCREENS["story-stage-talk"], "every": 2})]),
+    ("story-stage-narration", "story-pre-battle", [(["Escape"], {**ROUTE_SCREENS["story-pre-battle"], "every": 3})]),
+    ("story-stage-talk", "story-pre-battle", [(["Escape"], {**ROUTE_SCREENS["story-pre-battle"], "every": 3})]),
+    ("story-battle", "story-victory-talk", [({"action": "win"}, ROUTE_SCREENS["story-victory-talk"])]),
     # 2026-10-22_2103-route-ability: Ability Acquisition of the first officer (the save picks which ability shows:
     # work/saves/ability-next-N); TEAM INFO is the third item, so the way back moves the cursor up to the top
     ("story-pre-battle", "story-team-info", ["Down", "Down", "Return"]),
@@ -1687,6 +1737,170 @@ def dream_cursor(root: Path) -> int:
     return int.from_bytes(bytes.fromhex(ask(root, {"action": "peek", "address": state + 0x64, "length": 4})["hex"]), "little")
 
 
+def peek_u32(root: Path, address: int) -> int:
+    return int.from_bytes(bytes.fromhex(ask(root, {"action": "peek", "address": address, "length": 4})["hex"]), "little")
+
+
+def movie_id(movie: int) -> int:
+    """The game's id for movieNNN.wmv: NNN below 36, 100-109 from 36, 200 and up from 46."""
+    if 0 <= movie < 36:
+        return movie
+    if 100 <= movie < 110:
+        return 36 + movie - 100
+    if movie >= 200:
+        return 46 + movie - 200
+    raise ValueError(f"movie{movie:03d} is no movie the game names")
+
+
+def movie_key(page: int, cell: int, target: int) -> str:
+    """One key that moves the Gallery cursor toward list index ``target``: Right and Left cross pages from the last and
+    first column; Up and Down wrap over the page's rows; a column a row lacks is left first (the last page's second
+    row has only column 0)."""
+    target_page, target_cell = divmod(target, 15)
+    if target_page != page:
+        return "Right" if target_page > page else "Left"
+    (row, col), (target_row, target_col) = divmod(cell, 5), divmod(target_cell, 5)
+    rows = -(-MOVIE_PAGES[page] // 5)
+    if row != target_row and target_row * 5 + col < MOVIE_PAGES[page]:
+        return "Down" if (target_row - row) % rows <= rows // 2 else "Up"
+    if col != target_col:
+        return "Right" if target_col > col else "Left"
+    return "Down" if (target_row - row) % rows <= rows // 2 else "Up"
+
+
+def pick_movie(root: Path, movie: int, label: str, before: dict | None = None) -> None:
+    """Move the Gallery movie cursor onto movieNNN a key at a time, reading the game's own cursor after each."""
+    ids = struct.unpack(f"<{sum(MOVIE_PAGES)}I", bytes.fromhex(
+        ask(root, {"action": "peek", "address": MOVIE_IDS, "length": 4 * sum(MOVIE_PAGES)})["hex"]))
+    if movie_id(movie) not in ids:
+        raise ValueError(f"movie{movie:03d} is not in the Gallery's movie list")
+    target, state = ids.index(movie_id(movie)), peek_u32(root, GALLERY_STATE)
+    for _ in range(2 * sum(MOVIE_PAGES)):
+        page, cell = peek_u32(root, state + MOVIE_PAGE), peek_u32(root, state + MOVIE_CELL)
+        if page * 15 + cell == target:
+            return
+        before = drive_step(root, [movie_key(page, cell, target)], None, None, label, quick=True, before=before)
+    raise RuntimeError(f"the Gallery cursor did not reach movie{movie:03d} (list index {target})")
+
+
+def free_select(root: Path) -> dict:
+    """Free Mode's character select as the game holds it: grid (group -> officer ids), cursor and hovered officer."""
+    state = peek_u32(root, FREE_STATE)
+
+    def u32s(offset: int, count: int) -> tuple[int, ...]:
+        raw = ask(root, {"action": "peek", "address": state + offset, "length": 4 * count})["hex"]
+        return struct.unpack(f"<{count}I", bytes.fromhex(raw))
+
+    counts, cells = u32s(FREE_COUNTS, 8), u32s(FREE_GRID, 8 * 15)
+    group = u32s(FREE_GROUP, 1)[0]
+    return {"grid": [list(cells[g * 15:g * 15 + counts[g]]) for g in range(8)], "group": group,
+            "row": u32s(FREE_ROWS + 4 * group, 1)[0], "hover": u32s(FREE_HOVER, 1)[0]}
+
+
+def officer_key(seen: dict, officer: int) -> str | None:
+    """One key toward ``officer`` on the character select: Up and Down step the group (wrapping over 8), Left and Right
+    the row (wrapping over the group); None when it is hovered."""
+    if seen["hover"] == officer:
+        return None
+    group = next(g for g, ids in enumerate(seen["grid"]) if officer in ids)
+    if group != seen["group"]:
+        return "Down" if (group - seen["group"]) % 8 <= 4 else "Up"
+    size, row = len(seen["grid"][group]), seen["grid"][group].index(officer)
+    return "Right" if (row - seen["row"]) % size <= size // 2 else "Left"
+
+
+def hover_officer(root: Path, officer: int, label: str) -> None:
+    for _ in range(24):
+        seen = free_select(root)
+        if (key := officer_key(seen, officer)) is None:
+            return
+        drive_step(root, [key], None, None, label, quick=True)
+    raise RuntimeError(f"the character select cursor did not reach officer {officer}")
+
+
+def officer_by_name(root: Path, name: str, label: str) -> int:
+    """The id of the officer the select shows as ``name``, found by hovering each until its name is drawn."""
+    for officer in [o for ids in free_select(root)["grid"] for o in ids if o < 0x60]:
+        hover_officer(root, officer, label)
+        texts = ask(root, {"action": "screen"})["texts"]
+        if any(t["caller"] == FREE_NAME and t["text"].casefold() == name.casefold() for t in texts):
+            return officer
+    raise ValueError(f"no officer named {name!r} on the character select")
+
+
+def pick_officers(root: Path, names: list[str], label: str) -> None:
+    """Fill Free Mode's three team slots: the named officers (a name, or an id), then the first others unlocked."""
+    if len(names) > 3:
+        raise ValueError("a Free Mode team has three officers")
+    team = [int(n) if n.isdigit() else officer_by_name(root, n, label) for n in names]
+    if len(set(team)) < len(team):
+        raise ValueError("pick three different officers")
+    team += [o for ids in free_select(root)["grid"] for o in ids if o < 0x60 and o not in team][:3 - len(team)]
+    for officer in team:
+        hover_officer(root, officer, label)
+        drive_step(root, ["Return"], None, None, label, quick=True)
+
+
+def stage_under_cursor(root: Path) -> tuple[int, int]:
+    state = peek_u32(root, STAGE_SELECT)
+    index = peek_u32(root, state + STAGE_CURSOR)
+    return index, peek_u32(root, state + STAGE_LIST + 4 * index)
+
+
+def pick_free_stage(root: Path, stage: int | None, label: str) -> None:
+    """Open the Free Mode chapter of ``stage`` (None: the story and chapter the select starts on). Right and Left on the
+    story list swap the main stories and the Story Z ones, Down steps through a column's stories; a story's chapters
+    run Right along the top row, then Down to the second row's end and Left (run 2026-10-25_1446-free4)."""
+    def press(key: str) -> None:
+        drive_step(root, [key], None, None, label, quick=True)
+
+    def moved(key: str) -> bool:  # press, and give the game a moment to move the cursor
+        index, deadline = stage_under_cursor(root)[0], time.monotonic() + 1.5
+        press(key)
+        while stage_under_cursor(root)[0] == index:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.1)
+        return True
+
+    def walk(key: str) -> bool:  # along a row until the stage is under the cursor, or the row ends
+        while stage_under_cursor(root)[1] != stage:
+            if not moved(key):
+                return False
+        return True
+
+    def level(chapters: bool, key: str) -> None:  # press until the cursor is in that list (a key sent while the
+        # list slides in is lost); the story list parks the chapter cursor at STORY_LIST_CURSOR
+        press(key)
+        deadline, again = time.monotonic() + 15, time.monotonic() + 3
+        while (stage_under_cursor(root)[0] != STORY_LIST_CURSOR) != chapters:
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"{key} did not open the Free Mode {'chapters' if chapters else 'stories'}")
+            if time.monotonic() >= again:
+                press(key)
+                again = time.monotonic() + 3
+            time.sleep(0.1)
+        time.sleep(0.5)  # the list takes input a moment after its cursor is set
+
+    level(True, "Return")
+    if stage is None:
+        return
+    for _ in range(FREE_STORIES):
+        if (stage_under_cursor(root)[1] < 40) != (stage < 40):  # the other column
+            level(False, "Escape")
+            press("Right")
+            level(True, "Return")
+            continue
+        if walk("Right"):
+            return
+        if moved("Down") and walk("Left"):
+            return
+        level(False, "Escape")
+        press("Down")
+        level(True, "Return")
+    raise ValueError(f"stage {stage} is in no Free Mode story")
+
+
 def pick_dream(root: Path, stage: int, label: str, before: dict | None = None) -> None:
     """Move the Dream select cursor to the stage's scenario, from wherever it is, and check the game's own cursor."""
     drive_step(root, dream_keys(stage, dream_cursor(root)), None, None, label, quick=True, before=before)
@@ -1694,7 +1908,8 @@ def pick_dream(root: Path, stage: int, label: str, before: dict | None = None) -
         raise RuntimeError(f"the Dream cursor is on scenario {cursor}, not {DREAM_STAGES.index(stage)} (stage {stage})")
 
 
-def route(root: Path, target: str, stage: int | None = None) -> int:
+def route(root: Path, target: str, stage: int | None = None, movie: int | None = None,
+          officers: list[str] | None = None) -> int:
     """Drive the game to ``target`` on a running --test build; print the screens passed."""
     state_path = local_path(root, "evidence/route.json")
 
@@ -1733,6 +1948,23 @@ def route(root: Path, target: str, stage: int | None = None) -> int:
             for n, (keys, until) in enumerate(moves):
                 if keys is DREAM_STEP:
                     pick_dream(root, stage, f"{source} -> {destination}", seen)
+                    continue
+                if keys is OFFICER_STEP:
+                    pick_officers(root, officers or [], f"{source} -> {destination}")
+                    continue
+                if keys is FREE_STAGE_STEP:
+                    pick_free_stage(root, stage, f"{source} -> {destination}")
+                    continue
+                if keys is NARRATION_STEP:
+                    # a main-story chapter may open with a movie, which Escape skips; a Story Z chapter fades its
+                    # narration in for about 4 s, and Escape in that time cancels it (0x55FF49; handbacks/wo2-narration.md)
+                    narration = ROUTE_SCREENS["story-stage-narration"]
+                    seen = drive_step(root, [], narration, None, f"{source} -> {destination}", quick=True, before=seen) \
+                        if stage < 40 else drive_step(root, ["Escape"], {**narration, "every": 3}, None,
+                                                      f"{source} -> {destination}", quick=True, before=seen)
+                    continue
+                if keys is MOVIE_STEP:
+                    pick_movie(root, DEFAULT_MOVIE if movie is None else movie, f"{source} -> {destination}", seen)
                     continue
                 if source in PAUSE_SOURCES and isinstance(keys, list) and route_input(root) == "pad":
                     keys = ["START" if k == "Escape" else k for k in keys]
@@ -2101,6 +2333,11 @@ def main(argv: list[str] | None = None) -> int:
                                  help="drive there from where the last route left the game")
             command.add_argument("--stage", type=int, help="the stage a battle route picks on the scenario or chapter "
                                  f"select, as a player does (Dream default {DREAM_STAGES[0]}; a story chapter needs it)")
+            command.add_argument("--movie", type=int, help="gallery-movie-play: the movie NNN (movieNNN.wmv) to play "
+                                 f"(default {DEFAULT_MOVIE})")
+            command.add_argument("--officer", action="append", default=[], metavar="NAME",
+                                 help="free-camp onward: an officer for the Free Mode team, by name as the select shows "
+                                      "it or by id (repeat, up to 3; the rest are filled in)")
         if action == "check":
             command.add_argument("spec", type=Path, help="a check file such as data/checks/menus.toml")
             command.add_argument("--only", type=lambda value: value.split(","), metavar="SCREEN,...",
@@ -2148,7 +2385,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.action == "tour":
             return tour(root, args.stages, args.dialog_seconds)
         if args.action == "route":
-            return route(root, args.screen, args.stage)
+            return route(root, args.screen, args.stage, args.movie, args.officer)
         if args.action == "check":
             return check(root, args.spec.resolve(strict=True), args.only, args.learn)
         request = {"action": args.action}

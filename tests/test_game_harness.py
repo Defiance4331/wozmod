@@ -607,7 +607,9 @@ def test_route_library_reaches_every_screen_and_back_to_the_menu():
     dead_ends = {"story-z-narration", "story-z-still", "story-z-still-2",  # story pages: no verified way out, so a check spec lists them last
                  "story-narration", "story-wei-pre-battle", "story-wei-battle", "story-victory-still",
                  "story-stage-camp", "story-stage-scenario", "story-pre-battle", "story-battle",
-                 "story-team-info", "story-officer-page", "ability-acquisition"}
+                 "story-team-info", "story-officer-page", "ability-acquisition",
+                 "story-stage-narration", "story-stage-talk", "story-victory-talk",
+                 "free-camp", "free-stories", "free-chapter", "free-pre-battle", "free-battle"}
     for start in names:
         for target in names - {"boot"} | {"menu"}:
             try:
@@ -945,6 +947,40 @@ def test_relative_teleport_offsets_x_and_z_from_where_the_player_stands(tmp_path
     harness.teleport(fd, block, 300.0, -400.0, 1.5, relative=True)
     os.close(fd)
     assert sent == [(1300.0, 1600.0, 1.5)]
+
+
+def test_movie_cursor_reaches_every_list_entry_from_every_cell():
+    """Bugs: the cursor bounces between two cells on the last page (its second row has only column 0), or heads to the
+    wrong page, so the route plays another movie or never arrives."""
+    pages = harness.MOVIE_PAGES
+
+    def press(page: int, cell: int, key: str) -> tuple[int, int]:  # the game's list input (0x556840)
+        row, col, last = cell // 5, cell % 5, pages[page] - 1
+        if key == "Right":
+            if col < 4:
+                return page, min(cell + 1, last)
+            return (page + 1, min(row * 5, pages[page + 1] - 1 - (pages[page + 1] - 1) % 5)) if page < 2 else (page, cell)
+        if key == "Left":
+            if col > 0:
+                return page, cell - 1
+            return (page - 1, row * 5 + 4) if page > 0 else (page, cell)
+        step = 5 if key == "Down" else 10
+        cell = (cell + step) % 15
+        while cell > last:
+            cell = (cell + step) % 15
+        return page, cell
+
+    stuck = []
+    for start in range(sum(pages)):
+        for target in range(sum(pages)):
+            page, cell = divmod(start, 15)
+            for _ in range(2 * sum(pages)):
+                if page * 15 + cell == target:
+                    break
+                page, cell = press(page, cell, harness.movie_key(page, cell, target))
+            else:
+                stuck.append((start, target))
+    assert stuck == []
 
 
 def test_scripts_reads_the_stage_at_the_real_addresses(tmp_path):
