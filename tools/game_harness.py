@@ -53,6 +53,8 @@ STAGE, STAGE_DATA, SCRIPT_TABLE, SCRIPT_EVENTS = 0x801AA0, 0x9C8FD4, 0x9C919C, 0
 # the game's units (stride 0xD0, used bit +0xBC & 1, actor pointer +0x14) and the actor's x, y (up), z at +0x40;
 # unit 0 is the player (work/crowdperf/re-spawn.md)
 UNITS, UNIT_SIZE, UNIT_COUNT, ACTOR_AT = 0x7DDC30, 0xD0, 255, 0x40
+CHARACTERS, CHARACTER_SIZE, RIDING = 0x9DE420, 0x2200, 0x1944  # the players' characters; +0x1944: the horse ridden
+TEAM_ACTIVE = 0x801B34  # player 0's active team member, 0-2
 SPAWN_MAX = 220  # the general unit pool
 SPAWN_INNER = 600  # the default nearest ring, in world units: in view, well inside the 7500 far cull
 SPAWN_SPACING = 120  # runtime/troop_ring.h TROOP_SPACING
@@ -334,6 +336,69 @@ def test_block(memory: int) -> int:
     raise ValueError("the game has no test mailbox; build the runtime with --test")
 
 
+# What an op's own results mean, where they differ from the shared ones in test_command.
+OP_REFUSALS = {
+    10: {5: "no player in that slot", 6: "already riding, or held by or linked to another character",
+         7: "this stage or this spot allows no horse; move and retry",
+         8: "the game's horse call brought no horse (no free horse unit, or it refused here)",
+         9: "the mount did not take"},
+    11: {5: "no such team member, or that one is already active", 6: "that officer is down"},
+}
+KEEPS = {"life": 1, "clock": 2, "no-defeat": 4}  # the runtime's KEEP_ bits
+SWITCH_SECONDS = 5  # the game's switch gate refuses for 20 ticks after a switch, and mid-attack
+
+
+def switch(memory: int, block: int, member: int) -> dict:
+    """Switch player 0 to team member 0-2 (test op 11), resending until the game's switch gate lets it through."""
+    def active() -> int:
+        return struct.unpack("<I", os.pread(memory, 4, TEAM_ACTIVE))[0]
+
+    was, deadline = active(), time.monotonic() + SWITCH_SECONDS
+    while active() != member:
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"the game kept refusing the switch for {SWITCH_SECONDS} s (mid-attack, or a scene); retry")
+        test_command(memory, block, 11, member, busy=SWITCH_SECONDS)
+        settle = time.monotonic() + 0.5
+        while active() != member and time.monotonic() < settle:
+            time.sleep(0.02)
+    return {"officer": member, "was": was}
+
+
+def player_at(memory: int) -> tuple[float, float, float]:
+    actor, = struct.unpack("<I", os.pread(memory, 4, UNITS + 0x14))
+    if not actor:
+        raise RuntimeError("the player has no unit; is a battle loaded?")
+    return struct.unpack("<3f", os.pread(memory, 12, actor + ACTOR_AT))
+
+
+def teleport(memory: int, block: int, x: float, z: float, facing: float, relative: bool) -> dict:
+    """Put player 0, with its horse, at world x, z (or that far from where it stands) facing a heading in radians
+    (test op 12), and read back where the game set it down (y from the ground)."""
+    if relative:
+        here = player_at(memory)
+        x, z = here[0] + x, here[2] + z
+    test_command(memory, block, 12, 0, struct.pack("<3f", x, z, facing), busy=10)
+    return {"at": [round(v, 1) for v in struct.unpack("<3f", os.pread(memory, 12, block + 48))]}
+
+
+def keep(memory: int, block: int, names: list[str]) -> dict:
+    """Hold battle state every frame until the battle ends (test op 13): the player's life, the clock, no defeat."""
+    unknown = set(names) - set(KEEPS)
+    if unknown:
+        raise ValueError(f"keep takes {', '.join(KEEPS)} (none: stop keeping), not {', '.join(sorted(unknown))}")
+    test_command(memory, block, 13, sum(KEEPS[n] for n in set(names)))
+    return {"keep": sorted(set(names))}
+
+
+def mount(memory: int, block: int, slot: int) -> dict:
+    """Put player slot on its horse (test op 10), and read back the horse it rides."""
+    if slot not in (0, 1):
+        raise ValueError("mount takes player slot 0 or 1")
+    test_command(memory, block, 10, slot, busy=10)
+    horse, = struct.unpack("<I", os.pread(memory, 4, CHARACTERS + CHARACTER_SIZE * slot + RIDING))
+    return {"mounted": slot, "horse": hex(horse)}
+
+
 def test_command(memory: int, block: int, op: int, arg: int = 0, data: bytes = b"", busy: float = 0) -> None:
     """Run one mailbox op on the game thread, at the game's next frame, retrying result 4 for busy seconds."""
     if len(data) >= TEST_INPUT:
@@ -356,7 +421,7 @@ def test_command(memory: int, block: int, op: int, arg: int = 0, data: bytes = b
             break
         time.sleep(0.2)
     if result:
-        raise RuntimeError(f"the game refused test op {op}: " + {
+        raise RuntimeError(f"the game refused test op {op}: " + (OP_REFUSALS.get(op, {}).get(result) or {
             1: "use window 1 or 2", 2: "unknown op, rebuild the runtime with this harness",
             3: "not in a battle, or the battle is already ending",
             4: "a script or scene is playing, or the event queue is full; retry",
@@ -364,7 +429,7 @@ def test_command(memory: int, block: int, op: int, arg: int = 0, data: bytes = b
                "no such queued script in this stage; run scripts",
             6: "review texture or rectangle is unavailable; check the test-only review.bin",
             7: "an officer that sub-scene casts is not on the field (no model loaded); the stage would not start it now",
-        }.get(result, f"result {result}"))
+        }.get(result, f"result {result}")))
 
 
 def troops_near(memory: int, radius: float) -> int:
@@ -528,7 +593,8 @@ def perform(root: Path, request: dict) -> dict:
     if action == "scripts":
         with open(f"/proc/{game_pid()}/mem", "rb", buffering=0) as memory:
             return stage_scripts(memory.fileno())
-    if action in ("screen", "wait", "say", "notice", "win", "lose", "script", "scene", "unlock", "review", "spawn"):
+    if action in ("screen", "wait", "say", "notice", "win", "lose", "script", "scene", "unlock", "review", "spawn",
+                  "mount", "switch", "teleport", "keep"):
         with open(f"/proc/{game_pid()}/mem", "r+b", buffering=0) as memory:
             block = test_block(memory.fileno())
             if action == "screen":
@@ -546,6 +612,15 @@ def perform(root: Path, request: dict) -> dict:
                 return {"queued": number} if action == "script" else {"scene": number}
             if action == "spawn":
                 return spawn(memory.fileno(), block, request["count"], request.get("inner", SPAWN_INNER))
+            if action == "mount":
+                return mount(memory.fileno(), block, request.get("slot", 0))
+            if action == "switch":
+                return switch(memory.fileno(), block, request["member"])
+            if action == "teleport":
+                return teleport(memory.fileno(), block, request["x"], request["z"], request.get("facing", 0.0),
+                                request.get("relative", False))
+            if action == "keep":
+                return keep(memory.fileno(), block, request["keep"])
             if action == "unlock":
                 test_command(memory.fileno(), block, 5)
                 return {"officers": "level 99, four weapons each"}
@@ -1154,6 +1229,16 @@ def shows(seen: dict, until: dict) -> bool:
             and (not until.get("with") or until["with"] in drawn)
             and (not until.get("quad_caller") or any(q["caller"] == until["quad_caller"] for q in seen["textures"]))
             and not any(t["caller"] == until.get("without_caller") for t in seen["texts"]))
+
+
+def routed_screens(seen: dict) -> list[str]:
+    """The routed screens whose fingerprint a frame shows (the menu's items as one); none: no route reaches it yet."""
+    names = [name.split("@")[0] for name, mark in ROUTE_SCREENS.items() if mark and shows(seen, mark)]
+    return list(dict.fromkeys(names))
+
+
+NO_ROUTE = ("no route reaches this screen: if you drove here by hand, add its route before you hand back "
+            "(wozmod-game-harness skill, Routes)")
 
 
 def ask(root: Path, request: dict, timeout: float = 30) -> dict:
@@ -1928,7 +2013,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="action", required=True)
     for action in ("run", "status", "key", "click", "pad", "plug", "capture", "record", "video", "peek", "poke",
-                   "find", "screen", "wait", "say", "notice", "win", "lose", "scripts", "script", "scene", "spawn", "unlock",
+                   "find", "screen", "wait", "say", "notice", "win", "lose", "scripts", "script", "scene", "spawn", "mount", "switch",
+                   "teleport", "keep", "unlock",
                    "reload", "review", "tour", "route", "check", "stop", "_audio", "_serve"):
         command = commands.add_parser(action)
         command.add_argument("--root", required=True, type=Path,
@@ -1990,6 +2076,18 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("number", type=int, help="script index from scripts")
         if action == "scene":
             command.add_argument("number", type=int, help="sub-scene of the current stage's event scene (0: its opening)")
+        if action == "switch":
+            command.add_argument("member", type=int, choices=[0, 1, 2], help="the team member to play, 0-2")
+        if action == "teleport":
+            command.add_argument("x", type=float)
+            command.add_argument("z", type=float)
+            command.add_argument("--facing", type=float, default=0.0, help="heading in radians")
+            command.add_argument("--relative", action="store_true", help="x and z are offsets from the player")
+        if action == "keep":
+            command.add_argument("keep", nargs="*", choices=list(KEEPS), metavar="WHAT",
+                                 help=f"any of {', '.join(KEEPS)}, held until the battle ends; none stops keeping")
+        if action == "mount":
+            command.add_argument("--slot", type=int, choices=[0, 1], default=0, help="the player (0, or 1 in 2P)")
         if action == "spawn":
             command.add_argument("count", type=int, help=f"enemy troops to put around the player (whole squads; at most {SPAWN_MAX})")
             command.add_argument("--inner", type=int, default=SPAWN_INNER, help="the nearest ring, in world units")
@@ -2092,10 +2190,23 @@ def main(argv: list[str] | None = None) -> int:
             request["number"] = args.number
         if args.action == "spawn":
             request.update(count=args.count, inner=args.inner)
+        if args.action == "mount":
+            request["slot"] = args.slot
+        if args.action == "switch":
+            request["member"] = args.member
+            timeout += SWITCH_SECONDS
+        if args.action == "teleport":
+            request.update(x=args.x, z=args.z, facing=args.facing, relative=args.relative)
+        if args.action == "keep":
+            request["keep"] = args.keep
         if args.action == "reload":
             request["table"] = str(args.table.resolve(strict=True))
             timeout += RELOAD_SECONDS
         response = send(root, request, timeout)
+        if args.action == "screen" and response["ok"]:
+            response = {"routes": routed_screens(response), **response}
+            if not response["routes"]:
+                print(f"game-harness: {NO_ROUTE}", file=sys.stderr)
         print(json.dumps(response))
         return 0 if response["ok"] else 1
     except KeyboardInterrupt:

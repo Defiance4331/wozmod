@@ -143,6 +143,7 @@ MOVING_FIX_HOOKS = [
 TEST_HOOKS = [
     (0x5DDDE0, "8b442424 8b4c241c", 73, None),  # sprite record builder (banner plates): a plain box in `screen`
     (0x590350, "83ec20 53 55", 74, None),       # nine-slice outline (the gallery selection frame), the same
+    (0x4EEE60, "53 8a5c2414 80fb07", 112, 0),   # stage-script queue (cdecl): keep's no-defeat refuses kind 8
 ]
 # Each letter CP932 lacks travels as the character at its surrogate code (latin_font).
 SURROGATES = str.maketrans({letter: (SURROGATE_CODE + i).to_bytes(2, "big").decode("cp932")

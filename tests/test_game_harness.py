@@ -8,6 +8,7 @@ import importlib.util
 from itertools import pairwise
 import json
 import os
+import struct
 import threading
 import time
 from pathlib import Path
@@ -886,6 +887,64 @@ def test_route_fingerprints_tell_the_screens_apart_that_share_textures():
     panel, course = drawn("4098.11"), drawn("4098.11", callers=["0x5a6774"])
     assert harness.shows(panel, screens["vs-team-select"]) and not harness.shows(course, screens["vs-team-select"])
     assert harness.shows(course, screens["vs-course"]) and not harness.shows(panel, screens["vs-course"])
+
+
+def test_screen_names_the_routed_screen_it_shows_or_says_none_reaches_it(tmp_path, monkeypatch, capsys):
+    """Bugs: a frame of a routed screen is reported as unrouted (agents add a duplicate route), or a screen reached by
+    hand reads as routed, so nobody adds the route the next agent needs."""
+    (tmp_path / "work/runtime-tests/r1").mkdir(parents=True)
+    monkeypatch.setattr(checkout, "REPO", tmp_path)
+    frames = {"title": [{"texture": "4085.0"}], "unrouted": [{"texture": "9999.0"}]}
+    for frame, textures in frames.items():
+        monkeypatch.setattr(harness, "send", lambda root, request, timeout: {"ok": True, "texts": [],
+                                                                             "textures": textures})
+        assert harness.main(["screen", "--root", "r1"]) == 0
+        out = capsys.readouterr()
+        assert json.loads(out.out)["routes"] == ([] if frame == "unrouted" else ["title"])
+        assert (harness.NO_ROUTE in out.err) == (frame == "unrouted")
+
+
+@pytest.mark.parametrize("result, reason", [(6, "already riding"), (7, "allows no horse"), (3, "not in a battle")])
+def test_mount_refusal_gives_the_ops_own_reason_and_the_shared_ones(tmp_path, result, reason):
+    """Bugs: an op's own refusal text is lost behind the shared one (result 6 read as a review-texture error), or a
+    shared result such as 3 crashes because the op has no text of its own for it."""
+    block, memory = 0x100, tmp_path / "mem"
+    memory.write_bytes(bytes(block + 48 + harness.TEST_INPUT))
+    fd = os.open(memory, os.O_RDWR)
+
+    def game():  # runs the command as the game thread would: result, then done = command
+        while not (command := struct.unpack("<I", os.pread(fd, 4, block + 28))[0]):
+            time.sleep(0.005)
+        os.pwrite(fd, struct.pack("<I", result), block + 44)
+        os.pwrite(fd, struct.pack("<I", command), block + 32)
+
+    threading.Thread(target=game, daemon=True).start()
+    with pytest.raises(RuntimeError, match=reason):
+        harness.mount(fd, block, 0)
+    os.close(fd)
+
+
+def test_relative_teleport_offsets_x_and_z_from_where_the_player_stands(tmp_path):
+    """Bug: the offset lands on the height (y) instead of z, or is sent as an absolute spot, so the player is set down
+    far from where the agent asked."""
+    block, actor = 0x100, 0x400
+    memory = tmp_path / "mem"
+    memory.write_bytes(bytes(harness.UNITS + 0x20))
+    fd = os.open(memory, os.O_RDWR)
+    os.pwrite(fd, struct.pack("<I", actor), harness.UNITS + 0x14)
+    os.pwrite(fd, struct.pack("<3f", 1000.0, -50.0, 2000.0), actor + harness.ACTOR_AT)
+    sent = []
+
+    def game():  # the game thread: take the spot asked for, answer done
+        while not (command := struct.unpack("<I", os.pread(fd, 4, block + 28))[0]):
+            time.sleep(0.005)
+        sent.append(struct.unpack("<3f", os.pread(fd, 12, block + 48)))
+        os.pwrite(fd, struct.pack("<I", command), block + 32)
+
+    threading.Thread(target=game, daemon=True).start()
+    harness.teleport(fd, block, 300.0, -400.0, 1.5, relative=True)
+    os.close(fd)
+    assert sent == [(1300.0, 1600.0, 1.5)]
 
 
 def test_scripts_reads_the_stage_at_the_real_addresses(tmp_path):

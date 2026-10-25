@@ -455,6 +455,69 @@ static u32 spawn_troops(u32 want, float inner, u32 *despawned)
     return placed;
 }
 
+/* Battle state for tests (work/handbacks/state-cmd-horse.md). A player's character is 0x9DE420 + 0x2200 * slot,
+   present while +0x17E8 & 2; +0x1944 is the horse it rides (the horse's +0x1948 its rider). */
+#define CHR(slot) ((u8 *)0x9DE420 + 0x2200 * (slot))
+#define CHR_U32(c, o) (*(volatile u32 *)((c) + (o)))
+#define GAME_MODE (*(volatile u32 *)0x801A98)  /* 3 and 4: modes the horse call returns quietly in */
+#define CALL_HORSE ((void (*)(u8 *, u32))0x417AC0)  /* spawn or fetch the player's horse beside it */
+#define MOUNT ((void (*)(u8 *, u8 *, u32))0x46A730)  /* rider, horse, 5: the save restore's mount */
+#define CELL_FLAG ((u32 (*)(const void *, u32))0x4AD250)  /* map cell test; flag 8 refuses the horse call */
+#define PLAYER_HORSE(slot) (((u8 *const volatile *)0x7EAB8C)[slot])  /* the horse's unit */
+#define HORSE_REFUSED 0x40000000u  /* set in +0x17EC when the horse call found no horse or no room */
+
+/* Mount player slot on its horse with the game's own call and mount, in the order its save restore uses
+   (0x441835-0x441874): 0 mounted, 5 no such player, 6 riding or held already, 7 no horse on this stage or
+   cell, 8 the call brought no horse, 9 the mount did not take. */
+static u32 mount_player(u32 slot)
+{
+    u8 *chr = CHR(slot), *unit, *horse;
+    if (slot > 1 || !(CHR_U32(chr, 0x17E8) & 2) || chr[0xEEE] != slot)
+        return 5;
+    if (CHR_U32(chr, 0x1944) || CHR_U32(chr, 0x1948) || CHR_U32(chr, 0x193C) || CHR_U32(chr, 0x1940))
+        return 6;
+    if (STAGE == 0x47 || BATTLE_FLAGS & 0xA000000 || CELL_FLAG(chr + 0x40, 8))
+        return 7;
+    CHR_U32(chr, 0x17EC) &= ~HORSE_REFUSED;
+    CALL_HORSE(chr, slot);
+    unit = PLAYER_HORSE(slot);
+    if (!unit || CHR_U32(chr, 0x17EC) & HORSE_REFUSED)
+        return 8;
+    horse = *(u8 *const *)(unit + 0x14);
+    if (!horse || CHR_U32(horse, 0x1948))
+        return 8;
+    MOUNT(chr, horse, 5);
+    return CHR_U32(chr, 0x1944) == (u32)horse ? 0 : 9;
+}
+
+/* The team (work/handbacks/state-cmd-player.md): player 0's active member, and each member's stored life. The game
+   switches on the release of a switch key, latched in +0xF91 (to active + 1) or +0xF92 (to active + 2), when its gate
+   0x418E50 allows it (not in the 20-tick cooldown, mid-attack or down); a latch it refuses is rewritten from the
+   real input the same tick, so setting one is a key press the gate judges. */
+#define TEAM_ACTIVE (*(volatile u32 *)0x801B34)
+#define TEAM_LIFE(m) (*(volatile u16 *)(0x801ADE + 0x28 * (m)))
+
+/* Battle upkeep the keep op turns on, redone every frame while a battle is loaded and dropped when it ends. */
+#define KEEP_LIFE 1  /* the player's life held at its maximum (a single hit past it still kills) */
+#define KEEP_CLOCK 2  /* the battle clock held where the op found it: no time-over, no timed events */
+#define KEEP_NO_DEFEAT 4  /* defeat scripts refused at the script queue (hook 112); lose turns it off */
+#define CLOCK (*(volatile u32 *)0x801ECC)
+#define LIFE(u) (*(volatile short *)((u) + 0x82))
+#define LIFE_MAX(u) (*(volatile short *)((u) + 0x80))
+static u32 test_keep, test_clock;
+
+static void keep_battle(void)
+{
+    if (!STAGE_DATA || BATTLE_FLAGS & 0x2000000) {
+        test_keep = 0;
+        return;
+    }
+    if (test_keep & KEEP_LIFE && LIFE(UNIT(0)) > 0)
+        LIFE(UNIT(0)) = LIFE_MAX(UNIT(0));
+    if (test_keep & KEEP_CLOCK)
+        CLOCK = test_clock;
+}
+
 
 struct test_text {
     u32 hook, caller, x, y, width;
@@ -570,6 +633,7 @@ static void test_frame(void)
         last->frame = b->frame;
     }
     current->texts = current->quads = 0;
+    keep_battle();
     if (b->command == b->done)
         return;
     b->result = 0;
@@ -607,6 +671,8 @@ static void test_frame(void)
             if ((b->op == 4 ? i == b->arg && script[5] : script[1] == b->arg) && !script[2] && !script[3]) {
                 b->result = 4;
                 if (b->op == 3) {
+                    if (b->arg == 8)
+                        test_keep &= ~KEEP_NO_DEFEAT;
                     script[0] |= 1;
                     SCRIPT_STATE(i)[1] = 3;
                     if (QUEUE_SCRIPT(0, i, 3, script[1], 0))
@@ -680,6 +746,63 @@ static void test_frame(void)
         b->result = 0;  /* fewer than asked when the stage runs out of enemy squads or of far squads to despawn */
         break;
     }
+    case 10:
+        /* Mount player arg on its horse. */
+        b->result = 3;
+        if (!STAGE_DATA || BATTLE_FLAGS & 0x2000000)
+            break;
+        b->result = 4;
+        if (BATTLE_FLAGS & SCENE_BUSY || BATTLE_STEP != 1 || GAME_MODE == 3 || GAME_MODE == 4)
+            break;
+        b->result = mount_player(b->arg);
+        break;
+    case 11:
+        /* Switch player 0 to team member arg, as a released switch key would; the harness polls TEAM_ACTIVE and
+           resends while the game's gate refuses. */
+        b->result = 3;
+        if (!STAGE_DATA || BATTLE_FLAGS & 0x2000000)
+            break;
+        b->result = 5;
+        if (b->arg > 2 || b->arg == TEAM_ACTIVE || TEAM_ACTIVE > 2)
+            break;
+        b->result = 6;
+        if (!TEAM_LIFE(b->arg))  /* the game would put a fallen officer in */
+            break;
+        b->result = 4;
+        if (BATTLE_FLAGS & (SCENE_BUSY | 0x8000000) || BATTLE_STEP != 1)
+            break;
+        CHR(0)[b->arg == (TEAM_ACTIVE + 1) % 3 ? 0xF91 : 0xF92] = 1;
+        b->result = 0;
+        break;
+    case 12: {
+        /* Put player 0 (with its horse) at input x, z facing input[2], as the stage start places player squads
+           (0x43F7A0); output: where it stands, x, y, z. */
+        float *io = (float *)b->input, xz[2] = {io[0], io[1]};
+        u8 *u = UNIT(0), *squad = *(u8 **)(u + 0x10);
+        b->result = 3;
+        if (!STAGE_DATA || BATTLE_FLAGS & 0x2000000)
+            break;
+        b->result = 4;
+        if (BATTLE_FLAGS & SCENE_BUSY || BATTLE_STEP != 1)
+            break;
+        PLACE_UNIT(u, xz, io[2]);
+        if (squad) {  /* its home and current spot, which the squad manager reads */
+            ((float *)(squad + 0x28))[0] = ((float *)(squad + 0x30))[0] = xz[0];
+            ((float *)(squad + 0x28))[1] = ((float *)(squad + 0x30))[1] = xz[1];
+        }
+        io[0] = UNIT_AT(u)[0], io[1] = UNIT_AT(u)[1], io[2] = UNIT_AT(u)[2];
+        b->result = 0;
+        break;
+    }
+    case 13:
+        /* Battle upkeep: arg is the KEEP_ bits to hold from now on (0: none). */
+        b->result = 3;
+        if (!STAGE_DATA || BATTLE_FLAGS & 0x2000000)
+            break;
+        test_keep = b->arg & (KEEP_LIFE | KEEP_CLOCK | KEEP_NO_DEFEAT);
+        test_clock = CLOCK;
+        b->result = 0;
+        break;
     default:
         b->result = 2;
     }
@@ -4876,6 +4999,11 @@ static int always(u32 id, struct frame *f, u32 *replace)
     case 73:
     case 74:
         test_quad(id, f, id == 73);
+        return 1;
+    case 112:  /* the stage-script queue (cdecl: owner, index, state, kind, flag): kind 8 is defeat */
+        *replace = test_keep & KEEP_NO_DEFEAT && f->arg[3] == 8;
+        if (*replace)
+            f->eax = 0;  /* no slot: the caller un-starts the script and tries it again next tick */
         return 1;
 #endif
     }
