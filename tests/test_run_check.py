@@ -290,7 +290,7 @@ def drive_with(tools, tmp_path, monkeypatch, spec, runs, check=0, only=None, gam
         staged[-1].mkdir(parents=True)
         return staged[-1]
 
-    def start(root, pad=False):
+    def start(root, pad=False, **_):
         FakeSupervisor(root, runs[len(staged) - 1], game_exit)
         return SimpleNamespace()
 
@@ -338,7 +338,7 @@ def test_run_routed_with_to_stays_up_unless_the_route_failed(tools, tmp_path, mo
         (tmp_path / "work/runtime-tests" / name).mkdir(parents=True)
         return tmp_path / "work/runtime-tests" / name
 
-    def start(root, pad=False):
+    def start(root, pad=False, **_):
         FakeSupervisor(root, "stopped")
         return SimpleNamespace()
 
@@ -347,14 +347,39 @@ def test_run_routed_with_to_stays_up_unless_the_route_failed(tools, tmp_path, mo
     assert bool(stops) == stopped
 
 
-def test_release_dll_is_refused_before_staging(tools, tmp_path, monkeypatch, spec):
+def test_release_dll_given_with_dll_is_refused_before_staging(tools, tmp_path, monkeypatch, spec):
     """Bug: a release d3d9.dll, which has no test mailbox, is staged and booted, and the run waits out its five-minute
     start limit before failing."""
     options = args(tmp_path, spec)
-    (tmp_path / "d3d9.dll").write_bytes(b"MZ release build")
+    options.dll = tmp_path / "release.dll"
+    options.dll.write_bytes(b"MZ release build")
     staged = []
     assert tools.run_check.run_check(options, lambda *a, **k: staged.append(a), None) == 1
     assert staged == []
+
+
+def test_installs_release_dll_is_replaced_by_a_test_build_of_the_checkout(tools, tmp_path, monkeypatch, spec):
+    """Bug: with no --dll, the install's release d3d9.dll is staged (no route or check can answer), or the test build
+    is made but the install's DLL is what goes into the run."""
+    import game_harness
+    monkeypatch.setattr(tools.prepare_run, "WORK", tmp_path / "work")
+    options = args(tmp_path, spec)
+    (tmp_path / "d3d9.dll").write_bytes(b"MZ release build")
+
+    def build(install, into):
+        assert install == tmp_path
+        (into / "d3d9.dll").write_bytes(b"MZ fresh" + game_harness.TEST_MAGIC)
+        return into / "d3d9.dll"
+
+    staged = []
+
+    def stage(name, install, dll, save, settings=(), replace=(), art=None):
+        staged.append(dll.read_bytes())
+        raise ValueError("staged")
+
+    with pytest.raises(ValueError, match="staged"):
+        tools.run_check.run_check(options, stage, None, build)
+    assert staged[-1] == b"MZ fresh" + game_harness.TEST_MAGIC
 
 
 @pytest.mark.parametrize("check, reason, code", [(0, "stopped", 0), (1, "stopped", 1), (0, "crash", 1)])
@@ -415,3 +440,22 @@ def test_wait_up_keeps_waiting_while_the_run_starts_but_fails_at_once_on_a_symli
     (tmp_path / "link").symlink_to(root)
     with pytest.raises(ValueError, match="symlinks"):
         tools.run_check.wait_up(tmp_path / "link", running, 2)
+
+
+@pytest.mark.parametrize("video", [True, False])
+def test_video_reaches_the_supervisor(tools, tmp_path, monkeypatch, spec, video):
+    """Bug: run_check --video is accepted but not passed to `game_harness.py run`, so the game outputs 4K through FSR
+    and a recording halves its frame rate."""
+    commands = []
+    monkeypatch.setattr(tools.prepare_run, "WORK", tmp_path / "work")
+    monkeypatch.setattr(tools.run_check.subprocess, "Popen", lambda command, **_: commands.append(command))
+    monkeypatch.setattr(tools.run_check, "wait_up", lambda root, proc: True)
+    monkeypatch.setattr(tools.run_check.harness, "route", lambda root, screen, stage: 0)
+
+    def stage(name, install, dll, save, settings=(), replace=(), art=None):
+        (tmp_path / "work/runtime-tests" / name).mkdir(parents=True)
+        return tmp_path / "work/runtime-tests" / name
+
+    options = SimpleNamespace(**vars(args(tmp_path, spec)), to="title", stage=None, video=video)
+    assert tools.run_check.run_check(options, stage) == 0
+    assert ["--video" in command for command in commands] == [video]

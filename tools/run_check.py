@@ -4,6 +4,9 @@
     uv run python tools/run_check.py --install work/install [--dll FILE] [--art DIR] [--save NAME]
         [--only SCREEN,...] [SPEC]
 
+Without --dll it runs the install's d3d9.dll when that is a --test build, and otherwise builds this checkout's runtime
+as one (about 4 s), since a release build answers no route or check.
+
 With --to SCREEN [--stage N] it routes the game there instead and leaves it running for hand commands
 (`game_harness.py ACTION --root RUN`); `game_harness.py stop --root RUN` ends it, or its 30-minute limit does.
 
@@ -20,6 +23,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +32,7 @@ import contact_sheet
 import game_harness as harness
 import prepare_run
 import screen_checks
+from wozmod.runtime.build import build_dll
 
 DEFAULT_SPEC = prepare_run.REPO / "data/checks/layout.toml"
 START_WAIT = 300  # seconds from launch (slot wait included) until the game answers the test mailbox
@@ -35,14 +40,16 @@ STOP_WAIT = 60  # seconds for the supervisor to end after stop
 RETRIES = 2  # fresh runs after one that ended before the game started
 
 
-def launch(root: Path, pad: bool = False, size: str | None = None) -> subprocess.Popen:
+def launch(root: Path, pad: bool = False, size: str | None = None, video: bool = False) -> subprocess.Popen:
     """The supervisor, in a game slot, in its own process group so it can be ended whole; ``pad``: routes press a
-    virtual pad instead of the keyboard; ``size``: render at WxH instead of 1080p upscaled."""
+    virtual pad instead of the keyboard; ``size``: render at WxH instead of 1080p upscaled; ``video``: output 1080p
+    without FSR, so the video command keeps the game at full speed."""
     # low CPU and disk priority, so the user's own work stays responsive
     command = ["nice", "-n", "10", "ionice", "-c2", "-n7",
                sys.executable, str(Path(harness.__file__).resolve()), "run", "--root", str(root), "--slot",
                "--target", harness.TARGET, "--game", str(root / "game"), "--authorize-launch", "--timeout", "1800",
-               *(["--pad", "--route-input", "pad"] if pad else []), *(["--size", size] if size else [])]
+               *(["--pad", "--route-input", "pad"] if pad else []), *(["--size", size] if size else []),
+               *(["--video"] if video else [])]
     with (root / "run.log").open("w") as log:
         return subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                                 start_new_session=True)
@@ -93,13 +100,22 @@ def run_name(label: str, attempt: int) -> str:
     return name
 
 
-def run_check(args: argparse.Namespace, stage=prepare_run.prepare, start=launch) -> int:
-    dll = args.dll or args.install / "d3d9.dll"
-    if harness.TEST_MAGIC not in Path(dll).read_bytes():  # its routes and checks talk to the test mailbox
-        print(f"run_check: {dll} is not a --test build; build one with `uv run python -m wozmod.runtime --game GAME_DIR "
-              "--output-dir DIR --test --log` and pass it with --dll", file=sys.stderr)
+def test_build(install: Path, into: Path) -> Path:
+    """This checkout's runtime as a --test build, from the install's stock OROCHI_Z.exe. No --log: it writes on the game
+    thread, which timing and video runs must not pay; only tour reads it, so pass a --log build with --dll for that."""
+    return build_dll(install / "OROCHI_Z.exe", into / "d3d9.dll", test=True)
+
+
+def is_test_build(dll: Path) -> bool:
+    return harness.TEST_MAGIC in dll.read_bytes()  # its routes and checks talk to the test mailbox
+
+
+def run_check(args: argparse.Namespace, stage=prepare_run.prepare, start=launch, build=test_build) -> int:
+    if args.dll and not is_test_build(args.dll):
+        print(f"run_check: {args.dll} is not a --test build; omit --dll to build this checkout's runtime as one",
+              file=sys.stderr)
         return 1
-    to = getattr(args, "to", None)
+    to, spec, only = getattr(args, "to", None), None, None
     if to:
         harness.route_plan("boot", to)  # an unknown screen fails before the minute of staging and boot
     else:
@@ -109,16 +125,30 @@ def run_check(args: argparse.Namespace, stage=prepare_run.prepare, start=launch)
         if only and set(only) - names:  # before the minute of staging and boot
             print(f"run_check: no screen {', '.join(sorted(set(only) - names))} in {spec.name}", file=sys.stderr)
             return 1
+    prepare_run.WORK.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=prepare_run.WORK, prefix=".test-dll-") as built:  # in work/: staging reflinks
+        dll = args.dll
+        if dll is None and not is_test_build(args.install / "d3d9.dll"):
+            dll = build(args.install.resolve(strict=True), Path(built))
+            print(f"run_check: {args.install / 'd3d9.dll'} is a release build; running this checkout's runtime as a "
+                  "--test build", file=sys.stderr)
+        return staged_run(args, dll, to, spec, only, stage, start)
+
+
+def staged_run(args: argparse.Namespace, dll: Path | None, to: str | None, spec: Path | None, only: list[str] | None,
+               stage, start) -> int:
+    """Stage, boot, then check the spec or route to ``to``, retrying a run that ended before the game started."""
     phases: dict[str, float] = {"stage": 0.0, "boot": 0.0, "check": 0.0, "stop": 0.0}
     began, result, record = time.monotonic(), 1, None
     for attempt in range(RETRIES + 1):
         t = time.monotonic()
         size = getattr(args, "size", None)
-        root = stage(run_name(args.name, attempt), args.install.resolve(strict=True), args.dll, args.save,
+        root = stage(run_name(args.name, attempt), args.install.resolve(strict=True), dll, args.save,
                      settings=args.setting + ([f"display.size={size}"] if size else []), replace=args.file,
                      art=args.art and args.art.resolve(strict=True))
         phases["stage"] += time.monotonic() - t
-        t, proc = time.monotonic(), start(root, getattr(args, "pad", False), *([size] if size else []))
+        t, proc = time.monotonic(), start(root, getattr(args, "pad", False), size=size,
+                                         video=getattr(args, "video", False))
         try:
             up = wait_up(root, proc)
             phases["boot"] += time.monotonic() - t
@@ -161,7 +191,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("spec", type=Path, nargs="?", default=DEFAULT_SPEC, help="check file (default layout.toml)")
     parser.add_argument("--install", type=Path, required=True, help="directory holding d3d9.dll and wozmod/")
-    parser.add_argument("--dll", type=Path, help="use this d3d9.dll instead of the install's")
+    parser.add_argument("--dll", type=Path, help="use this --test build of d3d9.dll instead of "
+                        "the install's (default: the install's when it is one, else this checkout's runtime built as one)")
     parser.add_argument("--save", default="full-unlock",
                         help="fixture under work/saves (default full-unlock), a save.dat path, or none for a fresh profile")
     parser.add_argument("--file", action="append", default=[], metavar="INSTALLED=PATH",
@@ -173,6 +204,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="a mod setting saved before the run, such as display.fps=120")
     parser.add_argument("--pad", action="store_true", help="routes press a pad, so captures show the pad's prompts")
     parser.add_argument("--only", metavar="SCREEN,...", help="run only these screens of the spec")
+    parser.add_argument("--video", action="store_true", help="with --to: output 1080p without FSR, so "
+                        "`game_harness.py video NAME --seconds N` records at full speed")
     parser.add_argument("--size", metavar="WxH", help="render the game at this listed display size (saved as the "
                         "player's choice) instead of 1080p upscaled")
     parser.add_argument("--name", default="check", help="label in the run directory name")

@@ -53,9 +53,9 @@ copies.
   Touch a live installation only when the user names its path and the operation.
 - Test in the game against one install per checkout: `work/install/`, a
   reflink copy of the stock game that `wozmod install` wrote into. Reinstall
-  into that folder only when the installer's output changes; for a runtime or
-  single-file change, pass the new build to `tools/run_check.py` with `--dll`
-  or `--file`. Do not make another install per task or per round: each one
+  into that folder only when the installer's output changes. `tools/run_check.py`
+  runs the checkout's runtime by itself, and takes a single-file change with
+  `--file`. Do not make another install per task or per round: each one
   costs about 3 GB of disk.
 - When the disk needs it, `tools/cleanup.py` lists old game test runs, stale
   caches, older packaging rounds and worktrees already in main; `--delete`
