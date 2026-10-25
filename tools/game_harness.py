@@ -17,6 +17,7 @@ import signal
 import struct
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -315,6 +316,76 @@ def find_bytes(pid: int, pattern: bytes) -> list[int]:
                         return hits
                     at = data.find(pattern, at + 1)
     return hits
+
+
+# The runtime counts its frames in the mailbox (test_block.frame, +24). The supervisor logs the count once a second to
+# evidence/fps.jsonl, so a capture, a recording and the run's end can say whether the game kept its frame rate: under
+# load a frame-locked game runs slow, and timing read from such a run is the machine's, not the mod's.
+FRAME_COUNT = 24
+SLOW = 0.95  # of the target frame rate: below it a second counts as slow
+
+
+def target_fps(game: Path) -> int:
+    """The frame rate the mod's display.fps setting asks for (the runtime's default 60 when unset)."""
+    ini = game / "wozmod/settings.ini"
+    text = ini.read_text(errors="replace") if ini.is_file() else ""
+    section = re.search(r"(?ims)^\[display\](.*?)(?=^\[|\Z)", text)
+    return 120 if section and re.search(r"(?im)^fps\s*=\s*120\s*$", section.group(1)) else 60
+
+
+def run_target(root: Path) -> int:
+    """The run's target frame rate, as its launch recorded it (60 for a run without one)."""
+    session = root / "evidence/session.json"
+    return json.loads(session.read_text()).get("target_fps", 60) if session.is_file() else 60
+
+
+def fps_seconds(root: Path, start: float = 0, end: float = float("inf")) -> list[float]:
+    """Frames per second for each logged second from start to end (wall-clock times)."""
+    path = root / "evidence/fps.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()] if path.is_file() else []
+    return [(b["frames"] - a["frames"]) / (b["time"] - a["time"]) for a, b in zip(rows, rows[1:], strict=False)
+            if start <= a["time"] and b["time"] <= end and b["time"] > a["time"] and b["frames"] >= a["frames"]]
+
+
+def fps_summary(root: Path, target: int, start: float = 0, end: float = float("inf")) -> dict | None:
+    """The median and lowest frame rate over a stretch's drawing seconds, its seconds below SLOW of the target, and its
+    seconds with no frame (loading screens, which draw nothing); None unlogged."""
+    seconds = fps_seconds(root, start, end)
+    rates = sorted(rate for rate in seconds if rate > 0)
+    if not seconds:
+        return None
+    return {"target": target, "median": round(rates[len(rates) // 2], 1) if rates else 0.0,
+            "lowest": round(rates[0], 1) if rates else 0.0, "slow_seconds": sum(rate < SLOW * target for rate in rates),
+            "loading_seconds": len(seconds) - len(rates), "seconds": len(seconds)}
+
+
+def recordings_slow(root: Path, target: int) -> list[str]:
+    """Recordings (record, video) whose stretch had a slow second: their timing is the machine's."""
+    path = root / "evidence/actions.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()] if path.is_file() else []
+    slow = []
+    for row in rows:
+        request = row["request"]
+        if request.get("action") in ("record", "video") and row["response"].get("ok"):
+            summary = fps_summary(root, target, row["time"], row["time"] + float(request.get("seconds", 0)))
+            if summary and summary["slow_seconds"]:
+                slow.append(request["name"])
+    return slow
+
+
+def log_frames(root: Path, stop: "threading.Event") -> None:
+    """The supervisor's sampler: the runtime's frame count once a second, until stop is set."""
+    block = None
+    with (root / "evidence/fps.jsonl").open("a") as log:
+        while not stop.wait(1.0):
+            try:
+                with open(f"/proc/{game_pid()}/mem", "rb", buffering=0) as memory:
+                    block = block or test_block(memory.fileno())
+                    frames, = struct.unpack("<I", os.pread(memory.fileno(), 4, block + FRAME_COUNT))
+            except (OSError, ValueError, RuntimeError):
+                continue  # still loading, or the game is gone
+            log.write(json.dumps({"time": time.time(), "frames": frames}) + "\n")
+            log.flush()
 
 
 def test_block(memory: int) -> int:
@@ -734,7 +805,9 @@ def perform(root: Path, request: dict) -> dict:
             raise ValueError(done["error"])
         time.sleep(request["gap"])
     elif action == "capture":
-        return {"path": str(capture_png(root, request["name"]))}
+        path, now = capture_png(root, request["name"]), time.time()
+        recent = fps_summary(root, run_target(root), now - 3, now)
+        return {"path": str(path), **({"fps": recent["median"], "slow": bool(recent["slow_seconds"])} if recent else {})}
     elif action == "record":
         # The game plays into the private null sink; its monitor is what a player would hear.
         name, seconds = request["name"], request["seconds"]
@@ -807,6 +880,11 @@ def serve(root: Path) -> int:
     ):
         raise ValueError("serve requires the harness Gamescope environment")
     control = root / "control"
+    session_path = root / "evidence/session.json"
+    session = json.loads(session_path.read_text()) if session_path.is_file() else {}
+    idle, target = session.get("idle_seconds"), session.get("target_fps", 60)
+    sampling = threading.Event()
+    threading.Thread(target=log_frames, args=(root, sampling), daemon=True).start()
     with (root / "evidence/launcher.log").open("w") as log:
         process = subprocess.Popen(
             ["bash", str(root / "launch.sh")], cwd=root,
@@ -814,9 +892,13 @@ def serve(root: Path) -> int:
         )
         try:
             write_json(control / "ready.json", {"display": os.environ.get("DISPLAY")})
+            busy_until = time.monotonic()  # the last request's end, or a recording's
             while process.poll() is None:
                 path = control / "request.json"
                 if not path.exists():
+                    if idle and time.monotonic() - busy_until > idle:  # a game left up by an agent that moved on
+                        write_json(root / "evidence/game-exit.json", {"stopped": True, "idle": idle, "time": time.time()})
+                        return 0
                     time.sleep(0.02)
                     continue
                 request = json.loads(path.read_text())
@@ -828,6 +910,10 @@ def serve(root: Path) -> int:
                     RuntimeError, subprocess.SubprocessError,
                 ) as exc:
                     response["error"] = str(exc)
+                busy_until = time.monotonic() + (float(request.get("seconds", 0)) if request.get("action") in
+                                                 ("record", "video") else 0)
+                if request.get("action") == "stop":  # how the game kept its frame rate, for every run's last word
+                    response.update(fps=fps_summary(root, target), slow_recordings=recordings_slow(root, target))
                 with (root / "evidence/actions.jsonl").open("a") as journal:
                     journal.write(json.dumps({
                         "time": time.time(), "request": request,
@@ -843,6 +929,7 @@ def serve(root: Path) -> int:
             write_json(root / "evidence/game-exit.json", {"returncode": process.returncode, "time": time.time()})
             return process.returncode
         finally:
+            sampling.set()
             (control / "ready.json").unlink(missing_ok=True)
             if process.poll() is None:
                 process.terminate()
@@ -881,7 +968,9 @@ def exit_record(root: Path, returncode: int | None, interrupted: bool) -> dict:
     status (evidence/game-exit.json, written inside the sandbox) separates them."""
     path = root / "evidence/game-exit.json"
     game = json.loads(path.read_text()) if path.is_file() else None
-    if game and game.get("stopped"):
+    if game and game.get("idle"):
+        reason = "idle"  # no command for the idle limit (run --idle): left up by an agent that moved on
+    elif game and game.get("stopped"):
         reason = "stopped"  # the stop command
     elif game:
         reason = "quit" if game["returncode"] == 0 else "crash"
@@ -894,6 +983,8 @@ def exit_record(root: Path, returncode: int | None, interrupted: bool) -> dict:
     record = {"returncode": returncode, "reason": reason, "last_actions": last_actions(root)}
     if game and "returncode" in game:
         record["game_returncode"] = game["returncode"]
+    if summary := fps_summary(root, run_target(root)):
+        record["fps"] = summary
     return record
 
 
@@ -906,7 +997,10 @@ def exit_info(root: Path) -> dict | None:
 def describe_exit(record: dict) -> str:
     """An exit record's reason, with the game's own exit status when it has one."""
     code = f" (game exit status {record['game_returncode']})" if "game_returncode" in record else ""
-    return f"{record.get('reason', 'unknown')}{code}"
+    fps = record.get("fps")
+    rate = (f"; {fps['median']} fps median, lowest {fps['lowest']}, {fps['slow_seconds']} of {fps['seconds']} s slow "
+            f"(target {fps['target']}; {fps.get('loading_seconds', 0)} s loading)" if fps else "")
+    return f"{record.get('reason', 'unknown')}{code}{rate}"
 
 
 def ended(root: Path) -> str | None:
@@ -920,9 +1014,9 @@ def ended(root: Path) -> str | None:
     return f"the run has ended: {describe_exit(record)}; last actions: {last}"
 
 
-# Two games may run at once across the checkout and all its worktrees: a run holds one of these, in the main
-# checkout's work/, for its whole life. `flock work/.game-run.lock run` there holds the first; `run --slot` takes
-# whichever is free.
+# Two games may run at once across the checkout and all its worktrees: every run holds one of these, in the main
+# checkout's work/, for its whole life, and writes its name and start into it so a waiting launch can say who holds
+# what.
 SLOTS = (".game-run.lock", ".game-run.1.lock")
 # Each slot's own Steam runtime in the main checkout's template, so two games never share one. A run binds its slot's
 # writable: pressure-vessel hard-links the runtime into its var/, which through an overlay copied 16k files into every
@@ -930,30 +1024,64 @@ SLOTS = (".game-run.lock", ".game-run.1.lock")
 RUNTIMES = ("steamrt", "steamrt-1")
 
 
-def take_slot(poll: float = 1.0) -> tuple[int, int]:
-    """Wait for a free game slot and lock it: (descriptor, slot index). The descriptor stays open, so the lock lasts
-    until the process ends."""
+def take_slot(holder: str = "", poll: float = 1.0) -> tuple[int, int]:
+    """Wait for a free game slot and lock it: (descriptor, slot index), writing ``holder`` (the run) and the time into
+    the lock file. The descriptor stays open, so the lock lasts until the process ends."""
     while True:
         for index, slot in enumerate(SLOTS):
             fd = os.open(work() / slot, os.O_RDWR | os.O_CREAT, 0o600)
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return fd, index
             except BlockingIOError:
                 os.close(fd)
+                continue
+            os.ftruncate(fd, 0)
+            os.pwrite(fd, json.dumps({"run": holder, "since": time.time()}).encode(), 0)
+            return fd, index
         time.sleep(poll)
+
+
+def slot_holders() -> list[str]:
+    """Who holds each busy game slot, and for how long: `run-name (12 min)`."""
+    held = []
+    for slot in SLOTS:
+        path = work() / slot
+        if not path.is_file():
+            continue
+        with path.open("rb") as handle:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                fcntl.flock(handle, fcntl.LOCK_UN)
+                continue  # free
+            except BlockingIOError:
+                pass
+            try:
+                info = json.loads(handle.read() or b"{}")
+            except ValueError:
+                info = {}
+        age = f"{(time.time() - info['since']) / 60:.0f} min" if "since" in info else "age unknown"
+        held.append(f"{info.get('run') or 'a launch without a name'} ({age})")
+    return held
 
 
 def run(root: Path, args: argparse.Namespace) -> int:
     if not args.authorize_launch:
         raise ValueError("launch needs current-task permission and --authorize-launch")
-    slot = take_slot()[1] if getattr(args, "slot", False) else 0  # without --slot the caller holds the first (flock)
     game = args.game.resolve(strict=True)
     if not game.is_dir() or not game.is_relative_to(root):
         raise ValueError("--game must be a disposable directory inside --root")
     launcher = local_path(root, "launch.sh")
     if not launcher.is_file():
         raise ValueError("prepare and review a run-local launch.sh first")
+    lock, slot = take_slot(root.name)  # every launch, so no game runs outside the two-game limit
+    try:
+        write_json(root / "slot.json", {"slot": slot, "time": time.time()})  # run_check: the boot clock starts here
+        return launch_in_slot(root, args, game, launcher, slot)
+    finally:
+        os.close(lock)
+
+
+def launch_in_slot(root: Path, args: argparse.Namespace, game: Path, launcher: Path, slot: int) -> int:
     steamrt = (work() / "runtime-tests/_template" / RUNTIMES[slot]).resolve()
     if args.target != XENIA:  # a MOZ run is staged by prepare_run.py; the reference emulator's are not
         verify_copy(root, game)
@@ -975,7 +1103,8 @@ def run(root: Path, args: argparse.Namespace) -> int:
     identity = {"target": args.target, "game": str(game), "root": str(root),
                 "launch_sha256": hashlib.sha256(launcher.read_bytes()).hexdigest(),
                 "timeout_seconds": args.timeout, "render_size": render_size,
-                "output_size": output_size, "fsr": fsr}
+                "output_size": output_size, "fsr": fsr, "target_fps": target_fps(game),
+                "idle_seconds": getattr(args, "idle", None)}
     pad = VirtualPad(args.pad) if args.pad else None
     identity["pad"] = pad.node if pad else None
     identity["route_input"] = getattr(args, "route_input", "keys")
@@ -2269,7 +2398,9 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--route-input", choices=["keys", "pad"], default="keys",
                                  help="what routes press: the keyboard, or (with --pad) the pad, for the pad's prompts")
             command.add_argument("--slot", action="store_true",
-                                 help="wait for one of the two game slots and hold it (instead of a flock wrapper)")
+                                 help="kept for old callers: every run waits for one of the two game slots")
+            command.add_argument("--idle", type=bounded, metavar="SECONDS",
+                                 help="stop the game after this long with no command (run_check --to passes 900)")
         if action == "plug":
             command.add_argument("state", choices=["on", "off"])
         if action == "key":

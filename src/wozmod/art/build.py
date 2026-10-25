@@ -690,7 +690,8 @@ class ArtError(ValueError):
 def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: Path | None,
               output_dir: Path | None, *, hires: bool = False, squeeze: bool = True, jobs: int | None = None,
               review: bool = False, lzp2_cache: Path | None = None, latin_cells: Path | None = None,
-              preview_dir: Path | None = None, entries: list[int] | None = None) -> None:
+              preview_dir: Path | None = None, entries: list[int] | None = None,
+              entries_dir: Path | None = None) -> None:
     """Build the menu art into output_dir/wozmod: entries/<ordinal>.bin, prompts-xbox.bin, glyphs.bin, and with hires
     hires.bin (the large-menu sheets the vector faces letter).
 
@@ -698,13 +699,15 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
     menu words resolve from. Nothing but the player files is written unless review is set: then the label review,
     the plate details and the vector plate sources go beside wozmod/. lzp2_cache keeps packed entries between builds.
     With preview_dir and entries, only those entries are rebuilt and their stock|edited sheets go to preview_dir
-    instead (output_dir None). jobs is the worker process count (default: CPU count).
+    instead (output_dir None); with entries_dir and entries, only those entries are rebuilt and written there as
+    <ordinal>.bin, for a test run to swap in (`run_check.py --entries-dir`), never a partial install tree. jobs is the
+    worker process count (default: CPU count).
     Raises ArtError for a wrong input; for a wrong donor archive, before writing anything.
     """
     packing.LZP2_CACHE = lzp2_cache
     jobs = jobs or os.process_cpu_count()
     words.use(text_donors)
-    working = output_dir or preview_dir
+    working = output_dir or preview_dir or entries_dir
     try:
         wo1_x360 = donor_stem(wo1_x360, None, WO1_X360, None)
     except ValueError as error:
@@ -759,7 +762,7 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
         donors |= {("moz", k): donor_g1ts(read_entry(stream, index.entries[k])[0])
                    for k in sorted({e[key][0] for e in flat for key in ("against", "base") if key in e})}
     donors["faces"] = faces(mapping, donors, jobs, used_faces(list(edits.values())))
-    review_dir = output_dir / "review" if output_dir else preview_dir
+    review_dir = output_dir / "review" if output_dir else preview_dir or entries_dir
     donors["menu_labels"] = prepare_menu_labels(mapping, review_dir / "native-menu-labels" if review else None,
                                                 set(edits) if entries else None)
     donors["menu_sound_rows"] = {item: sound_menu_rows(mapping, item) for item in (23, 24, 25)}
@@ -774,7 +777,7 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
     ld2_bin = game / "LINKDATA2.BIN"
     SHARED.update(base_bin=base_bin, index=index, donors=donors, edits=edits,
                   ld2_bin=ld2_bin, ld2_index=parse_index((game / "LINKDATA2.IDX").read_bytes(), ld2_bin.stat().st_size),
-                  preview=preview_dir, write=bool(output_dir))
+                  preview=preview_dir, write=bool(output_dir or entries_dir))
 
     with worker_pool(jobs) as pool:
         futures = [pool.submit(rebuilt, ordinal)
@@ -790,6 +793,12 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
         except BaseException:
             pool.shutdown(wait=False, cancel_futures=True)
             raise
+    if entries_dir:
+        entries_dir.mkdir(parents=True, exist_ok=True)
+        for ordinal, data in stored.items():
+            (entries_dir / f"{ordinal}.bin").write_bytes(data)
+        print(f"{entries_dir}: {len(stored)} entries")
+        return
     if not output_dir:
         print(f"{preview_dir}: previews of {len(stored)} entries")
         return
@@ -826,7 +835,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--preview-dir", type=Path,
                         help="write <entry>.<item>.<texture>.png stock|edited sheets of every edited texture")
     parser.add_argument("--entries", type=int, nargs="+",
-                        help="rebuild only these entries for --preview-dir; writes no entries")
+                        help="rebuild only these entries, for --preview-dir or --entries-dir")
+    parser.add_argument("--entries-dir", type=Path,
+                        help="with --entries: write each rebuilt entry here as <ordinal>.bin (seconds, not minutes), "
+                             "for `tools/run_check.py --entries-dir`; never a partial install")
     parser.add_argument("--hires", action="store_true",
                         help="also write wozmod/hires.bin, the large-menu sheets the vector faces letter")
     parser.add_argument("--hires-only", action="store_true", help="with --hires: the entries are already built")
@@ -839,9 +851,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cache-dir", type=Path)
     args = parser.parse_args(argv)
     lettering.FONT_PYTHON = args.font_python
-    working = args.output_dir or args.preview_dir
-    if (bool(args.entries) == bool(args.output_dir)) or (args.entries and not args.preview_dir):
-        parser.error("give --output-dir, or --entries with --preview-dir (a partial build is never written)")
+    working = args.output_dir or args.preview_dir or args.entries_dir
+    if (bool(args.entries) == bool(args.output_dir)) or (args.entries and not (args.preview_dir or args.entries_dir)) \
+            or (args.entries_dir and not args.entries):
+        parser.error("give --output-dir, or --entries with --preview-dir or --entries-dir (a partial build is never "
+                     "written as an install)")
     if args.hires_only and not (args.hires and args.output_dir):
         parser.error("--hires-only needs --hires and --output-dir")
     if not args.hires_only and args.game is None:
@@ -864,7 +878,7 @@ def main(argv: list[str] | None = None) -> int:
             build_art(args.game, args.wo1_x360_donor, args.wo2_x360_donor, args.text_donors, args.output_dir,
                       hires=args.hires, squeeze=not args.no_squish, jobs=args.jobs, review=True,
                       lzp2_cache=lzp2_cache, latin_cells=args.latin_cells, preview_dir=args.preview_dir,
-                      entries=args.entries)
+                      entries=args.entries, entries_dir=args.entries_dir)
         except ArtError as error:
             parser.error(str(error))
     if args.output_dir:

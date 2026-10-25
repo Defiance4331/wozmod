@@ -983,6 +983,38 @@ def test_movie_cursor_reaches_every_list_entry_from_every_cell():
     assert stuck == []
 
 
+def test_a_recording_made_while_the_game_ran_slow_is_flagged_and_a_full_speed_one_is_not(tmp_path):
+    """Bug: a recording taken while load held the game at 40 fps reads as good evidence (subtitle timing judged on a
+    slowed cutscene), or a full-speed one is flagged so every warning gets ignored."""
+    (tmp_path / "evidence").mkdir()
+    frames, rows = 0, []
+    for second in range(16):  # 60 fps for 10 s, then 40 fps for 5 s
+        rows.append({"time": 1000.0 + second, "frames": frames})
+        frames += 60 if second < 10 else 40
+    (tmp_path / "evidence/fps.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    actions = [{"time": 1001.0, "request": {"action": "video", "name": "fast", "seconds": 5}, "response": {"ok": True}},
+               {"time": 1010.0, "request": {"action": "video", "name": "slow", "seconds": 5}, "response": {"ok": True}}]
+    (tmp_path / "evidence/actions.jsonl").write_text("".join(json.dumps(a) + "\n" for a in actions))
+    assert harness.recordings_slow(tmp_path, 60) == ["slow"]
+    assert harness.fps_summary(tmp_path, 60) == {"target": 60, "median": 60.0, "lowest": 40.0, "slow_seconds": 5,
+                                                 "loading_seconds": 0, "seconds": 15}
+
+
+def test_a_game_nobody_commands_stops_after_its_idle_limit(tmp_path, monkeypatch):
+    """Bug: a game an agent left up with --to keeps a slot until its 30-minute timeout, so the next launch waits or
+    times out."""
+    for folder in ("control", "evidence"):
+        (tmp_path / folder).mkdir()
+    (tmp_path / "launch.sh").write_text("exec sleep 60\n")
+    (tmp_path / "evidence/session.json").write_text(json.dumps({"idle_seconds": 0.3}))
+    monkeypatch.setenv("MUSOU_HARNESS_ROOT", str(tmp_path))
+    monkeypatch.setenv("GAMESCOPE_WAYLAND_DISPLAY", "synthetic-test-only")
+    began = time.monotonic()
+    assert harness.serve(tmp_path) == 0
+    assert time.monotonic() - began < 5
+    assert harness.exit_record(tmp_path, 0, False)["reason"] == "idle"
+
+
 def test_scripts_reads_the_stage_at_the_real_addresses(tmp_path):
     """Bug: a later module constant rebinds the stage address (once a route dict), so every live scripts call fails."""
     memory = tmp_path / "mem"
@@ -1389,12 +1421,15 @@ def test_two_games_at_once_each_run_their_own_writable_steam_runtime(tmp_path, m
     monkeypatch.setattr(harness.subprocess, "Popen", lambda command, **kwargs: calls.append(command) or
                         SimpleNamespace(wait=lambda: 0, poll=lambda: 0, returncode=0))
     monkeypatch.setattr(harness, "start_audio", lambda root: None)
-    for name in ("first", "second"):  # a run keeps its slot until its process ends, so here the second gets slot 1
+    held = None
+    for name in ("first", "second"):  # the first game still holds slot 0 when the second launches
         root = tmp_path / "work/runtime-tests" / name
         _staged(root / "game")
         (root / "launch.sh").write_text("exit 0\n")
-        harness.main(["run", "--root", str(root), "--game", str(root / "game"), "--authorize-launch", "--slot",
+        harness.main(["run", "--root", str(root), "--game", str(root / "game"), "--authorize-launch",
                       "--target", harness.TARGET])
+        held = held or harness.take_slot("first")[0]
+    os.close(held)
     launched = [c for c in calls if "bwrap" in c]
     used = [c[c.index("SLR4") + 1] for c in launched]
     assert used == [str(template / runtime / "run") for runtime in harness.RUNTIMES]

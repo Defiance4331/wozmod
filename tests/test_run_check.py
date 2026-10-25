@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -258,6 +259,7 @@ def test_install_that_differs_from_its_installer_record_is_refused(tools, tmp_pa
 
 class FakeSupervisor:
     def __init__(self, root: Path, reason: str, game_exit: bool = False):
+        (root / "slot.json").write_text("{}")  # the supervisor took a game slot
         (root / "evidence").mkdir(parents=True)
         (root / "evidence/exit.json").write_text(json.dumps({"reason": reason}))
         if game_exit:  # the game's own status, written after the harness recorded its end
@@ -434,6 +436,7 @@ def test_wait_up_keeps_waiting_while_the_run_starts_but_fails_at_once_on_a_symli
     running = SimpleNamespace(poll=lambda: None)
     root = tmp_path / "run"
     (root / "control").mkdir(parents=True)
+    (root / "slot.json").write_text("{}")
     began = time.monotonic()
     assert tools.run_check.wait_up(root, running, 1) is False
     assert time.monotonic() - began >= 1
@@ -459,3 +462,33 @@ def test_video_reaches_the_supervisor(tools, tmp_path, monkeypatch, spec, video)
     options = SimpleNamespace(**vars(args(tmp_path, spec)), to="title", stage=None, video=video)
     assert tools.run_check.run_check(options, stage) == 0
     assert ["--video" in command for command in commands] == [video]
+
+
+def test_boot_clock_starts_once_the_run_holds_a_slot_and_the_wait_names_the_holders(tools, tmp_path, monkeypatch,
+                                                                                    capsys):
+    """Bugs: the wait for a busy slot counts against the boot limit, so a launch behind another game fails as never
+    started; or the waiting launch cannot say who holds the slots (a free one listed, or a holder left out)."""
+    monkeypatch.setattr(tools.run_check.harness, "work", lambda: tmp_path / "work")
+    (tmp_path / "work").mkdir()
+    held = tools.run_check.harness.take_slot("their-run")[0]
+    assert tools.run_check.harness.slot_holders() == ["their-run (0 min)"]
+    root = tmp_path / "work/runtime-tests/r1"
+    (root / "control").mkdir(parents=True)
+    threading.Timer(1.2, lambda: (root / "slot.json").write_text("{}")).start()
+    began = time.monotonic()
+    assert tools.run_check.wait_up(root, SimpleNamespace(poll=lambda: None), 0.5) is False
+    os.close(held)
+    assert time.monotonic() - began >= 1.7  # 1.2 s for the slot, then the whole 0.5 s boot limit
+    assert tools.run_check.harness.slot_holders() == []
+
+
+def test_entries_dir_swaps_each_rebuilt_entry_over_the_installed_one(tools, tmp_path, monkeypatch):
+    """Bug: a rebuilt menu-art entry goes in under the wrong installed path, so the run quietly shows the old art."""
+    built = tmp_path / "entries"
+    built.mkdir()
+    for ordinal in (4074, 4104):
+        (built / f"{ordinal}.bin").write_bytes(b"x")
+    seen = []
+    monkeypatch.setattr(tools.run_check, "run_check", lambda args: seen.append(args.file) or 0)
+    assert tools.run_check.main(["--install", str(tmp_path), "--entries-dir", str(built)]) == 0
+    assert seen == [[f"wozmod/entries/{n}.bin={built / f'{n}.bin'}" for n in (4074, 4104)]]

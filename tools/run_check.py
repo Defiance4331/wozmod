@@ -35,12 +35,16 @@ import screen_checks
 from wozmod.runtime.build import build_dll
 
 DEFAULT_SPEC = prepare_run.REPO / "data/checks/layout.toml"
-START_WAIT = 300  # seconds from launch (slot wait included) until the game answers the test mailbox
+START_WAIT = 300  # seconds from taking a game slot until the game answers the test mailbox
+SLOT_WAIT = 1800  # seconds a launch waits for one of the two game slots
+SLOT_REPORT = 30  # seconds between the waiting launch's reports of who holds the slots
+IDLE = 900  # a game left up with --to stops after this long with no command
 STOP_WAIT = 60  # seconds for the supervisor to end after stop
 RETRIES = 2  # fresh runs after one that ended before the game started
 
 
-def launch(root: Path, pad: bool = False, size: str | None = None, video: bool = False) -> subprocess.Popen:
+def launch(root: Path, pad: bool = False, size: str | None = None, video: bool = False,
+           idle: float | None = None) -> subprocess.Popen:
     """The supervisor, in a game slot, in its own process group so it can be ended whole; ``pad``: routes press a
     virtual pad instead of the keyboard; ``size``: render at WxH instead of 1080p upscaled; ``video``: output 1080p
     without FSR, so the video command keeps the game at full speed."""
@@ -49,15 +53,33 @@ def launch(root: Path, pad: bool = False, size: str | None = None, video: bool =
                sys.executable, str(Path(harness.__file__).resolve()), "run", "--root", str(root), "--slot",
                "--target", harness.TARGET, "--game", str(root / "game"), "--authorize-launch", "--timeout", "1800",
                *(["--pad", "--route-input", "pad"] if pad else []), *(["--size", size] if size else []),
-               *(["--video"] if video else [])]
+               *(["--video"] if video else []), *(["--idle", str(idle)] if idle else [])]
     with (root / "run.log").open("w") as log:
         return subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                                 start_new_session=True)
 
 
+def wait_slot(root: Path, proc: subprocess.Popen, seconds: float = SLOT_WAIT, report: float = SLOT_REPORT) -> bool:
+    """True once the run holds a game slot; meanwhile say every ``report`` seconds who holds them. False when the run
+    ended first or the wait ran out."""
+    deadline, reported = time.monotonic() + seconds, time.monotonic()
+    while not (root / "slot.json").is_file():
+        if proc.poll() is not None or time.monotonic() >= deadline:
+            return False
+        if time.monotonic() - reported >= report:
+            print("run_check: waiting for a game slot, held by " + (", ".join(harness.slot_holders()) or "nobody now"),
+                  file=sys.stderr)
+            reported = time.monotonic()
+        time.sleep(0.5)
+    return True
+
+
 def wait_up(root: Path, proc: subprocess.Popen, seconds: float = START_WAIT) -> bool:
     """True once the game answers a screen request (a frame ran); False when the run ended first or the wait ran
-    out. Raises at once on an error waiting cannot fix, such as a run path through a symlink."""
+    out. The clock starts once the run holds a game slot. Raises at once on an error waiting cannot fix, such as a run
+    path through a symlink."""
+    if not wait_slot(root, proc):
+        return False
     deadline = time.monotonic() + seconds
     while proc.poll() is None and time.monotonic() < deadline:
         try:
@@ -148,7 +170,7 @@ def staged_run(args: argparse.Namespace, dll: Path | None, to: str | None, spec:
                      art=args.art and args.art.resolve(strict=True))
         phases["stage"] += time.monotonic() - t
         t, proc = time.monotonic(), start(root, getattr(args, "pad", False), size=size,
-                                         video=getattr(args, "video", False))
+                                         video=getattr(args, "video", False), idle=IDLE if to else None)
         try:
             up = wait_up(root, proc)
             phases["boot"] += time.monotonic() - t
@@ -201,6 +223,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--art", type=Path, metavar="DIR",
                         help="swap all of the install's menu art for a fresh art build's: DIR as `python -m "
                              "wozmod.art.build --output-dir DIR --hires` or `python -m wozmod.art compose` wrote it")
+    parser.add_argument("--entries-dir", type=Path, metavar="DIR",
+                        help="swap in each menu-art entry DIR holds (<ordinal>.bin), as `python -m wozmod.art.build "
+                             "--entries N... --entries-dir DIR` writes them in seconds")
     parser.add_argument("--setting", action="append", default=[], metavar="SECTION.KEY=VALUE",
                         help="a mod setting saved before the run, such as display.fps=120")
     parser.add_argument("--pad", action="store_true", help="routes press a pad, so captures show the pad's prompts")
@@ -217,6 +242,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--officer", action="append", default=[], metavar="NAME",
                         help="with --to a Free Mode screen: an officer for the team (repeat, up to 3)")
     args = parser.parse_args(argv)
+    if args.entries_dir:  # each rebuilt entry replaces the installed one, as --file would
+        built = sorted(args.entries_dir.resolve(strict=True).glob("*.bin"))
+        if not built:
+            parser.error(f"--entries-dir {args.entries_dir} holds no <ordinal>.bin")
+        args.file += [f"wozmod/entries/{entry.name}={entry}" for entry in built]
     try:
         return run_check(args)
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
