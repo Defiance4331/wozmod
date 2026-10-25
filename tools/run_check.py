@@ -43,16 +43,18 @@ STOP_WAIT = 60  # seconds for the supervisor to end after stop
 RETRIES = 2  # fresh runs after one that ended before the game started
 
 
-def launch(root: Path, pad: bool = False, size: str | None = None, video: bool = False,
-           idle: float | None = None) -> subprocess.Popen:
-    """The supervisor, in a game slot, in its own process group so it can be ended whole; ``pad``: routes press a
-    virtual pad instead of the keyboard; ``size``: render at WxH instead of 1080p upscaled; ``video``: output 1080p
+def launch(root: Path, pad: str | None = None, size: str | None = None, video: bool = False,
+           idle: float | None = None, unplugged: bool = False, route_keys: bool = False) -> subprocess.Popen:
+    """The supervisor, in a game slot, in its own process group so it can be ended whole; ``pad``: a virtual pad of
+    that model (harness PAD_MODELS), which routes press unless ``route_keys``, plugged in after the start when
+    ``unplugged`` (game_harness.py plug on); ``size``: render at WxH instead of 1080p upscaled; ``video``: output 1080p
     without FSR, so the video command keeps the game at full speed."""
     # low CPU and disk priority, so the user's own work stays responsive
     command = ["nice", "-n", "10", "ionice", "-c2", "-n7",
                sys.executable, str(Path(harness.__file__).resolve()), "run", "--root", str(root), "--slot",
                "--target", harness.TARGET, "--game", str(root / "game"), "--authorize-launch", "--timeout", "1800",
-               *(["--pad", "--route-input", "pad"] if pad else []), *(["--size", size] if size else []),
+               *(["--pad", pad, "--route-input", "keys" if route_keys else "pad"] if pad else []),
+               *(["--unplugged"] if pad and unplugged else []), *(["--size", size] if size else []),
                *(["--video"] if video else []), *(["--idle", str(idle)] if idle else [])]
     with (root / "run.log").open("w") as log:
         return subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
@@ -169,8 +171,10 @@ def staged_run(args: argparse.Namespace, dll: Path | None, to: str | None, spec:
                      settings=args.setting + ([f"display.size={size}"] if size else []), replace=args.file,
                      art=args.art and args.art.resolve(strict=True))
         phases["stage"] += time.monotonic() - t
-        t, proc = time.monotonic(), start(root, getattr(args, "pad", False), size=size,
-                                         video=getattr(args, "video", False), idle=IDLE if to else None)
+        t, proc = time.monotonic(), start(root, getattr(args, "pad", None), size=size,
+                                         video=getattr(args, "video", False), idle=IDLE if to else None,
+                                         unplugged=getattr(args, "unplugged", False),
+                                         route_keys=getattr(args, "route_keys", False))
         try:
             up = wait_up(root, proc)
             phases["boot"] += time.monotonic() - t
@@ -228,7 +232,13 @@ def main(argv: list[str] | None = None) -> int:
                              "--entries N... --entries-dir DIR` writes them in seconds")
     parser.add_argument("--setting", action="append", default=[], metavar="SECTION.KEY=VALUE",
                         help="a mod setting saved before the run, such as display.fps=120")
-    parser.add_argument("--pad", action="store_true", help="routes press a pad, so captures show the pad's prompts")
+    parser.add_argument("--pad", nargs="?", const="x360", choices=harness.PAD_MODELS,
+                        help="give the game a virtual pad (default x360; steam, ds4, dualsense, ...), which routes "
+                             "press, so captures show the pad's prompts")
+    parser.add_argument("--unplugged", action="store_true",
+                        help="with --pad: the pad is plugged in after the start (game_harness.py plug on)")
+    parser.add_argument("--route-keys", action="store_true",
+                        help="with --pad: routes press the keyboard, for a pad the game may not bind")
     parser.add_argument("--only", metavar="SCREEN,...", help="run only these screens of the spec")
     parser.add_argument("--video", action="store_true", help="with --to: output 1080p without FSR, so "
                         "`game_harness.py video NAME --seconds N` records at full speed")

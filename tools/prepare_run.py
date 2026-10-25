@@ -37,7 +37,7 @@ STOCK_HASHED = ["OROCHI_Z.exe", *(f"LINKDATA{n}.{ext}" for n in "123" for ext in
 HASH_CACHE = WORK / "hash-cache.json"
 MANIFEST = installer.MANIFEST  # the installer's record of every file it wrote, with its SHA-256
 # the files an art build writes under wozmod/ (wozmod.art.build.build_art with hires, as the installer runs it)
-ART_FILES = re.compile(r"wozmod/(entries/[0-9]+\.bin|glyphs\.bin|hires\.bin|prompts-xbox\.bin)")
+ART_FILES = re.compile(r"wozmod/(entries/[0-9]+\.bin|glyphs\.bin|hires\.bin|prompts-(xbox|playstation)(-hires)?\.bin)")
 # the mod's own settings, as its Settings menu writes them to wozmod/settings.ini: section.key -> allowed values
 SETTINGS = {"language.text": ("english", "japanese"), "language.voice": ("english", "japanese"),
             "camera.fov": None, "camera.moving_fix": ("on", "off"), "display.fps": ("60", "120"),
@@ -186,6 +186,18 @@ def check_template(template: Path) -> None:
                          f"{proton}/proton run wineboot.exe -u")
 
 
+def key_configs(save: str) -> dict[str, bytes]:
+    """The Key Config files (inputmap1.dat, inputmap2.dat) a save fixture brings, checked against its meta.json; a run
+    without them keeps the template prefix's, whose maps name no pad."""
+    fixture = WORK / "saves" / save
+    hashes = json.loads((fixture / "meta.json").read_text()).get("inputmap_sha256", {}) if fixture.is_dir() else {}
+    files = {name: (fixture / name).read_bytes() for name in hashes}
+    for name, data in files.items():
+        if hashlib.sha256(data).hexdigest() != hashes[name]:
+            raise ValueError(f"{fixture}/{name} changed since export")
+    return files
+
+
 def save_data(save: str, template: Path) -> tuple[bytes | None, str]:
     """The save.dat a run starts with, and its name for fixtures.json: a fixture under work/saves (its meta.json hash
     checked), a save.dat file, or none for a fresh profile, which the template prefix must then not supply instead."""
@@ -237,6 +249,7 @@ def prepare(name: str, install: Path, dll: Path | None, save: str, cache_file: P
     ini = settings_ini(settings) if settings else None
     dll = (dll or install / "d3d9.dll").resolve(strict=True)
     data, save = save_data(save, template)
+    maps = key_configs(save)
     stock, root = stock_backup(), WORK / "runtime-tests" / name
     if root.exists():
         raise ValueError(f"exists: {root}")
@@ -273,9 +286,12 @@ def prepare(name: str, install: Path, dll: Path | None, save: str, cache_file: P
     target.parent.mkdir(parents=True, exist_ok=True)
     if data is not None:
         target.write_bytes(data)
+    for name, map_data in maps.items():
+        (target.parent.parent / name).write_bytes(map_data)
     stock_sha256 = dict(zip(STOCK_HASHED, cached_sha256s([stock / f for f in STOCK_HASHED], cache_file), strict=True))
     write_record(root, files, {
-        "save": {"name": save, "sha256": None if data is None else hashlib.sha256(data).hexdigest()}, "dll": str(dll),
+        "save": {"name": save, "sha256": None if data is None else hashlib.sha256(data).hexdigest(),
+                 "key_configs": sorted(maps)}, "dll": str(dll),
         "install": str(install),
         "version": installer.installed_version(install),
         "extras": sorted(EXTRAS & set(files)), "settings": list(settings),

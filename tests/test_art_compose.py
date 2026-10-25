@@ -83,4 +83,5 @@ def test_the_install_art_build_writes_only_the_player_files(tmp_path):
     compose(game, stems, bundle, tmp_path / "art")
     assert sorted(p.relative_to(tmp_path / "art").as_posix() for p in (tmp_path / "art").rglob("*")
                   if p.parent.name != "entries") == [
-        "wozmod", "wozmod/entries", "wozmod/glyphs.bin", "wozmod/hires.bin", "wozmod/prompts-xbox.bin"]
+        "wozmod", "wozmod/entries", "wozmod/glyphs.bin", "wozmod/hires.bin", "wozmod/prompts-playstation-hires.bin",
+        "wozmod/prompts-playstation.bin", "wozmod/prompts-xbox-hires.bin", "wozmod/prompts-xbox.bin"]

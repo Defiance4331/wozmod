@@ -21,6 +21,8 @@
 #include "glyph_raster.h"
 #include "display_fit.h"
 #include "voice_play.h"
+#include "pad_buttons.h"
+#include "prompt_hires.h"
 #include "device_hooks.h"
 #include "crash_log.h"
 #include "event_line.h"
@@ -2365,25 +2367,43 @@ static void camera_default(u32 player)
 #define WIDE_LAST_DRAW 0x54BAE1     /* last double-advance icon code: draw, then measure */
 #define WIDE_LAST_MEASURE 0x54C041
 #define KEYS_HELD ((const volatile u8 *)0x140C4E0)
-/* The 4079 slots prompts-xbox.bin replaces: PROMPT_SLOT_LIST (enrt_data.h) is wozmod.runtime.prompts' list. */
-static const u8 prompt_slot[PROMPT_SLOTS] = {PROMPT_SLOT_LIST};
-static unsigned long long prompt_handle[2][PROMPT_SLOTS];
+/* The items of prompts-<family>.bin the runtime makes handles for (enrt_data.h, from wozmod.runtime.prompts): the first
+ * PROMPT_SLOTS are the 4079 slots it swaps into the game's icon table, the rest the stick-direction icons. */
+static const u8 prompt_slot[PROMPT_ITEMS] = {PROMPT_SLOT_LIST};
+_Static_assert(PROMPT_ITEMS == PROMPT_SLOTS + 8, "the Move List's stick icons: each stick's up, down, left, right");
+/* Prompt sets: the stock keyboard art, then the art of each pad family (PAD_XBOX, PAD_PLAYSTATION). */
+enum { PAD_OTHER, PAD_XBOX, PAD_PLAYSTATION };
+static unsigned long long prompt_handle[3][PROMPT_ITEMS];
+static u32 prompt_key[2][PROMPT_ITEMS];  /* each pad set's registry key (its G1T's +4), to tell its record is still ours */
 static int prompts_ready, prompt_set;
-static int pad_last;
+static int pad_last, pad_last_family;
+static void prompts_sharpen(int fresh);
 
 static void prompts_load(void)
 {
+    static const WCHAR *const file[2] = {L"prompts-xbox.bin", L"prompts-playstation.bin"};
     WCHAR name[MAX_PATH];
-    u32 size, i;
-    u8 *data = load(path(name, L"prompts-xbox.bin"), &size);
-    if (!data)
-        return;
-    for (i = 0; i < sizeof prompt_slot; i++) {
-        prompt_handle[0][i] = PROMPT_TABLE[prompt_slot[i]];
-        prompt_handle[1][i] = TEXTURE_HANDLE(PACKAGE_ITEM(data, prompt_slot[i]), 0x1F00, 0x3EE3);
+    u32 size, i, set;
+    u8 *data[2];
+    for (set = 0; set < 2; set++)
+        if (!(data[set] = load(path(name, file[set]), &size))) {
+            if (set)
+                HeapFree(GetProcessHeap(), 0, data[0]);
+            return;
+        }
+    for (i = 0; i < PROMPT_ITEMS; i++) {
+        if (i < PROMPT_SLOTS)
+            prompt_handle[0][i] = PROMPT_TABLE[prompt_slot[i]];
+        for (set = 0; set < 2; set++) {
+            const u8 *g1t = PACKAGE_ITEM(data[set], prompt_slot[i]);
+            prompt_key[set][i] = *(const u32 *)(g1t + 4);
+            prompt_handle[set + 1][i] = TEXTURE_HANDLE(g1t, 0x1F00, 0x3EE3);
+        }
     }
-    HeapFree(GetProcessHeap(), 0, data);
+    for (set = 0; set < 2; set++)
+        HeapFree(GetProcessHeap(), 0, data[set]);
     prompts_ready = 1;
+    prompts_sharpen(1);
 }
 
 
@@ -2712,6 +2732,103 @@ static void hires_load(void)
     note("hi-res sheets:", hires_sheets << 16 | hires_rows);
 }
 
+/* The pad prompts' sharper copies, prompts-<family>-hires.bin (wozmod.art.build.prompt_hires): per pad set, each
+ * swapped slot's icon at each of its scales, BGRA. The game draws a prompt from its handle's texture cell and
+ * normalises the UVs by the handle's size (the 32x32 or 64x32 of prompts-<family>.bin), so a larger texture in the
+ * cell draws the same icon with more texels. The display picks the copy: the stock size up to 720 lines, 2x up to
+ * 1440, else 4x, so a 30-pixel icon has at least as many texels as pixels. Ours are MANAGED, which a Reset keeps;
+ * the handle's own texture waits aside, to go back in when the display shrinks. A record the engine has freed or
+ * reused is left alone. */
+static struct {
+    void **cell;
+    void *stock, *ours;
+} prompt_sharp[2][PROMPT_ITEMS];
+static u32 prompt_scale = 1;
+static void *prompt_device;
+
+/* The cell the engine binds a pad prompt's texture from (as hires_find_cell), while its record is still that prompt's. */
+static void **prompt_cell(u32 set, u32 i)
+{
+    const u8 *r = TEXTURE_RECORDS + ((u32)prompt_handle[set + 1][i] & 0xFFFF) * 0x28, *object;
+    void **const *wrappers;
+    if (*(const u32 *)r != prompt_key[set][i] || !(object = *(const u8 *const *)(r + 4)) ||
+        !(wrappers = *(void **const *const *)(object + 0x10)))
+        return 0;
+    return *wrappers;
+}
+
+/* A MANAGED BGRA texture w x h from rows of pixels. */
+static void *prompt_texture(void *device, u32 w, u32 h, const u8 *pixels)
+{
+    typedef long(__stdcall *create_fn)(void *, u32, u32, u32, u32, u32, u32, void **, void *);
+    struct { int pitch; u8 *bits; } locked;
+    void *texture = 0;
+    u32 y;
+    if (((create_fn)(*(void ***)device)[23])(device, w, h, 1, 0, 21 /* D3DFMT_A8R8G8B8 */, 1, &texture, 0) < 0)
+        return 0;
+    if (COM(texture, 0x4C, 5)(texture, 0, (u32)&locked, 0, 0) < 0) {
+        COM(texture, 0x08, 1)(texture);
+        return 0;
+    }
+    for (y = 0; y < h; y++)
+        CopyMemory(locked.bits + y * locked.pitch, pixels + y * w * 4, w * 4);
+    COM(texture, 0x50, 2)(texture, 0);
+    return texture;
+}
+
+/* fresh: the handles were just made, their cells hold their own textures. Otherwise (after a Reset), swap in the
+ * copies the display size needs, if it changed. */
+static void prompts_sharpen(int fresh)
+{
+    static const WCHAR *const file[2] = {L"prompts-xbox-hires.bin", L"prompts-playstation-hires.bin"};
+    WCHAR name[MAX_PATH];
+    u32 want = area_h <= 720 ? 1 : area_h <= 1440 ? 2 : 4, set, i, size = 0, at, w, made = 0;
+    void *device = game_device();
+    u8 *data;
+    if (!prompts_ready || !device)
+        return;
+    for (set = 0; set < 2; set++)
+        for (i = 0; i < PROMPT_ITEMS; i++)
+            if (fresh || device != prompt_device)
+                prompt_sharp[set][i].cell = prompt_cell(set, i), prompt_sharp[set][i].ours = 0,
+                prompt_sharp[set][i].stock = prompt_sharp[set][i].cell ? *prompt_sharp[set][i].cell : 0;
+            else if (prompt_cell(set, i) != prompt_sharp[set][i].cell
+                     || *prompt_sharp[set][i].cell != (prompt_sharp[set][i].ours ? prompt_sharp[set][i].ours
+                                                                                  : prompt_sharp[set][i].stock))
+                prompt_sharp[set][i].cell = 0;  /* freed or reused by the engine since */
+    if (fresh || device != prompt_device)
+        prompt_scale = 1, prompt_device = device;
+    if (want == prompt_scale)
+        return;
+    for (set = 0; set < 2; set++) {
+        data = want > 1 ? load(path(name, file[set]), &size) : 0;
+        if (want > 1 && !prompt_hires_find(data, size, prompt_slot[0], want, &w)) {
+            note("refused: prompt copies, scale", want);
+            if (data)
+                HeapFree(GetProcessHeap(), 0, data);
+            return;
+        }
+        for (i = 0; i < PROMPT_ITEMS; i++) {
+            void *texture = 0;
+            if (!prompt_sharp[set][i].cell)
+                continue;
+            if (want > 1 && (at = prompt_hires_find(data, size, prompt_slot[i], want, &w)))
+                texture = prompt_texture(device, w, 32 * want, data + at);
+            if (!texture && want > 1)
+                continue;
+            *prompt_sharp[set][i].cell = texture ? texture : prompt_sharp[set][i].stock;
+            if (prompt_sharp[set][i].ours)
+                COM(prompt_sharp[set][i].ours, 0x08, 1)(prompt_sharp[set][i].ours);
+            prompt_sharp[set][i].ours = texture;
+            made += texture != 0;
+        }
+        if (data)
+            HeapFree(GetProcessHeap(), 0, data);
+    }
+    prompt_scale = want;
+    note("prompt copies: scale << 16 | made", want << 16 | made);
+}
+
 static void glyphs_load(void)
 {
     WCHAR name[MAX_PATH];
@@ -2947,20 +3064,22 @@ static void test_review_draw(void)
 
 static int rebinding;
 
-static void prompts_show(int xbox)
+/* set: 0 the keyboard, else a pad family's art. */
+static void prompts_show(int set)
 {
-    static const u8 width[2] = {30, 60}, wide_last[2] = {0x14, 0x15};
+    /* the pad sets draw every icon in the left 32 texels of its slot, so no icon takes a double advance */
+    static const u8 width[3] = {30, 30, 30}, wide_last[3] = {0x14, 0x10, 0x10};
     u32 i;
-    if (!prompts_ready || xbox == prompt_set)
+    if (!prompts_ready || set == prompt_set)
         return;
-    prompt_set = xbox;
-    PAD_PROMPTS = (u8)xbox;
-    for (i = 0; i < sizeof prompt_slot; i++)
-        PROMPT_TABLE[prompt_slot[i]] = prompt_handle[xbox][i];
-    write_at(START_WIDTH, &width[xbox], 1);
-    write_at(STICK_WIDTH, &width[xbox], 1);
-    write_at(WIDE_LAST_DRAW, &wide_last[xbox], 1);
-    write_at(WIDE_LAST_MEASURE, &wide_last[xbox], 1);
+    prompt_set = set;
+    PAD_PROMPTS = (u8)(set != 0);
+    for (i = 0; i < PROMPT_SLOTS; i++)
+        PROMPT_TABLE[prompt_slot[i]] = prompt_handle[set][i];
+    write_at(START_WIDTH, &width[set], 1);
+    write_at(STICK_WIDTH, &width[set], 1);
+    write_at(WIDE_LAST_DRAW, &wide_last[set], 1);
+    write_at(WIDE_LAST_MEASURE, &wide_last[set], 1);
 }
 
 
@@ -2993,24 +3112,46 @@ static void keys_read(void)
 
 
 #define GAME_NEW ((char *(*)(u32))0x69BC72)
-static int xbox_pad_seen;
+/* The family of each pad (index as in the game's pad list), from pad_identify; DualSense pads name button 8 Create. */
+static u8 pad_family[8], pad_dualsense[8];
 
+static int pad_present(u32 index)
+{
+    return PADS[0] && index < (u32)(PADS[1] - PADS[0]) / 2;
+}
+
+/* A binding's name for the Key Config, by the family of its pad: the pad's own button names, or for another pad or
+ * one not connected, the stock numbering in English (the stock pieces are Japanese). */
 static int pad_label(const u8 *binding, char **out)
 {
-    static const char *const button[10] = {"A", "B", "X", "Y", "LB", "RB", "Back", "Start", "LS Click", "RS Click"};
-    static const char *const axis[5][2] = {
-        {"LS Right", "LS Left"}, {"LS Down", "LS Up"}, {"LT", "RT"}, {"RS Right", "RS Left"}, {"RS Down", "RS Up"}};
-    u32 code = *(const u32 *)(binding + 12);
-    const char *name;
-    if (!xbox_pad_seen || *(const u32 *)binding >= 8)
+    static const char *const button[2][16] = {
+        {"A", "B", "X", "Y", "LB", "RB", "Back", "Start", "LS Click", "RS Click"},
+        {"Square", "Cross", "Circle", "Triangle", "L1", "R1", "L2", "R2", "Share", "Options", "L3", "R3", "PS",
+         "Touchpad", "Mute"}};
+    static const char *const axis[2][6][2] = {
+        {{"LS Right", "LS Left"}, {"LS Down", "LS Up"}, {"LT", "RT"}, {"RS Right", "RS Left"}, {"RS Down", "RS Up"}},
+        {{"LS Right", "LS Left"}, {"LS Down", "LS Up"}, {"RS Right", "RS Left"}, {"RS Down", "RS Up"}, {"R2", "R2"},
+         {"L2", "L2"}}};
+    u32 device = *(const u32 *)binding, code = *(const u32 *)(binding + 12), negative = *(const u32 *)(binding + 8) != 0;
+    u32 family = device < 8 && pad_present(device) ? pad_family[device] : PAD_OTHER;
+    const char *name = 0;
+    char *text;
+    if (device >= 8)
         return 0;
-    if (binding[4])
-        name = code < 5 ? axis[code][*(const u32 *)(binding + 8) != 0] : 0;
+    if (family != PAD_OTHER && binding[4])
+        name = code < 6 ? axis[family - 1][code][negative] : 0;
+    else if (family != PAD_OTHER)
+        name = code < 16 ? button[family - 1][code] : 0;
+    if (family == PAD_PLAYSTATION && !binding[4] && code == 8 && pad_dualsense[device])
+        name = "Create";
+    text = GAME_NEW(30);
+    if (name)
+        lstrcpyA(text, name);
+    else if (binding[4])  /* the half the binding keeps (the stock label prints + for the negative half) */
+        wsprintfA(text, "Axis %u%c", code + 1, negative ? '-' : '+');
     else
-        name = code < 10 ? button[code] : 0;
-    if (!name)
-        return 0;
-    *out = lstrcpyA(GAME_NEW(30), name);
+        wsprintfA(text, "Button %u", code + 1);
+    *out = text;
     return 1;
 }
 
@@ -3023,17 +3164,32 @@ static int pad_label(const u8 *binding, char **out)
 #define GAME_DELETE ((void (*)(void *))0x69BD3A)
 static int move_key(const struct frame *f)
 {
-    static const u8 art[12] = {1, 0, 12, 11, 7, 9, 14, 13, 179, 178, 8, 10};
+    /* The art for a binding of the prompt set's family, in its 30-texel window: a button's 4079 slot (Xbox A to RS
+     * Click; PlayStation Square to R3), a trigger axis half's (Xbox LT, RT on axis 2; PlayStation R2, L2 on axes 4,
+     * 5), else a stick half's icon (stick_axis: LX, LY, RX, RY as 0 to 3) by its stick and the half it keeps. */
+    static const u8 button_art[2][12] = {{1, 0, 12, 11, 7, 9, 14, 13, 179, 178}, {12, 1, 0, 11, 7, 9, 8, 10, 14, 13, 179, 178}};
+    static const u8 stick_axis[2][6] = {{0, 1, 0xFF, 2, 3, 0xFF}, {0, 1, 2, 3, 0xFF, 0xFF}};
     const u8 *b = PLAYER_MAP(f->edx) + MOVE_ACTION[f->eax] * 0x28 + 8 + 16;
-    u32 code = *(const u32 *)(b + 12), slot = 0xFF, w = 0;
+    u32 device = *(const u32 *)b, code = *(const u32 *)(b + 12), negative = *(const u32 *)(b + 8) != 0;
+    u32 slot = 0xFF, w = 0, family, axis;
+    unsigned long long h = 0;
     char *name;
     if (!prompt_set)
         return 0;
-    if (*(const u32 *)b < 8)
-        slot = !b[4] && code < 10 ? art[code] : b[4] && code == 2 ? art[10 + (*(const u32 *)(b + 8) != 0)] : 0xFF;
-    if (slot != 0xFF) {
-        unsigned long long h = PROMPT_TABLE[slot];
-        w = slot >= 13 ? 60 : 30;
+    family = device < 8 && pad_present(device) ? pad_family[device] : PAD_OTHER;
+    if (family == prompt_set && !b[4])
+        slot = code < (family == PAD_XBOX ? 10u : 12u) ? button_art[family - 1][code] : 0xFF;
+    else if (family == prompt_set && family == PAD_XBOX && code == 2)
+        slot = negative ? 10 : 8;
+    else if (family == prompt_set && family == PAD_PLAYSTATION && (code == 4 || code == 5))
+        slot = code == 4 ? 10 : 8;
+    else if (family == prompt_set && code < 6 && (axis = stick_axis[family - 1][code]) != 0xFF)
+        /* up, down, left, right: a vertical axis's negative half is up, a horizontal one's left */
+        h = prompt_handle[family][PROMPT_SLOTS + axis / 2 * 4 + (axis % 2 ? !negative : 2 + !negative)];
+    if (slot != 0xFF)
+        h = PROMPT_TABLE[slot];
+    if (h) {
+        w = 30;
         GAME_QUAD((u32)h, (u32)(h >> 32), f->arg[0], f->arg[1], 0, w, 30, 0, 0, w, 30, 0x80, 4);
     } else if (pad_label(b, &name)) {
         w = GAME_MEASURE(name, 0, 0);
@@ -3060,36 +3216,82 @@ static int xbox_named(u8 *pad)
 /* With no saved Key Config, the input map load (0x5E38E0) auto-sets each player's pad by name before
  * the first poll, so name the pads first. A saved Key Config is loaded as it is. Logs each pad once,
  * with its own name and its shape as axes << 8 | buttons. */
+static void pad_note(const u8 *pad)
+{
+    char line[80];
+    lstrcpyA(line, "pad: ");
+    lstrcpynA(line + 5, (const char *)pad, sizeof line - 5);
+    note(line, *(const u32 *)(pad + 0x160) << 8 | *(const u32 *)(pad + 0x168));
+}
+
+/* Each pad's family, before anything renames it: Xbox by the XInput shape (Windows names every XInput pad alike),
+ * PlayStation by Sony's USB ids in DirectInput's product GUID (Data1: vendor | product << 16): DualShock 4 (two
+ * revisions and the wireless adapter), DualSense and DualSense Edge. */
+static void pad_identify(u32 index)
+{
+    static const unsigned short dualshock[3] = {0x05C4, 0x09CC, 0x0BA0}, dualsense[2] = {0x0CE6, 0x0DF2};
+    u32 info[0x244 / 4], product, i;
+    void *device = PADS[0][2 * index];
+    const u8 *pad = PADS[0][2 * index + 1];
+    pad_family[index] = XINPUT_SHAPE(pad) ? PAD_XBOX : PAD_OTHER;
+    info[0] = sizeof info;
+    if (pad_family[index] == PAD_OTHER && COM(device, 0x3C, 2)(device, (u32)info) >= 0 && (info[5] & 0xFFFF) == 0x054C) {
+        product = info[5] >> 16;
+        for (i = 0; i < 3; i++)
+            pad_family[index] = product == dualshock[i] ? PAD_PLAYSTATION : pad_family[index];
+        for (i = 0; i < 2; i++)
+            if (product == dualsense[i])
+                pad_family[index] = PAD_PLAYSTATION, pad_dualsense[index] = 1;
+    }
+    note("pad family", index << 8 | pad_family[index]);
+}
+
 static void pads_named(void)
 {
     static int logged;
-    char line[80];
     u8 *pad;
     u32 i, count = PADS[0] ? (u32)(PADS[1] - PADS[0]) / 2 : 0;
     if (!logged)
         note("pads at start", count);
-    for (i = 0; i < count; i++) {
+    for (i = 0; i < count && i < 8; i++) {
         pad = PADS[0][2 * i + 1];
         if (!logged) {
-            lstrcpyA(line, "pad: ");
-            lstrcpynA(line + 5, (const char *)pad, sizeof line - 5);
-            note(line, *(const u32 *)(pad + 0x160) << 8 | *(const u32 *)(pad + 0x168));
+            pad_note(pad);
+            pad_identify(i);
         }
         xbox_named(pad);
     }
     logged = 1;
 }
 
+/* Hook 47, after the pad's state read (pad_buttons.h): held follows the state, at JOY_STATE + 0x30. */
+static void buttons_sync(const u8 *pad)
+{
+    pad_buttons_sync(*(float *const *)(pad + 0x148), *(float *const *)(pad + 0x14C), *(float *const *)(pad + 0x150),
+                     *(const float *const *)(pad + 0x154), (const volatile u8 *)JOY_STATE + 0x30,
+                     *(const u32 *)(pad + 0x168));
+}
+
+/* Hook 47 for an Xbox or PlayStation pad, after its state read: the D-pad (a POV hat the stock poll never reads)
+ * becomes the left stick, an Xbox pad's right stick X (lRx) goes to the lRz slot the stock poll reads for 5 axes,
+ * and the first input since the keyboard's shows that pad family's prompts. */
 static void pad_read(const u8 *pad)
 {
     static int bound, was_active;
+    /* JOY_STATE ints that are sticks (and the Xbox's trigger axis, which rests at 0): a PlayStation pad's triggers,
+     * lRx and lRy, rest at -255 */
+    static const u8 sticks[2][5] = {{0, 1, 2, 3, 4}, {0, 1, 2, 5, 5}};
     volatile int *s = JOY_STATE;
-    u32 i, active = 0;
+    u32 i, active = 0, index, family;
     u32 pov = (u32)s[8], dir;
     static const signed char dx[8] = {0, 1, 1, 1, 0, -1, -1, -1}, dy[8] = {-1, -1, 0, 1, 1, 1, 0, -1};
-    if (!xbox_named((u8 *)pad))  /* a pad plugged in after the start */
+    for (index = 0; pad_present(index) && PADS[0][2 * index + 1] != pad; index++)
+        ;
+    family = index < 8 && pad_present(index) ? pad_family[index] : PAD_OTHER;
+    if (family == PAD_OTHER)
         return;
-    xbox_pad_seen = 1;
+    if (family == PAD_XBOX)
+        xbox_named((u8 *)pad);  /* a pad plugged in after the start */
     if (!bound) {
         bound = 1;
         if (PLAYER_JOY[0] == 10)
@@ -3099,18 +3301,33 @@ static void pad_read(const u8 *pad)
         if ((maps_loaded >> i & 1) && PLAYER_JOY[i] < 8)
             camera_default(i);
     maps_loaded = 0;
-    s[5] = s[3];
+    if (family == PAD_XBOX)
+        s[5] = s[3];
     if ((pov & 0xFFFF) != 0xFFFF) {
         dir = (pov + 2250) / 4500 % 8;
         s[0] = dx[dir] * 255, s[1] = dy[dir] * 255;
     }
-    for (i = 0; i < 10; i++)
+    for (i = 0; i < *(const u32 *)(pad + 0x168) && i < 128; i++)
         active |= ((const volatile u8 *)(s + 12))[i] & 0x80;
-    for (i = 0; i < 6; i++)
-        active |= s[i] > 128 || s[i] < -128;
+    for (i = 0; i < 5; i++)
+        active |= s[sticks[family - 1][i]] > 128 || s[sticks[family - 1][i]] < -128;
     if (active && !was_active)
-        pad_last = 1;
+        pad_last = 1, pad_last_family = family;
     was_active = active;
+}
+
+/* Hook 113, the pad auto-setting's (0x5E2D30) success exit, map object in esi and pad index in ebx: a PlayStation pad
+ * got the stock defaults for an unnamed pad (layout 0), whose sticks, camera (Z and Rz) and D-pad fit it; its
+ * buttons take the console layout by position instead of layout 0's numbers. The stock layout table (0x7AA8C0, a
+ * row of button indices per layout) feeds these actions in this order; layout 0's row is 0 to 11. Square, Cross,
+ * Circle, Triangle, L1, R1, L2, R2, Share, Options, L3, R3 are buttons 0 to 11. */
+static void playstation_defaults(u8 *map)
+{
+    static const u8 action[13] = {8, 9, 6, 7, 10, 11, 12, 13, 16, 14, 15, 5, 4};
+    static const u8 button[13] = {0, 3, 1, 2, 4, 5, 6, 7, 10, 10, 11, 8, 9};
+    u32 k;
+    for (k = 0; k < 13; k++)
+        *(u32 *)(map + action[k] * 0x28 + 8 + 16 + 12) = button[k];
 }
 
 
@@ -3207,6 +3424,9 @@ static void pads_rescan(void)
         PAD_INIT(pad, (const char *)info + 0x12C, caps[3], caps[4], caps[5], 0.4f);
         PAD_NUMBER(pad, i);
         note("pad: added device", i);
+        pad_note(pad);
+        if (i < 8)
+            pad_identify(i);
     }
 }
 
@@ -4157,7 +4377,7 @@ static long __stdcall reset(void *device, void *params)
     if (result >= 0)
         COM(device, 0x170, 2)(device, 0), COM(device, 0x1AC, 2)(device, 0);  /* SetVertexShader, SetPixelShader */
     if (result >= 0)
-        hires_attach();  /* at the level the new display size needs */
+        hires_attach(), prompts_sharpen(0);  /* at the level the new display size needs */
     return result;
 }
 
@@ -4735,7 +4955,7 @@ static int always(u32 id, struct frame *f, u32 *replace)
         reload();
         keys_read();
         pads_rescan();
-        prompts_show(pad_last && !rebinding);
+        prompts_show(pad_last && !rebinding ? pad_last_family : 0);
         rebinding = 0;
         box_now ^= 1, box_count[box_now] = 0;
         if (fps_ok && !hfr_busy) {
@@ -4810,7 +5030,13 @@ static int always(u32 id, struct frame *f, u32 *replace)
         return 1;
 #endif
     case 47:
+        buttons_sync((const u8 *)f->esi);
         pad_read((const u8 *)f->esi);
+        return 1;
+    case 113:
+        if (f->ebx < 8 && pad_present(f->ebx) && pad_family[f->ebx] == PAD_PLAYSTATION
+            && (f->esi == 0x140C48C || f->esi == 0x140C49C))
+            playstation_defaults(*(u8 **)f->esi);
         return 1;
     case 70:
         pads_named();

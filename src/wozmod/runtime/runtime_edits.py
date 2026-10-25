@@ -863,6 +863,13 @@ PAD_CAMERA = [
     if value != stock
 ]
 
+# A saved Key Config keeps its pad bindings when that pad is not connected yet. The input map load (0x5E38E0) set
+# each binding whose pad index had no pad at boot to device 10 (none), so a pad that arrives later (Steam Input's
+# virtual pad, a pad switched on after the game) was unbound until the player chose Load, and the next save wrote
+# the loss to disk. Every reader of a binding's pad already skips a pad index with no pad (the evaluators 0x5E3EB0,
+# 0x5E4020, 0x5E40C0, 0x5E4200 test 0x5E5740), so the binding waits for its pad: jne becomes jmp over the clear.
+SAVED_PAD = [(0x5E3C43, bytes.fromhex("750c"), bytes.fromhex("eb0c"))]
+
 # A new save and the Controller page's DEFAULT start CAMERA - HORIZONTAL at STANDARD: bit 0x1 of the player's options
 # byte (0x801508 + 0x11 * player) set, so the stick camera (0x4AF600) turns the view the way the stick is pushed. Stock
 # clears it, INVERSE. The first-run defaults (0x475440, from 0x476FF0) clear bits 0-2 for both players before any save

@@ -13,7 +13,7 @@ from wozmod.formats import pe
 
 from .latin_font import LATIN_GLYPH, SURROGATE_CODE, SURROGATE_LETTERS
 from .layout import C_SOURCE
-from .prompts import XBOX_PROMPTS
+from .prompts import PROMPT_SLOTS, STICK_ITEMS
 from .text_room import ROOMS, WIDE
 
 COMPILER = "i686-w64-mingw32-gcc"
@@ -81,6 +81,7 @@ ALWAYS_HOOKS = [
     (0x428FB4, "8d442438 d9ee", 46, None),      # 40-degree battle camera FOV stored (mid-function)
     (0x5E4F64, "8b8660010000", 47, None),       # joystick state read (mid-function)
     (0x5E38E0, "81ec40020000", 70, 0),          # input map load (cdecl): Xbox names before its auto-setting
+    (0x5E3891, "b801000000", 113, None),        # pad auto-setting's success exit: PlayStation buttons (mid-function)
     (0x56FDC0, "e82b5a0700", 106, 0),           # Controller page, Key Config chosen: the pad auto-setting offer; always replaced
     (0x58E2BC, "5f5eb801000000", 48, None),     # 4079 prompt handles made (tail)
     (0x5ADC60, "8b442404 69c0f0000000", 49, 0),  # menu word, pressed (cdecl): A/B for a pad
@@ -234,8 +235,9 @@ def data_header(exe: bytes, edits: dict[int, list[tuple[int, bytes, bytes]]], ho
         f"#define WIDE_TEXT {WIDE}",
         f"static const u32 enrt_wide_writes[] = {{{', '.join(f'{r.call + 5:#x}' for r in ROOMS if r.room == WIDE)}}};",
         f"static const u32 enrt_wide_reads[] = {{{', '.join(f'{r.read + 5:#x}' for r in ROOMS if r.read)}}};",
-        f"#define PROMPT_SLOTS {len(XBOX_PROMPTS)}",
-        f"#define PROMPT_SLOT_LIST {', '.join(map(str, XBOX_PROMPTS))}",
+        f"#define PROMPT_SLOTS {len(PROMPT_SLOTS)}",
+        f"#define PROMPT_ITEMS {len(PROMPT_SLOTS) + len(STICK_ITEMS)}",
+        f"#define PROMPT_SLOT_LIST {', '.join(map(str, PROMPT_SLOTS + STICK_ITEMS))}",
         "",
     ])
 

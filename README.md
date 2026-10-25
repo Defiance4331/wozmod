@@ -31,9 +31,10 @@ options.
 - **A wider field of view**, up to 150%.
 - **More screen sizes**, up to the size of your monitor, and a borderless
   window mode.
-- **Xbox controller support** with the Warriors Orochi 2 controls and Xbox
-  button prompts. A new controller is set up at once, with the camera on the
-  right stick.
+- **Xbox and PlayStation controller support** (DualShock 4 and DualSense) with
+  the Warriors Orochi 2 controls and button prompts for your controller. A new
+  controller is set up at once, with the camera on the right stick, even when
+  you connect it after the game starts.
 - **Closing the game window quits the game** at once.
 
 ## What you need
@@ -184,6 +185,9 @@ change.
 - **The screen stays black at start (Linux).** The game must start in its own
   folder. If you added it to Steam as a non-Steam game, set **Start In** to the
   game folder.
+- **Your PlayStation controller shows Xbox buttons.** Steam Input is on for the
+  game, and it shows the game an Xbox controller. Turn Steam Input off for the
+  game to see PlayStation buttons, or leave it on if you prefer its settings.
 - **You want to report a bug.** Open an issue on GitHub and attach
   `wozmod/runtime.log`. If the game crashed or froze, also attach
   `wozmod/runtime.crash.log`. wozmod keeps the log of the last run that crashed
@@ -263,5 +267,11 @@ wozmod to match the look of the official menus, which the release ships
 rendered, together with the outlines of wozmod's own in-game text face. It
 contains no font files or images from any game, and it is covered by the same
 licence as the rest of wozmod.
+
+The controller button prompts are original artwork too, drawn by wozmod's own
+code; they only show which button to press. PlayStation, DualShock and
+DualSense are trademarks of Sony Interactive Entertainment, and Xbox is a
+trademark of Microsoft. wozmod is not affiliated with, endorsed by, or
+sponsored by Sony Interactive Entertainment or Microsoft.
 
 wozmod is free software under the [GNU General Public License v3.0 or later](LICENSE).

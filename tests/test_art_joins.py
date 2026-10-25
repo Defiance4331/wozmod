@@ -13,7 +13,6 @@ from wozmod.art.build import MAPPING, expanded
 from wozmod.art.stage_titles import title_members, title_sources
 from wozmod.formats import pe
 from wozmod.formats.linkdata import archive, wo1_entries
-from wozmod.runtime.prompts import XBOX_PROMPTS
 
 STOCK = Path(os.environ.get("WOZMOD_GAME", ""))
 DONORS = Path(os.environ.get("WOZMOD_DONORS", ""))
@@ -33,17 +32,14 @@ def program(disc: str) -> bytes:
     return path.read_bytes()
 
 
-def test_each_xbox_prompt_takes_the_wo2_item_its_slot_draws_in_both_programs() -> None:
-    # Bug: a prompt slot is paired with a neighbouring ENS 13 item, so a menu shows the wrong button. Both programs
-    # load the 4079 icons through one 158-entry slot table (MOZ 0x718B60, WO2 X360 0x82047CB8): equal tables make
-    # ENS 13 item k the Xbox art for slot k. MOZ repainted slots 11 and 12 (the X360 D-pad halves) as its attack
-    # keycaps, which take the face buttons of items 2 and 3.
+def test_the_2p_strip_takes_the_wo2_item_its_slot_draws_in_both_programs() -> None:
+    # Bug: the 2P strip of the pad prompts (slot 44) takes a neighbouring ENS 13 item, so the 2P banner shows other
+    # art. Both programs load the 4079 icons through one 158-entry slot table (MOZ 0x718B60, WO2 X360 0x82047CB8):
+    # equal tables make ENS 13 item 44 the X360 art for slot 44.
     exe = stock("OROCHI_Z.exe").read_bytes()
     moz = struct.unpack_from("<158I", exe, pe.file_offset(pe.layout(exe), 0x718B60))
     x360 = struct.unpack_from(">158I", program("wo2-x360"), 0x82047CB8 - X360_BASE)
     assert moz == x360
-    repainted = {11: 2, 12: 3}
-    assert {slot: item for slot, item in XBOX_PROMPTS.items() if repainted.get(slot, slot) != item} == {}
 
 
 # Entries MOZ loads through the same handle table as a WO2 X360 entry (MOZ table, WO2 ENS, WO2 table, length): the

@@ -21,7 +21,8 @@ from wozmod.progress import report as report_progress
 from . import lettering, words
 from wozmod.runtime.latin_font import CELL, LATIN_GLYPH
 from wozmod.runtime import camp_plate
-from wozmod.runtime.prompts import PROMPT_ENTRY, XBOX_PROMPTS
+from wozmod.runtime.prompts import PROMPT_ENTRY, PROMPT_FAMILIES, STICK_ITEMS
+from .prompt_glyphs import prompt_art, stick_art
 from wozmod.donors import WO1_X360, WO2_X360, extract_donor, verify_file
 from wozmod.formats.textures import (
     G1T_HEADER, G1T_TEXTURE_HEADER, PIXEL_FORMAT_BGRA8, G1tFile, parse_g1t, parse_texture_package,
@@ -585,24 +586,42 @@ def glyphs_bin(atlas: bytes, outlines: bytes) -> bytes:
     header = glyph_sheet_header(atlas)
     return struct.pack("<I", len(header)) + header + outlines
 
-XBOX_PROMPT_SIZE = {3: (64, 32)}  
-TWO_P_SLOT, TWO_P_ROWS = 44, 56  
+TWO_P_SLOT, TWO_P_ROWS = 44, 56  # the 2P strip: MOZ's art with the X360 "2P" rows pasted over its top
 
-def xbox_prompts(stock: bytes, wo2: dict[int, G1tFile]) -> bytes:
 
+def pad_prompts(stock: bytes, wo2: dict[int, G1tFile], family: str) -> bytes:
+    """prompts-<family>.bin: entry 4079 with the pad family's icons (wozmod.art.prompt_glyphs, our own drawing) in
+    the slots the runtime swaps, each at the size of the slot's stock texture, the stick-direction icons in
+    STICK_ITEMS, and the 2P strip in slot 44."""
     package = parse_texture_package(stock)
-    for slot, item in XBOX_PROMPTS.items():
-        g1t = wo2[item]
-        if size := XBOX_PROMPT_SIZE.get(slot):
-            icon = rgba(g1t.textures[0])
-            g1t = g1t.with_texture_resized(0, *size, fitted(icon, *size, (0, 0, *size)).tobytes())
-        if slot == TWO_P_SLOT:  
-            moz = parse_g1t(package.items[slot].source)
-            art = rgba(moz.textures[0])
-            art.paste(rgba(g1t.textures[0]).crop((0, 0, art.width, TWO_P_ROWS)), (0, 0))
-            g1t = moz.with_texture_rgba(0, art.tobytes())
-        package = package.with_g1t(slot, rekeyed(g1t))
-    return package.encode()
+    for slot, icon in pad_icons(family).items():  # uncompressed: DXT5 blurs a 32-texel icon
+        moz = parse_g1t(package.items[slot].source)
+        package = package.with_g1t(slot, rekeyed(moz.with_texture_resized(0, *icon.size, icon.tobytes(),
+                                                                          PIXEL_FORMAT_BGRA8)))
+    moz = parse_g1t(package.items[TWO_P_SLOT].source)
+    art = rgba(moz.textures[0])
+    art.paste(rgba(wo2[TWO_P_SLOT].textures[0]).crop((0, 0, art.width, TWO_P_ROWS)), (0, 0))
+    return package.with_g1t(TWO_P_SLOT, rekeyed(moz.with_texture_rgba(0, art.tobytes()))).encode()
+
+PROMPT_HIRES_SCALES = (2, 4)  # the runtime's copies for large displays: 2x up to 1440 lines, 4x above
+
+
+def pad_icons(family: str, scale: int = 1) -> dict[int, Image.Image]:
+    """Every icon of a pad family by its item in entry 4079: the swapped slots, then the stick directions."""
+    return {**prompt_art(family, scale), **dict(zip(STICK_ITEMS, stick_art(family, scale), strict=True))}
+
+
+def prompt_hires(family: str) -> bytes:
+    """prompts-<family>-hires.bin: the pad family's icons at each of PROMPT_HIRES_SCALES, for the runtime to put in
+    place of the stock-size textures on a large display. u32 magic "PHR1", slot count, scale count, the scales, the
+    slots, each slot's width in stock texels (all are 32 tall); then per scale, per slot, its BGRA rows."""
+    art = {scale: pad_icons(family, scale) for scale in PROMPT_HIRES_SCALES}
+    slots = list(art[PROMPT_HIRES_SCALES[0]])
+    widths = [art[PROMPT_HIRES_SCALES[0]][slot].width // PROMPT_HIRES_SCALES[0] for slot in slots]
+    head = struct.pack(f"<4s2I{len(PROMPT_HIRES_SCALES)}I{len(slots)}I{len(slots)}I", b"PHR1", len(slots),
+                       len(PROMPT_HIRES_SCALES), *PROMPT_HIRES_SCALES, *slots, *widths)
+    return head + b"".join(art[scale][slot].tobytes("raw", "BGRA") for scale in PROMPT_HIRES_SCALES for slot in slots)
+
 
 def read_entry(stream, entry) -> tuple[bytes, bool]:
 
@@ -809,7 +828,9 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
     with base_bin.open("rb") as stream:
         prompts = read_entry(stream, index.entries[PROMPT_ENTRY])[0]
     wo2_prompts = wo1_entries(wo2.with_suffix(".lnk"), wo2.with_suffix(".idx"), [13])[13]
-    (output_dir / "wozmod/prompts-xbox.bin").write_bytes(xbox_prompts(prompts, wo2_g1ts(wo2_prompts)))
+    for family in PROMPT_FAMILIES:
+        (output_dir / f"wozmod/prompts-{family}.bin").write_bytes(pad_prompts(prompts, wo2_g1ts(wo2_prompts), family))
+        (output_dir / f"wozmod/prompts-{family}-hires.bin").write_bytes(prompt_hires(family))
     # an install takes the outlines from the lettering bundle: players have no FontForge
     outlines = lettering.outlines(working)
     with base_bin.open("rb") as stream:

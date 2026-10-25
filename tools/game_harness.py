@@ -75,9 +75,55 @@ PAD_PRESSES = {"LT": (2, 255), "RT": (5, 255), "UP": (0x11, -1), "DOWN": (0x11, 
                "R-RIGHT": (3, STICK)}
 PAD_AXES = {0: (-32768, STICK), 1: (-32768, STICK), 3: (-32768, STICK), 4: (-32768, STICK),
             2: (0, 255), 5: (0, 255), 0x10: (-1, 1), 0x11: (-1, 1)}
-# xpad pads by USB id and kernel name: the Microsoft pad, and a third-party XInput pad Wine names differently
-PAD_MODELS = {"x360": (0x045E, 0x028E, b"Microsoft X-Box 360 pad"),
-              "8bitdo": (0x2DC8, 0x3106, b"8BitDo Ultimate Wireless / Pro 2 Wired Controller")}
+# XInput pads by USB id and kernel name, as xpad or Steam presents them: the Microsoft 360 and One pads, a third-party
+# pad Wine names differently, and the virtual pad Steam Input puts in place of any controller it manages
+XINPUT_PADS = {"x360": (0x045E, 0x028E, b"Microsoft X-Box 360 pad"),
+               "xone": (0x045E, 0x02EA, b"Microsoft X-Box One S pad"),
+               "8bitdo": (0x2DC8, 0x3106, b"8BitDo Ultimate Wireless / Pro 2 Wired Controller"),
+               "steam": (0x28DE, 0x11FF, b"Microsoft X-Box 360 pad 0")}
+# PlayStation pads on USB, made through uhid so the kernel's hid-playstation binds them and makes the hidraw node
+# Proton reads, which gives the game the pad's own HID shape as Windows does: (vendor, product, name, report
+# descriptor, the feature reports hid-playstation reads at probe, and where the input report keeps each control).
+# The descriptors declare the real pads' input reports field for field; vendor fields are left opaque.
+DS4_DESCRIPTOR = bytes.fromhex(
+    "05010905a1018501"
+    "0930093109320935150026ff00750895048102"  # X Y Z Rz: the sticks
+    "0939150025073500463b0165147504950181426500"  # hat
+    "05091901290e15002501750195 0e8102"  # 14 buttons
+    "0600ff09207506950115 00257f8102"  # counter
+    "050109330934150026ff00750895028102"  # Rx Ry: the triggers
+    "0600ff0921953681028505092295 1f9102c0".replace(" ", ""))
+DUALSENSE_DESCRIPTOR = bytes.fromhex(
+    "05010905a1018501"
+    "09300931093209350933093415 0026ff00750895068102"  # X Y Z Rz Rx Ry: sticks, then triggers
+    "0600ff092095018102"  # counter
+    "05010939150025073500463b0165147504950181426500"  # hat
+    "05091901290f150025017501950f8102"  # 15 buttons
+    "0600ff0921950d8102"
+    "0600ff0922150026ff0075089534810285020923952f9102c0".replace(" ", ""))
+CALIBRATION = struct.pack("<3h6h2h6h", 0, 0, 0, 8000, -8000, 8000, -8000, 8000, -8000, 540, 540,
+                          8192, -8192, 8192, -8192, 8192, -8192)
+HID_PADS = {
+    "ds4": dict(vendor=0x054C, product=0x05C4, name=b"Sony Computer Entertainment Wireless Controller",
+                descriptor=DS4_DESCRIPTOR, features={0x02: CALIBRATION.ljust(36, b"\0"), 0x12: bytes(range(1, 7)).ljust(15, b"\0"),
+                                                      0x81: bytes(range(1, 7)),
+                                                      0xA3: bytes(48)},
+                sticks=1, triggers=8, buttons=5, idle={35: 0x80, 39: 0x80}),
+    "dualsense": dict(vendor=0x054C, product=0x0CE6, name=b"Sony Interactive Entertainment DualSense Wireless Controller",
+                      descriptor=DUALSENSE_DESCRIPTOR,
+                      features={0x05: CALIBRATION.ljust(40, b"\0"), 0x09: bytes(range(1, 7)).ljust(19, b"\0"),
+                                0x20: bytes(63)},
+                      sticks=1, triggers=5, buttons=8, idle={33: 0x80, 37: 0x80}),
+}
+PAD_MODELS = [*XINPUT_PADS, *HID_PADS]
+# Pad inputs by position, Xbox names: bits in the PlayStation report's three button bytes (cross is A, circle B,
+# square X, triangle Y; share or create is BACK, options START, PS GUIDE), then the triggers' analog bytes.
+HID_BUTTONS = {"X": (0, 0x10), "A": (0, 0x20), "B": (0, 0x40), "Y": (0, 0x80), "LB": (1, 0x01), "RB": (1, 0x02),
+               "BACK": (1, 0x10), "START": (1, 0x20), "LS": (1, 0x40), "RS": (1, 0x80), "GUIDE": (2, 0x01)}
+HID_TRIGGERS = {"LT": (0, 0x04), "RT": (1, 0x08)}  # (analog byte, button bit in byte 1)
+HID_HAT = {"UP": 0, "RIGHT": 2, "DOWN": 4, "LEFT": 6}  # 8 is released
+HID_STICKS = {"L-LEFT": (0, 0), "L-RIGHT": (0, 255), "L-UP": (1, 0), "L-DOWN": (1, 255),
+              "R-LEFT": (2, 0), "R-RIGHT": (2, 255), "R-UP": (3, 0), "R-DOWN": (3, 255)}
 
 
 def bounded(value: str) -> float:
@@ -85,6 +131,13 @@ def bounded(value: str) -> float:
     if not math.isfinite(number) or not 0 < number <= 3600:
         raise argparse.ArgumentTypeError("use a finite value greater than 0 and at most 3600")
     return number
+
+
+def stir_rate(value: str) -> int:
+    rate = int(value)
+    if not 0 <= rate <= 2000:
+        raise argparse.ArgumentTypeError("use 0 (sticks still) to 2000 reports a second")
+    return rate
 
 
 def render_size_arg(value: str) -> tuple[int, int]:
@@ -205,8 +258,30 @@ def click_point(x: int, y: int) -> None:
         x11.XCloseDisplay(display)
 
 
+class Stir:
+    """Both sticks of a pad circling at rate reports a second (one turn a second) while the caller waits; rate 0
+    leaves them alone. Each report moves every stick axis, so a game reading the pad's event buffer gets four
+    axis events per report, as from a real pad's sticks in play."""
+
+    def __init__(self, pad, rate: float) -> None:
+        self.pad, self.rate, self.moved, self.start = pad, rate, False, time.monotonic()
+
+    def wait(self, seconds: float) -> None:
+        end = time.monotonic() + seconds
+        while self.rate and (now := time.monotonic()) < end:
+            turn = 2 * math.pi * (now - self.start)
+            self.pad.stick_report(0.6 * math.cos(turn), 0.6 * math.sin(turn))
+            self.moved = True
+            time.sleep(min(1 / self.rate, max(0.0, end - time.monotonic())))
+        time.sleep(max(0.0, end - time.monotonic()))
+
+    def stop(self) -> None:
+        if self.moved:
+            self.pad.stick_report(0, 0)
+
+
 class VirtualPad:
-    """A uinput XInput pad (PAD_MODELS), created outside the sandbox; its event node is bound in."""
+    """A uinput XInput pad (XINPUT_PADS), created outside the sandbox; its event node is bound in."""
 
     def __init__(self, model: str) -> None:
         self.fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
@@ -219,7 +294,7 @@ class VirtualPad:
                 fcntl.ioctl(self.fd, 0x40045567, axis)  # UI_SET_ABSBIT
                 flat = 128 if high == STICK else 0
                 fcntl.ioctl(self.fd, 0x401C5504, struct.pack("<H2x6i", axis, 0, low, high, 16 if flat else 0, flat, 0))
-            vendor, product, name = PAD_MODELS[model]
+            vendor, product, name = XINPUT_PADS[model]
             fcntl.ioctl(self.fd, 0x405C5503, struct.pack("<4H80sI", 3, vendor, product, 0x110, name, 0))  # UI_DEV_SETUP
             fcntl.ioctl(self.fd, 0x5501)  # UI_DEV_CREATE
             sysname = fcntl.ioctl(self.fd, 0x80405500 | 44, bytes(64)).split(b"\0")[0].decode()  # UI_GET_SYSNAME
@@ -242,8 +317,15 @@ class VirtualPad:
         stamp = struct.pack("<qq", int(now), int(now % 1 * 1e6))
         os.write(self.fd, b"".join(stamp + struct.pack("<HHi", *event) for event in events + [(0, 0, 0)]))
 
-    def tap(self, names: list[str], hold: float, gap: float) -> None:
-        """Press each name (parts joined by + go down together) for hold seconds, then release it."""
+    def stick_report(self, x: float, y: float) -> None:
+        """Both sticks at (x, y) and (y, x), from -1 to 1."""
+        lx, ly = round(x * STICK), round(y * STICK)
+        self.send([(3, 0, lx), (3, 1, ly), (3, 3, ly), (3, 4, lx)])
+
+    def tap(self, names: list[str], hold: float, gap: float, stir: float = 0) -> None:
+        """Press each name (parts joined by + go down together) for hold seconds, then release it; with stir, both
+        sticks circle at that many reports a second throughout, as a played pad's sticks do."""
+        motion = Stir(self, stir)
         for name in names:
             down, up = [], []
             for part in name.split("+"):
@@ -254,13 +336,119 @@ class VirtualPad:
                     down.append((3, axis, value)), up.append((3, axis, 0))
             try:
                 self.send(down)
-                time.sleep(hold)
+                motion.wait(hold)
             finally:
                 self.send(up)
-            time.sleep(gap)
+            motion.wait(gap)
+        motion.stop()
 
     def close(self) -> None:
         fcntl.ioctl(self.fd, 0x5502)  # UI_DEV_DESTROY
+        os.close(self.fd)
+
+
+UHID_EVENT = 4376  # sizeof(struct uhid_event): the type, then the largest request, UHID_CREATE2's
+
+
+class HidPad:
+    """A uhid PlayStation pad (HID_PADS), created outside the sandbox; its hidraw node is bound in. A thread answers
+    the kernel's feature-report requests, which hid-playstation needs to finish binding the pad."""
+
+    def __init__(self, model: str) -> None:
+        import threading
+        self.spec = spec = HID_PADS[model]
+        self.report = bytearray(64)
+        self.report[0] = 1
+        self.report[spec["sticks"]:spec["sticks"] + 4] = b"\x80" * 4
+        self.report[spec["buttons"]] = 8  # hat released
+        for offset, value in spec["idle"].items():  # no finger on the touchpad
+            self.report[offset] = value
+        self.fd = os.open("/dev/uhid", os.O_RDWR)
+        try:
+            known = {p.name for p in Path("/sys/class/hidraw").iterdir()}
+            create = struct.pack("<128s64s64sHHIIII", spec["name"], b"harness-pad", b"", len(spec["descriptor"]), 3,
+                                 spec["vendor"], spec["product"], 0x100, 0) + spec["descriptor"]
+            self.write(11, create)  # UHID_CREATE2
+            threading.Thread(target=self.answer, daemon=True).start()
+            deadline = time.monotonic() + 10
+            ids = f"0003:{spec['vendor']:04X}:{spec['product']:04X}."
+            while True:
+                nodes = [p for p in Path("/sys/class/hidraw").iterdir()
+                         if p.name not in known and p.resolve().parent.parent.name.startswith(ids)]
+                if nodes and os.access(f"/dev/{nodes[0].name}", os.R_OK | os.W_OK):
+                    break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("the virtual pad got no usable hidraw node; is /dev/uhid open to this seat "
+                                       "(udev uaccess) and hid-playstation loaded?")
+                time.sleep(0.05)
+            self.node = f"/dev/{nodes[0].name}"
+            self.send_report()
+        except BaseException:
+            os.close(self.fd)
+            raise
+
+    def write(self, kind: int, payload: bytes) -> None:
+        os.write(self.fd, struct.pack("<I", kind) + payload.ljust(UHID_EVENT - 4, b"\0"))
+
+    def answer(self) -> None:
+        """Answer GET_REPORT with the pad's feature report and SET_REPORT with success; drop the rest."""
+        while True:
+            try:
+                event = os.read(self.fd, UHID_EVENT)
+            except OSError:
+                return
+            kind = struct.unpack_from("<I", event)[0]
+            if kind == 9:  # UHID_GET_REPORT: id, report number, type
+                ident, number = struct.unpack_from("<IB", event, 4)
+                data = self.spec["features"].get(number)
+                reply = bytes([number]) + data if data is not None else b""
+                self.write(10, struct.pack("<IHH", ident, 0 if reply else 5, len(reply)) + reply)
+            elif kind == 13:  # UHID_SET_REPORT
+                self.write(14, struct.pack("<IH", struct.unpack_from("<I", event, 4)[0], 0))
+
+    def send_report(self) -> None:
+        self.write(12, struct.pack("<H", len(self.report)) + self.report)  # UHID_INPUT2
+
+    def press(self, part: str, down: bool) -> None:
+        spec, report = self.spec, self.report
+        if part in HID_BUTTONS:
+            index, bit = HID_BUTTONS[part]
+            report[spec["buttons"] + index] = report[spec["buttons"] + index] & ~bit | (bit if down else 0)
+        elif part in HID_TRIGGERS:
+            index, bit = HID_TRIGGERS[part]
+            report[spec["triggers"] + index] = 255 if down else 0
+            report[spec["buttons"] + 1] = report[spec["buttons"] + 1] & ~bit | (bit if down else 0)
+        elif part in HID_HAT:
+            report[spec["buttons"]] = report[spec["buttons"]] & 0xF0 | (HID_HAT[part] if down else 8)
+        else:
+            index, value = HID_STICKS[part]
+            report[spec["sticks"] + index] = value if down else 0x80
+
+    def stick_report(self, x: float, y: float) -> None:
+        """Both sticks at (x, y) and (y, x), from -1 to 1."""
+        lx, ly = round(127.5 + x * 127.5), round(127.5 + y * 127.5)
+        self.report[self.spec["sticks"]:self.spec["sticks"] + 4] = bytes([lx, ly, ly, lx])
+        self.send_report()
+
+    def tap(self, names: list[str], hold: float, gap: float, stir: float = 0) -> None:
+        """Press each name (parts joined by + go down together) for hold seconds, then release it; with stir, both
+        sticks circle at that many reports a second throughout, as a played pad's sticks do."""
+        motion = Stir(self, stir)
+        for name in names:
+            try:
+                for part in name.split("+"):
+                    self.press(part, True)
+                self.send_report()
+                motion.wait(hold)
+            finally:
+                for part in name.split("+"):
+                    self.press(part, False)
+                self.send_report()
+            motion.wait(gap)
+        motion.stop()
+
+    def close(self) -> None:
+        self.write(1, b"")  # UHID_DESTROY
         os.close(self.fd)
 
 
@@ -1105,7 +1293,7 @@ def launch_in_slot(root: Path, args: argparse.Namespace, game: Path, launcher: P
                 "timeout_seconds": args.timeout, "render_size": render_size,
                 "output_size": output_size, "fsr": fsr, "target_fps": target_fps(game),
                 "idle_seconds": getattr(args, "idle", None)}
-    pad = VirtualPad(args.pad) if args.pad else None
+    pad = (HidPad if args.pad in HID_PADS else VirtualPad)(args.pad) if args.pad else None
     identity["pad"] = pad.node if pad else None
     identity["route_input"] = getattr(args, "route_input", "keys")
     if identity["route_input"] == "pad" and not pad:
@@ -1187,7 +1375,8 @@ def launch_in_slot(root: Path, args: argparse.Namespace, game: Path, launcher: P
                         taken = json.loads(request.read_text())
                         done = {"id": taken.get("id")}
                         try:
-                            pad.tap(pad_names(taken["names"]), float(taken["hold"]), float(taken["gap"]))
+                            pad.tap(pad_names(taken["names"]), float(taken["hold"]), float(taken["gap"]),
+                                    float(taken.get("stir", 0)))
                         except (OSError, ValueError, KeyError) as exc:
                             done["error"] = str(exc)
                         write_json(root / "control/pad-done.json", done)
@@ -1379,7 +1568,7 @@ def ask(root: Path, request: dict, timeout: float = 30) -> dict:
 
 # The pad buttons a route sends for its keys in a `run --route-input pad` run: A confirms, B goes back, Y is the
 # page key Tab (the prompts say so; runs fid-pad, v-pad). In a battle B attacks: Escape there is START (PAUSE_SOURCES).
-PAD_FOR_KEY = {"Return": "A", "Escape": "B", "Tab": "Y", "Up": "UP", "Down": "DOWN", "Left": "LEFT", "Right": "RIGHT"}
+PAD_FOR_KEY = {"Return": "A", "Escape": "B", "Tab": "Y", "space": "START", "Up": "UP", "Down": "DOWN", "Left": "LEFT", "Right": "RIGHT"}
 PAUSE_SOURCES = {"battle", "story-battle", "story-wei-battle"}
 
 
@@ -2394,7 +2583,8 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--game", type=Path, required=True)
             command.add_argument("--authorize-launch", action="store_true")
             command.add_argument("--pad", nargs="?", const="x360", choices=PAD_MODELS,
-                                 help="give the game a virtual XInput pad (default x360), driven by the pad command")
+                                 help="give the game a virtual pad (default x360): an XInput pad, Steam Input's virtual pad (steam), "
+                                      "or a PlayStation pad on USB (ds4, dualsense); driven by the pad command")
             command.add_argument("--unplugged", action="store_true", help="the pad starts unplugged; see plug")
             command.add_argument("--video", action="store_true",
                                  help="output 1080p without FSR, so the video command keeps the game at full speed")
@@ -2417,6 +2607,9 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("names", nargs="+", metavar="input",
                                  help="A B X Y LB RB LT RT BACK START LS RS, UP DOWN LEFT RIGHT (D-pad), "
                                       "L-UP ... R-RIGHT (sticks); join with + to press together")
+        if action == "pad":
+            command.add_argument("--stir", type=stir_rate, default=0, metavar="HZ",
+                                 help="circle both sticks at HZ reports a second throughout, as in play (0: still)")
         if action in ("key", "pad"):
             command.add_argument("--hold", type=bounded, default=0.08)
             command.add_argument("--gap", type=bounded, default=0.3,
@@ -2537,7 +2730,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.action == "click":
             request.update(x=args.x, y=args.y)
         if args.action == "pad":
-            request.update(names=args.names, hold=args.hold, gap=args.gap)
+            request.update(names=args.names, hold=args.hold, gap=args.gap, stir=args.stir)
             timeout += len(args.names) * (args.hold + args.gap)
         if args.action == "review":
             review_request(args.texture, args.rect)

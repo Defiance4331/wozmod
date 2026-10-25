@@ -187,7 +187,7 @@ def record(install: Path) -> None:
 
 
 ART = ("wozmod/entries/4059.bin", "wozmod/entries/4060.bin", "wozmod/glyphs.bin", "wozmod/hires.bin",
-       "wozmod/prompts-xbox.bin")
+       "wozmod/prompts-playstation.bin", "wozmod/prompts-xbox.bin")
 
 
 def test_an_art_build_swaps_exactly_the_installs_menu_art(tools, tmp_path, monkeypatch):
@@ -226,14 +226,32 @@ def test_run_starts_from_a_fixture_a_save_file_or_no_save(tools, tmp_path, monke
     root = prep.prepare("file", staged.install, None, str(tmp_path / "edited.dat"), staged.cache)
     assert (root / prep.SAVE).read_bytes() == b"edited save"
     assert json.loads((root / "fixtures.json").read_text())["save"] == {
-        "name": str(tmp_path / "edited.dat"), "sha256": digest(b"edited save")}
+        "name": str(tmp_path / "edited.dat"), "sha256": digest(b"edited save"), "key_configs": []}
     root = prep.prepare("fresh", staged.install, None, "none", staged.cache)
     assert not (root / prep.SAVE).exists() and (root / prep.SAVE).parent.is_dir()
-    assert json.loads((root / "fixtures.json").read_text())["save"] == {"name": "none", "sha256": None}
+    assert json.loads((root / "fixtures.json").read_text())["save"] == {"name": "none", "sha256": None,
+                                                                        "key_configs": []}
     (staged.template / prep.SAVE).parent.mkdir(parents=True)
     (staged.template / prep.SAVE).write_bytes(b"template save")
     with pytest.raises(ValueError, match="template prefix holds"):
         prep.prepare("shadowed", staged.install, None, "none", staged.cache)
+
+
+def test_fixture_key_config_lands_where_the_game_reads_it(tools, tmp_path, monkeypatch):
+    """Bugs: a fixture's inputmap1.dat is staged beside save.dat in Savedata/, where the game never reads it, so the
+    run keeps the template's map with no pad; or a Key Config edited after export is staged unchecked."""
+    prep, staged = tools.prepare_run, staging(tools, tmp_path, monkeypatch)
+    fixture = prep.WORK / "saves/s"
+    (fixture / "inputmap1.dat").write_bytes(b"pad map")
+    meta = json.loads((fixture / "meta.json").read_text())
+    (fixture / "meta.json").write_text(json.dumps({**meta, "inputmap_sha256": {"inputmap1.dat": digest(b"pad map")}}))
+    root = prep.prepare("mapped", staged.install, None, "s", staged.cache)
+    profile = root / "prefix/pfx/drive_c/users/steamuser/Documents/KOEI/Musou OROCHI Z"
+    assert (profile / "inputmap1.dat").read_bytes() == b"pad map"
+    assert json.loads((root / "fixtures.json").read_text())["save"]["key_configs"] == ["inputmap1.dat"]
+    (fixture / "inputmap1.dat").write_bytes(b"edited map")
+    with pytest.raises(ValueError, match="changed since export"):
+        prep.prepare("edited-map", staged.install, None, "s", staged.cache)
 
 
 @pytest.mark.parametrize("change", ["leftover", "edited", "missing"])
@@ -269,7 +287,7 @@ class FakeSupervisor:
 def args(tmp_path, spec, only=None):
     import game_harness
     (tmp_path / "d3d9.dll").write_bytes(b"MZ" + game_harness.TEST_MAGIC)  # a --test build
-    return SimpleNamespace(spec=spec, install=tmp_path, dll=None, save="s", setting=[], file=[], art=None, pad=False, only=only,
+    return SimpleNamespace(spec=spec, install=tmp_path, dll=None, save="s", setting=[], file=[], art=None, pad=None, only=only,
                            name="check")
 
 

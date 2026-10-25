@@ -17,9 +17,9 @@ from wozmod.install import STOCK_FILES
 from wozmod.runtime import build, layout
 from wozmod.runtime import english_runtime as runtime
 from wozmod.runtime.latin_font import LATIN_GLYPH
-from wozmod.runtime.prompts import XBOX_PROMPTS
+from wozmod.runtime.prompts import PROMPT_SLOTS, STICK_ITEMS
 from wozmod.runtime.runtime_edits import (
-    CODE_EDITS, FONT_ROUTE, PAD_CAMERA, STANDARD_CAMERA, VOICE_EDITS, camp_plate_edits, settings_rows,
+    CODE_EDITS, FONT_ROUTE, PAD_CAMERA, SAVED_PAD, STANDARD_CAMERA, VOICE_EDITS, camp_plate_edits, settings_rows,
 )
 from wozmod.runtime import camp_plate
 
@@ -66,7 +66,7 @@ def test_data_header_keeps_group_lengths_terminator_and_hook_return_flags() -> N
     assert bytes(layout.c_array("enrt_stock_sha256", header)) == bytes([0x12]) * 32
     assert bytes(layout.c_array("enrt_widths", header)) == b"\x05\x07"
     assert layout.defines(header) == {"WIDTH_POINTER": 0x79BAC0, "GLYPH_LATIN": LATIN_GLYPH, "WIDE_TEXT": 1024,
-                                      "PROMPT_SLOTS": len(XBOX_PROMPTS)}
+                                      "PROMPT_SLOTS": len(PROMPT_SLOTS), "PROMPT_ITEMS": len(PROMPT_SLOTS) + len(STICK_ITEMS)}
     # The runtime matches the return address of each widened write and draw, as read in the stock code.
     wide = dict(re.findall(r"enrt_wide_(\w+)\[\] = \{([^}]*)\}", header))
     assert {name: sorted(int(v, 16) for v in values.split(",")) for name, values in wide.items()} == {
@@ -151,7 +151,8 @@ def test_build_puts_each_edit_list_in_its_text_mode_group(stock_builds, variant:
     rows = options.get("render_distance", False), options.get("moving_fix", False)
     lists = {"FONT_ROUTE": (FONT_ROUTE, {0}), "CODE_EDITS": (CODE_EDITS, {0}),
              "one-row settings": (settings_rows(1, *rows), {1}), "two-row settings": (settings_rows(2, *rows), {2}),
-             "PAD_CAMERA": (PAD_CAMERA, {1, 2}), "STANDARD_CAMERA": (STANDARD_CAMERA, {1, 2}),
+             "PAD_CAMERA": (PAD_CAMERA, {1, 2}), "SAVED_PAD": (SAVED_PAD, {1, 2}),
+             "STANDARD_CAMERA": (STANDARD_CAMERA, {1, 2}),
              "VOICE_EDITS": (VOICE_EDITS, {2}),
              "camp plate": (camp_plate_edits(camp_plate.width(camp_plate.stock_plate(Path(os.environ["WOZMOD_GAME"])))),
                             {0})}
@@ -171,7 +172,7 @@ SYNTHETIC_HEADER = "\n".join([
     "static const u8 enrt_widths[1] = {24};",
     "#define WIDTH_POINTER 0x79bac0", f"#define GLYPH_LATIN {LATIN_GLYPH}",
     "#define WIDE_TEXT 1024", "static const u32 enrt_wide_writes[] = {0};", "static const u32 enrt_wide_reads[] = {0};",
-    "#define PROMPT_SLOTS 1", "#define PROMPT_SLOT_LIST 0", "",
+    "#define PROMPT_SLOTS 1", "#define PROMPT_ITEMS 9", "#define PROMPT_SLOT_LIST 0, 1, 2, 3, 4, 5, 6, 7, 8", "",
 ])
 
 

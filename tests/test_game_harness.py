@@ -1475,3 +1475,40 @@ def test_video_pins_the_screen_stream_to_bgrx(tmp_path, monkeypatch):
     command = calls[0]
     link = command.index("!", command.index("pipewiresrc"))
     assert command[link + 1] == "video/x-raw,format=BGRx"
+
+
+def hid_inputs(descriptor: bytes) -> dict[int, list[tuple[int, int, list[int]]]]:
+    """Per report id, each Input main item of a HID report descriptor: (bits per field, fields, the usages queued
+    for it). A minimal walk of short items, independent of the harness's report builder."""
+    reports, size, count, report, usages, at = {}, 0, 0, 0, [], 0
+    while at < len(descriptor):
+        prefix = descriptor[at]
+        length = (0, 1, 2, 4)[prefix & 3]
+        value = int.from_bytes(descriptor[at + 1:at + 1 + length], "little")
+        tag = prefix & 0xFC
+        if tag == 0x74:
+            size = value
+        elif tag == 0x94:
+            count = value
+        elif tag == 0x84:
+            report = value
+        elif tag == 0x08:
+            usages.append(value)
+        elif tag == 0x80:
+            reports.setdefault(report, []).append((size, count, usages))
+        if tag in (0x80, 0x90, 0xB0, 0xA0):  # a main item ends the local usages
+            usages = []
+        at += 1 + length
+    return reports
+
+
+def test_virtual_playstation_pads_declare_the_report_they_send_and_the_axes_windows_shows():
+    """Bugs: a miscounted descriptor field makes the declared input report differ from the 64 bytes the virtual pad
+    sends, so the kernel drops every report and the pad never moves; or the axes are declared in another order than
+    the real pad's (X Y Z Rz for the sticks), so the game reads a trigger as a stick."""
+    got = {}
+    for model, spec in harness.HID_PADS.items():
+        inputs = hid_inputs(spec["descriptor"])[1]
+        axes = [u for _, _, usages in inputs for u in usages if 0x30 <= u <= 0x35]
+        got[model] = (1 + sum(size * count for size, count, _ in inputs) // 8, axes[:4])
+    assert got == {model: (64, [0x30, 0x31, 0x32, 0x35]) for model in harness.HID_PADS}
