@@ -1458,6 +1458,7 @@ ROUTE_SCREENS = {
     "options": {"texture": "4079.171"},
     "game-settings": {"texture": "4069.14", "without": "4079.149"},  # the controller page draws 4069.14 too
     "options-controller": {"texture": "4069.14", "with": "4079.149"},
+    "options-controller-buttons": {"caller": "0x5983cb"},  # Button Settings: each action's name (its key 0x598418)
     "options-graphics": {"caller": "0x56cb92"},  # the resolution row's size label
     "options-advanced": {"texture": "4069.14|4069.15", "quad_caller": "0x56bff8"},  # the preset row's plates
     "story-select": {"texture": "4082.0|4082.4"},  # two columns: 4082.0 with the cursor in the left one (Shu), 4082.4 in the right (Z)
@@ -1713,6 +1714,10 @@ ROUTE_EDGES = [
     ("survival-members", "menu@survival", ["Escape"]),
     ("options", "options-controller", ["Down", "Return", "Return"]),  # also 0207-B
     ("options-controller", "options", [(["Escape"], None), (["Escape"], None), (["Up"], None)]),  # a sub list sits between; Up undoes the Down
+    # 2026-10-25_1641-controls: Button Settings, the fourth row; `screen` there lists every binding as text
+    ("options-controller", "options-controller-buttons", ["Down", "Down", "Down", "Return"]),
+    ("options-controller-buttons", "options-controller", [(["Escape"], ROUTE_SCREENS["options-controller"]),
+                                                          (["Up"], None), (["Up"], None), (["Up"], None)]),
     ("options", "options-graphics", ["Down", "Down", "Down", "Return"]),
     ("options-graphics", "options", [(["Escape"], None), (["Up", "Up", "Up"], None)]),
     # from the first row; in a window (the harness) the cursor skips the greyed BRIGHTNESS row
