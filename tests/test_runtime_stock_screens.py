@@ -12,7 +12,7 @@ import pytest
 from PIL import Image
 
 from wozmod.formats import pe
-from wozmod.runtime import layout, runtime_edits
+from wozmod.runtime import layout, runtime_edits, text_boxes
 
 
 @pytest.fixture(scope="module")
@@ -127,7 +127,7 @@ def test_page_origins_do_not_leave_a_glyph_callback_counting_from_the_stock_line
     """The Z narration callback adds 4 px per glyph and resets only at the stock line x 0x168: at the X360
     origin it never reset, so the glyphs ran off screen while the screen data said they were drawn."""
     checked = 0
-    for site, row in layout.pages().items():
+    for site, row in text_boxes.page_rows().items():
         before = code(site - 0x80, 0x80)
         found = re.search(rb"\xc7\x05\xe8\xad\xc2\x00(.{4})", before, re.S)
         if not found:

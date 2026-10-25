@@ -14,7 +14,7 @@ import pytest
 from synthetic import pe_image
 from wozmod.formats import pe
 from wozmod.install import STOCK_FILES
-from wozmod.runtime import build, layout
+from wozmod.runtime import build, layout, text_boxes
 from wozmod.runtime import english_runtime as runtime
 from wozmod.runtime.latin_font import LATIN_GLYPH
 from wozmod.runtime.prompts import PROMPT_SLOTS, STICK_ITEMS
@@ -172,7 +172,8 @@ SYNTHETIC_HEADER = "\n".join([
     "static const u8 enrt_widths[1] = {24};",
     "#define WIDTH_POINTER 0x79bac0", f"#define GLYPH_LATIN {LATIN_GLYPH}",
     "#define WIDE_TEXT 1024", "static const u32 enrt_wide_writes[] = {0};", "static const u32 enrt_wide_reads[] = {0};",
-    "#define PROMPT_SLOTS 1", "#define PROMPT_ITEMS 9", "#define PROMPT_SLOT_LIST 0, 1, 2, 3, 4, 5, 6, 7, 8", "",
+    "#define PROMPT_SLOTS 1", "#define PROMPT_ITEMS 9", "#define PROMPT_SLOT_LIST 0, 1, 2, 3, 4, 5, 6, 7, 8",
+    *text_boxes.c_header(), "",
 ])
 
 

@@ -112,6 +112,10 @@ def test_staged_game_sha256_covers_every_file_launch_checks_and_follows_a_new_dl
     assert json.loads((root / "fixtures.json").read_text())["replaced"] == {"wozmod/table.bin": str(tmp_path / "work.bin")}
     with pytest.raises(ValueError, match="install record"):
         prep.prepare("four", install, None, "s", cache, replace=[f"wozmod/new.bin={tmp_path / 'work.bin'}"])
+    # an entry the install lacks (an art change that edits one more stock entry) is added, listed and hashed
+    root = prep.prepare("five", install, None, "s", cache, replace=[f"wozmod/entries/4102.bin={tmp_path / 'work.bin'}"])
+    assert prep.recorded(root)["wozmod/entries/4102.bin"] == digest((root / "game/wozmod/entries/4102.bin").read_bytes())
+    assert not (install / "wozmod/entries/4102.bin").exists()
 
 
 def test_launch_check_hashes_only_mod_files_whose_stamp_moved_and_refuses_a_changed_or_missing_one(

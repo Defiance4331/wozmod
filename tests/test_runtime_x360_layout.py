@@ -50,8 +50,7 @@ PANEL_EDITS = {
     0x53670E: 0x8229054C, 0x536791: 0x822905CC, 0x536828: 0x822906AC, 0x5368C4: 0x8229073C,
     0x5368F3: 0x8229078C, 0x536970: 0x82290874, 0x536984: 0x8229087C, 0x53699B: 0x82290888,
     0x535E6C: 0x8228FD74, 0x535E5D: 0x8228FD64, 0x535EDB: 0x8228FDB8, 0x538CB0: 0x8229362C,
-    0x538CA3: 0x82293614, 0x538C9C: 0x8229360C, 0x56A160: 0x822B9C14, 0x56A1A8: 0x822B9C1C,
-    0x59C3DF: 0x822DD854}  # the left camp-talk plate's x
+    0x538CA3: 0x82293614, 0x538C9C: 0x8229360C, 0x56A160: 0x822B9C14, 0x56A1A8: 0x822B9C1C}
 # Panel values computed from X360 values; x reads an X360 immediate.
 DERIVED = {
     0x529587: lambda x: x(0x82282094) + x(0x822D91B8),  # slide travel = resting x + panel width
@@ -74,13 +73,6 @@ CAVES = {
 # The officer card's reading-line call, which the X360 card does not make.
 NOPS = {0x535EC1}
 
-# Page site: X360 draw cell w, cell h, pitch, x, y, wrap width, and the cell w it wraps at.
-PAGES = {
-    "STILL_DRAW": (0x822DDD3C, 0x822DDD40, 0x822DDD44, 0x822DDD94, 0x822DDD90, 0x822DDD7C, 0x822DDD3C),
-    "STILL_Z_DRAW": (0x822DDD3C, 0x822DDD40, 0x822DDD44, 0x822DDD94, 0x822DDD90, 0x822DDD7C, 0x822DDD3C)}
-# Camp talk keeps the stock cell and pitch (0x59C773, 0x59C77D) and its first line 96 below the bar's top, as the stock
-# y 508 sits below the stock bar at 412 (0x59C7AD, 0x59C723); the bar is runtime_edits.CAMP_BAR_Y.
-STOCK_PAGE = {"STILL_DRAW": {0: 28, 1: 28, 2: 42, 4: runtime_edits.CAMP_BAR_Y + 508 - 412}}
 # Site: the X360 wrap width and the cell w it wraps at; the box is that width unless our art moves it.
 WRAPS = {
     0x595F93: (0x822D974C, 0x822D972C, True), 0x5975C6: (0x822DB240, 0x822DB224, False),
@@ -117,23 +109,12 @@ def ours(edit: tuple) -> int:
     return struct.unpack("<i", patched[-4:])[0]
 
 
-def test_the_camp_talk_right_plate_ends_where_the_x360_one_does(x360: bytes) -> None:
-    # Bug: the right plate's anchor drifts from the X360 plate it replaces, so a widened plate runs off screen.
-    assert runtime_edits.X360_RIGHT_PLATE == (immediate(x360, 0x822DD7D4), immediate(x360, 0x822DD950))
-
-
 def test_layout_values_do_not_drift_from_the_x360_screens(x360: bytes) -> None:
     panels = {edit[0]: edit for edit in runtime_edits.X360_LAYOUT + runtime_edits.X360_PANELS}
     edits = {va: ours(edit) for va, edit in panels.items()}
     rows = [(f"edit {va:#x}", edits[va], immediate(x360, at)) for va, at in EDITS.items()]
     rows += [(f"edit {va:#x}", edits[va], round(immediate(x360, at) * 24 / 20)) for va, at in CELL_EDITS.items()]
-    pages, boxes, wraps = layout.pages(), layout.sites(), layout.reflow_rules()
-    for name, refs in PAGES.items():
-        w, h, pitch, x, y, width, cell = (immediate(x360, at) for at in refs)
-        ours_w = round(w * 24 / 20)
-        expected = (ours_w, h, pitch, x, y, round(width * 20 / cell * ours_w / 24), round(width * w / cell))
-        expected = tuple(STOCK_PAGE.get(name, {}).get(k, v) for k, v in enumerate(expected))
-        rows.append((name, pages[layout.DEFINES[name]], expected))
+    boxes, wraps = layout.sites(), layout.reflow_rules()
     for site, (width_at, cell_at, boxed) in WRAPS.items():
         width, cell = immediate(x360, width_at), immediate(x360, cell_at)
         rows.append((f"wrap {site}", wraps.get(site, boxes[site][0]), round(width * 20 / cell)))

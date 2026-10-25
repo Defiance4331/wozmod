@@ -34,13 +34,15 @@ def restriped(image: Image.Image, box, column: int) -> Image.Image:
     out.paste(image.crop((column, y0, column + 1, y1)).resize((x1 - x0, y1 - y0)), (x0, y0))
     return out
 
-def rows_stretched(image: Image.Image, row: int, extra: int) -> Image.Image:
-    """image taller by extra rows: row repeated extra more times, the rows below it moved down (the canvas keeps its
-    size; rows pushed past its bottom are dropped)."""
+def rows_stretched(image: Image.Image, first: int, last: int, extra: int) -> Image.Image:
+    """image taller by extra rows: rows first to last resampled into extra more rows (one row: repeated), the rows
+    below them moved down (the canvas keeps its size; rows pushed past its bottom are dropped)."""
     out = Image.new(image.mode, image.size)
-    out.paste(image.crop((0, 0, image.width, row + 1)), (0, 0))
-    out.paste(image.crop((0, row, image.width, row + 1)).resize((image.width, extra)), (0, row + 1))
-    out.paste(image.crop((0, row + 1, image.width, image.height - extra)), (0, row + 1 + extra))
+    out.paste(image.crop((0, 0, image.width, first)), (0, 0))
+    band, size = image.crop((0, first, image.width, last + 1)), (image.width, last + 1 - first + extra)
+    # each channel on its own: Pillow resamples RGBA premultiplied, which blanks the colour of transparent pixels
+    out.paste(Image.merge(image.mode, [c.resize(size, Image.Resampling.BILINEAR) for c in band.split()]), (0, first))
+    out.paste(image.crop((0, last + 1, image.width, image.height - extra)), (0, last + 1 + extra))
     return out
 
 def keyed(image: Image.Image, column: int, threshold: int, solid: bool = False) -> Image.Image:

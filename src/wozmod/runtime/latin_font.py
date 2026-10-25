@@ -22,3 +22,23 @@ ADVANCES = bytes.fromhex(
     "080608111314140509090b0f060b060c120a121212121311131306060e100e121414121413111114130611121115131412141212"
     "131313131313110918090c0e1810111011100c111006090f0614101011110c0f0c10101410100f181818141013100b")
 WIDTHS = bytes([CELL] * LATIN_GLYPH) + ADVANCES  # the game's glyph width table, one byte per glyph
+
+
+def width(text: str, cell: int = CELL) -> int:
+    """A line's width as the game measures it (0x54BF80) at cell width ``cell``: each glyph's advance scaled to the
+    cell and rounded down on its own, a non-Latin glyph the whole cell, a colour tag ('[' and two characters) and
+    ']' nothing."""
+    total, i = 0, 0
+    while i < len(text):
+        c = text[i]
+        if c == "[":
+            i += 3
+            continue
+        if c in "]\t":
+            pass
+        elif c in LATIN_CHARS:
+            total += ADVANCES[LATIN_CHARS.index(c)] * cell // CELL
+        elif ord(c) >= 0x80:
+            total += cell
+        i += 1
+    return total

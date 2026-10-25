@@ -2714,10 +2714,22 @@
       "texture": 0,
       "draw": [
         {
-          "stretch": [
-            190,
-            42
-          ]
+          "stretch": "camp"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4102,
+      "item": 2,
+      "texture": 0,
+      "size": [
+        1024,
+        256
+      ],
+      "draw": [
+        {
+          "stretch": "z-talk"
         }
       ],
       "source": "edited"
@@ -7243,6 +7255,21 @@
     },
     {
       "entry": 4150,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4150,
       "item": 1,
       "texture": 0,
       "size": [
@@ -7272,6 +7299,21 @@
         1.2
       ],
       "source": "authored"
+    },
+    {
+      "entry": 4151,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
     },
     {
       "entry": 4151,
@@ -7307,6 +7349,21 @@
     },
     {
       "entry": 4152,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4152,
       "item": 1,
       "texture": 0,
       "size": [
@@ -7336,6 +7393,21 @@
         1.2
       ],
       "source": "authored"
+    },
+    {
+      "entry": 4153,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
     },
     {
       "entry": 4153,
@@ -7371,6 +7443,21 @@
     },
     {
       "entry": 4154,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4154,
       "item": 1,
       "texture": 0,
       "size": [
@@ -7400,6 +7487,21 @@
         1.2
       ],
       "source": "authored"
+    },
+    {
+      "entry": 4155,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
     },
     {
       "entry": 4155,
@@ -7435,6 +7537,21 @@
     },
     {
       "entry": 4156,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4156,
       "item": 1,
       "texture": 0,
       "size": [
@@ -7464,6 +7581,21 @@
         1.2
       ],
       "source": "authored"
+    },
+    {
+      "entry": 4157,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
     },
     {
       "entry": 4157,
@@ -7499,6 +7631,21 @@
     },
     {
       "entry": 4158,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4158,
       "item": 1,
       "texture": 0,
       "size": [
@@ -7528,6 +7675,21 @@
         1.2
       ],
       "source": "authored"
+    },
+    {
+      "entry": 4159,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
     },
     {
       "entry": 4159,
@@ -7563,6 +7725,21 @@
     },
     {
       "entry": 4160,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4160,
       "item": 1,
       "texture": 0,
       "size": [
@@ -7592,6 +7769,21 @@
         1.2
       ],
       "source": "authored"
+    },
+    {
+      "entry": 4161,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
     },
     {
       "entry": 4161,
@@ -7627,6 +7819,21 @@
     },
     {
       "entry": 4162,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4162,
       "item": 1,
       "texture": 0,
       "size": [
@@ -7656,6 +7863,21 @@
         1.2
       ],
       "source": "authored"
+    },
+    {
+      "entry": 4163,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
     },
     {
       "entry": 4163,
@@ -7691,6 +7913,21 @@
     },
     {
       "entry": 4164,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4164,
       "item": 1,
       "texture": 0,
       "size": [
@@ -7720,6 +7957,21 @@
         1.2
       ],
       "source": "authored"
+    },
+    {
+      "entry": 4165,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
     },
     {
       "entry": 4165,
@@ -7755,6 +8007,21 @@
     },
     {
       "entry": 4166,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4166,
       "item": 1,
       "texture": 0,
       "size": [
@@ -7784,6 +8051,21 @@
         1.2
       ],
       "source": "authored"
+    },
+    {
+      "entry": 4167,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
     },
     {
       "entry": 4167,
@@ -7819,6 +8101,21 @@
     },
     {
       "entry": 4168,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4168,
       "item": 1,
       "texture": 0,
       "size": [
@@ -7848,6 +8145,21 @@
         1.2
       ],
       "source": "authored"
+    },
+    {
+      "entry": 4169,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
     },
     {
       "entry": 4169,
@@ -7883,6 +8195,21 @@
     },
     {
       "entry": 4170,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4170,
       "item": 1,
       "texture": 0,
       "size": [
@@ -7912,6 +8239,21 @@
         1.2
       ],
       "source": "authored"
+    },
+    {
+      "entry": 4171,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
     },
     {
       "entry": 4171,
@@ -7947,6 +8289,21 @@
     },
     {
       "entry": 4172,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4172,
       "item": 1,
       "texture": 0,
       "size": [
@@ -7979,6 +8336,21 @@
     },
     {
       "entry": 4173,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4173,
       "item": 1,
       "texture": 0,
       "size": [
@@ -8008,6 +8380,21 @@
         1.2
       ],
       "source": "authored"
+    },
+    {
+      "entry": 4174,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
     },
     {
       "entry": 4174,
@@ -8050,6 +8437,21 @@
     },
     {
       "entry": 4175,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4175,
       "item": 1,
       "texture": 0,
       "size": [
@@ -8079,6 +8481,21 @@
         1.2
       ],
       "source": "authored"
+    },
+    {
+      "entry": 4176,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
     },
     {
       "entry": 4176,
@@ -8114,6 +8531,21 @@
     },
     {
       "entry": 4177,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4177,
       "item": 1,
       "texture": 0,
       "size": [
@@ -8146,6 +8578,21 @@
     },
     {
       "entry": 4178,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4178,
       "item": 1,
       "texture": 0,
       "size": [
@@ -8171,6 +8618,21 @@
     },
     {
       "entry": 4179,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4179,
       "item": 1,
       "texture": 0,
       "size": [
@@ -8193,6 +8655,21 @@
         1.2
       ],
       "source": "authored"
+    },
+    {
+      "entry": 4180,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
     },
     {
       "entry": 4180,
@@ -8228,6 +8705,21 @@
     },
     {
       "entry": 4181,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4181,
       "item": 1,
       "texture": 0,
       "size": [
@@ -8253,6 +8745,21 @@
     },
     {
       "entry": 4182,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4182,
       "item": 1,
       "texture": 0,
       "size": [
@@ -8275,6 +8782,21 @@
         1.2
       ],
       "source": "authored"
+    },
+    {
+      "entry": 4183,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
     },
     {
       "entry": 4183,
@@ -8310,6 +8832,21 @@
     },
     {
       "entry": 4184,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4184,
       "item": 1,
       "texture": 0,
       "size": [
@@ -8342,6 +8879,21 @@
     },
     {
       "entry": 4185,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4185,
       "item": 1,
       "texture": 0,
       "size": [
@@ -8364,6 +8916,21 @@
         1.2
       ],
       "source": "authored"
+    },
+    {
+      "entry": 4186,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
     },
     {
       "entry": 4186,
@@ -8399,6 +8966,21 @@
     },
     {
       "entry": 4187,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4187,
       "item": 1,
       "texture": 0,
       "size": [
@@ -8431,6 +9013,21 @@
     },
     {
       "entry": 4188,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
+    },
+    {
+      "entry": 4188,
       "item": 1,
       "texture": 0,
       "size": [
@@ -8460,6 +9057,21 @@
         1.2
       ],
       "source": "authored"
+    },
+    {
+      "entry": 4189,
+      "item": 0,
+      "texture": 0,
+      "size": [
+        32,
+        512
+      ],
+      "draw": [
+        {
+          "stretch": "briefing"
+        }
+      ],
+      "source": "edited"
     },
     {
       "entry": 4189,

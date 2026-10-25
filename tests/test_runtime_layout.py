@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from wozmod.runtime import layout
+from wozmod.runtime import layout, text_boxes
 
 
 SOURCE = """
@@ -18,7 +18,6 @@ static const u32 windows[2][2] = {{45, 41}, {33, 29}};
 #define DREAM_SUMMARY_WIDTH 23
 #define CAPTION_WIDTH 19
 #define HISTORY_WIDTH 15
-static const int pages[][8] = {{NARRATION_DRAW, 12, 21, 31, 1, 2, 19, 17}};
 static const int boxed[][2] = {{0xA0, 13}, /* ignored */ {0xB0, 11}};
 static const int described[][2] = {{0xC0, 7}};
 static const int single_line[][2] = {{0xD0, 9}};
@@ -28,15 +27,15 @@ static const int single_line[][2] = {{0xD0, 9}};
 def test_sites_does_not_drop_a_supported_array_row() -> None:
     assert layout.sites(SOURCE) == {
         ("window", 1): (41, False), ("window", 2): (29, False),
-        0x10: (17, True), 0x20: (31, True), 0x30: (23, True), 0x40: (19, False),
+        0x20: (31, True), 0x30: (23, True), 0x40: (19, False),
         0x50: (15, False),
         0xA0: (13, False), 0xB0: (11, False), 0xC0: (7, True), 0xD0: (9, False),
+        **{site: (row[6], True) for site, row in text_boxes.page_rows().items()},
     }
 
 
 @pytest.mark.parametrize(("array", "original", "perturbed"), [
     ("boxed", "{0xA0, 13}", "{0xA0, 13 + 1}"),
-    ("pages", "{NARRATION_DRAW, 12, 21, 31, 1, 2, 19, 17}", "{STILL_DRAW, 12, 21, 31, 1, 2, 19, 17}"),
     ("described", "{0xC0, 7}", "{0xC0}"),
     ("single_line", "{0xD0, 9}", "{0xD0, WIDTH}"),
 ])

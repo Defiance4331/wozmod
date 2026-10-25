@@ -28,13 +28,6 @@ def speakers(scenes: list[bytes]) -> set[int]:
     return {block[16 * k + 1] for block in scenes for k in range(block[0])}
 
 
-def name_width(name: str) -> int:
-    """A name's drawn width at the stock name cell (24): the runtime's glyph advances."""
-    from .latin_font import ADVANCES, CELL, LATIN_CHARS
-
-    return sum(ADVANCES[LATIN_CHARS.index(c)] if c in LATIN_CHARS else CELL for c in name)
-
-
 def caps(plate: Image.Image, drawn: int = STOCK_WIDTH) -> tuple[int, int]:
     """The widths of the plate's end caps: the drawn columns outside the run of identical columns at its middle."""
     columns = [plate.crop((x, 0, x + 1, plate.height)).tobytes() for x in range(drawn)]

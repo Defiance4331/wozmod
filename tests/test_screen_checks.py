@@ -376,3 +376,15 @@ def test_borderless_fails_when_its_device_is_full_screen():
     assert not sc.device_matches_mode(full_screen_device, "[display]\nmode=borderless\n").ok
     assert sc.device_matches_mode(windowed_device, "[display]\nmode=borderless\n").ok
     assert sc.device_matches_mode("display: device windowed\r\n", "[display]\nmode=fullscreen\n").ok
+
+
+def test_a_centred_page_is_checked_at_the_y_of_its_own_line_count():
+    """Bug: the narration box is checked at one y whatever its line count (the runtime centres the lines on y 531),
+    or a page one line over its box passes. Oracle: cell 24 and pitch 36 by hand, centred on 531, half way between
+    the stretched panel's edge lines (438.4 + 26 and 619.7 - 23): 4 lines start at 531 - (24 + 3 * 36) // 2 = 465,
+    3 lines at 483."""
+    page = lambda y, lines: screen([text(160, y, 900, "\n".join(["a"] * lines), caller="0x561111")])  # noqa: E731
+    assert sc.text_box(page(465, 4), "narration", ink=False).ok
+    assert sc.text_box(page(483, 3), "narration", ink=False).ok
+    assert not sc.text_box(page(483, 4), "narration", ink=False).ok
+    assert not sc.text_box(page(447, 5), "narration", ink=False).ok

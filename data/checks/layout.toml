@@ -139,7 +139,8 @@ route = "vs-course"
   kind = "line_count"
   text = { caller = "0x5a686c" }
   min = 2
-  max = 4
+  # The longest course's rules take 5 lines and still fit the panel.
+  max = 5
 
   [[screen.assert]]
   kind = "text_clear_of_text"
@@ -374,26 +375,14 @@ route = "dream-select"
   text = { x = 980, y = 408 }
   edge = 1220
 
-# Briefing (Mixed): the stock band and text origin (248, 486), at most 4 lines condensed into the 784 band.
+# Briefing (Mixed): the band widened and grown to hold five lines, the text centred in it (text_boxes "briefing").
 [[screen]]
 name = "briefing"
 route = "briefing"
 
   [[screen.assert]]
-  kind = "text_position"
-  text = { caller = "0x548f52" }
-  x = 248
-  y = 486
-
-  [[screen.assert]]
-  kind = "line_count"
-  text = { caller = "0x548f52" }
-  max = 4
-
-  [[screen.assert]]
-  kind = "text_within_edge"
-  text = { caller = "0x548f52" }
-  edge = 1032
+  kind = "text_box"
+  box = "briefing"
 
   [[screen.assert]]
   kind = "text_has_ink"
@@ -518,23 +507,16 @@ route = "customize-fusion-weapons"
   text = { caller = "0x5950ec" }
   edge = 511
 
-# Story Z chapter narration (Mixed): wrapped in the X360 box at (200, 507) at cell 24x25 (pitch 35): the first page
-# takes 3 lines there (2 at the X360 size).
+# Story Z chapter narration (Mixed): wrapped in the X360 box (text_boxes "z-narration"; typed out, so its right end
+# is the reported width): the first page takes 3 lines there (2 at the X360 size).
 [[screen]]
 name = "story-z-narration"
 route = "story-z-narration"
 wait = { caller = "0x55f31c", timeout = 30 }
 
   [[screen.assert]]
-  kind = "text_position"
-  text = { caller = "0x55f31c" }
-  x = 200
-  y = 507
-
-  [[screen.assert]]
-  kind = "text_within_edge"         # wrap 742; the page is typed out, so use the reported width
-  text = { caller = "0x55f31c" }
-  edge = 942
+  kind = "text_box"
+  box = "z-narration"
   ink = false
 
   [[screen.assert]]

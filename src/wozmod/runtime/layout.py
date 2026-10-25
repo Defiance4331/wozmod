@@ -65,14 +65,15 @@ DEFINES = defines()
 
 
 def sites(source: str = SOURCE) -> dict:
-    """Read wrapping widths and reflow flags from the runtime source."""
+    """Read wrapping widths and reflow flags from the runtime source, and the pages' from text_boxes."""
+    from . import text_boxes
     known = defines(source)
     found = {("window", k + 1): (box, False) for k, (_, box) in enumerate(windows(source))} | {
              known[f"{name}_DRAW"]: (known[f"{name}_WIDTH"], True) for name in ("SCENARIO_TEXT", "DREAM_SUMMARY")}
     found[known["CAPTION_CUE"]] = (known["CAPTION_WIDTH"], False)
     if "HISTORY_DRAW" in known and "HISTORY_WIDTH" in known:
         found[known["HISTORY_DRAW"]] = (known["HISTORY_WIDTH"], False)
-    found |= {site: (row[6], True) for site, row in pages(source).items()}
+    found |= {site: (row[6], True) for site, row in text_boxes.page_rows().items()}
     found |= {va: (width, False) for va, width in c_array("boxed", source)}
     found |= {va: (width, True) for va, width in c_array("described", source)}
     return found | {site: (width, False) for site, width in single_line_sites(source).items()}
@@ -97,13 +98,10 @@ def windows(source: str = SOURCE) -> list[tuple[int, int]]:
         raise ValueError("windows layout array initializer does not list two windows")
     return rows
 
-def pages(source: str = SOURCE) -> dict[int, tuple[int, ...]]:
-    """Read each page site's cell width and height, pitch, x, y, wrap width and box."""
-    return {row[0]: row[1:] for row in c_array("pages", source)}
-
 def reflow_rules(source: str = SOURCE) -> dict[int, int]:
-    """Read each site's wrap width where it differs from its box."""
-    rules = {site: row[5] for site, row in pages(source).items()}
+    """Read each site's wrap width where it differs from its box (the pages' from text_boxes)."""
+    from . import text_boxes
+    rules = {site: row[5] for site, row in text_boxes.page_rows().items()}
     rules |= {("window", k + 1): wrap for k, (wrap, _) in enumerate(windows(source))}
     if re.search(r"\breflow\s*\[", source):
         rules |= dict(c_array("reflow", source))

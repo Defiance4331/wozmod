@@ -7,6 +7,8 @@ import struct
 from .latin_font import (
     LATIN_COUNT, LATIN_FIRST, LATIN_GLYPH, SURROGATE_CODE, SURROGATE_GLYPH, SURROGATE_LETTERS,
 )
+from . import camp_plate
+from .text_boxes import box
 
 CAVE = 0x5F5100
 PAD_PROMPTS = 0x1413FEC
@@ -41,27 +43,19 @@ def detour(site: int, stock: bytes, cave: int, back: int, code: bytes, call: int
     return [(site, stock, rel32(b"\xe9", site, cave) + b"\x90" * (len(stock) - 5)),
             (cave, b"\xcc" * len(moved), moved)]
 
-# The camp-talk bar (4104.1, stock 262 rows) holds two lines of its stock text (cell 28, pitch 42, first line 96 rows
-# down) between its edge lines with equal margins. English camp talk wraps to at most three (data/text, block 4105,
-# at the stock cell and the 972-px wrap; the widest of them, MESC line 510, sets the count): the art build repeats one
-# row of the bar's uniform middle (row 190) one pitch more, and the game draws the taller bar 1:1. The bar grows
-# upward, so its bottom edge stays where the stock game has it, clear of the prompt bar; the name plate, the name and
-# the text (STILL_DRAW in english_runtime.c) keep their stock places relative to the bar's top (-14, 0, +96).
-# The X360 right name plate: x 640, 616 wide (0x822DD7D4, 0x822DD950), so its right edge is at 1256.
-X360_RIGHT_PLATE = (640, 616)
+# The stock camp-talk plates' x: the left speaker's (0x59C3DF) and the right speaker's (0x59C3E6), both 266 wide.
+CAMP_PLATES = {0x59C3DF: 232, 0x59C3E6: 787}
 
 
 def camp_plate_edits(width: int) -> list:
     """The camp-talk plate drawn `width` wide (wozmod.runtime.camp_plate: source and drawn width, and the width the
-    stock code centres the name on, 0x59C48E), the right plate ending where the X360 right plate ends."""
-    x, x360_width = X360_RIGHT_PLATE
-    return [*widths(0x59C421, 0x59C42C, stock=266, wide=width), immediate(0x59C48E, "b8", 266, width),
-            immediate(0x59C3E6, "bf", 787, x + x360_width - width)]
+    stock code centres the name on, 0x59C48E), each side's plate centred where the stock plate is centred, so every
+    name, centred on its plate, lies where the stock game puts it and the plate grows evenly to either side."""
+    grow = (width - camp_plate.STOCK_WIDTH) // 2
+    return [*widths(0x59C421, 0x59C42C, stock=camp_plate.STOCK_WIDTH, wide=width),
+            immediate(0x59C48E, "b8", camp_plate.STOCK_WIDTH, width),
+            *[immediate(va, "bf", x, x - grow) for va, x in CAMP_PLATES.items()]]
 
-
-CAMP_PITCH, CAMP_LINES_STOCK, CAMP_LINES_MOST = 42, 2, 3
-CAMP_GROWTH = CAMP_PITCH * (CAMP_LINES_MOST - CAMP_LINES_STOCK)
-CAMP_BAR_ROWS, CAMP_BAR_Y = 262 + CAMP_GROWTH, 412 - CAMP_GROWTH
 
 def widths(*sites: int, stock: int, wide: int) -> list:
     """Return checked push-immediate width edits."""
@@ -304,10 +298,14 @@ CODE_EDITS = [
     (0x54EC48, bytes.fromhex("83c208"), bytes.fromhex("83c209")),
     (0x54EF45, bytes.fromhex("83c208"), bytes.fromhex("83c209")),
 
-    # Camp talk bar (0x59C709 source height, 0x59C717 drawn height, 0x59C723 y), plate y and name y: see CAMP_BAR_ROWS.
-    *widths(0x59C709, 0x59C717, stock=262, wide=CAMP_BAR_ROWS),
-    *widths(0x59C723, stock=412, wide=CAMP_BAR_Y), *widths(0x59C433, stock=398, wide=CAMP_BAR_Y - 14),
-    *widths(0x59C4A2, stock=412, wide=CAMP_BAR_Y),
+    # The camp-talk bar's rows and y, and the name plate's and the name's y on its top (text_boxes).
+    *box("camp").edits(),
+    # The Story Z talk bar's rows sampled and drawn, pushed as imm8 (126), which the grown bar outgrows; its y, and the
+    # name plate's and the name's y on its top (text_boxes).
+    *detour(0x59A6F9, bytes.fromhex("6a7e 6880030000 6a00 6a00 6a7e"), CAVE + 0xA80, 0x59A706,
+            b"\x68" + p32(box("z-talk").drawn + box("z-talk").growth) + bytes.fromhex("6880030000 6a00 6a00")
+            + b"\x68" + p32(box("z-talk").drawn + box("z-talk").growth)),
+    *box("z-talk").edits(),
 
     *widths(0x537C0F, 0x537C1C, stock=140, wide=208),
 
@@ -389,6 +387,8 @@ CODE_EDITS = [
     *[(va, bytes.fromhex("6a38"), bytes.fromhex("6a40")) for va in (0x5489FD, 0x548A06)],
     *widths(0x5489FF, 0x548A08, stock=294, wide=1024),
     *widths(0x548A13, stock=226, wide=134),
+    # The briefing band's rows and y, and the stage name plate's y on its top (text_boxes).
+    *box("briefing").edits(),
 
     *widths(0x56EAEA, 0x56EAF4, 0x56B595, 0x56B59F, 0x56FAC4, 0x570585, 0x57058F, 0x572432, 0x57243C,
             0x56BEE2, 0x56BEEC, 0x56CAC6, 0x56CAD0, 0x571BB2, stock=210, wide=310),
@@ -562,10 +562,9 @@ def cell_then(site: int, stock: str, cave: int, cell: int, field: int, skip: int
 
 # Panel geometry taken from the X360 build of the same screen.
 X360_LAYOUT = [
-    # Camp talk (WO1 still event): the bar at the X360 x and width; its height and y are CAMP_BAR_ROWS'. The left
-    # name plate at the X360 left plate's x; the plate's width and the right plate's x: camp_plate_edits.
+    # Camp talk (WO1 still event): the bar at the X360 x and width; its height and y: text_boxes. The name plates'
+    # x and width: camp_plate_edits.
     immediate(0x59C728, "68", 232, 40), immediate(0x59C71C, "68", 756, 1200),
-    immediate(0x59C3DF, "bf", 232, 26),
     # Battle history: box, scroll bar, two entries, time and text x, lone entry, highlight, row table.
     immediate(0x53A631, "68", 293, 237), immediate(0x53A62C, "68", 424, 430), immediate(0x53A625, "68", 708, 812),
     immediate(0x53A663, "68", 292, 236), immediate(0x53A65E, "68", 426, 432),
@@ -725,7 +724,7 @@ MOZ_LAYOUT = [
     (0x5531DA, bytes.fromhex("bf2c020000"), bytes.fromhex("bf5f020000")),
     *widths(0x56108C, stock=756, wide=1229),
     *widths(0x561098, stock=262, wide=25),
-    *widths(0x561087, stock=262, wide=305),
+    *box("narration").edits(),  # the narration panel's rows (text_boxes)
     imm8(0x55B624, "83c7", 32, 38),
 ]
 

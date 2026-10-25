@@ -948,20 +948,15 @@ def test_every_spacing_table_key_is_a_word_its_face_draws() -> None:
 
 def test_rows_stretched_repeats_the_one_row_and_moves_the_rest_down():
     # Bug: the repeat starts a row late or the rows below land one row off, so a stretched box shows a seam or loses
-    # its edge line.
+    # its edge line; or a band of rows is stretched past its ends (a ramp that overshoots shows a bright or dark
+    # stripe). Oracle: rows numbered by their value, by hand.
     from wozmod.art.imaging import rows_stretched
 
-    image = Image.new("L", (2, 8))
-    image.putdata([v for y in range(8) for v in (y, y)])
-    out = rows_stretched(image, 3, 2)
-    assert [out.getpixel((0, y)) for y in range(8)] == [0, 1, 2, 3, 3, 3, 4, 5]
-
-
-def test_the_camp_talk_bar_art_grows_by_the_rows_the_runtime_draws():
-    # Bug: the bar's drawn height (runtime) and its stretched art (art data) disagree, so the game samples past the
-    # art's bottom edge or squeezes it.
-    from wozmod.runtime.runtime_edits import CAMP_BAR_ROWS
-
-    mapping = json.loads(build.MAPPING.read_text(encoding="utf-8"))
-    bar = next(e for e in mapping["textures"] if (e["entry"], e.get("item")) == (4104, 1))
-    assert 262 + sum(piece["stretch"][1] for piece in bar["draw"] if "stretch" in piece) == CAMP_BAR_ROWS
+    image = Image.new("L", (2, 12))
+    image.putdata([v for y in range(12) for v in (10 * y, 10 * y)])
+    rows = lambda out: [out.getpixel((0, y)) for y in range(12)]  # noqa: E731
+    assert rows(rows_stretched(image, 3, 3, 2)) == [0, 10, 20, 30, 30, 30, 40, 50, 60, 70, 80, 90]
+    out = rows(rows_stretched(image, 2, 5, 4))
+    band = out[2:10]
+    assert out[:2] == [0, 10] and out[10:] == [60, 70]
+    assert band == sorted(band) and 20 <= band[0] <= 25 and 45 <= band[-1] <= 50

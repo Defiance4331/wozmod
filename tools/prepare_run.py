@@ -217,6 +217,10 @@ def save_data(save: str, template: Path) -> tuple[bytes | None, str]:
     return data, save
 
 
+# An archive entry an art build may add to the install's: the runtime serves every wozmod/entries/<key>.bin it finds.
+NEW_ENTRY = re.compile(r"wozmod/entries/[0-9]+\.bin")
+
+
 def art_build(folder: Path, files: dict[str, str]) -> list[str]:
     """--file pairs that swap all of the install's menu art for an art build's: folder/wozmod as
     `python -m wozmod.art.build --output-dir FOLDER --hires` or `python -m wozmod.art compose` wrote it. Refused
@@ -240,7 +244,7 @@ def prepare(name: str, install: Path, dll: Path | None, save: str, cache_file: P
     replaced = {}  # an installed file swapped for a working build, as --dll does for d3d9.dll; fixtures.json lists them
     for pair in [*replace, *(art_build(art, files) if art else [])]:
         listed, _, source = pair.partition("=")
-        if listed not in files or listed == "d3d9.dll":
+        if (listed not in files and not NEW_ENTRY.fullmatch(listed)) or listed == "d3d9.dll":
             raise ValueError(f"--file {pair!r}: name a file of the install record, such as wozmod/table.bin=PATH "
                              "(d3d9.dll goes in with --dll)")
         if listed in replaced:
@@ -267,7 +271,7 @@ def prepare(name: str, install: Path, dll: Path | None, save: str, cache_file: P
     reflink(dll, game / "d3d9.dll")
     reflink(install / "wozmod", game / "wozmod")
     for listed, source in replaced.items():
-        (game / listed).unlink()  # never write through the install's shared extent
+        (game / listed).unlink(missing_ok=True)  # never write through the install's shared extent
         reflink(source, game / listed)
     if ini:  # the game rewrites it, so game.sha256 leaves it out
         (game / "wozmod/settings.ini").write_text(ini, newline="")

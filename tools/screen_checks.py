@@ -27,8 +27,9 @@ from typing import Any, Callable
 
 from PIL import Image
 
+from wozmod.runtime import layout, text_boxes
 from wozmod.runtime.english_runtime import DLL_BASE
-from wozmod.runtime.latin_font import ADVANCES, LATIN_CHARS
+from wozmod.runtime.latin_font import width as _table_width
 
 LAYOUT_W = 1280
 TEXT_H = 28  # one glyph row, layout px
@@ -235,13 +236,6 @@ def text_within_edge(screen: dict, text: dict | None, edge: int = LAYOUT_W, allo
                                      "reported_ends": [t["x"] + t.get("reported_width", t["width"]) for t in ts]})
 
 
-def _table_width(line: str, cell: int = 24) -> int:
-    """Layout px the game measures a line of Latin text at with `cell` px letters: each letter's width from the
-    runtime's width table scaled to the cell, rounded down as the game does (colour tags take no room)."""
-    line = re.sub(r"\[[0-9A-Fa-f]{2}|\]", "", line)
-    return sum(ADVANCES[LATIN_CHARS.index(c)] * cell // 24 for c in line if c in LATIN_CHARS)
-
-
 def text_position(screen: dict, text: dict | None, x: int | None = None, y: int | None = None,
                   right: int | None = None, centre: int | None = None, cell: int = 24, tol: int = 1,
                   allow_empty: bool = False) -> Check:
@@ -258,6 +252,26 @@ def text_position(screen: dict, text: dict | None, x: int | None = None, y: int 
     bad = [s for s in seen if any(v is not None and abs(s[k] - v) > tol for k, v in want.items())]
     return Check(not bad, {"texts": len(ts), "want": {k: v for k, v in want.items() if v is not None}, "tol": tol,
                            "bad": bad})
+
+
+def text_box(screen: dict, box: str, allow_empty: bool = False, *, img: Image.Image | None = None,
+             ink: bool = True, tol: int = 1) -> Check:
+    """The page a box shows (wozmod.runtime.text_boxes, by its kind), selected by the box's draw: at the box's x and
+    first-line y (centred lines: the y for their own count), in at most its lines, and ending by its wrap (`ink=False`
+    keeps the reported width, for a page the game types out letter by letter)."""
+    b = text_boxes.box(box)
+    sel = {"caller": hex(layout.DEFINES[b.site])}
+    ts = _texts(screen, sel)
+    if not ts:
+        return _empty("texts=0", allow_empty)
+    seen = [{"x": t["x"], "y": t["y"], "lines": t["text"].count("\n") + 1} for t in ts]
+    bad = [s for s in seen if abs(s["x"] - b.x) > tol or abs(s["y"] - b.first_line(s["lines"])) > tol
+           or s["lines"] > b.lines]
+    right = b.x + min(b.wrap, b.width)
+    edge = text_within_edge(screen, sel, right, img=img, ink=ink)
+    return Check(not bad and edge.ok, {"box": box, "want": {"x": b.x, "y": b.y, "lines": b.lines,
+                                                            "edge": right},
+                                       "bad": bad, "right_ends": edge.numbers["right_ends"]})
 
 
 def text_cell(screen: dict, text: dict | None, cell: int, tol: int = 1, allow_empty: bool = False) -> Check:
@@ -544,6 +558,7 @@ ASSERTIONS: dict[str, tuple[Callable[..., Check], bool]] = {
     "line_count": (line_count, False),
     "text_within_edge": (text_within_edge, False),
     "text_position": (text_position, False),
+    "text_box": (text_box, False),
     "text_cell": (text_cell, False),
     "quad_position": (quad_position, False),
     "no_cjk": (no_cjk, False),
@@ -556,7 +571,7 @@ ASSERTIONS: dict[str, tuple[Callable[..., Check], bool]] = {
     "device_matches_mode": (device_matches_mode, False),
 }
 RUN_FILES = {"device_matches_mode"}  # read the run's runtime.log and settings.ini, not the screen
-INK_WIDTH = {"text_clear_of_quad", "text_clear_of_text", "text_within_edge"}  # take the capture as `img=`
+INK_WIDTH = {"text_clear_of_quad", "text_clear_of_text", "text_within_edge", "text_box"}  # take the capture as `img=`
 SCREEN_KEYS = {"name", "route", "fixture", "battle", "script", "spawn", "keys", "notice", "wait", "assert"}
 
 
@@ -572,6 +587,8 @@ def load_spec(path: Path) -> list[dict]:
         for a in sc.get("assert", []):
             if a.get("kind") not in ASSERTIONS:
                 raise ValueError(f"screen {sc['name']!r}: unknown assertion kind {a.get('kind')!r}")
+            if a["kind"] == "text_box" and a.get("box") not in text_boxes.BOXES:
+                raise ValueError(f"screen {sc['name']!r}: unknown text box {a.get('box')!r}")
             for sel in (a.get("text"), a.get("other")):
                 # callers inside our DLL move with every build; a spec must name stock code or a position
                 if isinstance(sel, dict) and int(sel.get("caller", "0"), 16) >= DLL_BASE:

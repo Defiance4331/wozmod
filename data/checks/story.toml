@@ -1,35 +1,23 @@
 # The main-story chain (a second dead end after the Z chain in layout.toml), so it needs its own boot:
 # `tools/run_check.py --install DIR [--dll FILE] data/checks/story.toml`.
 
-# Story narration (Old): the MOZ page, text from x 160 at the stock size, wrapped at 960, centred on y 535.
+# Story narration (Old): the MOZ page in its box (wozmod.runtime.text_boxes "narration"); typed out, so its right end
+# is the reported width.
 [[screen]]
 name = "story-narration"
 route = "story-narration"
 wait = { caller = "0x561111", timeout = 30 }
 
   [[screen.assert]]
-  kind = "text_position"
-  text = { caller = "0x561111" }
-  x = 160
-
-  [[screen.assert]]
-  kind = "line_count"
-  text = { caller = "0x561111" }
-  max = 4
-
-  [[screen.assert]]
-  kind = "text_within_edge"         # wrap 960 from x 160; typed out, so the reported width
-  text = { caller = "0x561111" }
-  edge = 1120
+  kind = "text_box"
+  box = "narration"
   ink = false
 
-# Story still text (New): the X360 origin (150, 531).
+# Story still text (New): the victory still is the camp-talk screen, in its box (text_boxes "camp").
 [[screen]]
 name = "story-victory-still"
 route = "story-victory-still"
 
   [[screen.assert]]
-  kind = "text_position"
-  text = { caller = "0x59c7bd" }
-  x = 150
-  y = 531
+  kind = "text_box"
+  box = "camp"

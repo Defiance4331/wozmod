@@ -14,6 +14,7 @@ from wozmod.formats import pe
 from .latin_font import LATIN_GLYPH, SURROGATE_CODE, SURROGATE_LETTERS
 from .layout import C_SOURCE
 from .prompts import PROMPT_SLOTS, STICK_ITEMS
+from .text_boxes import c_header as text_box_header
 from .text_room import ROOMS, WIDE
 
 COMPILER = "i686-w64-mingw32-gcc"
@@ -238,6 +239,7 @@ def data_header(exe: bytes, edits: dict[int, list[tuple[int, bytes, bytes]]], ho
         f"#define PROMPT_SLOTS {len(PROMPT_SLOTS)}",
         f"#define PROMPT_ITEMS {len(PROMPT_SLOTS) + len(STICK_ITEMS)}",
         f"#define PROMPT_SLOT_LIST {', '.join(map(str, PROMPT_SLOTS + STICK_ITEMS))}",
+        *text_box_header(),
         "",
     ])
 

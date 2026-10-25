@@ -20,7 +20,7 @@ from wozmod import resources
 from wozmod.progress import report as report_progress
 from . import lettering, words
 from wozmod.runtime.latin_font import CELL, LATIN_GLYPH
-from wozmod.runtime import camp_plate
+from wozmod.runtime import camp_plate, text_boxes
 from wozmod.runtime.prompts import PROMPT_ENTRY, PROMPT_FAMILIES, STICK_ITEMS
 from .prompt_glyphs import prompt_art, stick_art
 from wozmod.donors import WO1_X360, WO2_X360, extract_donor, verify_file
@@ -424,8 +424,8 @@ def payload(target, edit: dict, donors: dict, package) -> bytes:
             if "erase" in spec:  
                 image = restriped(image, spec["erase"][:4], spec["erase"][4])
                 continue
-            if "stretch" in spec:  # [row, extra]: the art taller by repeating one uniform row
-                image = rows_stretched(image, *spec["stretch"])
+            if "stretch" in spec:  # a text box's art, taller by repeating one uniform row (wozmod.runtime.text_boxes)
+                image = rows_stretched(image, *text_boxes.box(spec["stretch"]).stretch)
                 continue
             if "refill" in spec:  
                 (cx, cy, r), disk = spec["refill"], Image.new("L", image.size)
