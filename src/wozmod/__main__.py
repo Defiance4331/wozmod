@@ -84,9 +84,12 @@ def run_install(args: argparse.Namespace) -> int:
         args.force = True
     view = TerminalView()
     progress = Progress(view)
+    notes: list[str] = []
     install(args.game, {name: getattr(args, attribute(name)) for name in INPUTS if name != "game"},
-            force=args.force, log=lambda _: None, progress=progress)
+            force=args.force, log=lambda _: None, progress=progress, note=notes.append)
     view.finish(progress, f"Installed in {duration(progress.elapsed())}. Start the game as usual.")
+    for line in notes:
+        print(line)
     return 0
 
 

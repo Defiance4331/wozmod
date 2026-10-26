@@ -41,6 +41,14 @@ def test_zero_allocation_row_does_not_shift_later_linkdata_members() -> None:
     ]
 
 
+@pytest.mark.parametrize("appended", [1, 2048, 2048 * 40 + 7])
+def test_bytes_past_the_last_entry_leave_every_entry_where_it_was(appended) -> None:
+    # Bug: a BIN longer than its index (another mod's tool left bytes past the last entry) is refused, or its record
+    # table runs on into the member-size trailer, or stops a record short.
+    fixture, data = _index_fixture()
+    assert linkdata.parse_index(fixture, len(data) + appended).entries == linkdata.parse_index(fixture, len(data)).entries
+
+
 @pytest.mark.parametrize(
     ("mutate", "size_change", "message"),
     (

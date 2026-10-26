@@ -33,7 +33,9 @@ WO2_SCRIPTS = range(2796, 2864)
 
 
 # Both games load a stage's script by its stage id: MOZ 0x4F06D0 reads LINKDATA2 entry s (key 0x109B + s), WO2 X360
-# 0x821B9BF0 ENS 103 + s (PS2 member 2796 + s, X360_ENS). The Dream stages are 40-67 in both.
+# 0x821B9BF0 ENS 103 + s (PS2 member 2796 + s, X360_ENS). The Dream stages are 40-67 in both. MOZ has 144 stages
+# (the stage table, LINKDATA1 4075, counts them), so its scripts are LINKDATA2 0-143.
+MOZ_SCRIPTS = range(144)
 DREAM_SCRIPTS = tuple(zip(range(40, 68), range(2836, 2864), strict=True))
 # WO2 PSP LINKDATA_NA.FNS members by stock Z Dream stage ordinal. The PSP loads a stage script as member stage id + 198
 # (0x1524C8: 0x1066C(5, [0x126FE64] + 0xC6) at 0x1524E4), so these are PSP stages 72-83; that MOZ stage s is PSP stage
@@ -128,9 +130,10 @@ def _parse(data: bytes) -> Script | None:
 
 
 def moz_scripts(stem: Path) -> dict[int, Script]:
-    """Read every single-member four-section stock script."""
+    """Read every single-member four-section stock stage script. Only the stage scripts are read: the build reads
+    nothing else of LINKDATA2 that it does not need, so another mod's change there does not stop the install."""
     entries = archive(stem)
-    single = entries.read(o for o in entries if entries.parts(o) == 1)
+    single = entries.read(o for o in MOZ_SCRIPTS if o in entries and entries.parts(o) == 1)
     return {o: parsed for o, data in single.items() if data[:4] == b"\x04\0\0\0" and (parsed := _parse(data))}
 
 

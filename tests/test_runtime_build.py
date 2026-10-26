@@ -13,7 +13,7 @@ import pytest
 
 from synthetic import pe_image
 from wozmod.formats import pe
-from wozmod.install import STOCK_FILES
+from wozmod.install.stock import EXE, recorded
 from wozmod.runtime import build, guards, layout, text_boxes
 from wozmod.runtime import english_runtime as runtime
 from wozmod.runtime.latin_font import LATIN_GLYPH
@@ -122,7 +122,7 @@ def stock_builds(tmp_path_factory: pytest.TempPathFactory) -> tuple[bytes, dict[
     if not exe.is_file():
         pytest.skip("set WOZMOD_GAME to the stock game folder")
     stock = exe.read_bytes()
-    assert (len(stock), hashlib.sha256(stock).hexdigest()) == STOCK_FILES["OROCHI_Z.exe"]
+    assert (len(stock), hashlib.sha256(stock).hexdigest()) == recorded().recorded_from[EXE]
     handed = {}
     with pytest.MonkeyPatch.context() as patch:
         for name, (options, _) in OPTIONS.items():

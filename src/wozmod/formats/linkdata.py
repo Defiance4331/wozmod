@@ -331,9 +331,54 @@ def _preliminary_entries(
 
 
 def parse_index(data: bytes, data_size: int) -> LinkdataIndex:
+    """The entries of a stock LINKDATA index over a BIN of `data_size` bytes.
 
+    The record table ends where the allocations fill the BIN. A BIN longer than its index (bytes past the last
+    entry, as another mod's tool may leave them) ends it instead at the record count whose member-size trailer the
+    records reference exactly.
+    """
     data = bytes(data)
-    records, trailer_offset = _preliminary_entries(data, data_size)
+    try:
+        records, trailer_offset = _preliminary_entries(data, data_size)
+        return _with_trailer(data, records, trailer_offset, data_size)
+    except ArchiveError as error:
+        for records in _tables_short_of(data, data_size):
+            try:
+                return _with_trailer(data, records, RECORD.size * len(records), data_size)
+            except ArchiveError:
+                continue
+        raise error
+
+
+def _tables_short_of(data: bytes, data_size: int):
+    """Each record table whose records are well formed, whose allocations fit in the BIN without filling it, and
+    whose last member-size vector ends exactly at the end of the index, shortest first."""
+    if len(data) % WORD.size or len(data) < WORD.size or WORD.unpack_from(data, len(data) - WORD.size)[0]:
+        return
+    words = len(data) // WORD.size - 1  # the last vector runs from just past the zero word before the final one
+    tail = next((k + 1 for k in range(words - 1, -1, -1) if not WORD.unpack_from(data, WORD.size * k)[0]), 0)
+    tail *= WORD.size
+    records: list[LinkdataIdxRecord] = []
+    data_offset, last_vector = 0, None
+    while RECORD.size * (len(records) + 1) <= len(data):
+        record = LinkdataIdxRecord(*RECORD.unpack_from(data, RECORD.size * len(records)))
+        allocation = record.allocation_size()
+        if (record.allocated_bytes % SECTOR_SIZE or (record.allocated_bytes and not record.size_or_descriptor)
+                or (not record.allocated_bytes and record.member_table_offset)
+                or data_offset + allocation >= data_size):
+            return
+        records.append(record)
+        data_offset += allocation
+        if record.allocated_bytes:
+            last_vector = record.member_table_offset
+        trailer = RECORD.size * len(records)
+        if (trailer == len(data) if last_vector is None
+                else tail <= trailer + last_vector <= len(data) - 2 * WORD.size):
+            yield tuple(records)
+
+
+def _with_trailer(data: bytes, records: tuple[LinkdataIdxRecord, ...], trailer_offset: int,
+                  data_size: int) -> LinkdataIndex:
     trailer = data[trailer_offset:]
     expected_member_table_offset = 0
     data_offset = 0
@@ -388,8 +433,6 @@ def parse_index(data: bytes, data_size: int) -> LinkdataIndex:
         raise ArchiveError(
             "LINKDATA member-size trailer contains unreferenced bytes"
         )
-    if data_offset != data_size:
-        raise ArchiveError("LINKDATA record allocations do not consume the BIN")
     return LinkdataIndex(
         records=records,
         trailer=trailer,

@@ -9,7 +9,6 @@ import queue
 import re
 import shutil
 import signal
-import struct
 import sys
 import tempfile
 import threading
@@ -24,7 +23,7 @@ from wozmod import __version__ as VERSION
 from wozmod import progress as reporting
 from wozmod import process, remembered, resources
 from wozmod.donors.discs import DISCS, DonorsFolder
-from wozmod.formats import pe
+from wozmod.install.stock import Verdict, check_game
 from wozmod.progress import Cancelled, Progress
 
 MANIFEST = "wozmod/install.json"
@@ -33,20 +32,7 @@ TEXT_DATA = resources.root() / "data/text/table.json"
 DUB_CAPTIONS = resources.root() / "data/text/dub_captions.json"
 MOVIE_CAPTIONS = resources.root() / "data/text/movie_captions.json"
 
-# Stock files the build reads: (size, SHA-256) of the supported Japanese PC release.
-STOCK_FILES = {
-    "OROCHI_Z.exe": (3_983_716, "ab3ac6deae8d135a5b59fe1c4de6c0893f3cf1fd8dd908f3ab3124edda699b49"),
-    "LINKDATA1.IDX": (76_080, "3db85bcba960df21d5ecec1a83a7ae794f3a3e016717a7637685869176b8ddef"),
-    "LINKDATA1.BIN": (1_637_697_536, "faf4ba7cf019750b037234feaeefaa4d2703944c7ddc6299e3d72841ae6f479d"),
-    "LINKDATA2.IDX": (12_352, "ae1e7a99b58e8875ca8b07fe4130e834c007955e1c4830980458e8d98bd1fb5b"),
-    "LINKDATA2.BIN": (1_837_785_088, "fb1004797008ff84f26c7f65c5a40c672ef09abd8083534bf67ebc3ce11711b0"),
-    "data/Sound/Voice/Voice.bin": (971_871_792, "6d30494571b62dc1f56983c7c84c0f834c6203714ccec089a288e1a38d62f630"),
-}
-# The OROCHI_Z.exe of the 1.01 update, told by its PE header: linked 2010-01-26 07:28:39 UTC, SizeOfImage 0x1194000
-# (1.00's: 2009-11-08 10:31:19 UTC, 0x101A000). The update's LINKDATA4 beside a 1.00 exe changes nothing wozmod reads.
-UPDATE_101 = (0x4B5E99A7, 0x1194000)
-UPDATE_101_FOUND = ("This game has the 1.01 update. wozmod needs version 1.00, and adds the update's sound and menu fixes "
-                    "itself. Reinstall the game from its disc without the update, then pick its folder.")
+# The game folder is checked piece by piece: only the parts of the stock files the build reads (install/stock.py).
 # Release assets built by us; a release updates both pins with the files it ships.
 LETTERING = (18_399_206, "5c45d5a0d200c3fe55f31140285f9ac6c22cff172850a79484fe3dbb5a4c6ec0")
 DLL = (248_985, "2382aa2b6c6729cc2e723d410a2deeb166059269e000f69c73d681e19aba8a46")
@@ -108,15 +94,6 @@ def worker_count() -> int:
 def _sha256(path: Path) -> str:
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
-
-
-def _updated(exe: Path) -> bool:
-    """Whether the exe's PE header is the 1.01 update's."""
-    try:
-        with exe.open("rb") as file:
-            return pe.build_stamp(file.read(0x1000)) == UPDATE_101
-    except (OSError, pe.PEError, struct.error):
-        return False
 
 
 def _pinned(path: Path, pin: tuple[int, str]) -> str | None:
@@ -307,18 +284,7 @@ def check_input(name: str, path: Path | str) -> str | None:
     """
     path = Path(path)
     if name == "game":
-        if not path.is_dir():
-            return "Not a folder. Pick the folder that contains the game's .exe."
-        with ThreadPoolExecutor(len(STOCK_FILES)) as pool:  # hashlib lets go of the GIL: hash the big files side by side
-            results = list(pool.map(lambda item: _pinned(path / item[0], item[1]), STOCK_FILES.items()))
-        for stock, wrong in zip(STOCK_FILES, results, strict=True):
-            if wrong and stock == "OROCHI_Z.exe" and wrong != "missing" and _updated(path / stock):
-                return UPDATE_101_FOUND
-            if wrong:
-                return (f"{stock} is missing. Pick the folder that contains the game's .exe (the Japanese PC release)."
-                        if wrong == "missing" else
-                        f"{stock} is not the stock Japanese PC release. Reinstall the game, then pick its folder.")
-        return None
+        return _game_check(path)[0]
     if name in DISCS:
         from wozmod.donors import check_donor_image
 
@@ -339,8 +305,25 @@ def check_input(name: str, path: Path | str) -> str | None:
     return None
 
 
-def check_inputs(game: Path, inputs: dict[str, Path | None], log=None) -> None:
-    """Raise one InstallError naming every missing or wrong input.
+def _shipped_dll() -> Path | None:
+    """The release's d3d9.dll, which the window and the packaged command line install; None where it is absent or
+    not the pinned one (a development checkout)."""
+    path = resources.root() / "d3d9.dll"
+    return None if _pinned(path, DLL) else path
+
+
+def _game_check(path: Path, dll: Path | None = None) -> tuple[str | None, Verdict | None]:
+    """(the reason the game folder cannot be used or None, what check_game found). The exe's code is checked
+    against the guards of ``dll``, else of the release's own d3d9.dll."""
+    if not path.is_dir():
+        return "Not a folder. Pick the folder that contains the game's .exe.", None
+    verdict = check_game(path, dll=dll or _shipped_dll())
+    return verdict.problem(), verdict
+
+
+def check_inputs(game: Path, inputs: dict[str, Path | None], log=None) -> list[str]:
+    """Raise one InstallError naming every missing or wrong input; else return the notes for the player (what
+    another mod in the game folder also replaces).
 
     The two files of the release download come first, on their own: a wrong download is named in milliseconds,
     not after the seconds the game folder's hashes take. Every other wrong input is then named in one error.
@@ -348,7 +331,8 @@ def check_inputs(game: Path, inputs: dict[str, Path | None], log=None) -> None:
     if wrong := [f"{INPUTS[name].label}: {problem}" for name in ("lettering", "dll")
                  if (problem := check_input(name, inputs[name]))]:
         raise InstallError("\n".join(wrong))
-    problems = {"game": check_input("game", game)}
+    problem, verdict = _game_check(Path(game), inputs["dll"])
+    problems = {"game": problem}
     for name in DISCS:
         problems[name] = check_input(name, inputs[name])
     for tool in TOOLS:  # a wrong disc image is named once, on the image: its key is already set above
@@ -359,6 +343,7 @@ def check_inputs(game: Path, inputs: dict[str, Path | None], log=None) -> None:
         lines.append("ffmpeg was not found on PATH; the voice build needs it")
     if lines:
         raise InstallError("\n".join(lines))
+    return verdict.notes()
 
 
 def read_manifest(game: Path) -> dict[str, str]:
@@ -702,8 +687,11 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
 
 
 def install(game: Path, inputs: dict[str, Path], force: bool = False, log=print,
-            progress: Progress | None = None, cache=None) -> dict[str, str]:
+            progress: Progress | None = None, cache=None, note=None) -> dict[str, str]:
     """Build wozmod into game; return the written files with their SHA-256.
+
+    `note` gets each note for the player once the files are in place (another mod in the game folder that also
+    replaces something wozmod replaces); without it they go to `log`.
 
     `cache` reuses unchanged build steps on developer machines (see _build); players never have one.
 
@@ -728,12 +716,12 @@ def install(game: Path, inputs: dict[str, Path], force: bool = False, log=print,
         progress.begin("check")
         checker = ThreadPoolExecutor(1)  # hashing the inputs overlaps with reading the discs; nothing but the build folder changes meanwhile
         check = checker.submit(check_inputs, game, inputs, log)
-        done = []
+        done, notes = [], []
 
         def checked(wait: bool = True) -> None:
             if not wait and not check.done():
                 return
-            check.result()  # raises the InstallError for a wrong input
+            notes[:] = check.result()  # raises the InstallError for a wrong input
             if not done:
                 done.append(progress.finish("check"))
             progress.checkpoint()
@@ -773,4 +761,6 @@ def install(game: Path, inputs: dict[str, Path], force: bool = False, log=print,
         reporting.attach(None, None)
     progress.end()
     log(f"Placed {len(files)} files in the game folder.")
+    for line in notes:
+        (note or log)(line)
     return files

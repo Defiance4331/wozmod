@@ -9,7 +9,9 @@ from pathlib import Path
 import pytest
 
 import wozmod.install as installer
-from wozmod.install import InstallError, install, uninstall
+from synthetic import stock_game
+from wozmod.install import InstallError, install, stock, uninstall
+from wozmod.runtime import guard_report
 
 REAL_BUILD = installer._build
 
@@ -24,13 +26,10 @@ def _tree(root: Path) -> dict[str, bytes | None]:
 
 @pytest.fixture
 def game(tmp_path: Path, monkeypatch) -> Path:
-    """A stock folder of two pinned files, and a build that writes three mod files."""
+    """A small stock folder with its pieces record, and a build that writes three mod files."""
     folder = tmp_path / "game"
-    (folder / "data").mkdir(parents=True)
-    (folder / "OROCHI_Z.exe").write_bytes(b"stock exe")
-    (folder / "data/LINKDATA1.BIN").write_bytes(b"stock archive")
-    monkeypatch.setattr(installer, "STOCK_FILES", {"OROCHI_Z.exe": _pin(b"stock exe"),
-                                                   "data/LINKDATA1.BIN": _pin(b"stock archive")})
+    record = stock_game(folder)
+    monkeypatch.setattr(stock, "recorded", lambda: record)
 
     def build(game, inputs, staging, progress, jobs, checked, cache=None):
         out = staging / "out"
@@ -52,12 +51,13 @@ def _inputs(tmp_path: Path) -> dict[str, Path]:
 def test_every_missing_or_wrong_input_is_named_and_no_right_one(game, tmp_path, monkeypatch):
     # Bug: a wrong input passes, the error blames the wrong input, or it stops at the first problem.
     inputs = _inputs(tmp_path)
-    (game / "data/LINKDATA1.BIN").write_bytes(b"patched archive")
+    (game / "LINKDATA1.BIN").write_bytes(b"patched archive")
     inputs["wo1-x360"].write_bytes(b"not a disc image")
     inputs["lettering"].write_bytes(b"bundle")
     inputs["dll"].write_bytes(b"dll")
     monkeypatch.setattr(installer, "LETTERING", _pin(b"bundle"))
     monkeypatch.setattr(installer, "DLL", _pin(b"dll"))
+    monkeypatch.setattr(guard_report, "refused_features", lambda exe, dll: [])  # the stand-in DLL has no guard list
 
     with pytest.raises(InstallError) as caught:
         install(game, inputs)
@@ -65,7 +65,7 @@ def test_every_missing_or_wrong_input_is_named_and_no_right_one(game, tmp_path, 
     named = {line.split(":")[0] for line in str(caught.value).splitlines() if ": " in line}
     assert named == {"Game folder", "Warriors Orochi (Xbox 360, USA) disc image",
                      "Warriors Orochi 2 (Xbox 360, USA) disc image", "Warriors Orochi 2 (PSP, USA) disc image"}
-    assert "data/LINKDATA1.BIN" in str(caught.value) and "OROCHI_Z.exe" not in str(caught.value)
+    assert "LINKDATA1.BIN" in str(caught.value) and "OROCHI_Z.exe" not in str(caught.value)
     assert not (game / "wozmod").exists()
 
 
@@ -73,7 +73,7 @@ def test_a_wrong_download_is_named_before_the_game_folder_is_hashed(game, tmp_pa
     # Bug: the release files are checked after the game folder's hashes (seconds on a real game), or only the
     # first wrong one is named.
     inputs = _inputs(tmp_path)
-    (game / "data/LINKDATA1.BIN").write_bytes(b"patched archive")
+    (game / "LINKDATA1.BIN").write_bytes(b"patched archive")
     inputs["lettering"].write_bytes(b"other bundle")
     monkeypatch.setattr(installer, "DLL", _pin(b"dll"))
     hashed = []
@@ -88,10 +88,20 @@ def test_a_wrong_download_is_named_before_the_game_folder_is_hashed(game, tmp_pa
     assert not [path for path in hashed if path.is_relative_to(game)]
 
 
+def test_the_notes_of_the_game_check_reach_the_player_once_the_files_are_placed(game, tmp_path, monkeypatch):
+    # Bug: the install drops the check's notes (another mod also replaces a voice clip), or gives
+    # them before the files are in place, so a failed install still tells the player what its files will do.
+    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: ["Note: one", "Note: two"])
+    shown = []
+    install(game, _inputs(tmp_path), log=lambda _: None,
+            note=lambda line: shown.append((line, (game / "wozmod/install.json").is_file())))
+    assert shown == [("Note: one", True), ("Note: two", True)]
+
+
 def test_install_over_the_same_version_rebuilds_and_a_newer_one_asks_first(game, tmp_path, monkeypatch):
     # Bug: a second install of the same version is refused (so "Reinstall" fails), or an install made by a
     # newer wozmod is silently replaced by this older one.
-    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: None)
+    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: [])
     install(game, _inputs(tmp_path), log=lambda _: None)
     (game / "wozmod/settings.ini").write_bytes(b"player settings")
     assert installer.install_state(game) == ("reinstall", installer.VERSION)
@@ -111,7 +121,7 @@ def test_install_over_the_same_version_rebuilds_and_a_newer_one_asks_first(game,
 def test_a_reinstall_leaves_unchanged_files_in_place_and_replaces_changed_ones(game, tmp_path, monkeypatch):
     # Bug: a reinstall writes every file anew (gigabytes of fresh disk blocks for the same bytes), or keeps a
     # file whose build changed, or one changed on disk since the last install.
-    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: None)
+    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: [])
     install(game, _inputs(tmp_path), log=lambda _: None)
     inodes = {name: (game / name).stat().st_ino for name in ("d3d9.dll", "wozmod/entries/4059.bin", "wozmod/table.bin")}
     build = installer._build
@@ -146,7 +156,7 @@ FROZEN_FIRST_RECORD = """{
 def test_a_record_from_the_first_release_is_still_updated(game, tmp_path, monkeypatch):
     # Bug: a later version requires a "version" key in install.json, so every install made by the first
     # release is refused as unreadable or as a downgrade, and the player has to delete files by hand.
-    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: None)
+    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: [])
     (game / "wozmod").mkdir()
     (game / "d3d9.dll").write_bytes(b"old dll")
     (game / "wozmod/table.bin").write_bytes(b"old table")
@@ -169,18 +179,19 @@ def test_existing_install_is_none_on_a_stock_folder(game):
 
 def test_a_record_from_the_first_release_is_still_uninstalled(game):
     # Bug: uninstall reads a "version" key the first release never wrote, so the player cannot remove it.
+    stock_tree = _tree(game)
     (game / "wozmod").mkdir()
     (game / "d3d9.dll").write_bytes(b"old dll")
     (game / "wozmod/table.bin").write_bytes(b"old table")
     (game / "wozmod/install.json").write_text(FROZEN_FIRST_RECORD)
     assert uninstall(game, log=lambda _: None, keep_settings=False) == {}
-    assert sorted(_tree(game)) == ["OROCHI_Z.exe", "data", "data/LINKDATA1.BIN"]
+    assert _tree(game) == stock_tree
 
 
 def test_uninstall_that_removes_the_settings_leaves_the_stock_folder(game, tmp_path, monkeypatch):
     # Bug: settings.ini and the runtime logs (written by the game, so not in install.json) stay behind, with
     # an otherwise empty wozmod/ folder, so the folder is no longer stock.
-    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: None)
+    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: [])
     before = _tree(game)
     install(game, _inputs(tmp_path), log=lambda _: None)
     (game / "wozmod/settings.ini").write_bytes(b"player settings")
@@ -194,7 +205,7 @@ def test_uninstall_that_removes_the_settings_leaves_the_stock_folder(game, tmp_p
 
 def test_uninstall_can_keep_the_settings(game, tmp_path, monkeypatch):
     # Bug: "keep my settings" still deletes them, so a later install starts from the defaults.
-    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: None)
+    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: [])
     install(game, _inputs(tmp_path), log=lambda _: None)
     (game / "wozmod/settings.ini").write_bytes(b"player settings")
     uninstall(game, log=lambda _: None, keep_settings=True)
@@ -213,7 +224,7 @@ def test_the_version_in_the_code_is_the_version_of_the_release():
 
 def test_a_d3d9_dll_the_installer_did_not_write_is_refused_even_with_force(game, tmp_path, monkeypatch):
     # Bug: another mod's d3d9.dll is overwritten, and a later uninstall deletes it.
-    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: None)
+    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: [])
     (game / "d3d9.dll").write_bytes(b"another mod")
 
     with pytest.raises(InstallError, match="d3d9.dll"):
@@ -224,7 +235,7 @@ def test_a_d3d9_dll_the_installer_did_not_write_is_refused_even_with_force(game,
 
 def test_a_failure_while_placing_files_removes_what_this_run_wrote(game, tmp_path, monkeypatch):
     # Bug: files placed before the failure (d3d9.dll, entries/) or the build folder are left behind.
-    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: None)
+    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: [])
     (game / "wozmod/table.bin").mkdir(parents=True)  # a folder where the last file goes
     before = _tree(game)
 
@@ -236,7 +247,7 @@ def test_a_failure_while_placing_files_removes_what_this_run_wrote(game, tmp_pat
 
 def test_install_then_uninstall_leaves_the_folder_as_it_was(game, tmp_path, monkeypatch):
     # Bug: install.json, an empty wozmod/ or entries/ folder, or a stray build folder is left.
-    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: None)
+    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: [])
     before = _tree(game)
     files = install(game, _inputs(tmp_path), log=lambda _: None)
     assert json.loads((game / "wozmod/install.json").read_text())["files"] == {
@@ -251,7 +262,7 @@ def test_install_then_uninstall_leaves_the_folder_as_it_was(game, tmp_path, monk
 
 def test_uninstall_leaves_changed_files_and_keeps_listing_them(game, tmp_path, monkeypatch):
     # Bug: a file the player changed after install is deleted, or forgotten by install.json.
-    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: None)
+    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: [])
     files = install(game, _inputs(tmp_path), log=lambda _: None)
     (game / "wozmod/table.bin").write_bytes(b"player edit")
     (game / "wozmod/settings.ini").write_bytes(b"written by the game")
@@ -267,14 +278,15 @@ def test_uninstall_leaves_changed_files_and_keeps_listing_them(game, tmp_path, m
 
 def test_uninstall_refuses_an_install_json_that_lists_a_stock_file(game):
     # Bug: an edited install.json carrying a stock file's own hash makes uninstall delete it.
+    exe = (game / "OROCHI_Z.exe").read_bytes()
     (game / "wozmod").mkdir()
     (game / "wozmod/install.json").write_text(json.dumps({"files": {
-        "OROCHI_Z.exe": hashlib.sha256(b"stock exe").hexdigest()}}))
+        "OROCHI_Z.exe": hashlib.sha256(exe).hexdigest()}}))
 
     with pytest.raises(InstallError, match="OROCHI_Z.exe"):
         uninstall(game, log=lambda _: None)
 
-    assert (game / "OROCHI_Z.exe").read_bytes() == b"stock exe"
+    assert (game / "OROCHI_Z.exe").read_bytes() == exe
 
 
 def test_the_input_checks_run_while_the_discs_are_read(game, tmp_path, monkeypatch):
@@ -285,6 +297,7 @@ def test_the_input_checks_run_while_the_discs_are_read(game, tmp_path, monkeypat
     def check(game, inputs, log=None):
         if not reading.wait(10):
             raise InstallError("the checks ran before any disc was read")
+        return []
 
     def extract(*args):
         reading.set()
@@ -412,35 +425,3 @@ def test_a_wrong_donor_archive_ends_the_art_stage_with_an_install_error_naming_i
     with pytest.raises(InstallError) as caught:
         installer._menu_art(tmp_path / "game", donors.root, bundle, tmp_path / "art", tmp_path / "out", 1)
     assert str(caught.value) == f"Menu art: {title} disc: Wrong donor member hash: linkdata_ens.lnk"
-
-
-def _exe_header(stamp: int, image_size: int) -> bytes:
-    """A PE header as the linker writes it: e_lfanew at 0x3C, the file header (i386) and the optional header."""
-    header = bytearray(0x200)
-    header[:2], header[0x3C:0x40] = b"MZ", (0x80).to_bytes(4, "little")
-    header[0x80:0x86] = b"PE\0\0" + (0x14C).to_bytes(2, "little")
-    header[0x88:0x8C] = stamp.to_bytes(4, "little")
-    header[0x80 + 24 + 56:0x80 + 24 + 60] = image_size.to_bytes(4, "little")
-    return bytes(header)
-
-
-def test_only_the_1_01_update_exe_is_named_as_the_update(game):
-    # Bug: a game with the 1.01 update is only told its exe is not the stock release (so the player reinstalls and
-    # patches again), or another exe, or the update's LINKDATA4 beside a stock 1.00 exe, is called the update.
-    # Linker stamps and image sizes as read from the two releases' exes.
-    generic = "OROCHI_Z.exe is not the stock Japanese PC release. Reinstall the game, then pick its folder."
-    rows = {
-        "1.01 exe": (_exe_header(0x4B5E99A7, 0x1194000), None, installer.UPDATE_101_FOUND),
-        "1.01 stamp, other image size": (_exe_header(0x4B5E99A7, 0x1196000), None, generic),
-        "a changed 1.00 exe": (_exe_header(0x4AF69DF7, 0x101A000), None, generic),
-        "not an exe": (b"MZ", None, generic),
-        "1.00 exe and the update's LINKDATA4": (b"stock exe", b"update archive", None),
-    }
-    found = {}
-    for name, (exe, linkdata4, _) in rows.items():
-        (game / "OROCHI_Z.exe").write_bytes(exe)
-        (game / "LINKDATA4.BIN").unlink(missing_ok=True)
-        if linkdata4:
-            (game / "LINKDATA4.BIN").write_bytes(linkdata4)
-        found[name] = installer.check_input("game", game)
-    assert found == {name: expected for name, (*_, expected) in rows.items()}

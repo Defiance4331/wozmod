@@ -180,3 +180,60 @@ def pe_image(size: int, *sections: tuple[bytes, int, int, int, int], image_base:
     for i, section in enumerate(sections):
         struct.pack_into("<8sIIII", image, pe_at + 24 + optional_size + 40 * i, *section)
     return image
+
+
+def stock_game(folder: Path, exe: dict | None = None, linkdata1: dict | None = None, linkdata2: dict | None = None,
+               clips: dict | None = None, voice_tail: bytes = b"", clip_order: tuple = ()):
+    """Write a small game folder laid out as the stock one, and return the pieces record (install.stock.Recorded) of
+    the unchanged folder. Each argument replaces stock pieces in what is written: exe {offset: bytes},
+    linkdata1/linkdata2 {entry: bytes or parts}, clips {clip: bytes}; voice_tail is appended to Voice.bin, and
+    clip_order lays the clips out in Voice.bin in another order.
+
+    The record: exe spans 0x200 (text) and 0x300 (text, art); LINKDATA1 2 read stored by art, 3 (LZP2) read unpacked
+    by text, 1 unread; LINKDATA2 0 read unpacked by voices, 2 only served; Voice.bin clips 0 and 3 read by voices, 1,
+    2 and 4 only served. LINKDATA1 4058 is the voice index."""
+    import hashlib
+
+    from wozmod.formats.linkdata import encode_lzp2
+    from wozmod.install.stock import EXE, VOICE, VOICE_INDEX, Piece, Recorded
+
+    sha = lambda data: hashlib.sha256(data).hexdigest()  # noqa: E731
+    stamp = (0x4AF69DF7, 0x101A000)  # 2009-11-08 10:31:19 UTC, version 1.00's
+    image = bytearray(bytes(range(256)) * 4)
+    image[:0x200] = bytes(0x200)
+    image[:2], image[0x3C:0x40] = b"MZ", (0x80).to_bytes(4, "little")
+    image[0x80:0x86] = b"PE\0\0" + (0x14C).to_bytes(2, "little")
+    image[0x88:0x8C] = stamp[0].to_bytes(4, "little")
+    image[0x80 + 24 + 56:0x80 + 24 + 60] = stamp[1].to_bytes(4, "little")
+    stock_clips = {0: b"clip zero " * 30, 1: b"clip one " * 20, 2: b"clip two " * 10, 3: b"clip three " * 5,
+                   4: b"clip four " * 7}
+    ld1 = {1: b"unread entry", 2: b"art entry " * 300, 3: encode_lzp2(b"text entry " * 40)}
+    ld2 = {0: b"stage script " * 50, 1: b"another unread entry", 2: b"caption schedule"}
+    record = Recorded(stamp, (
+        Piece(EXE, 0x200, sha(bytes(image[0x200:0x220])), frozenset({"text"}), length=0x20),
+        Piece(EXE, 0x300, sha(bytes(image[0x300:0x310])), frozenset({"text", "art"}), length=0x10),
+        Piece("LINKDATA1", 2, sha(ld1[2]), frozenset({"art"})),
+        Piece("LINKDATA1", 3, sha(ld1[3]), frozenset({"text"}), decoded_sha256=sha(b"text entry " * 40)),
+        Piece("LINKDATA2", 0, sha(ld2[0]), frozenset({"voices"}), decoded_sha256=sha(ld2[0])),
+        Piece("LINKDATA2", 2, sha(ld2[2]), frozenset(), served=True),
+        Piece(VOICE, 0, sha(stock_clips[0]), frozenset({"voices"})),
+        Piece(VOICE, 1, sha(stock_clips[1]), frozenset(), served=True),
+        Piece(VOICE, 2, sha(stock_clips[2]), frozenset(), served=True),
+        Piece(VOICE, 3, sha(stock_clips[3]), frozenset({"voices"})),
+        Piece(VOICE, 4, sha(stock_clips[4]), frozenset(), served=True),
+    ))
+    for offset, value in (exe or {}).items():
+        image[offset:offset + len(value)] = value
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / EXE).write_bytes(image)
+    every, body, where = {**stock_clips, **(clips or {})}, b"", {}
+    for clip in clip_order or sorted(every):
+        where[clip] = (len(body), len(every[clip]))
+        body += every[clip] + bytes(-len(every[clip]) % 16)
+    table = b"".join(struct.pack(">II", *where[clip]) for clip in sorted(every))
+    write_stock_archive(folder, "LINKDATA1", {**ld1, **(linkdata1 or {}),
+                                              VOICE_INDEX: struct.pack(">II", len(every), 0) + table}, count=VOICE_INDEX + 1)
+    write_stock_archive(folder, "LINKDATA2", {**ld2, **(linkdata2 or {})})
+    (folder / VOICE).parent.mkdir(parents=True, exist_ok=True)
+    (folder / VOICE).write_bytes(body + voice_tail)
+    return record

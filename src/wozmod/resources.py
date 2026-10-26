@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 # The files and folders under root() that the release bundles (packaging/wozmod.spec reads this list).
-PACKAGED = ("data/art", "data/text", "data/movies.json", "runtime")
+PACKAGED = ("data/art", "data/text", "data/movies.json", "data/stock_pieces.json", "runtime")
 
 
 def root() -> Path:

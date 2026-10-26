@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import textwrap
 from pathlib import Path
 
@@ -22,7 +23,6 @@ REPO = {
         from wozmod.lib import helper
 
         TEXT_DATA = "data/text/table.json"
-        STOCK_FILES = {"LINKDATA1.BIN": (1, "aa")}
         NICE = 10
 
         def _text_table(game, donors, out):
@@ -46,6 +46,9 @@ REPO = {
     "src/wozmod/deep.py": 'import os\nSOURCE = "runtime"\nKNOB = os.environ.get("WOZMOD_VOICE_KNOB")\n',
     "src/wozmod/art.py": 'MAPPING = "data/art/map.json"\ndef compose(): pass\n',
     "src/wozmod/lib.py": "def helper(): pass\n",
+    "data/stock_pieces.json": json.dumps({"format": 1, "stamp": [1, 2], "pieces": {
+        "OROCHI_Z.exe": [[512, 16, "aa", "text"]], "LINKDATA1": [[4079, "bb", None, "voices art", 1]],
+        "LINKDATA2": [], "data/Sound/Voice/Voice.bin": [[7, "cc", "", 1]]}}),
     "data/text/table.json": "{}",
     "data/art/map.json": "{}",
     "data/checks/route.toml": "",
@@ -73,13 +76,15 @@ def test_each_step_key_changes_with_exactly_the_inputs_its_output_depends_on(tmp
     """Bug: an input drops out of a step's key, so a stale step ships (a donor file changes and the old voices
     are reused); or one leaks into the wrong key, so a translation edit rebuilds the voices for minutes."""
     root = _repo(tmp_path)
-    install = root / "src/wozmod/install/__init__.py"
+    install, pieces = root / "src/wozmod/install/__init__.py", root / "data/stock_pieces.json"
     sources = {"game": root / "game", "donors": root / "donors", "lettering": root / "lettering.zip"}
     here = {"python": "3.14.0", "ffmpeg": "7.1"}
     edits = {
         "a donor file the steps read": ({"text", "voices", "art"},
                                         lambda: (root / "donors/wo2-x360/link_vodat.bdx").write_text("other voices")),
-        "a stock pin": (STEPS, lambda: _edit(install, '(1, "aa")', '(1, "bb")')),
+        "a stock piece only the text reads": ({"text"}, lambda: _edit(pieces, '"aa"', '"ab"')),
+        "a stock entry the voices and the art read": ({"voices", "art"}, lambda: _edit(pieces, '"bb"', '"bc"')),
+        "a clip wozmod only serves": (set(), lambda: _edit(pieces, '"cc"', '"cd"')),
         "the lettering bundle": ({"art"}, lambda: (root / "lettering.zip").write_text("other bundle")),
         "a translation row": ({"text"}, lambda: (root / "data/text/table.json").write_text('{"row": 1}')),
         "an art recipe": ({"art"}, lambda: (root / "data/art/map.json").write_text('{"row": 1}')),

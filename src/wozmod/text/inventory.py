@@ -11,11 +11,12 @@ from wozmod.formats.pe import pointer_strings
 from wozmod.formats.scripts import NOTICE, SPEAK, event_texts, mesc_blocks, parse_script, quote_tables, quote_text
 from wozmod.runtime.layout import DEFINES
 
-from .script_alignment import BRIEFINGS, QUOTE_SLOTS, QUOTES
+from .script_alignment import BRIEFINGS, MOZ_SCRIPTS, QUOTE_SLOTS, QUOTES
 
 JAPANESE = re.compile(rb"[\x81-\x9f\xe0-\xfc]")
 EVENTS = range(177, 414)
 CAPTIONS = range(145, 177)
+SCANNED = {*MOZ_SCRIPTS, *CAPTIONS, *EVENTS}  # the LINKDATA2 entries the inventory reads (a scan of all finds no more)
 MESSAGES, MESSAGE_COUNT = 0x6DE4F0, 911
 MESC_SITES = {
     4071: DEFINES["NARRATION_DRAW"],
@@ -38,6 +39,8 @@ def inventory(stock: Path) -> dict[str, dict[bytes, object]]:
     index = parse_index((stock / "LINKDATA2.IDX").read_bytes(), bin_path.stat().st_size)
     with bin_path.open("rb") as stream:
         for entry in index.entries:
+            if entry.ordinal not in SCANNED:
+                continue
             if len(entry.stored_sizes) != 1 and entry.ordinal not in EVENTS:  # the Dream events come in several parts
                 continue
             data = entry_bytes(stream, entry)

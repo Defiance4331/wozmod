@@ -40,8 +40,9 @@ options.
 ## What you need
 
 1. **Musou Orochi Z for Windows** (the Japanese release), a copy you own,
-   installed. wozmod checks the game files first. If they are a different
-   version, wozmod changes nothing.
+   installed, version 1.00 without the 1.01 update: wozmod adds that update's
+   sound and menu fixes itself. Other mods can stay. If one changed a part of
+   the game that wozmod reads, wozmod names it and changes nothing.
 2. **Your own copies of these three games:**
    - **Warriors Orochi for Xbox 360** (the US release), as a disc image
      (`.iso`).

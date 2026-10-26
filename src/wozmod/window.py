@@ -473,10 +473,12 @@ class SetupWindow:
                           for name in (*PROGRAMS, *TOOLS, *FILES.values())}
                 inputs["lettering"] = resources.root() / "lettering.zip"
                 inputs["dll"] = resources.root() / "d3d9.dll"
-                install(Path(values["game"]), inputs, force=True, log=log, progress=progress)
+                notes: list[str] = []
+                install(Path(values["game"]), inputs, force=True, log=log, progress=progress, note=notes.append)
                 message = f"Done. Start the game as usual. {LANGUAGES}"
                 if cancel.is_set():
                     message = f"The files were already being placed, so the install finished. Start the game as usual. {LANGUAGES}"
+                message = "\n".join([message, *notes])
             else:
                 changed = uninstall(Path(values["game"]), log=log, keep_settings=keep)
                 message = "Done. wozmod is removed." if not changed else (

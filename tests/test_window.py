@@ -174,7 +174,7 @@ def test_every_place_names_each_disc_the_same_way(shown, tmp_path, monkeypatch, 
     error_lines = str(caught.value).splitlines()
 
     shown_lines = set()
-    monkeypatch.setattr(installer, "check_inputs", lambda *args: None)
+    monkeypatch.setattr(installer, "check_inputs", lambda *args: [])
 
     def extract_donor(*args, on_bytes, **kwargs):
         time.sleep(0.11)  # the progress takes at most ten reports a second
@@ -232,6 +232,27 @@ def test_the_window_shows_the_released_version(shown):
     labels = [w.cget("text") for w in win.frame.winfo_children() if w.winfo_class() == "TLabel"]
     assert f"wozmod {version}" in labels
 
+def test_both_front_ends_show_the_notes_of_an_install(shown, tmp_path, monkeypatch, capsys):
+    """Bug: a note the install gives (another mod also replaces something wozmod replaces) is dropped, as the
+    command line drops the install's log, or only one front end shows it."""
+    win, root = shown
+    paths = {name: tmp_path / name for name in installer.INPUTS}
+    note = "Note: another mod also replaces 1 thing wozmod replaces (Voice.bin: 1 voice clip)."
+
+    def install(game, inputs, **kwargs):
+        kwargs["note"](note)
+        return {}
+
+    monkeypatch.setattr(cli, "install", install)
+    monkeypatch.setattr(window, "install", install)
+    assert cli.main(["install", *(f"--{name}={path}" for name, path in paths.items())]) == 0
+    assert note in capsys.readouterr().out
+    win.vars["game"].set("/g")
+    win.run("install")
+    _wait(root, lambda: not win.busy)
+    assert win.result.cget("text").startswith("Done.") and note in win.result.cget("text")
+
+
 @pytest.mark.parametrize("outcome, expected", [
     (None, "Done. Start the game as usual. Switch the text and voice languages in the game's Options."),
     (InstallError("Game folder: Not a folder."), "Game folder: Not a folder."),
@@ -241,7 +262,7 @@ def test_a_finished_run_shows_its_log_and_its_result_in_the_window(shown, monkey
     win, root = shown
     calls = {}
 
-    def fake_install(game, inputs, force, log, progress):
+    def fake_install(game, inputs, force, log, progress, note=None):
         calls.update(game=game, force=force)
         log("built the thing")
         if outcome:
@@ -313,7 +334,7 @@ def test_the_finished_view_keeps_the_stage_lines_and_shows_the_real_time(shown, 
     win, root = shown
     gate = __import__("threading").Event()
 
-    def fake_install(game, inputs, force, log, progress):
+    def fake_install(game, inputs, force, log, progress, note=None):
         progress.begin("build")
         for key in ("text", "voices", "art"):
             progress.begin(key)

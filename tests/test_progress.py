@@ -161,7 +161,7 @@ def game(tmp_path, monkeypatch):
     (folder / "data").mkdir(parents=True)
     (folder / "OROCHI_Z.exe").write_bytes(b"stock exe")
     (folder / "data/LINKDATA1.BIN").write_bytes(b"stock archive")
-    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: None)
+    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: [])
 
     def build(game, inputs, staging, progress, jobs, checked, cache=None):
         out = staging / "out"

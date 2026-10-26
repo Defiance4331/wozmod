@@ -10,8 +10,8 @@ A step's key covers everything its output can depend on. It is worked out from t
   package's __init__);
 - every file under each folder the release bundles (resources.PACKAGED) that a string in that code names;
 - the WOZMOD_* environment variables that code names, but WOZMOD_JOBS;
-- each input the function takes: the game folder by the stock pins (the installer checks the stock files against
-  them before any step starts), any other file or folder by its bytes;
+- each input the function takes: the game folder by the stock pieces the step reads (the installer checks them
+  before any step starts), any other file or folder by its bytes;
 - the Python and its packages, the native codec's binary and the ffmpeg.
 
 The worker count is left out: a step writes the same bytes with any number of workers.
@@ -221,12 +221,17 @@ def _installer_parts(code: _Code, function: str) -> tuple[dict[str, str], set[st
     return parts, modules, strings, parameters
 
 
-def stock_pins(code: _Code) -> str:
-    path, tree = code.module("wozmod.install")
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "STOCK_FILES" for t in node.targets):
-            return ast.get_source_segment(path.read_text(encoding="utf-8"), node)
-    raise CacheError("wozmod.install has no STOCK_FILES")
+def stock_pieces(root: Path, step: str) -> str:
+    """The digest of the stock pieces the step reads (data/stock_pieces.json): the installer checks each one before
+    any step starts, and tests/test_stock_pieces.py proves a step reads nothing else of the game folder."""
+    from wozmod.install.stock import parse
+
+    try:
+        record = parse(json.loads((root / "data/stock_pieces.json").read_text(encoding="utf-8")))
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise CacheError(f"data/stock_pieces.json is unreadable: {error}") from error
+    read = [[p.file, p.at, p.length, p.sha256, p.decoded_sha256] for p in record.pieces if step in p.steps]
+    return _digest(json.dumps([record.stamp, read]).encode())
 
 
 def machine() -> dict:
@@ -261,7 +266,7 @@ def step_inputs(step: str, root: Path, sources: dict[str, Path], here: dict, tre
     inputs = {}
     for name in (p for p in parameters if p not in SCRATCH):
         if name == "game":
-            inputs[name] = {"STOCK_FILES": stock_pins(code)}
+            inputs[name] = {"stock_pieces": stock_pieces(root, step)}
         else:
             if name not in trees:
                 trees[name] = _tree(Path(sources[name]), NOT_READ.get(name, ()))
