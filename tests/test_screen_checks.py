@@ -84,6 +84,29 @@ def test_text_is_measured_against_the_panel_drawn_on_its_rows():
     assert not sc.text_within_box(shown(102), None, "0x999").ok
 
 
+def test_the_weapon_rows_pips_are_measured_against_the_frame_that_holds_the_row():
+    """Bug: a list whose frame did not grow with the wider weapon row keeps its names inside the frame while the pips
+    hang 50 px outside it, so a names-only check passes the overflow; a pip of another caller must not count."""
+    frame = {"x": 232, "y": 252, "width": 366, "height": 390, "caller": "0x584375", "count": 1}
+    pip = lambda x, caller="0x59518b": {**quad("4079.81", x, 308, 14, 14), "caller": caller}
+    shown = lambda *pips: {"texts": [], "boxes": [frame], "textures": list(pips)}
+    assert sc.quad_within_box(shown(pip(584)), "4079.81", "0x584375").ok  # ends on the frame's right edge, 598
+    c = sc.quad_within_box(shown(pip(585)), "4079.81", "0x584375")
+    assert not c.ok and c.numbers["outside"][0]["right_end"] == 599
+    assert sc.quad_within_box(shown(pip(584), pip(900, "0x1")), "4079.81", "0x584375", caller="0x59518b").ok
+    assert not sc.quad_within_box(shown(pip(584)), "4079.81", "0x999").ok
+
+
+def test_a_list_frame_past_the_screen_edge_fails_though_its_names_and_pips_fit():
+    """Bug: the upgrade skills' weapon list rests at 831 and grew to 506 wide, so its frame ends at 1337 on a 1280
+    screen while every name and pip (to 1267) is inside it; only the frame's own end shows it."""
+    frame = {"x": 831, "y": 166, "width": 506, "height": 183, "caller": "0x526df1", "count": 1}
+    c = sc.box_within_edge({"boxes": [frame]}, "0x526df1")
+    assert not c.ok and c.numbers["worst_over"] == 57
+    assert sc.box_within_edge({"boxes": [{**frame, "width": 449}]}, "0x526df1").ok  # ends on the edge, 1280
+    assert not sc.box_within_edge({"boxes": [frame]}, "0x999").ok
+
+
 def test_squished_text_is_measured_by_its_ink_not_its_reported_width():
     """Bug: the JSON width is taken before the lane squish, so a name squished to end at its lane edge fails
     the lane and the thumbnail checks; trimming must still see a name that is really drawn under the thumbnail."""

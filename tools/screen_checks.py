@@ -254,6 +254,34 @@ def text_within_box(screen: dict, text: dict | None, box: str, allow_empty: bool
                                "outside": outside})
 
 
+def quad_within_box(screen: dict, quad: str, box: str, caller: str | None = None, allow_empty: bool = False) -> Check:
+    """Each quad of texture `quad` (drawn by `caller`, when given) starts and ends inside a box drawn by caller `box`
+    whose height holds the quad's top: the weapon row's pips inside the list frame that holds the row. The names
+    can sit inside a frame while the pips, 416 px from the row's left edge, hang outside it."""
+    qs = [q for q in select_quads(screen, quad) if caller is None or q["caller"].lower() == caller.lower()]
+    bs = [b for b in screen.get("boxes", []) if b["caller"].lower() == box.lower()]
+    if not qs or not bs:
+        return _empty(f"quads={len(qs)} boxes={len(bs)}", allow_empty)
+    outside = []
+    for q in qs:
+        rows = [b for b in bs if b["y"] <= q["y"] < b["y"] + b["height"]]
+        if not any(b["x"] <= q["x"] and q["x"] + q["width"] <= b["x"] + b["width"] for b in rows):
+            outside.append({"quad_at": (q["x"], q["y"]), "right_end": q["x"] + q["width"],
+                            "boxes": [(b["x"], b["x"] + b["width"]) for b in rows]})
+    return Check(not outside, {"quads": len(qs), "boxes": [(b["x"], b["y"], b["width"], b["height"]) for b in bs],
+                               "outside": outside})
+
+
+def box_within_edge(screen: dict, box: str, edge: int = LAYOUT_W, allow_empty: bool = False) -> Check:
+    """Each box drawn by caller `box` ends at or before `edge`: a list's frame that grew with the wider weapon row must
+    not hang past the screen, however well its names and pips stay inside it."""
+    bs = [b for b in screen.get("boxes", []) if b["caller"].lower() == box.lower()]
+    if not bs:
+        return _empty("boxes=0", allow_empty)
+    ends = [b["x"] + b["width"] for b in bs]
+    return Check(max(ends) <= edge, {"right_ends": ends, "edge": edge, "worst_over": max(0, max(ends) - edge)})
+
+
 def text_position(screen: dict, text: dict | None, x: int | None = None, y: int | None = None,
                   right: int | None = None, centre: int | None = None, cell: int = 24, tol: int = 1,
                   allow_empty: bool = False) -> Check:
@@ -576,6 +604,8 @@ ASSERTIONS: dict[str, tuple[Callable[..., Check], bool]] = {
     "line_count": (line_count, False),
     "text_within_edge": (text_within_edge, False),
     "text_within_box": (text_within_box, False),
+    "quad_within_box": (quad_within_box, False),
+    "box_within_edge": (box_within_edge, False),
     "text_position": (text_position, False),
     "text_box": (text_box, False),
     "text_cell": (text_cell, False),

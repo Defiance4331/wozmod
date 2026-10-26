@@ -1686,6 +1686,11 @@ ROUTE_SCREENS = {
     "camp-treasure": {"texture": "4060.43"},  # the acquired-treasure grid on the upgrade skills page
     "customize-weapon-pick": {"texture": "4060.37", "without": "4060.13"},  # the weapon list before the attribute list
     "customize-weapon-attributes": {"caller": "0x5956fa"},  # the attribute (upgrade skill) list; its text box
+    # Upgrade Skills, after a skill is picked: the officer list (its weapon list is FUN_00526db0's frame, resting at 741
+    # in stock) and, after an officer, that officer's weapons (the same frame at 227). The boxes are the thumbnails each
+    # page draws behind its rows, by a stock caller of its own
+    "customize-upgrade-officers": {"box_caller": "0x527957"},
+    "customize-upgrade-weapons": {"box_caller": "0x527b76"},
     "customize-fusion-weapons": {"texture": "4060.6"},  # the weapon list of the fusion; several weapons only after `unlock`
     "dream-select": {"texture": "4094.5"},
     "gallery": {"texture": "4079.169", "without": "4064.7|4064.9|4064.17|4079.105|4079.17"},  # sub-pages draw one of these
@@ -1708,6 +1713,8 @@ ROUTE_SCREENS = {
     "pause": {"texture": "4079.223|4079.168", "without": "4079.44"},
     "battle-history": {"texture": "4080.38"},  # the entries (caller 0x539f9f) are empty at the start of a battle
     "results": {"texture": "4079.52", "without": "4080.0"},
+    # the list of weapons to discard, drawn by FUN_00584300 when the officer a battle's drop goes to holds 8 weapons
+    "results-discard": {"box_caller": "0x584375"},
     "save-prompt": {"caller": "0x54e76f"},  # message box, cursor on NO
     # any story chapter's camp, chapter screen (one of the strips 4077.30 to 4077.166), pre-battle and battle
     "story-stage-camp": {"texture": "4060.39"},
@@ -1778,6 +1785,47 @@ FREE_STORIES = 10  # more than the select offers, so a full turn of Down comes b
 # On the story list the chapter cursor reads 23, inside a story 0-22 (it moves the frame Return lands; run free15):
 # the help bar is no sign (two-row stories show the Up/Down icon too), nor are army names (Story Z previews them)
 STORY_LIST_CURSOR = 23
+
+
+# The weapon discard list (FUN_00584510, state 2 or 6 at +0x7C) opens when a battle's drop goes to an officer who holds 8
+# weapons already (FUN_00583f50 asks FUN_00475170 for the count). A player gets there by filling the played officer's
+# eight slots and winning with a weapon dropped; the step puts the game in that state. Player slot 0 of team 0 is the
+# u32 at PLAYED_OFFICER; its weapons are 8 records of 0x18 bytes at WEAPON_TABLE + id * 0xDC; the battle's drops are 12
+# records of 0x1A bytes per team at DROPS (the weapon, then a team byte (2 is empty) and the player slot). A weapon's
+# byte 6 is its number of skill squares (FUN_00595050 draws that many pips on its row), so the copies get four: the
+# pips sit 416 px from the row's left edge in English, the part of a row that overflows a frame that did not grow.
+DISCARD_STEP = {"pick": "discard"}  # filled by route: the played officer holds 8 weapons and a ninth drops
+PLAYED_OFFICER, WEAPON_TABLE, WEAPON_SIZE, OFFICER_SIZE, WEAPON_SLOTS, DROPS = 0x801ABC, 0x7FB668, 0x18, 0xDC, 8, 0x801C3C
+SKILL_SQUARES, SKILL_SQUARES_BYTE = 4, 6
+
+
+def stage_discard(root: Path) -> int:
+    """Copy the played officer's first weapon, with four skill squares, into its other seven slots and drop one more to it;
+    returns the officer."""
+    officer = peek_u32(root, PLAYED_OFFICER)
+    base = WEAPON_TABLE + officer * OFFICER_SIZE
+    record = bytearray(bytes.fromhex(ask(root, {"action": "peek", "address": base, "length": WEAPON_SIZE})["hex"]))
+    record[SKILL_SQUARES_BYTE] = SKILL_SQUARES
+    weapon = record.hex()
+    for slot in range(1, WEAPON_SLOTS):
+        ask(root, {"action": "poke", "address": base + slot * WEAPON_SIZE, "hex": weapon})
+    ask(root, {"action": "poke", "address": DROPS, "hex": weapon + "0000"})
+    return officer
+
+
+# Upgrade Skills (the first Customize page) opens its officer page for a skill that the save does not hold 99 of and that
+# one officer's weapon can pay for (FUN_00527f80 on OK; FUN_00532e10 asks each weapon for the recipe's effects). The first
+# skill (id 0) needs the effect 0 on a weapon (recipe table 0x6D61B6), and its count is the byte at SKILL_COUNTS; the game reads
+# the weapons when the page opens, so the step runs before the first OK. A weapon's u16 at +2 is its effect mask.
+UPGRADE_STEP = {"pick": "upgrade"}  # filled by route: skill 0 is makeable from the first officer's first weapon
+SKILL_COUNTS, EFFECT_MASK = 0x8014A0, 2
+
+
+def stage_upgrade(root: Path) -> None:
+    """Set skill 0's count to 0 and effect 0 on officer 0's first weapon; after `unlock`, which gives it a second."""
+    ask(root, {"action": "poke", "address": SKILL_COUNTS, "hex": "00"})
+    mask = int(ask(root, {"action": "peek", "address": WEAPON_TABLE + EFFECT_MASK, "length": 1})["hex"], 16)
+    ask(root, {"action": "poke", "address": WEAPON_TABLE + EFFECT_MASK, "hex": f"{mask | 1:02x}"})
 
 
 def title_index(stage: int) -> int:
@@ -1884,6 +1932,13 @@ ROUTE_EDGES = [
     # first and waits, and Escape skips it as a player can (run fid-win, stage 133)
     ("battle", "results", [({"action": "win"}, {"any": [ROUTE_SCREENS["results"], {"caller": "0x49dace"}]}),
                            (["Escape"], {**slow("results", 2.0), "every": 3})]),
+    # the drop is a stand-in for a ninth weapon in a battle (stage_discard); each Return waits for its screen to take
+    # input (the weapon-acquired page is caller 0x585242). Runs wlr-discard and wlr-en
+    ("battle", "results-discard", [(DISCARD_STEP, None),
+                                   ({"action": "win"}, {"any": [ROUTE_SCREENS["results"], {"caller": "0x49dace"}]}),
+                                   (["Escape"], {**slow("results", 2.0), "every": 3}),
+                                   (["Return"], {"caller": "0x585242", "gap": 1.5}),
+                                   (["Return"], ROUTE_SCREENS["results-discard"])]),
     ("results", "save-prompt", ["Return"]),
     ("save-prompt", "menu@dream", [(["Return"], None), (["Return"], ROUTE_SCREENS["menu@dream"])]),
     # 1107-B: VS and Survival menus, the options pages
@@ -1935,6 +1990,15 @@ ROUTE_EDGES = [
     ("camp-customize", "story-camp", ["Escape", "Down", "Down"]),
     ("camp-customize", "customize-upgrade-skills", ["Return"]),
     ("customize-upgrade-skills", "camp-customize", ["Escape"]),
+    # runs wlr-upgrade and wlr-en: `unlock`, skill 0's count 0 and effect 0 on officer 0's weapon, then OK on the skill list
+    # and OK on the first officer
+    ("camp-customize", "customize-upgrade-officers", [(UNLOCK_STEP, None), (UPGRADE_STEP, None),
+                                                      (["Return"], {**ROUTE_SCREENS["customize-upgrade-skills"], "gap": 1.0}),
+                                                      (["Return"], ROUTE_SCREENS["customize-upgrade-officers"])]),
+    ("customize-upgrade-officers", "customize-upgrade-weapons", ["Return"]),
+    ("customize-upgrade-weapons", "customize-upgrade-officers", ["Escape"]),
+    # the skill list's names stay drawn under the officer page, so Escape waits a fixed time instead of for them
+    ("customize-upgrade-officers", "customize-upgrade-skills", [(["Escape"], {"seconds": 1.5})]),
     ("camp-customize", "customize-fusion-officers", ["Down", "Return"]),
     ("customize-fusion-officers", "camp-customize", ["Escape", "Up"]),
     ("camp-customize", "customize-weapon-upgrade", ["Down", "Down", "Return"]),
@@ -2279,6 +2343,12 @@ def route(root: Path, target: str, stage: int | None = None, movie: int | None =
                 if keys is OFFICER_STEP:
                     pick_officers(root, officers or [], f"{source} -> {destination}")
                     continue
+                if keys is UPGRADE_STEP:
+                    stage_upgrade(root)
+                    continue
+                if keys is DISCARD_STEP:
+                    stage_discard(root)
+                    continue
                 if keys is FREE_STAGE_STEP:
                     pick_free_stage(root, stage, f"{source} -> {destination}")
                     continue
@@ -2399,6 +2469,8 @@ class CheckDriver:
                 plan = route_plan(at, leg)
                 used |= {step[0]["action"] for edge in plan if not isinstance(edge[2][0], str) for step in edge[2]
                          if isinstance(step[0], dict) and step[0].get("action") in ("win", "lose", "unlock")}
+                used |= {"discard drops" for edge in plan if not isinstance(edge[2][0], str) for step in edge[2]
+                         if step[0] is DISCARD_STEP}
                 at = plan[-1][1] if plan else at
         self.unlocked |= "unlock" in used
         self.name = name

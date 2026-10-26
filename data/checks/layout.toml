@@ -207,6 +207,18 @@ route = "camp-weapons"
   text = { caller = "0x5950ec" }
   quad = "4079.82"
 
+  [[screen.assert]]
+  kind = "text_within_box"          # names inside the list's frame (it grew with the wider weapon row)
+  text = { caller = "0x5950ec" }
+  box = "0x5951f3"
+
+  [[screen.assert]]
+  kind = "quad_within_box"          # the weapon row's pips inside the frame
+  quad = "4079.*"
+  caller = "0x59518b"
+  box = "0x5951f3"
+  allow_empty = true
+
 [[screen]]
 name = "camp-weapon-panel"
 route = "camp-weapon-panel"
@@ -223,6 +235,18 @@ route = "camp-weapon-panel"
   kind = "text_within_edge"         # weapon panel list names: lane 303 from x 193
   text = { caller = "0x5950ec" }
   edge = 496
+
+  [[screen.assert]]
+  kind = "text_within_box"          # names inside the list's frame (it grew with the wider weapon row)
+  text = { caller = "0x5950ec" }
+  box = "0x5951f3"
+
+  [[screen.assert]]
+  kind = "quad_within_box"          # the weapon row's pips inside the frame
+  quad = "4079.*"
+  caller = "0x59518b"
+  box = "0x5951f3"
+  allow_empty = true
 
 [[screen]]
 name = "camp-customize"
@@ -277,6 +301,17 @@ route = "customize-fusion-officers"
   text = { caller = "0x5950ec" }
   edge = 1051
 
+  [[screen.assert]]
+  kind = "text_within_box"          # names inside the list's frame (it grew with the wider weapon row)
+  text = { caller = "0x5950ec" }
+  box = "0x5951f3"
+
+  [[screen.assert]]
+  kind = "quad_within_box"          # the weapon row's pips inside the frame
+  quad = "4079.*"
+  caller = "0x59518b"
+  box = "0x5951f3"
+  allow_empty = true
 
 [[screen]]
 name = "customize-weapon-upgrade"
@@ -284,6 +319,18 @@ route = "customize-weapon-upgrade"
 
   [[screen.assert]]
   kind = "no_cjk"
+
+  [[screen.assert]]
+  kind = "text_within_box"          # names inside the list's frame (it grew with the wider weapon row)
+  text = { caller = "0x5950ec" }
+  box = "0x5951f3"
+
+  [[screen.assert]]
+  kind = "quad_within_box"          # the weapon row's pips inside the frame
+  quad = "4079.*"
+  caller = "0x59518b"
+  box = "0x5951f3"
+  allow_empty = true
 
 # Scenario panel (Old, option B): the MOZ panel; army names at full size inside the MOZ box; the scenario text one
 # size smaller in the stock 290 column from (449, 507), at most 5 lines, inside the box.
@@ -414,6 +461,18 @@ route = "pre-battle-weapons"
   text = { caller = "0x5950ec" }
   edge = 1010
 
+  [[screen.assert]]
+  kind = "text_within_box"          # names inside the list's frame (it grew with the wider weapon row)
+  text = { caller = "0x5950ec" }
+  box = "0x5951f3"
+
+  [[screen.assert]]
+  kind = "quad_within_box"          # the weapon row's pips inside the frame
+  quad = "4079.*"
+  caller = "0x59518b"
+  box = "0x5951f3"
+  allow_empty = true
+
 [[screen]]
 name = "pre-battle-weapon-panel"
 route = "pre-battle-weapon-panel"
@@ -422,6 +481,18 @@ route = "pre-battle-weapon-panel"
   kind = "text_within_edge"         # panel names: lane 303 from x 208
   text = { caller = "0x5950ec" }
   edge = 511
+
+  [[screen.assert]]
+  kind = "text_within_box"          # names inside the list's frame (it grew with the wider weapon row)
+  text = { caller = "0x5950ec" }
+  box = "0x5951f3"
+
+  [[screen.assert]]
+  kind = "quad_within_box"          # the weapon row's pips inside the frame
+  quad = "4079.*"
+  caller = "0x59518b"
+  box = "0x5951f3"
+  allow_empty = true
 
 [[screen]]
 name = "pre-battle-officers"
@@ -502,6 +573,18 @@ route = "customize-weapon-pick"
   kind = "no_cjk"
   allow_empty = true
 
+  [[screen.assert]]
+  kind = "text_within_box"          # names inside the list's frame (it grew with the wider weapon row)
+  text = { caller = "0x5950ec" }
+  box = "0x5951f3"
+
+  [[screen.assert]]
+  kind = "quad_within_box"          # the weapon row's pips inside the frame
+  quad = "4079.*"
+  caller = "0x59518b"
+  box = "0x5951f3"
+  allow_empty = true
+
 # The fusion weapon list sends `unlock` (four weapons, the longest names), so check visits it after the screens
 # that need the plain save.
 [[screen]]
@@ -517,6 +600,18 @@ route = "customize-fusion-weapons"
   kind = "text_within_edge"         # the panel list's long names at full size in the MOZ row (lane 303 from x 208)
   text = { caller = "0x5950ec" }
   edge = 511
+
+  [[screen.assert]]
+  kind = "text_within_box"          # names inside the list's frame (it grew with the wider weapon row)
+  text = { caller = "0x5950ec" }
+  box = "0x5951f3"
+
+  [[screen.assert]]
+  kind = "quad_within_box"          # the weapon row's pips inside the frame
+  quad = "4079.*"
+  caller = "0x59518b"
+  box = "0x5951f3"
+  allow_empty = true
 
 # Story Z chapter narration (Mixed): wrapped in the X360 box (text_boxes "z-narration"; typed out, so its right end
 # is the reported width): the first page takes 3 lines there (2 at the X360 size).
@@ -657,3 +752,62 @@ wait = { caller = "0x550f0b", timeout = 30 }
   [[screen.assert]]
   kind = "text_on_one_line"
   text = { caller = "0x550f0b" }
+
+# Upgrade Skills after a skill is picked: the officers, and the chosen officer's weapons. Both draw their weapon list
+# in the frame of FUN_00526db0, which English widens with the weapon row. The route unlocks the weapons and sets the
+# first skill's count and a weapon's effect, so check visits them after the screens that need the plain save.
+[[screen]]
+name = "customize-upgrade-officers"
+route = "customize-upgrade-officers"
+
+  [[screen.assert]]
+  kind = "text_within_box"          # names inside the weapon list's frame
+  text = { caller = "0x5950ec" }
+  box = "0x526df1"
+
+  [[screen.assert]]
+  kind = "quad_within_box"          # pips inside the frame
+  quad = "4079.*"
+  caller = "0x59518b"
+  box = "0x526df1"
+
+  [[screen.assert]]
+  kind = "box_within_edge"          # the frame itself ends on the screen
+  box = "0x526df1"
+
+[[screen]]
+name = "customize-upgrade-weapons"
+route = "customize-upgrade-weapons"
+
+  [[screen.assert]]
+  kind = "text_within_box"
+  text = { caller = "0x5950ec" }
+  box = "0x526df1"
+
+  [[screen.assert]]
+  kind = "quad_within_box"
+  quad = "4079.*"
+  caller = "0x59518b"
+  box = "0x526df1"
+
+  [[screen.assert]]
+  kind = "box_within_edge"
+  box = "0x526df1"
+
+# The weapon discard list after a battle's drop, when the officer holds 8 weapons. English grows its frame with the
+# wider weapon row and moves it left, so its right edge (598) and the detail card beside it (612) stay put; the pips
+# sit 416 px from the row's left edge, so they are the ones that hang out of an unmoved frame.
+[[screen]]
+name = "results-discard"
+route = "results-discard"
+
+  [[screen.assert]]
+  kind = "text_within_box"          # names inside the frame
+  text = { caller = "0x5950ec" }
+  box = "0x584375"
+
+  [[screen.assert]]
+  kind = "quad_within_box"          # pips inside the frame
+  quad = "4079.*"
+  caller = "0x59518b"
+  box = "0x584375"

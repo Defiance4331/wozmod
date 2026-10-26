@@ -608,7 +608,7 @@ def test_route_library_reaches_every_screen_and_back_to_the_menu():
                  "story-narration", "story-wei-pre-battle", "story-wei-battle", "story-victory-still",
                  "story-stage-camp", "story-stage-scenario", "story-pre-battle", "story-battle",
                  "story-team-info", "story-officer-page", "ability-acquisition",
-                 "story-stage-narration", "story-stage-talk", "story-victory-talk",
+                 "story-stage-narration", "story-stage-talk", "story-victory-talk", "results-discard",
                  "free-camp", "free-stories", "free-chapter", "free-pre-battle", "free-battle"}
     for start in names:
         for target in names - {"boot"} | {"menu"}:
@@ -625,6 +625,26 @@ def test_route_library_reaches_every_screen_and_back_to_the_menu():
     # the tour's own keys: Up Up from STORY MODE, then Return, reach the options
     assert [edge[1] for edge in harness.route_plan("boot", "options")] == ["title", "menu@story", "menu@option",
                                                                           "options"]
+
+
+def test_discard_step_fills_the_played_officers_eight_weapon_slots_and_drops_a_ninth(monkeypatch):
+    """Bugs: a wrong officer stride or slot offset fills another officer's weapons, so the drop is simply stored and the
+    discard list never opens; a copy with no skill squares draws no pips, so the list's pips go unchecked."""
+    memory = {0x801ABC: "05000000", 0x7FB668 + 5 * 220: "aa" * 24}  # officer 5: its first weapon at 0x7FBAB4
+    copy = "aa" * 6 + "04" + "aa" * 17  # the same weapon with four skill squares (byte 6)
+    pokes = {}
+
+    def fake_ask(root, request, timeout=30):
+        if request["action"] == "peek":
+            return {"hex": memory[request["address"]]}
+        pokes[request["address"]] = request["hex"]
+        return {}
+
+    monkeypatch.setattr(harness, "ask", fake_ask)
+    assert harness.stage_discard(Path("run")) == 5
+    assert sorted(pokes) == [0x7FBAB4 + 0x18 * slot for slot in range(1, 8)] + [0x801C3C]
+    assert all(pokes[0x7FBAB4 + 0x18 * slot] == copy for slot in range(1, 8))
+    assert pokes[0x801C3C] == copy + "0000"
 
 
 def test_route_resumes_where_it_left_and_stops_after_outside_input(tmp_path, monkeypatch):
