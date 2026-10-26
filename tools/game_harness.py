@@ -1342,7 +1342,9 @@ def launch_in_slot(root: Path, args: argparse.Namespace, game: Path, launcher: P
     }
     for key, value in environment.items():
         command += ["--setenv", key, value]
-    hz = "60" if args.target == XENIA else os.environ.get("MUSOU_HARNESS_HZ", "60")
+    # The compositor refreshes at the rate the game's own display.fps setting asks for, so a 120 FPS run is not held
+    # to 60 by the screen; MUSOU_HARNESS_HZ overrides it (a 60 Hz screen under a 120 FPS setting, for instance).
+    hz = "60" if args.target == XENIA else os.environ.get("MUSOU_HARNESS_HZ") or str(target_fps(game))
     if hz not in ("60", "120"):
         raise ValueError("MUSOU_HARNESS_HZ must be 60 or 120")
     # The private audio server starts first: gamescope connects to PipeWire once, at start, for its screen stream.

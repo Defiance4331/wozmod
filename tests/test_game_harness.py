@@ -164,6 +164,27 @@ def test_size_renders_and_outputs_unscaled(tmp_path, monkeypatch):
     assert session["render_size"] == session["output_size"] == [3440, 1440] and not session["fsr"]
 
 
+def test_screen_refreshes_at_the_frame_rate_the_game_setting_asks_for(tmp_path, monkeypatch):
+    """Bug: the compositor stays at 60 Hz under a display.fps=120 setting, so a 120 FPS check silently runs at 60."""
+    _slot_runtime(tmp_path, monkeypatch)
+    monkeypatch.delenv("MUSOU_HARNESS_HZ", raising=False)
+    rates = {}
+    for name, ini in (("hz120", "[display]\nfps=120\n"), ("hz60", "")):
+        root = tmp_path / "work/runtime-tests" / name
+        game = _staged(root / "game")
+        if ini:
+            (game / "wozmod").mkdir(exist_ok=True)
+            (game / "wozmod/settings.ini").write_text(ini)
+        (root / "launch.sh").write_text("exit 0\n")
+        calls = []
+        monkeypatch.setattr(harness.subprocess, "Popen", lambda command, **kwargs: calls.append(command)
+                            or SimpleNamespace(wait=lambda: 0, poll=lambda: 0, returncode=0))
+        assert harness.main(["run", "--root", str(root), "--game", str(game), "--authorize-launch",
+                             "--target", harness.TARGET]) == 0
+        rates[name] = calls[0][calls[0].index("-r") + 1]
+    assert rates == {"hz120": "120", "hz60": "60"}
+
+
 def test_bare_run_name_addresses_the_run_under_work_runtime_tests(tmp_path, monkeypatch):
     """Bug: a bare --root name resolves against the shell's directory, so a command sent from the repo root misses the
     run (or reaches another directory of that name)."""
