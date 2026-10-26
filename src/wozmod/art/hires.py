@@ -7,14 +7,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from wozmod.formats.textures import encode_dxt5
-from wozmod.runtime.layout import DEFINES
+from wozmod.runtime.shared import DEFINES
 
 if TYPE_CHECKING:  # Pillow stays out of the import: the font tools import this module without it
     from PIL import Image
 
 HIRES_SCALE = 3  # sheet texels per stock texel: 1:1 on a 2160-high screen
 
-# The row flags and the limits past which the runtime refuses the whole bank, as runtime/english_runtime.c has them.
+# The row flags and the limits past which the runtime refuses the whole bank, as runtime/shared.h has them.
 HIRES_OVERLAY = DEFINES["HIRES_OVERLAY"]  # scale flag: native plate first, vector lettering over it
 HIRES_RIGHT_GROW = DEFINES["HIRES_RIGHT_GROW"]  # the minimum is growth, preserving an unresolved help right edge
 HIRES_SCALE_MASK = DEFINES["HIRES_SCALE_MASK"]

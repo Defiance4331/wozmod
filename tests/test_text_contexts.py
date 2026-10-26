@@ -13,7 +13,8 @@ from pathlib import Path
 import pytest
 
 from wozmod.formats.audio import WO1_EVENT_VOICES
-from wozmod.runtime.english_runtime import table_blob
+from wozmod.runtime import layout
+from wozmod.runtime.text_table import table_blob
 from wozmod.text import contexts
 from synthetic import container, mesc, spans, strings, write_stock_archive
 from synthetic import timed_event as event_file
@@ -126,7 +127,7 @@ def test_the_text_hooks_look_up_the_kinds_the_context_model_says() -> None:
     # Bug: a hook gains or loses its table lookup in C (hook 44 stops looking movie cues up once the installer writes
     # each cue's English into its schedule) while contexts.LOOKUP_HOOKS still says it looks them up, so the model
     # shows the player another text than the game does.
-    source = (RUNTIME / "english_runtime.c").read_text()
+    source = layout.SOURCE  # runtime/shared.h, then english_runtime.c
     calls = {hook: bool(re.search(r"\b(text|voiced_line)\(", _case(source, hook)))
              for hooks in contexts.LOOKUP_HOOKS.values() for hook in hooks}
     assert calls == {hook: True for hook in calls}
@@ -146,7 +147,7 @@ def test_each_text_hook_looks_up_the_key_the_context_model_uses(tmp_path: Path) 
     # served, compiled from english_runtime.c; page_voice, which reads the game's memory, is a stub.
     if not (shutil.which("i686-w64-mingw32-gcc") and shutil.which("wine")):
         pytest.skip("i686-w64-mingw32-gcc or wine absent")
-    source = (RUNTIME / "english_runtime.c").read_text()
+    source = layout.SOURCE  # runtime/shared.h, then english_runtime.c
     rows = {b"line@0012": b"Own wording", b"line": b"Shared wording", b"other": b"Other", b"quote": b"Quote",
             b"line@V0942": b"Voiced wording", b"line@0012@L1.12": b"Line wording"}
     stills = [(site, voice, text) for site, voice in (("STILL_DRAW", 942), ("STILL_Z_DRAW", 1480),

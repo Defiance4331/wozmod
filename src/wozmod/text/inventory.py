@@ -9,7 +9,7 @@ from pathlib import Path
 from wozmod.formats.linkdata import entry_bytes, moz_entries, parse_index
 from wozmod.formats.pe import pointer_strings
 from wozmod.formats.scripts import NOTICE, SPEAK, event_texts, mesc_blocks, parse_script, quote_tables, quote_text
-from wozmod.runtime.layout import DEFINES
+from wozmod.runtime.shared import DEFINES
 
 from .script_alignment import BRIEFINGS, MOZ_SCRIPTS, QUOTE_SLOTS, QUOTES
 

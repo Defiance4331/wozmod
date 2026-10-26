@@ -200,7 +200,7 @@ def renderer_key(python: str) -> str:
                                                          and "__pycache__" not in p.parts):
             digest.update(repr((each.relative_to(build.REPO).as_posix(),
                                 hashlib.sha256(each.read_bytes()).hexdigest())).encode())
-    setup = process.run([python, "-c", FONT_SETUP], capture_output=True, text=True, check=True)
+    setup = process.run([python, "-c", FONT_SETUP], capture_output=True, text=True, encoding="utf-8", check=True)
     digest.update(repr((setup.stdout, PIL.__version__)).encode())  # Pillow here reads the drawn PNGs
     for path in SYSTEM_PACKAGES:
         if path.exists():

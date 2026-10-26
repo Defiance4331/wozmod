@@ -33,7 +33,7 @@ from wozmod.formats.linkdata import LINKDATA2_FIRST, archive, decoded_member, ps
 from wozmod.formats.scripts import (
     caption_cues, donor_text, event_lines, mesc_blocks, quote_tables, quote_text,
 )
-from wozmod.runtime.english_runtime import decode_english, table_lookup
+from wozmod.runtime.text_table import decode_english, table_lookup
 from wozmod.text.narration_voices import VOICE_KEYED, camp_lines_drawn, line_voices
 from wozmod.text.script_alignment import NARRATION, X360_ENS, quote_slot_read
 from wozmod.text.stock import stage_line_form
@@ -900,11 +900,11 @@ def build_text_stage(stock: Path, donors: Path, out: Path) -> Path:
     for the event clips only (converting the whole voice bank takes minutes), and return out."""
     from wozmod.donors import WO2_X360
     from wozmod.formats.audio import english_voice_clips
-    from wozmod.install import _text_table
+    from wozmod.text.build import text_step
     from wozmod.text.script_alignment import EVENTS, donor_event_entries, wo2_x360
     from wozmod.voices.events import build_event_schedules, event_line_indices, event_voice_bases
     stock, donors, out = Path(stock), Path(donors), Path(out)
-    _text_table(stock, donors, out)
+    text_step(stock, donors, out)
     world = World(stock, donors, out, Path(__file__).resolve().parents[3] / "data/text")
     stock_events = world.linkdata2.read([o for ordinals, _, _ in EVENTS for o in ordinals])
     bases = event_voice_bases()

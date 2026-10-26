@@ -16,6 +16,7 @@ from wozmod.formats import pe
 from wozmod.install.stock import EXE, recorded
 from wozmod.runtime import build, guards, layout, text_boxes
 from wozmod.runtime import english_runtime as runtime
+from wozmod.runtime import text_table
 from wozmod.runtime.latin_font import LATIN_GLYPH
 from wozmod.runtime.prompts import PROMPT_SLOTS, STICK_ITEMS
 from wozmod.runtime.runtime_edits import (
@@ -28,7 +29,7 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 def test_missing_latin_glyphs_use_their_distinct_two_byte_surrogates() -> None:
-    assert runtime.encode_english("AŌōŪūïZ") == b"A\x84\x40\x84\x41\x84\x42\x84\x43\x84\x44Z"
+    assert text_table.encode_english("AŌōŪūïZ") == b"A\x84\x40\x84\x41\x84\x42\x84\x43\x84\x44Z"
 
 
 def test_colliding_keys_keep_both_rows_and_aligned_shared_name_pointers() -> None:
@@ -43,7 +44,7 @@ def test_colliding_keys_keep_both_rows_and_aligned_shared_name_pointers() -> Non
         + struct.pack("<4I", 3, 113, 0, 106)
         + struct.pack("<2I", 1, 2)
     )
-    assert runtime.table_blob({b"a": b"left", b"i": b"right"}, [b"right", None, b"left"], [2]) == expected
+    assert text_table.table_blob({b"a": b"left", b"i": b"right"}, [b"right", None, b"left"], [2]) == expected
 
 
 def test_data_header_keeps_group_lengths_terminator_and_hook_return_flags() -> None:

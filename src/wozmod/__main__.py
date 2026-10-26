@@ -5,9 +5,10 @@ import multiprocessing
 import sys
 from pathlib import Path
 
-from wozmod import __version__, remembered, resources
-from wozmod.install import (FILES, IMAGE_FIRST, INPUTS, PROGRAMS, TOOLS, InstallError, check_input, existing_install,
-                            install, install_state, program_status, uninstall)
+from wozmod import remembered, resources
+from wozmod.version import __version__
+from wozmod.install import (FILES, IMAGE_FIRST, INPUTS, PROGRAMS, REINSTALL_QUESTION, TOOLS, InstallError, check_input,
+                            existing_install, install, install_state, program_status, uninstall)
 from wozmod.interactive import ask_choice, ask_path, ask_yes, interactive
 from wozmod.progress import Cancelled, Progress, TerminalView, duration
 
@@ -72,7 +73,7 @@ def run_install(args: argparse.Namespace) -> int:
                 print(f"wozmod: wozmod {__version__} is already installed in {args.game}. Pass --force to "
                       "reinstall it.", file=sys.stderr)
                 return 2
-            if not ask_yes(f"wozmod {__version__} is already installed here. Reinstall it? Your settings stay.", False):
+            if not ask_yes(" ".join(REINSTALL_QUESTION).format(version=__version__), False):
                 print("Nothing was changed.")
                 return 1
         print(f"Reinstalling wozmod {__version__}. Your settings stay.")

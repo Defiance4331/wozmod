@@ -73,7 +73,7 @@ def page_texts(stock: Path, table: bytes) -> dict[str, list[tuple[str, str]]]:
     """(id, the English the player reads) of every line each box shows, read as the runtime looks them up."""
     from wozmod.formats.linkdata import archive
     from wozmod.formats.scripts import mesc_blocks
-    from wozmod.runtime.english_runtime import decode_english
+    from wozmod.runtime.text_table import decode_english
     from wozmod.text.contexts import drawn_mesc_lines, shown_text
     from wozmod.text.narration_voices import BRIEFING_VOICES, VOICE_KEYED, line_voices
 
@@ -98,7 +98,7 @@ def test_every_page_line_takes_its_box_lines_at_most():
     # Bug: a translation wraps to one line more than its box holds (camp talk's fourth line would fall below the
     # bar, a seventh briefing line below the band), or every line got shorter and a box is taller than its text
     # needs.
-    from wozmod.runtime.english_runtime import table_blob
+    from wozmod.runtime.text_table import table_blob
     from wozmod.text.build import resolved_text
     from wozmod.text.resolver import DonorResolver
 

@@ -93,6 +93,19 @@ def check_assets(assets: Path) -> None:
             raise SystemExit(f"{path} is missing or not the file pinned in src/wozmod/install/__init__.py")
 
 
+def write_step_keys(folder: Path) -> Path:
+    """Ship the mod's part of each install step's key, made from this source tree, where the frozen installer finds
+    it (resources.root()): an update keeps the steps whose key did not change, and players have no source to make
+    them from."""
+    sys.path.insert(0, str(ROOT / "src"))
+    from wozmod.install import step_keys
+
+    path = folder / step_keys.SHIPPED
+    path.write_text(json.dumps(step_keys.shipped_document(ROOT, PLATFORM), indent=1, sort_keys=True) + "\n",
+                    encoding="utf-8")
+    return path
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--assets", type=Path, required=True, help="folder with d3d9.dll and lettering.zip")
@@ -115,6 +128,7 @@ def main() -> int:
     shutil.copytree(BUILD / "ffmpeg", stage / "_internal/ffmpeg")
     for file in (args.assets / "d3d9.dll", args.assets / "lettering.zip"):
         shutil.copy2(file, stage / "_internal")  # players see only the programs and the licences
+    write_step_keys(stage / "_internal")
     shutil.copy2(ROOT / "LICENSE", stage)
     (stage / "licenses").mkdir()
     shutil.copy2(BUILD / "ffmpeg-LICENSE.txt", stage / "licenses")

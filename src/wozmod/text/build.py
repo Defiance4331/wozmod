@@ -8,10 +8,11 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from wozmod import resources
 from wozmod.donors import DISCS, check_disc_names
 from wozmod.formats.pe import pointer_strings
 from wozmod.progress import report
-from wozmod.runtime.english_runtime import (
+from wozmod.runtime.text_table import (
     SURROGATES, encode_english, table_blob,
 )
 
@@ -237,3 +238,19 @@ def resolved_text(stock: Path, donors: DonorResolver, data: Path) -> tuple[list[
     overrides = [{**row, "en": donors.resolve_row(row)} for row in payload["parts"]]
     pairs = table_pairs(rows)
     return rows, pairs, table_parts((stock / "OROCHI_Z.exe").read_bytes(), pairs, overrides)
+
+
+TEXT_DATA = resources.root() / "data/text"
+
+
+def text_step(stock: Path, donors: Path, out: Path) -> None:
+    """The installer's text step: table.bin and the served caption schedules, written into out as laid out in the
+    game folder."""
+    from .movie_captions import build_movie_schedules
+    from .resolver import DonorResolver
+
+    resolver = DonorResolver(donors)
+    _, pairs, names = resolved_text(stock, resolver, TEXT_DATA / "table.json")
+    write_table(pairs, names, out / "wozmod/table.bin")
+    build_movie_schedules(stock, resolver, pairs, TEXT_DATA / "movie_captions.json", TEXT_DATA / "dub_captions.json",
+                          out)

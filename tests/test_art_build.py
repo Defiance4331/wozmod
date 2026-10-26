@@ -856,7 +856,7 @@ PACKAGE_DATABASE = (Path("/usr/lib/sysimage/rpm/rpmdb.sqlite"), Path("/usr/lib/s
 
 def art_sources(repo: Path) -> list[Path]:
     files = [*(repo / "src/wozmod").rglob("*.py"), *(repo / "data/art").rglob("*"), repo / "tests/test_art_build.py",
-             repo / "tests/conftest.py", repo / "runtime/english_runtime.c"]  # the C: hires.bin's flags and limits
+             repo / "tests/conftest.py", repo / "runtime/shared.h"]  # the C: hires.bin's flags and limits
     return sorted(p for p in files if p.is_file() and "__pycache__" not in p.parts
                   and not p.relative_to(repo).as_posix().startswith(ART_UNREAD))
 
@@ -879,7 +879,7 @@ def test_the_art_build_key_changes_with_each_input_it_covers(tmp_path):
     """Bug: an input drops out of the key, so verify.sh skips the art build after a change that breaks it."""
     repo, game, donors, python = tmp_path / "repo", tmp_path / "game", tmp_path / "donors", tmp_path / "python"
     paths = [repo / "src/wozmod/fonts/raster.py", repo / "data/art/faces/mainvec.py", repo / "data/art/lettering.json",
-             repo / "tests/test_art_build.py", repo / "runtime/english_runtime.c", game / "LINKDATA1.BIN",
+             repo / "tests/test_art_build.py", repo / "runtime/shared.h", game / "LINKDATA1.BIN",
              donors / "wo2-x360/linkdata_ens.idx"]
     for path in paths:
         path.parent.mkdir(parents=True, exist_ok=True)

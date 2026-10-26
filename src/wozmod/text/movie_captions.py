@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 
 from wozmod.formats.linkdata import LINKDATA2_FIRST, archive
 from wozmod.formats.scripts import caption_cues
-from wozmod.runtime.english_runtime import encode_english
+from wozmod.runtime.text_table import encode_english
 
 from wozmod.movies import movie_rows
 

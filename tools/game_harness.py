@@ -25,7 +25,8 @@ from pathlib import Path
 from checkout import work
 from prepare_run import local_path, verify_copy
 from wozmod.formats import pe
-from wozmod.runtime.english_runtime import DLL_BASE, decode_english, encode_english
+from wozmod.runtime.english_runtime import DLL_BASE
+from wozmod.runtime.text_table import decode_english, encode_english
 from wozmod.runtime.layout import DEFINES
 
 

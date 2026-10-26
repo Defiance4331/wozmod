@@ -38,6 +38,10 @@ UPDATE_101_FOUND = ("This game has the 1.01 update. wozmod needs version 1.00, a
 WRONG_GAME = ("This is not Musou Orochi Z for Windows version 1.00 (the Japanese release). Pick the folder of that "
               "game.")
 SHOWN = 6  # changed pieces named per file; the rest are counted
+# The note for a changed piece that only steps an update keeps read (row 31; wording approved, row 34).
+KEPT_NOTE = ("Note: {name}: another mod changed {what}, which wozmod reads to build its {purpose}. wozmod kept the "
+             "{purpose} it built before. Put back the original {file} before an update needs to build its {purpose} "
+             "again.")
 
 
 @dataclass(frozen=True)
@@ -97,6 +101,17 @@ class Verdict:
             lines.append(_changed_line(name, [p for p in blocking if p.shown_file == name]))
         return "\n".join(lines) or None
 
+    def kept_notes(self, rebuilt=STEPS) -> list[str]:
+        """Notes for changed pieces that only steps an update keeps read: one line per file. The kept files were
+        built from the original pieces, so they stay right; an update that must build such a step again stops."""
+        reused = self.reused(rebuilt)
+        lines = []
+        for name in dict.fromkeys(p.shown_file for p in reused):
+            pieces = sorted((p for p in reused if p.shown_file == name), key=lambda p: p.at)
+            lines.append(KEPT_NOTE.format(name=name, what=_what(name, pieces), purpose=_purpose(pieces),
+                                          file=Path(name).name))
+        return lines
+
     def notes(self) -> list[str]:
         """Notes that do not stop the install: what another mod also replaces."""
         overlaps = self.overlaps()
@@ -129,18 +144,22 @@ def _and(values: list[str]) -> str:
     return " and ".join([", ".join(values[:-1]), values[-1]]) if len(values) > 1 else values[0]
 
 
+def _what(name: str, pieces: list[Piece]) -> str:
+    if name == EXE:
+        return f"the bytes at {_listed([f'{p.at:#x}' for p in pieces])}"
+    noun = _noun(name)
+    plural = "entries" if noun == "entry" else noun + "s"
+    return f"{noun if len(pieces) == 1 else plural} {_listed([str(p.at) for p in pieces])}"
+
+
+def _purpose(pieces: list[Piece]) -> str:
+    return _and([PURPOSE[s] for s in STEPS if any(s in p.steps for p in pieces)])
+
+
 def _changed_line(name: str, pieces: list[Piece]) -> str:
     pieces = sorted(pieces, key=lambda p: p.at)
-    if name == EXE:
-        what = f"the bytes at {_listed([f'{p.at:#x}' for p in pieces])}"
-    else:
-        noun = _noun(name)
-        plural = "entries" if noun == "entry" else noun + "s"
-        what = f"{noun if len(pieces) == 1 else plural} {_listed([str(p.at) for p in pieces])}"
-    steps = [PURPOSE[s] for s in STEPS if any(s in p.steps for p in pieces)]
-    purpose = _and(steps)
-    return (f"{name}: another mod changed {what}, which wozmod reads to build its {purpose}. Put back the original "
-            f"{Path(name).name}, or remove that mod, then install again.")
+    return (f"{name}: another mod changed {_what(name, pieces)}, which wozmod reads to build its {_purpose(pieces)}. "
+            f"Put back the original {Path(name).name}, or remove that mod, then install again.")
 
 
 def _guarded_line(names: tuple[str, ...]) -> str:

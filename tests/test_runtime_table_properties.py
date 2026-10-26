@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from hypothesis import given, settings, strategies as st
 
-from wozmod.runtime import english_runtime as runtime
+from wozmod.runtime import text_table as runtime
 
 
 KEYS = st.binary(min_size=1, max_size=6).filter(lambda b: b"\0" not in b)

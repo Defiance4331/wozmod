@@ -1,3 +1,5 @@
-"""wozmod: build and install the Musou Orochi Z mod."""
+"""wozmod: build and install the Musou Orochi Z mod.
 
-__version__ = "0.1.0"  # pyproject.toml carries the same version; a test keeps them equal
+The version lives in wozmod.version, not here: every module sits under this package, so a value here would be part
+of every install step's key (wozmod.install.step_keys) and each release would rebuild everything.
+"""

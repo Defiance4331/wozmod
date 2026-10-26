@@ -7,8 +7,12 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 
 
 def _text_mode(call: ast.Call) -> bool:
-    """True for read_text/write_text, builtin open, and Path.open with a text mode string."""
+    """True for read_text/write_text, builtin open, Path.open with a text mode string, and a program started with
+    text=True (or universal_newlines=True), whose output is decoded."""
     name = call.func
+    if any(k.arg in ("text", "universal_newlines") and isinstance(k.value, ast.Constant) and k.value.value is True
+           for k in call.keywords):
+        return True
     if isinstance(name, ast.Attribute) and name.attr in ("read_text", "write_text"):
         return True
     modes = [a.value for a in call.args if isinstance(a, ast.Constant) and isinstance(a.value, str)]
@@ -29,6 +33,7 @@ def missing_encodings() -> list[str]:
 
 
 def test_text_files_name_their_encoding() -> None:
-    # Bug: without encoding= Windows reads and writes cp1252, so JSON or C source with non-ASCII text
-    # (or a log line) crashes the install there while it passes on Linux.
+    # Bug: without encoding= Windows reads and writes in its locale's code page (cp1252, or cp932 on a Japanese
+    # Windows), so JSON or C source with non-ASCII text (or a log line) crashes the install there while it passes on
+    # Linux, or a program's output parses differently and the same step key holds other bytes on that machine.
     assert missing_encodings() == []

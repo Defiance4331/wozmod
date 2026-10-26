@@ -14,9 +14,9 @@ from pathlib import Path
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 from wozmod import resources
-from wozmod import __version__
+from wozmod.version import __version__
 from wozmod.install import (FILE_PROGRAMS, FILES, INPUTS, PROGRAMS, TOOLS, InstallError, check_input, file_problem, install,
-                            install_state, program_status, uninstall)
+                            REINSTALL_QUESTION, install_state, program_status, uninstall)
 from wozmod.progress import DONE, Cancelled, Progress, duration, minutes_left
 from wozmod.remembered import load_settings, save_settings
 
@@ -440,8 +440,7 @@ class SetupWindow:
         else:
             state, found = self.install_state()
             if state == "reinstall" and not self.ask_yes(
-                    "Reinstall", f"wozmod {__version__} is already installed here.\n\nBuild and install it again? "
-                    "Your settings stay."):
+                    "Reinstall", "\n\n".join(REINSTALL_QUESTION).format(version=__version__)):
                 return
             if state == "downgrade" and not self.ask_yes(
                     "Older version", f"wozmod {found or 'of an unknown version'} is installed here. This is wozmod "

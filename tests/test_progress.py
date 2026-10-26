@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 import wozmod.install as installer
+from synthetic import fake_step_keys
 from wozmod import progress as reporting
 from wozmod.progress import Cancelled, Progress, TerminalView
 
@@ -161,9 +162,9 @@ def game(tmp_path, monkeypatch):
     (folder / "data").mkdir(parents=True)
     (folder / "OROCHI_Z.exe").write_bytes(b"stock exe")
     (folder / "data/LINKDATA1.BIN").write_bytes(b"stock archive")
-    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: [])
+    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None, rebuilt=None: [])
 
-    def build(game, inputs, staging, progress, jobs, checked, cache=None):
+    def build(game, inputs, staging, progress, jobs, checked, cache=None, rebuilt=installer.STEPS, movies=None):
         out = staging / "out"
         (out / "wozmod").mkdir(parents=True)
         for key in ("discs", "text", "voices", "art"):
@@ -173,9 +174,10 @@ def game(tmp_path, monkeypatch):
             progress.finish(key)
         (out / "d3d9.dll").write_bytes(b"dll")
         (out / "wozmod/table.bin").write_bytes(b"table")
-        return out
+        return out, {"text": ["wozmod/table.bin"], "voices": [], "art": []}
 
     monkeypatch.setattr(installer, "_build", build)
+    fake_step_keys(monkeypatch)
     return folder
 
 

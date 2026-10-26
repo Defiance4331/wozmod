@@ -29,7 +29,7 @@ import math
 import struct
 from dataclasses import dataclass
 
-from . import layout
+from . import shared
 from .latin_font import width as text_width
 
 STOCK_CELL = 28
@@ -54,7 +54,7 @@ class Art:
 @dataclass(frozen=True)
 class Box:
     kind: str
-    site: str  # the english_runtime.c define of its text draw's return address
+    site: str  # the runtime/shared.h define of its text draw's return address
     art: Art | None
     stock: tuple[int, int, int]  # the stock text, at cell 28: first line's y, pitch, most lines
     x: int
@@ -240,7 +240,7 @@ def _row(b: Box) -> tuple[int, ...]:
 def page_rows() -> dict[int, tuple[int, ...]]:
     """The runtime's page table by draw site: cell width and height (0: stock), pitch, x, y, wrap, width, and 1 when
     its lines centre on y."""
-    return {layout.DEFINES[b.site]: _row(b) for b in BOXES.values()}
+    return {shared.DEFINES[b.site]: _row(b) for b in BOXES.values()}
 
 
 def c_header() -> list[str]:

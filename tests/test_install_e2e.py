@@ -54,7 +54,7 @@ def release_files(tmp_path_factory) -> dict[str, Path]:
 
 @pytest.fixture(scope="module")
 def installed(release_files):
-    """One install into a copy of the stock game: (game copy, install command, seconds, log lines)."""
+    """One install into a copy of the stock game: (game copy, install command, seconds, log lines, _snapshot)."""
     # Bug: the checkout builds another d3d9.dll or lettering.zip than the one its pin names (the runtime or the
     # lettering changed and the pin did not), so a release from it refuses its own files. The installer would say
     # so only after the game copy (6 to 60 s): check them first.
@@ -70,14 +70,28 @@ def installed(release_files):
         folder.mkdir()
         stopped = signal.signal(signal.SIGTERM, signal.default_int_handler)  # a stopped run cleans up too
         try:
-            yield _install(folder / "game", release_files)
+            game, command, seconds, log = _install(folder / "game", release_files)
+            yield game, command, seconds, log, _snapshot(game)
         finally:
             signal.signal(signal.SIGTERM, stopped)
             shutil.rmtree(folder)
 
 
-def _install(game: Path, release_files: dict[str, Path]):
-    subprocess.run(["cp", "-a", "--reflink=auto", os.environ["WOZMOD_GAME"], str(game)], check=True)
+def _snapshot(game: Path) -> dict[str, tuple[str, int]]:
+    """Each file the install wrote, with its SHA-256 and inode."""
+    files = json.loads((game / "wozmod/install.json").read_text())["files"]
+    return {name: (hashlib.sha256((game / name).read_bytes()).hexdigest(), (game / name).stat().st_ino) for name in files}
+
+
+def _install_log() -> list[str]:
+    from wozmod import remembered
+
+    return remembered.settings_path().with_name("install.log").read_text(encoding="utf-8").splitlines()
+
+
+def _install(game: Path, release_files: dict[str, Path], copy: bool = True):
+    if copy:
+        subprocess.run(["cp", "-a", "--reflink=auto", os.environ["WOZMOD_GAME"], str(game)], check=True)
     command = ["install", "--game", str(game)]
     for flag, variable in INPUTS.items():
         command += [f"--{flag}", os.environ[variable]]
@@ -86,7 +100,8 @@ def _install(game: Path, release_files: dict[str, Path]):
     start = time.perf_counter()
     # as on a player's machine: no font tools (build.FONT_PYTHON), whatever this machine has
     font_tools = dict(os.environ, WOZMOD_FONT_PYTHON=str(game.parent / "no-font-python"))
-    run = subprocess.run([sys.executable, "-m", "wozmod", *command], capture_output=True, text=True, env=font_tools)
+    run = subprocess.run([sys.executable, "-m", "wozmod", *command, *([] if copy else ["--force"])], capture_output=True,
+                         text=True, encoding="utf-8", env=font_tools)
     seconds = time.perf_counter() - start
     assert run.returncode == 0, run.stderr
     return game, command, seconds, run.stdout.splitlines()
@@ -101,7 +116,7 @@ def test_install_draws_game_text_without_font_tools(installed):
 
 def test_install_finishes_within_its_time_budget(installed, capsys):
     # Bug: a stage falls back to serial work (one worker, one ffmpeg per clip) or stops overlapping the others.
-    _, _, seconds, log = installed
+    _, _, seconds, log, _ = installed
     budget = float(os.environ.get("WOZMOD_INSTALL_BUDGET", "300"))
     with capsys.disabled():
         print(f"\ninstall: {seconds:.0f} s (budget {budget:.0f} s, WOZMOD_JOBS={os.environ.get('WOZMOD_JOBS', 'CPU count')})")
@@ -170,9 +185,38 @@ def test_the_dll_accepts_every_file_the_install_wrote(installed, c_library):
         len(json.loads((folder / "install.json").read_text())["files"]), [], set())
 
 
+def test_a_second_install_keeps_every_step_and_leaves_the_files_of_the_first(installed, release_files, capsys):
+    # Bug: a reinstall with nothing changed rebuilds a step (its key is not stable from one run to the next), recopies
+    # the movies, or moves or rewrites a kept file. WOZMOD_UPDATE_BUDGET (seconds, default 60) is the time it may take.
+    game, _, _, _, fresh = installed
+    _, _, seconds, _ = _install(game, release_files, copy=False)
+    log = _install_log()
+    with capsys.disabled():
+        print(f"\nreinstall with nothing changed: {seconds:.0f} s; " + "; ".join(log[:5]))
+    assert [line.split(":")[0] + ": " + line.split(": ")[1].split(" ")[0] for line in log[:3]] == [
+        "text: kept", "voices: kept", "art: kept"]
+    assert log[3].startswith("movies: kept ") and log[3].split()[2] == log[3].split()[4]
+    assert _snapshot(game) == fresh
+    assert seconds <= float(os.environ.get("WOZMOD_UPDATE_BUDGET", "60"))
+
+
+def test_a_changed_step_key_rebuilds_only_that_step_and_the_same_files(installed, release_files):
+    # Bug: one changed key rebuilds the other steps too, or the rebuilt step's files differ from a fresh install's
+    # (a kept step's output fed back into it).
+    game, _, _, _, fresh = installed
+    record = json.loads((game / "wozmod/install.json").read_text())
+    record["steps"]["text"]["key"] = "0" * 64
+    (game / "wozmod/install.json").write_text(json.dumps(record))
+    _install(game, release_files, copy=False)
+    log = _install_log()
+    assert [line.split(": ")[1] for line in log[:3]] == ["built", "kept", "kept"]
+    assert {name: digest for name, (digest, _) in _snapshot(game).items()} == {
+        name: digest for name, (digest, _) in fresh.items()}
+
+
 def test_install_lists_every_file_it_wrote_and_uninstall_restores_the_stock_folder(installed):
     # Bug: a built file missing from install.json (left by uninstall), a stale hash, or a stock file touched.
-    game, command, _, _ = installed
+    game, command, _, _, _ = installed
     stock = Path(os.environ["WOZMOD_GAME"])
     listed = json.loads((game / "wozmod/install.json").read_text())["files"]
     on_disk = {p.relative_to(game).as_posix() for p in game.rglob("*")

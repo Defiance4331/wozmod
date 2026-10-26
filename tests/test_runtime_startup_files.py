@@ -10,7 +10,7 @@ import struct
 import pytest
 
 from wozmod.install import _write_manifest
-from wozmod.runtime.english_runtime import table_blob
+from wozmod.runtime.text_table import table_blob
 from wozmod.voices.maps import VoiceSlot, slot_table
 
 GLUE = r'''
@@ -57,11 +57,14 @@ def _names(files, json: bytes) -> list[str] | None:
 def test_the_dll_reads_every_file_the_installers_record_lists(files, tmp_path):
     """Bugs: the first or the last file of the record is dropped (the ',' and '}' around it), a hash is read as a
     file, so a missing file goes unnoticed or a present one turns wozmod off; a record cut short or with an escaped
-    name is read as a complete one. The record is written by the installer's own writer."""
+    name is read as a complete one; the record the installer writes (format 2, with each step's files) is refused, so
+    wozmod is off for every player. The record is written by the installer's own writer, with steps."""
     listed = {"d3d9.dll": "a" * 64, "wozmod/captions/4397.bin": "b" * 64, "wozmod/entries/12.bin": "c" * 64,
               "wozmod/voice/Voice.bin": "d" * 64}
+    steps = {"text": {"key": "e" * 64, "parts": {"mod": "f" * 64}, "files": ["wozmod/captions/4397.bin"]},
+             "movies": {"wozmod/movie/voice/movie001.wmv": "0" * 64}}
     (tmp_path / "wozmod").mkdir()
-    _write_manifest(tmp_path, listed)
+    _write_manifest(tmp_path, listed, steps=steps)
     record = (tmp_path / "wozmod/install.json").read_bytes()
     assert _names(files, record) == sorted(listed)
     _write_manifest(tmp_path, {})

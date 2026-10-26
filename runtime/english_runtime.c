@@ -16,6 +16,7 @@
 
 
 #include <windows.h>
+#include "shared.h"  /* the defines the installer's build steps also read */
 #include "text_fit.h"
 #include "format_order.h"
 #include "glyph_raster.h"
@@ -82,8 +83,6 @@ static const u32 *enrt_table;
 #define WINDOW_MEASURE 0x54E807
 #define WINDOW_PITCH 24
 
-#define NARRATION_DRAW 0x561111
-#define STILL_DRAW 0x59C7BD
 #define STILL_PLATE 0x59C4B3
 /* Camp talk name plate: the stock plate (4104.0) widened to hold the longest speaker's name (wozmod.runtime.camp_plate;
    runtime_edits camp_plate_edits). The stock code centres the name on the plate's drawn width (0x59C481-0x59C4A7,
@@ -93,10 +92,7 @@ static const u32 *enrt_table;
 #define STILL_Z_PLATE 0x59A3E2
 #define STILL_Z_LANE 180
 #define NAME_GLYPHS ((u32 (*)(u32))0x54A0A0)
-#define BRIEFING_DRAW 0x548F52
 /* Z-story chapter narration and still event: twins of the screens above, with their glyph counts. */
-#define NARRATION_Z_DRAW 0x55F31C
-#define STILL_Z_DRAW 0x59A785
 #define NARRATION_Z_COUNT 0x55E724
 #define STILL_Z_COUNTS 0x5990EE, 0x5995D9
 
@@ -148,7 +144,6 @@ static const u32 *enrt_table;
 #define ARMY_TITLE 0x536785
 #define BANNER_NAME_DRAW 0x550874
 #define BANNER_TEXT_CELL 22
-#define CAPTION_CUE 0x56A23F
 #define CAPTION_WIDTH 1200
 
 
@@ -2492,17 +2487,6 @@ struct hires {
     u32 entry, item, scale, w, h, band, per_col;  /* scale: the drawing packing's, with the row's flags */
     u32 sheet, origin;                            /* in the drawing packing; origin x | y << 16, level-0 texels */
 };
-#define HIRES_MAX 256
-#define HIRES_SHEETS 32
-#define HIRES_BANKS 4
-#define HIRES_SCALE_MIN 2      /* a packing's texels per stock texel */
-#define HIRES_SCALE_MAX 7
-#define HIRES_LEVELS 3         /* most levels in a packing or a sheet */
-#define HIRES_SIDE_MIN_LOG2 3  /* a sheet's sides: 8 to 4096 texels */
-#define HIRES_SIDE_MAX_LOG2 12
-#define HIRES_OVERLAY 0x80000000u
-#define HIRES_RIGHT_GROW 0x40000000u
-#define HIRES_SCALE_MASK 0x3fffffffu
 #define HIRES_KEY 0x48570000u        /* "WH" + the sheet: the stand-ins' registry keys (G1T +4), never 0 */
 #define D3DFMT_DXT5 0x35545844u
 static struct hires hires_row[HIRES_MAX];

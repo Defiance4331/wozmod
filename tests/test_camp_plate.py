@@ -44,7 +44,7 @@ def test_the_plate_is_as_wide_as_the_longest_camp_talk_speaker_name() -> None:
     # Bug: a translation makes a camp-talk speaker's name longer than LONGEST_NAME, and it overruns the plate.
     from wozmod.formats.linkdata import archive
     from wozmod.runtime import text_room
-    from wozmod.runtime.english_runtime import decode_english
+    from wozmod.runtime.text_table import decode_english
     from wozmod.text.build import resolved_text
     from wozmod.text.narration_voices import container
     from wozmod.text.resolver import DonorResolver

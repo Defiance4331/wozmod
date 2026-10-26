@@ -19,18 +19,17 @@ from functools import partial
 from multiprocessing import get_context
 from pathlib import Path
 
-from wozmod import __version__ as VERSION
+from wozmod.version import __version__ as VERSION
 from wozmod import progress as reporting
 from wozmod import process, remembered, resources
 from wozmod.donors.discs import DISCS, DonorsFolder
-from wozmod.install.stock import Verdict, check_game
+from wozmod.install import step_keys
+from wozmod.install.stock import STEPS, Verdict, check_game
 from wozmod.progress import Cancelled, Progress
 
 MANIFEST = "wozmod/install.json"
+RECORD_FORMAT = 2  # 1: files only; 2: also each step's key and files, and each movie's key (see _write_manifest)
 RUNTIME_FILES = ("wozmod/settings.ini", "wozmod/runtime.log", "wozmod/runtime.crash.log")  # written by the game, not by the installer
-TEXT_DATA = resources.root() / "data/text/table.json"
-DUB_CAPTIONS = resources.root() / "data/text/dub_captions.json"
-MOVIE_CAPTIONS = resources.root() / "data/text/movie_captions.json"
 
 # The game folder is checked piece by piece: only the parts of the stock files the build reads (install/stock.py).
 # Release assets built by us; a release updates both pins with the files it ships.
@@ -284,7 +283,7 @@ def check_input(name: str, path: Path | str) -> str | None:
     """
     path = Path(path)
     if name == "game":
-        return _game_check(path)[0]
+        return _game_check(path, planned_rebuild(path))[0]
     if name in DISCS:
         from wozmod.donors import check_donor_image
 
@@ -312,18 +311,20 @@ def _shipped_dll() -> Path | None:
     return None if _pinned(path, DLL) else path
 
 
-def _game_check(path: Path, dll: Path | None = None) -> tuple[str | None, Verdict | None]:
-    """(the reason the game folder cannot be used or None, what check_game found). The exe's code is checked
-    against the guards of ``dll``, else of the release's own d3d9.dll."""
+def _game_check(path: Path, rebuilt=STEPS, dll: Path | None = None) -> tuple[str | None, Verdict | None]:
+    """(the reason the game folder cannot be used or None, what check_game found). Only a changed piece that a step
+    in rebuilt reads stops the install; exe code wozmod patches that another mod changed always does. The exe's code
+    is checked against the guards of ``dll``, else of the release's own d3d9.dll."""
     if not path.is_dir():
         return "Not a folder. Pick the folder that contains the game's .exe.", None
     verdict = check_game(path, dll=dll or _shipped_dll())
-    return verdict.problem(), verdict
+    return verdict.problem(rebuilt), verdict
 
 
-def check_inputs(game: Path, inputs: dict[str, Path | None], log=None) -> list[str]:
+def check_inputs(game: Path, inputs: dict[str, Path | None], log=None, rebuilt=STEPS) -> list[str]:
     """Raise one InstallError naming every missing or wrong input; else return the notes for the player (what
-    another mod in the game folder also replaces).
+    another mod in the game folder also replaces, and what it changed that only kept steps read). rebuilt: the steps
+    this install builds; the others are kept from the last install.
 
     The two files of the release download come first, on their own: a wrong download is named in milliseconds,
     not after the seconds the game folder's hashes take. Every other wrong input is then named in one error.
@@ -331,7 +332,7 @@ def check_inputs(game: Path, inputs: dict[str, Path | None], log=None) -> list[s
     if wrong := [f"{INPUTS[name].label}: {problem}" for name in ("lettering", "dll")
                  if (problem := check_input(name, inputs[name]))]:
         raise InstallError("\n".join(wrong))
-    problem, verdict = _game_check(Path(game), inputs["dll"])
+    problem, verdict = _game_check(Path(game), rebuilt, inputs["dll"])
     problems = {"game": problem}
     for name in DISCS:
         problems[name] = check_input(name, inputs[name])
@@ -339,11 +340,11 @@ def check_inputs(game: Path, inputs: dict[str, Path | None], log=None) -> list[s
         for source, problem in program_status(tool, inputs, log).problems.items():
             problems.setdefault(source, problem)
     lines = [f"{INPUTS[name].label}: {problem}" for name, problem in problems.items() if problem]
-    if resources.ffmpeg() is None:
+    if "voices" in rebuilt and resources.ffmpeg() is None:
         lines.append("ffmpeg was not found on PATH; the voice build needs it")
     if lines:
         raise InstallError("\n".join(lines))
-    return verdict.notes()
+    return [*verdict.notes(), *verdict.kept_notes(rebuilt)]
 
 
 def read_manifest(game: Path) -> dict[str, str]:
@@ -386,10 +387,14 @@ def _remove(game: Path, files: dict[str, str]) -> dict[str, str]:
     return changed
 
 
-def _write_manifest(game: Path, files: dict[str, str], version: str | None = VERSION) -> None:
+def _write_manifest(game: Path, files: dict[str, str], version: str | None = VERSION, steps: dict | None = None) -> None:
+    """Write the install record: format 2 holds the version, the platform and every installed file with its SHA-256,
+    and, when steps is given, each step's key and files ({"key", "parts", "files"}) and each movie's key under
+    "movies". Every later version reads every earlier format; uninstall needs only "files"."""
     path = game / MANIFEST
     temporary = path.with_name(path.name + ".tmp")
-    record = {"format": 1, **({"version": version} if version else {}), "files": dict(sorted(files.items()))}
+    record = {"format": RECORD_FORMAT, **({"version": version} if version else {}), "platform": sys.platform,
+              "files": dict(sorted(files.items())), **({"steps": steps} if steps is not None else {})}
     temporary.write_text(json.dumps(record, indent=1) + "\n", encoding="utf-8")
     os.replace(temporary, path)
 
@@ -414,6 +419,12 @@ def _version_key(version: str | None) -> tuple[int, ...] | None:
         return (0,)  # records written before versions were recorded
     parts = version.split(".")
     return tuple(int(p) for p in parts) if all(p.isascii() and p.isdecimal() for p in parts) else None
+
+
+# The question before a reinstall of the same version, which keeps every intact part and builds the rest (row 34):
+# (what is installed, the question). The command line joins them with a space, the window with a blank line.
+REINSTALL_QUESTION = ("wozmod {version} is already installed here.",
+                      "Install it again? Parts that are already up to date are kept, and your settings stay.")
 
 
 def install_state(game: Path) -> tuple[str, str | None]:
@@ -458,6 +469,112 @@ def uninstall(game: Path, keep_settings: bool = True, log=print) -> dict[str, st
     return changed
 
 
+@dataclass(frozen=True)
+class Reuse:
+    """What an install keeps from the last one: the installed files left in place, and what it builds."""
+
+    kept: dict[str, str]  # installed file -> SHA-256, left where it is
+    steps: dict  # the record's "steps" for the steps and movies kept (_write_manifest)
+    rebuilt: tuple[str, ...]  # the steps to build, in STEPS order
+    movies: tuple[str, ...]  # the movies to copy from the discs, by their place in the game folder
+    keys: dict | None  # this version's step keys (step_keys.keys()) and "movies"; None when they cannot be made
+    reasons: dict[str, str]  # step -> why it is kept or built, for the install log
+
+
+def _intact(game: Path, names, files: dict[str, str]) -> list[str]:
+    """The names whose installed file is missing or no longer has its recorded SHA-256 (hashed side by side)."""
+    def broken(name: str) -> bool:
+        path = game / name
+        return not path.is_file() or _sha256(path) != files[name]
+
+    with ThreadPoolExecutor(4) as pool:  # hashlib lets go of the GIL
+        return [name for name, bad in zip(names, pool.map(broken, names), strict=True) if bad]
+
+
+def _recorded_steps(record: dict) -> dict | str:
+    """The record's steps, or why they cannot be used (then every step is built)."""
+    if record.get("format") != RECORD_FORMAT or not isinstance(record.get("steps"), dict):
+        return "the last install was made by a wozmod from before step keys"
+    if record.get("platform") != sys.platform:
+        return f"the last install was made on {record.get('platform')}"
+    steps, files, owner = record["steps"], record["files"], {}
+    try:
+        claims = [(step, name) for step in STEPS if step in steps for name in steps[step]["files"]]
+        claims += [("movies", name) for name in steps.get("movies", {})]
+        for step in STEPS:
+            if step in steps and not isinstance(steps[step]["key"], str):
+                raise TypeError(f"{step} has no key")
+    except (KeyError, TypeError, AttributeError) as error:
+        return f"the install record's steps are unreadable ({error})"
+    for step, name in claims:
+        if name not in files or owner.setdefault(name, step) != step:
+            return f"the install record's steps claim {name} " + (
+                "twice" if name in files else "but do not list it among the installed files")
+    return steps
+
+
+def _changed_parts(old: dict, new: dict) -> str:
+    names = {"mod": "the mod's code or data", "game": "the game files it reads", "donors": "the disc files it reads",
+             "lettering": "lettering.zip", "environment": "WOZMOD_ settings"}
+    parts = [names.get(p, p) for p in new if (old or {}).get(p) != new[p]]
+    return ", ".join(parts) or "its key"
+
+
+def plan_reuse(game: Path, log=print) -> Reuse:
+    """Decide which steps and movies this install keeps from the last one: a step whose key is the recorded one and
+    whose recorded files are all still intact, and a movie whose pin is the recorded one and whose file is intact.
+    Everything else is built. An install recorded before step keys, on another platform or with steps the record
+    cannot vouch for builds everything."""
+    game = Path(game)
+    try:
+        keys = {**step_keys.keys(), "movies": step_keys.movie_keys()}
+    except (step_keys.StepKeyError, OSError, ValueError) as error:
+        log(f"wozmod keeps nothing from the last install: its step keys cannot be made ({error})")
+        return Reuse({}, {}, STEPS, (), None, dict.fromkeys(STEPS, "built: no step keys"))
+    movies = tuple(keys["movies"])
+    try:
+        record = json.loads((game / MANIFEST).read_text(encoding="utf-8"))
+        files = read_manifest(game)
+    except (OSError, ValueError, InstallError):
+        return Reuse({}, {}, STEPS, movies, keys, dict.fromkeys(STEPS, "built: no earlier install"))
+    steps = _recorded_steps(record)
+    if isinstance(steps, str):
+        return Reuse({}, {}, STEPS, movies, keys, dict.fromkeys(STEPS, f"built: {steps}"))
+    candidates = {step: steps[step]["files"] for step in STEPS if steps.get(step, {}).get("key") == keys[step]["key"]}
+    movie_candidates = [name for name, pin in keys["movies"].items() if steps.get("movies", {}).get(name) == pin]
+    broken = set(_intact(game, [*(n for names in candidates.values() for n in names), *movie_candidates], files))
+    kept, kept_steps, reasons = {}, {}, {}
+    for step in STEPS:
+        if step not in candidates:
+            reasons[step] = f"built: changed since the last install: {_changed_parts(steps.get(step, {}).get('parts'), keys[step]['parts'])}"
+        elif bad := sorted(broken & set(candidates[step])):
+            reasons[step] = f"built: {len(bad)} of its installed files changed or went missing ({bad[0]})"
+        else:
+            kept |= {name: files[name] for name in candidates[step]}
+            kept_steps[step] = steps[step]
+            reasons[step] = f"kept: {len(candidates[step])} files"
+    kept_movies = {name: keys["movies"][name] for name in movie_candidates if name not in broken}
+    kept |= {name: files[name] for name in kept_movies}
+    kept_steps["movies"] = kept_movies
+    reasons["movies"] = f"kept {len(kept_movies)} of {len(movies)}"
+    return Reuse(kept, kept_steps, tuple(s for s in STEPS if s not in kept_steps),
+                 tuple(name for name in movies if name not in kept_movies), keys, reasons)
+
+
+def planned_rebuild(game: Path) -> tuple[str, ...]:
+    """The steps an install into game would build, by the keys alone (the setup window's game check: an install
+    also rebuilds a kept step whose files changed, and checks again)."""
+    try:
+        record = json.loads((Path(game) / MANIFEST).read_text(encoding="utf-8"))
+        steps = _recorded_steps(record)
+        if isinstance(steps, str):
+            return STEPS
+        keys = step_keys.keys()
+    except (OSError, ValueError, step_keys.StepKeyError):
+        return STEPS
+    return tuple(s for s in STEPS if steps.get(s, {}).get("key") != keys[s]["key"])
+
+
 def _extract(flag: str, image: Path, donor, destination: Path, files, label: str, lo: float, hi: float,
              failed=lambda: None) -> None:
     from wozmod.donors import extract_donor
@@ -482,14 +599,9 @@ def _place_programs(inputs: dict[str, Path | None], donors: Path) -> None:
 
 
 def _text_table(game: Path, donors: Path, out: Path) -> None:
-    from wozmod.text import DonorResolver
-    from wozmod.text.build import resolved_text, write_table
-    from wozmod.text.movie_captions import build_movie_schedules
+    from wozmod.text.build import text_step
 
-    resolver = DonorResolver(donors)
-    _, pairs, names = resolved_text(game, resolver, TEXT_DATA)
-    write_table(pairs, names, out / "wozmod/table.bin")
-    build_movie_schedules(game, resolver, pairs, MOVIE_CAPTIONS, DUB_CAPTIONS, out)
+    text_step(game, donors, out)
 
 
 def _menu_art(game: Path, donors: Path, lettering: Path, staging: Path, out: Path, jobs: int) -> None:
@@ -597,8 +709,9 @@ def _run_stages(pool, futures: dict, events, stop, progress: Progress) -> None:
 
 
 def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progress, jobs: int, checked,
-           cache=None) -> Path:
-    """Build every mod file into staging/out (as laid out in the game folder) and return it.
+           cache=None, rebuilt=STEPS, movies=None) -> tuple[Path, dict[str, list[str]]]:
+    """Build the steps in rebuilt and copy the movies named in movies (all when None) into staging/out, laid out as
+    the game folder; return it, with the files each step wrote. Only the disc files those steps read are read.
 
     The input checks run while the discs are read; `checked()` waits for them and raises when an input is wrong,
     and `checked(wait=False)` raises only once they are done, so a wrong input stops the read at once.
@@ -609,52 +722,58 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
     as the game folder, but for "movies", whose folder is wozmod/movie. Nothing is kept before the checks pass.
     """
     from wozmod.movies import movie_donors
-    from wozmod.text.movie_captions import DUB_SCHEDULE_FILES
-    from wozmod.voices import PSP_VOICE_FILES, VOICE_DONOR_FILES
 
     donors, out = staging / "donors", staging / "out"
     folders = DonorsFolder(donors)
     sources = {"game": game, "donors": donors, **inputs}
-    movies_kept = cache is not None and cache.fetch("movies", sources, donors / "movie")
-    reads = {"wo1-x360": VOICE_DONOR_FILES + DUB_SCHEDULE_FILES, "wo2-x360": VOICE_DONOR_FILES,
-             "wo2-psp": PSP_VOICE_FILES}
+    wanted = [m for donor in movie_donors().values() for m in donor.files
+              if movies is None or f"wozmod/movie/{m.path}" in movies]
+    movies_kept = bool(wanted) and cache is not None and cache.fetch("movies", sources, donors / "movie")
+    reads: dict[str, list[str]] = {}
+    for step in rebuilt:
+        for disc, files in step_keys.disc_reads(step).items():
+            reads.setdefault(disc, []).extend(f for f in files if f not in reads[disc])
     plan = [(disc, DISCS[disc].donor, folders.folder(disc), files, f"reading the {DISCS[disc].title} disc")
             for disc, files in reads.items()]
-    if not movies_kept:
-        plan += [(name, donor, donors / "movie", None, "copying the English movies")
-                 for name, donor in movie_donors().items()]
-    sizes = [sum(m.size for m in donor.files if files is None or m.path in files) for _, donor, _, files, _ in plan]
+    if wanted and not movies_kept:
+        plan += [(name, donor, donors / "movie", [m.path for m in donor.files if m in wanted],
+                  "copying the English movies") for name, donor in movie_donors().items()
+                 if any(m in wanted for m in donor.files)]
+    sizes = [sum(m.size for m in donor.files if m.path in files) for _, donor, _, files, _ in plan]
     progress.begin("discs")
     offset, unread = 0, None
     try:
         for (flag, donor, folder, files, label), size in zip(plan, sizes, strict=True):
             _extract(flag, inputs[flag], donor, folder, files, label,
-                     offset / sum(sizes), (offset + size) / sum(sizes), lambda: checked(wait=False))
+                     offset / max(sum(sizes), 1), (offset + size) / max(sum(sizes), 1), lambda: checked(wait=False))
             offset += size
     except InstallError as error:
         unread = error
     checked()  # a wrong input is named before a disc that failed to read
     if unread:
         raise unread
-    _place_programs(inputs, donors)
-    if cache is not None and not movies_kept:
+    if step_keys.PROGRAMS & set(rebuilt):
+        _place_programs(inputs, donors)
+    if cache is not None and wanted and not movies_kept:
         cache.keep("movies", sources, donors / "movie")
     progress.finish("discs")
     progress.checkpoint()
 
-    # The three builds are independent: run them side by side, each in its own process. Each writes to the
-    # folder it is given, laid out as the game folder.
+    # The builds are independent: run them side by side, each in its own process, each into its own folder laid out
+    # as the game folder, so that the record knows which step wrote which file.
     progress.begin("build")
     builds = {"text": partial(_text_table, game, donors), "voices": partial(_voice_banks, game, donors, jobs=jobs),
               "art": partial(_menu_art, game, donors, inputs["lettering"], staging / "art", jobs=jobs)}
-    targets = dict.fromkeys(builds, out) if cache is None else {name: staging / "steps" / name for name in builds}
+    builds = {name: build for name, build in builds.items() if name in rebuilt}
+    targets = {name: staging / "steps" / name for name in builds}
     kept = [] if cache is None else [name for name in builds if cache.fetch(name, sources, targets[name])]
     context = get_context("spawn")
     events, stop = context.Queue(), context.Event()
     log_path = remembered.settings_path().with_name("install.log")  # one folder with the remembered paths
     try:
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_path.write_text("", encoding="utf-8")
+        with log_path.open("a", encoding="utf-8"):  # install() starts it; the workers add what the build prints
+            pass
     except OSError:
         log_path = None  # no log is better than no install
     with ProcessPoolExecutor(3, mp_context=context, initializer=_worker_start,
@@ -663,32 +782,42 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
         for key, text in (("text", "building the text table"), ("voices", "reading the voice banks"),
                           ("art", "preparing the menu art")):
             progress.begin(key, text)
-        for name in kept:
+        for name in [*kept, *(s for s in STEPS if s not in builds)]:
             progress.finish(name)
         try:
             _run_stages(pool, futures, events, stop, progress)
         except BaseException:
             _stop_workers(pool, futures, stop)
             raise
-    if cache is not None:
-        for name, folder in targets.items():
-            if name not in kept:
-                cache.keep(name, sources, folder)
-            for built in sorted(p for p in folder.rglob("*") if p.is_file()):
-                target = out / built.relative_to(folder)
-                if target.exists():
-                    raise InstallError(f"two build steps wrote {built.relative_to(folder).as_posix()}")
-                target.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(built, target)
+    written: dict[str, list[str]] = {}
+    for name, folder in targets.items():
+        folder.mkdir(parents=True, exist_ok=True)
+        if cache is not None and name not in kept:
+            cache.keep(name, sources, folder)
+        written[name] = []
+        for built in sorted(p for p in folder.rglob("*") if p.is_file()):
+            relative = built.relative_to(folder).as_posix()
+            target = out / relative
+            if target.exists():
+                raise InstallError(f"two build steps wrote {relative}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(built, target)
+            written[name].append(relative)
     progress.finish("build")
-    os.replace(donors / "movie", out / "wozmod/movie")
+    if (donors / "movie").is_dir():
+        (out / "wozmod").mkdir(parents=True, exist_ok=True)
+        os.replace(donors / "movie", out / "wozmod/movie")
+    out.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(inputs["dll"], out / "d3d9.dll")
-    return out
+    return out, written
 
 
 def install(game: Path, inputs: dict[str, Path], force: bool = False, log=print,
             progress: Progress | None = None, cache=None, note=None) -> dict[str, str]:
-    """Build wozmod into game; return the written files with their SHA-256.
+    """Build wozmod into game; return the installed files with their SHA-256.
+
+    An install over an earlier one keeps each step (text, voices, art) and each movie whose key is the recorded one
+    and whose installed files are intact (plan_reuse), and builds the rest; install.log says which and why.
 
     `note` gets each note for the player once the files are in place (another mod in the game folder that also
     replaces something wozmod replaces); without it they go to `log`.
@@ -714,8 +843,11 @@ def install(game: Path, inputs: dict[str, Path], force: bool = False, log=print,
     reporting.attach(progress.apply, progress.cancel)
     try:
         progress.begin("check")
+        started = time.monotonic()
+        reuse = plan_reuse(game, log)
+        _start_log(reuse, time.monotonic() - started)
         checker = ThreadPoolExecutor(1)  # hashing the inputs overlaps with reading the discs; nothing but the build folder changes meanwhile
-        check = checker.submit(check_inputs, game, inputs, log)
+        check = checker.submit(check_inputs, game, inputs, log, reuse.rebuilt)
         done, notes = [], []
 
         def checked(wait: bool = True) -> None:
@@ -733,21 +865,31 @@ def install(game: Path, inputs: dict[str, Path], force: bool = False, log=print,
             raise
         written: list[str] = []
         try:
-            out = _build(game, inputs, staging, progress, jobs, checked, cache=cache)
+            out, wrote = _build(game, inputs, staging, progress, jobs, checked, cache=cache, rebuilt=reuse.rebuilt,
+                                movies=set(reuse.movies))
             checked()
             progress.checkpoint()  # the last place to cancel: below, the files are put in place
             progress.begin("place")
-            files = {p.relative_to(out).as_posix(): _sha256(p) for p in sorted(out.rglob("*")) if p.is_file()}
-            # An installed file with the same bytes stays in place: rewriting it costs its size in new disk blocks.
-            same = {name for name, digest in files.items()
-                    if old.get(name) == digest and (game / name).is_file() and _sha256(game / name) == digest}
+            built = {p.relative_to(out).as_posix(): _sha256(p) for p in sorted(out.rglob("*")) if p.is_file()}
+            files = {**reuse.kept, **built}
+            # A built file whose installed copy has the same bytes stays in place: rewriting it costs its size in new
+            # disk blocks. A kept file is never touched.
+            same = set(reuse.kept) | {name for name, digest in built.items()
+                                      if old.get(name) == digest and (game / name).is_file()
+                                      and _sha256(game / name) == digest}
             _remove(game, {name: digest for name, digest in old.items() if name not in same})
+            steps = None
+            if reuse.keys is not None:
+                steps = {**reuse.steps, **{step: {"key": reuse.keys[step]["key"], "parts": reuse.keys[step]["parts"],
+                                                  "files": wrote[step]} for step in reuse.rebuilt},
+                         "movies": {**reuse.steps.get("movies", {}),
+                                    **{name: reuse.keys["movies"][name] for name in reuse.movies}}}
             try:
-                for name in [name for name in files if name not in same]:
+                for name in [name for name in built if name not in same]:
                     (game / name).parent.mkdir(parents=True, exist_ok=True)
                     os.replace(out / name, game / name)
                     written.append(name)
-                _write_manifest(game, files)
+                _write_manifest(game, files, steps=steps)
             except BaseException:
                 for name in written:
                     (game / name).unlink(missing_ok=True)
@@ -764,3 +906,16 @@ def install(game: Path, inputs: dict[str, Path], force: bool = False, log=print,
     for line in notes:
         (note or log)(line)
     return files
+
+
+def _start_log(reuse: Reuse, seconds: float) -> None:
+    """Start install.log with which steps this install keeps and which it builds, and why; the build workers add
+    what the build prints."""
+    lines = [*(f"{step}: {reason}" for step, reason in reuse.reasons.items()),
+             f"checking the installed files to keep took {seconds:.1f} s"]
+    path = remembered.settings_path().with_name("install.log")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
+    except OSError:
+        pass  # no log is better than no install

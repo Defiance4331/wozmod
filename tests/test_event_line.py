@@ -89,7 +89,7 @@ def test_page_draws_the_runtime_keys_read_the_state_their_voice_start_reads() ->
         pytest.skip("set WOZMOD_GAME to the stock game folder")
     stock = (game / "OROCHI_Z.exe").read_bytes()
     image = pe.layout(stock)
-    source = (Path(__file__).resolve().parents[1] / "runtime/english_runtime.c").read_text()
+    from wozmod.runtime.layout import SOURCE as source  # runtime/shared.h and english_runtime.c
 
     def define(name: str) -> int:
         return int(re.search(rf"^#define {name} .*?(0x[0-9A-Fa-f]+)", source, re.M).group(1), 16)

@@ -1,4 +1,7 @@
-"""The runtime's C source, and the defines and site tables read out of it."""
+"""The runtime's C source, and the defines and site tables read out of it (the DLL build, its tests and tools).
+
+The installer's build steps read only runtime/shared.h, through wozmod.runtime.shared: they must not load this module,
+so that a change to the runtime keeps their keys (wozmod.install.step_keys)."""
 
 from __future__ import annotations
 
@@ -7,25 +10,10 @@ import struct
 
 from wozmod import resources
 
+from .shared import _COMMENTS, _INTEGER, SHARED_H, defines
+
 C_SOURCE = resources.root() / "runtime" / "english_runtime.c"
-SOURCE = C_SOURCE.read_text(encoding="utf-8")
-_COMMENTS = re.compile(r"/\*.*?\*/|//[^\n]*", re.S)
-_INTEGER = re.compile(r"(-?(?:0x[0-9A-Fa-f]+|\d+))[uU]?")
-
-
-def defines(source: str = SOURCE) -> dict[str, int]:
-    """Read every #define whose value is one integer: bare, in parentheses or behind casts (``0x1F``, ``(-3)``,
-    ``((void (*)(u32))0x4F4230)``). Defines of anything else (an expression, a float, a macro) are left out."""
-    found = {}
-    for name, value in re.findall(r"^[ \t]*#define[ \t]+(\w+)[ \t]+(.*?)[ \t]*$", _COMMENTS.sub("", source), re.M):
-        literal = re.search(rf"{_INTEGER.pattern}(\)*)$", value)
-        if literal is None:
-            continue
-        head = value[:literal.start()].rstrip()
-        if head and (head[-1] not in "()" or head.count("(") != head.count(")") + len(literal[2])):
-            continue  # the number ends an expression, not a cast
-        found[name] = int(literal[1], 0)
-    return found
+SOURCE = SHARED_H.read_text(encoding="utf-8") + C_SOURCE.read_text(encoding="utf-8")  # as the compiler sees it
 
 
 def c_array(name: str, source: str = SOURCE) -> list:
@@ -61,7 +49,9 @@ def c_array(name: str, source: str = SOURCE) -> list:
     return values if len(sizes) == 2 else list(values[0])
 
 
-DEFINES = defines()
+DEFINES = defines(SOURCE)
+if _twice := sorted(defines(SHARED_H.read_text(encoding="utf-8")).keys() & defines(C_SOURCE.read_text(encoding="utf-8"))):
+    raise ValueError(f"runtime/shared.h and english_runtime.c both define {', '.join(_twice)}: keep each in one file")
 
 
 def sites(source: str = SOURCE) -> dict:

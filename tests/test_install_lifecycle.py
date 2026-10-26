@@ -9,11 +9,12 @@ from pathlib import Path
 import pytest
 
 import wozmod.install as installer
-from synthetic import stock_game
+from synthetic import fake_step_keys, stock_game
 from wozmod.install import InstallError, install, stock, uninstall
 from wozmod.runtime import guard_report
 
 REAL_BUILD = installer._build
+BUILT = {"text": {"wozmod/table.bin": b"table"}, "voices": {}, "art": {"wozmod/entries/4059.bin": b"entry"}}
 
 
 def _pin(data: bytes) -> tuple[int, str]:
@@ -26,18 +27,24 @@ def _tree(root: Path) -> dict[str, bytes | None]:
 
 @pytest.fixture
 def game(tmp_path: Path, monkeypatch) -> Path:
-    """A small stock folder with its pieces record, and a build that writes three mod files."""
+    """A small stock folder with its pieces record, fixed step keys, and a build whose text and art steps write a mod
+    file each (beside d3d9.dll)."""
     folder = tmp_path / "game"
     record = stock_game(folder)
     monkeypatch.setattr(stock, "recorded", lambda: record)
+    fake_step_keys(monkeypatch)
 
-    def build(game, inputs, staging, progress, jobs, checked, cache=None):
+    def build(game, inputs, staging, progress, jobs, checked, cache=None, rebuilt=installer.STEPS, movies=None):
         out = staging / "out"
-        (out / "wozmod/entries").mkdir(parents=True)
+        out.mkdir(parents=True)
         (out / "d3d9.dll").write_bytes(b"dll")
-        (out / "wozmod/entries/4059.bin").write_bytes(b"entry")
-        (out / "wozmod/table.bin").write_bytes(b"table")
-        return out
+        written = {}
+        for step in rebuilt:
+            written[step] = [name for name in BUILT[step]]
+            for name, data in BUILT[step].items():
+                (out / name).parent.mkdir(parents=True, exist_ok=True)
+                (out / name).write_bytes(data)
+        return out, written
 
     monkeypatch.setattr(installer, "_build", build)
     return folder
@@ -91,7 +98,7 @@ def test_a_wrong_download_is_named_before_the_game_folder_is_hashed(game, tmp_pa
 def test_the_notes_of_the_game_check_reach_the_player_once_the_files_are_placed(game, tmp_path, monkeypatch):
     # Bug: the install drops the check's notes (another mod also replaces a voice clip), or gives
     # them before the files are in place, so a failed install still tells the player what its files will do.
-    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: ["Note: one", "Note: two"])
+    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None, rebuilt=None: ["Note: one", "Note: two"])
     shown = []
     install(game, _inputs(tmp_path), log=lambda _: None,
             note=lambda line: shown.append((line, (game / "wozmod/install.json").is_file())))
@@ -101,7 +108,7 @@ def test_the_notes_of_the_game_check_reach_the_player_once_the_files_are_placed(
 def test_install_over_the_same_version_rebuilds_and_a_newer_one_asks_first(game, tmp_path, monkeypatch):
     # Bug: a second install of the same version is refused (so "Reinstall" fails), or an install made by a
     # newer wozmod is silently replaced by this older one.
-    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: [])
+    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None, rebuilt=None: [])
     install(game, _inputs(tmp_path), log=lambda _: None)
     (game / "wozmod/settings.ini").write_bytes(b"player settings")
     assert installer.install_state(game) == ("reinstall", installer.VERSION)
@@ -119,19 +126,13 @@ def test_install_over_the_same_version_rebuilds_and_a_newer_one_asks_first(game,
 
 
 def test_a_reinstall_leaves_unchanged_files_in_place_and_replaces_changed_ones(game, tmp_path, monkeypatch):
-    # Bug: a reinstall writes every file anew (gigabytes of fresh disk blocks for the same bytes), or keeps a
+    # Bug: a rebuilt step writes every file anew (gigabytes of fresh disk blocks for the same bytes), or keeps a
     # file whose build changed, or one changed on disk since the last install.
-    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: [])
+    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None, rebuilt=None: [])
     install(game, _inputs(tmp_path), log=lambda _: None)
     inodes = {name: (game / name).stat().st_ino for name in ("d3d9.dll", "wozmod/entries/4059.bin", "wozmod/table.bin")}
-    build = installer._build
-
-    def changed_table(*args, **kwargs):
-        out = build(*args, **kwargs)
-        (out / "wozmod/table.bin").write_bytes(b"new table")
-        return out
-
-    monkeypatch.setattr(installer, "_build", changed_table)
+    fake_step_keys(monkeypatch, {step: {"key": f"new {step} key", "parts": {}} for step in installer.STEPS})
+    monkeypatch.setitem(BUILT, "text", {"wozmod/table.bin": b"new table"})  # the art step builds the same bytes
     with (game / "d3d9.dll").open("r+b") as dll:
         dll.write(b"DLL")  # same inode, other bytes
     install(game, _inputs(tmp_path), log=lambda _: None)
@@ -156,7 +157,7 @@ FROZEN_FIRST_RECORD = """{
 def test_a_record_from_the_first_release_is_still_updated(game, tmp_path, monkeypatch):
     # Bug: a later version requires a "version" key in install.json, so every install made by the first
     # release is refused as unreadable or as a downgrade, and the player has to delete files by hand.
-    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: [])
+    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None, rebuilt=None: [])
     (game / "wozmod").mkdir()
     (game / "d3d9.dll").write_bytes(b"old dll")
     (game / "wozmod/table.bin").write_bytes(b"old table")
@@ -191,7 +192,7 @@ def test_a_record_from_the_first_release_is_still_uninstalled(game):
 def test_uninstall_that_removes_the_settings_leaves_the_stock_folder(game, tmp_path, monkeypatch):
     # Bug: settings.ini and the runtime logs (written by the game, so not in install.json) stay behind, with
     # an otherwise empty wozmod/ folder, so the folder is no longer stock.
-    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: [])
+    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None, rebuilt=None: [])
     before = _tree(game)
     install(game, _inputs(tmp_path), log=lambda _: None)
     (game / "wozmod/settings.ini").write_bytes(b"player settings")
@@ -205,7 +206,7 @@ def test_uninstall_that_removes_the_settings_leaves_the_stock_folder(game, tmp_p
 
 def test_uninstall_can_keep_the_settings(game, tmp_path, monkeypatch):
     # Bug: "keep my settings" still deletes them, so a later install starts from the defaults.
-    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: [])
+    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None, rebuilt=None: [])
     install(game, _inputs(tmp_path), log=lambda _: None)
     (game / "wozmod/settings.ini").write_bytes(b"player settings")
     uninstall(game, log=lambda _: None, keep_settings=True)
@@ -214,17 +215,17 @@ def test_uninstall_can_keep_the_settings(game, tmp_path, monkeypatch):
 
 
 def test_the_version_in_the_code_is_the_version_of_the_release():
-    # Bug: a release bumps pyproject.toml but not wozmod.__version__, so install.json records the old
+    # Bug: a release bumps pyproject.toml but not wozmod.version.__version__, so install.json records the old
     # version and the next update sees "reinstall" (or "downgrade").
     import tomllib
-    from wozmod import __version__
+    from wozmod.version import __version__
     root = Path(__file__).resolve().parents[1]
     assert tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"] == __version__
 
 
 def test_a_d3d9_dll_the_installer_did_not_write_is_refused_even_with_force(game, tmp_path, monkeypatch):
     # Bug: another mod's d3d9.dll is overwritten, and a later uninstall deletes it.
-    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: [])
+    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None, rebuilt=None: [])
     (game / "d3d9.dll").write_bytes(b"another mod")
 
     with pytest.raises(InstallError, match="d3d9.dll"):
@@ -235,7 +236,7 @@ def test_a_d3d9_dll_the_installer_did_not_write_is_refused_even_with_force(game,
 
 def test_a_failure_while_placing_files_removes_what_this_run_wrote(game, tmp_path, monkeypatch):
     # Bug: files placed before the failure (d3d9.dll, entries/) or the build folder are left behind.
-    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: [])
+    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None, rebuilt=None: [])
     (game / "wozmod/table.bin").mkdir(parents=True)  # a folder where the last file goes
     before = _tree(game)
 
@@ -247,7 +248,7 @@ def test_a_failure_while_placing_files_removes_what_this_run_wrote(game, tmp_pat
 
 def test_install_then_uninstall_leaves_the_folder_as_it_was(game, tmp_path, monkeypatch):
     # Bug: install.json, an empty wozmod/ or entries/ folder, or a stray build folder is left.
-    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: [])
+    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None, rebuilt=None: [])
     before = _tree(game)
     files = install(game, _inputs(tmp_path), log=lambda _: None)
     assert json.loads((game / "wozmod/install.json").read_text())["files"] == {
@@ -262,7 +263,7 @@ def test_install_then_uninstall_leaves_the_folder_as_it_was(game, tmp_path, monk
 
 def test_uninstall_leaves_changed_files_and_keeps_listing_them(game, tmp_path, monkeypatch):
     # Bug: a file the player changed after install is deleted, or forgotten by install.json.
-    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None: [])
+    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None, rebuilt=None: [])
     files = install(game, _inputs(tmp_path), log=lambda _: None)
     (game / "wozmod/table.bin").write_bytes(b"player edit")
     (game / "wozmod/settings.ini").write_bytes(b"written by the game")
@@ -294,7 +295,7 @@ def test_the_input_checks_run_while_the_discs_are_read(game, tmp_path, monkeypat
     import threading
     reading = threading.Event()
 
-    def check(game, inputs, log=None):
+    def check(game, inputs, log=None, rebuilt=None):
         if not reading.wait(10):
             raise InstallError("the checks ran before any disc was read")
         return []
@@ -312,7 +313,7 @@ def test_the_input_checks_run_while_the_discs_are_read(game, tmp_path, monkeypat
 
 def test_a_wrong_input_is_named_before_a_disc_that_failed_to_read(game, tmp_path, monkeypatch):
     # Bug: the disc read error hides the wrong input, and the player is told a disc is bad when it is the game folder.
-    def check(game, inputs, log=None):
+    def check(game, inputs, log=None, rebuilt=None):
         raise InstallError("Game folder: wrong input")
 
     def extract(*args):
@@ -334,7 +335,7 @@ def test_a_wrong_input_stops_the_disc_read_as_soon_as_the_checks_find_it(game, t
     import wozmod.donors
     read = []
 
-    def check(game, inputs, log=None):
+    def check(game, inputs, log=None, rebuilt=None):
         raise InstallError("lettering.zip: wrong input")
 
     def extract_donor(image, donor, destination, files=None, on_bytes=None):

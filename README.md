@@ -138,7 +138,8 @@ it, some battles slow down to one frame per second.
 
 Unzip the new release and open its `wozmod-setup`. Your files are already
 filled in, and the button says **Update from** your version **to** the new
-one. Your settings stay.
+one. Your settings stay. An update rebuilds only what changed in the new
+release, so it is usually much quicker than the first install.
 
 ### Uninstall
 

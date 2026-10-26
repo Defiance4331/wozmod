@@ -10,7 +10,7 @@ import pytest
 
 from synthetic import write_ens, write_stock_archive
 from wozmod.formats.scripts import caption_cues
-from wozmod.runtime.english_runtime import encode_english
+from wozmod.runtime.text_table import encode_english
 from wozmod.text import DonorResolver
 from wozmod.text.movie_captions import MovieCaptionError, build_dub_schedules, build_movie_schedules
 
