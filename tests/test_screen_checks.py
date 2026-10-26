@@ -71,6 +71,19 @@ def test_text_past_the_edge_is_reported_with_the_excess():
     assert sc.text_within_edge(screen([text(200, 507, 1080)]), None).ok
 
 
+def test_text_is_measured_against_the_panel_drawn_on_its_rows():
+    """Bug: a list is measured against one fixed edge (the other text mode's panel), or by its start only, so a count
+    one pixel past the panel this mode draws passes; a box by the same caller on other rows must not hold it."""
+    panel = {"x": 307, "y": 140, "width": 203, "height": 261, "caller": "0x533305", "count": 1}
+    lower = {"x": 0, "y": 500, "width": 1280, "height": 100, "caller": "0x533305", "count": 1}
+    shown = lambda width, y=195: {"texts": [text(408, y, width)], "boxes": [panel, lower]}
+    assert sc.text_within_box(shown(102), None, "0x533305").ok  # ends on the panel's right edge, 510
+    c = sc.text_within_box(shown(103), None, "0x533305")
+    assert not c.ok and c.numbers["outside"][0]["right_end"] == 511
+    assert not sc.text_within_box(shown(102, y=420), None, "0x533305").ok
+    assert not sc.text_within_box(shown(102), None, "0x999").ok
+
+
 def test_squished_text_is_measured_by_its_ink_not_its_reported_width():
     """Bug: the JSON width is taken before the lane squish, so a name squished to end at its lane edge fails
     the lane and the thumbnail checks; trimming must still see a name that is really drawn under the thumbnail."""

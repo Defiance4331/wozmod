@@ -236,10 +236,21 @@ route = "camp-customize"
 name = "customize-upgrade-skills"
 route = "customize-upgrade-skills"
 
+  # Measured against the panel each text mode draws: English the X360 panel, Japanese the stock one.
   [[screen.assert]]
-  kind = "text_within_edge"         # name lane 170, at least 8 px before the count column at 374
+  kind = "text_clear_of_text"       # each skill name ends before its count
   text = { caller = "0x533469" }
-  edge = 366
+  other = { caller = "0x533497" }
+
+  [[screen.assert]]
+  kind = "text_within_box"          # names inside the list panel
+  text = { caller = "0x533469" }
+  box = "0x533305"
+
+  [[screen.assert]]
+  kind = "text_within_box"          # counts inside the list panel
+  text = { caller = "0x533497" }
+  box = "0x533305"
 
 # Descriptions (Mixed): the description text in the X360 413 box (the MOZ build wrapped it at 516).
 [[screen]]

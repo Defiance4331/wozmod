@@ -56,6 +56,54 @@ def test_weapon_name_starts_after_the_moz_thumbnail_and_ends_before_the_skill_sq
     assert name_x + layout.single_line_sites()[0x5950EC] <= squares
 
 
+@pytest.fixture(scope="module")
+def calls(game: Path) -> dict[int, set[int]]:
+    """Target -> VAs of every `call rel32` (e8) to it in the stock .text."""
+    image = (game / "OROCHI_Z.exe").read_bytes()
+    where = pe.layout(image)
+    text = next(s for s in where["sections"] if s["name"] == b".text")
+    base, data = where["image_base"] + text["rva"], image[text["raw"]:text["raw"] + text["raw_size"]]
+    found: dict[int, set[int]] = {}
+    for m in re.finditer(b"\xe8", data):
+        at = m.start()
+        if at + 5 <= len(data):
+            found.setdefault((base + at + 5 + struct.unpack_from("<i", data, at + 1)[0]) & 0xFFFFFFFF,
+                             set()).add(base + at)
+    return found
+
+
+def test_every_list_that_draws_the_weapon_row_grows_with_it(code, calls) -> None:
+    """Bug: a list drawn around the wider MOZ weapon row keeps its stock frame (the end-of-battle discard list did),
+    so names and skill pips run past its box. Every call of the row, and every call of the functions that draw its
+    frames, must be in the shared rule's tables, and each frame must grow by what the row grows."""
+    def push(va: int, edited: bool) -> int:
+        assert code(va, 1) == b"\x68", hex(va)
+        return struct.unpack("<I", code(va + 1, 4, edited))[0]
+    grow = push(0x59506C, True) - push(0x59506C, False)
+    pips = [struct.unpack("<i", code(0x595135 + 3, 4, edited))[0] for edited in (False, True)]
+    assert grow > 0 and pips[1] - pips[0] == grow
+    assert calls[runtime_edits.WEAPON_ROW] == set(runtime_edits.WEAPON_ROW_FRAMES)
+    for call, (function, frame, _) in runtime_edits.WEAPON_ROW_FRAMES.items():
+        assert function < frame < call, hex(call)
+        assert push(frame, True) - push(frame, False) == grow, f"frame {frame:#x} around the row call {call:#x}"
+    drawn_from = set().union(*(calls[f] for f, _, _ in runtime_edits.WEAPON_ROW_FRAMES.values()))
+    assert drawn_from == set(runtime_edits.WEAPON_LIST_ORIGINS)
+
+
+def test_the_discard_list_grows_like_the_menu_list_and_keeps_its_right_edge(code) -> None:
+    """Bug: the end-of-battle discard list (0x584300) grows but keeps its stock x, so it runs into the weapon card
+    right of it, or moves without the portrait drawn above it at a 3 px inset."""
+    assert code(0x584368, 1) == code(0x5951E6, 1) == b"\x68"
+    assert code(0x5846B9, 2) == code(0x5845FC, 2) == bytes.fromhex("8d93")  # lea edx, [ebx + disp32]
+    width = lambda va, edited: struct.unpack("<I", code(va + 1, 4, edited))[0]
+    x = lambda va, edited: struct.unpack("<i", code(va + 2, 4, edited))[0]
+    assert width(0x584368, True) == width(0x5951E6, True)
+    grow = width(0x584368, True) - width(0x584368, False)
+    assert x(0x5846B9, True) + width(0x584368, True) == x(0x5846B9, False) + width(0x584368, False)
+    assert x(0x5845FC, True) - x(0x5846B9, True) == x(0x5845FC, False) - x(0x5846B9, False) == 3
+    assert x(0x5846B9, True) == x(0x5846B9, False) - grow
+
+
 LENGTHS = {0x6A: 2, 0x68: 5, 0x6B: 3, 0x69: 6, 0x99: 1, 0x83: 3, 0x81: 6, 0xB9: 5, **dict.fromkeys(range(0x50, 0x58), 1)}
 
 

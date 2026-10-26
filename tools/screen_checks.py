@@ -236,6 +236,24 @@ def text_within_edge(screen: dict, text: dict | None, edge: int = LAYOUT_W, allo
                                      "reported_ends": [t["x"] + t.get("reported_width", t["width"]) for t in ts]})
 
 
+def text_within_box(screen: dict, text: dict | None, box: str, allow_empty: bool = False, *,
+                    img: Image.Image | None = None, ink: bool = True) -> Check:
+    """Each selected text starts and ends inside a box drawn by caller `box` whose height holds its y: a list's
+    names inside the panel that text mode draws, wherever that panel is. With `img`, a text ends where its ink ends."""
+    ts = drawn_texts(_texts(screen, text), img if ink else None)
+    bs = [b for b in screen.get("boxes", []) if b["caller"].lower() == box.lower()]
+    if not ts or not bs:
+        return _empty(f"texts={len(ts)} boxes={len(bs)}", allow_empty)
+    outside = []
+    for t in ts:
+        rows = [b for b in bs if b["y"] <= t["y"] < b["y"] + b["height"]]
+        if not any(b["x"] <= t["x"] and t["x"] + t["width"] <= b["x"] + b["width"] for b in rows):
+            outside.append({"text_at": (t["x"], t["y"]), "right_end": t["x"] + t["width"],
+                            "boxes": [(b["x"], b["x"] + b["width"]) for b in rows]})
+    return Check(not outside, {"texts": len(ts), "boxes": [(b["x"], b["y"], b["width"], b["height"]) for b in bs],
+                               "outside": outside})
+
+
 def text_position(screen: dict, text: dict | None, x: int | None = None, y: int | None = None,
                   right: int | None = None, centre: int | None = None, cell: int = 24, tol: int = 1,
                   allow_empty: bool = False) -> Check:
@@ -557,6 +575,7 @@ ASSERTIONS: dict[str, tuple[Callable[..., Check], bool]] = {
     "text_clear_of_text": (text_clear_of_text, False),
     "line_count": (line_count, False),
     "text_within_edge": (text_within_edge, False),
+    "text_within_box": (text_within_box, False),
     "text_position": (text_position, False),
     "text_box": (text_box, False),
     "text_cell": (text_cell, False),
@@ -571,7 +590,8 @@ ASSERTIONS: dict[str, tuple[Callable[..., Check], bool]] = {
     "device_matches_mode": (device_matches_mode, False),
 }
 RUN_FILES = {"device_matches_mode"}  # read the run's runtime.log and settings.ini, not the screen
-INK_WIDTH = {"text_clear_of_quad", "text_clear_of_text", "text_within_edge", "text_box"}  # take the capture as `img=`
+# take the capture as `img=`
+INK_WIDTH = {"text_clear_of_quad", "text_clear_of_text", "text_within_edge", "text_within_box", "text_box"}
 SCREEN_KEYS = {"name", "route", "fixture", "battle", "script", "spawn", "keys", "notice", "wait", "assert"}
 
 

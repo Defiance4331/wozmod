@@ -170,36 +170,6 @@ CODE_EDITS = [
     (0x52745A, bytes.fromhex("bf7d020000"), bytes.fromhex("bf30020000")),
     (0x5274B1, bytes.fromhex("69f683020000"), bytes.fromhex("69f6d0020000")),
 
-    (0x531914, bytes.fromhex("8d8402b0feffff"), bytes.fromhex("8d840230feffff")),
-    (0x53191D, bytes.fromhex("b8d4000000"), bytes.fromhex("b854000000")),
-    (0x531976, bytes.fromhex("8d8c02b0feffff"), bytes.fromhex("8d8c0230feffff")),
-    (0x531983, bytes.fromhex("c7442410d4000000"), bytes.fromhex("c744241054000000")),
-
-    (0x53C8C1, bytes.fromhex("8d8402b0feffff"), bytes.fromhex("8d840230feffff")),
-    (0x53C8CA, bytes.fromhex("b8e3000000"), bytes.fromhex("b863000000")),
-    (0x53C920, bytes.fromhex("8dbc02b0feffff"), bytes.fromhex("8dbc0230feffff")),
-    (0x53C92D, bytes.fromhex("c744240ce3000000"), bytes.fromhex("c744240c63000000")),
-
-    (0x5296DC, bytes.fromhex("69ff9c010000"), bytes.fromhex("69ff1c020000")),
-    (0x5296F0, bytes.fromhex("8d940ae3000000"), bytes.fromhex("8d940a63000000")),
-    (0x529868, bytes.fromhex("69d29e010000"), bytes.fromhex("69d21e020000")),
-    (0x5298AF, bytes.fromhex("8d940292feffff"), bytes.fromhex("8d940212feffff")),
-    (0x5298EC, bytes.fromhex("c744240ce3000000"), bytes.fromhex("c744240c63000000")),
-    (0x52D16E, bytes.fromhex("69d2a4010000"), bytes.fromhex("69d224020000")),
-    (0x52D1B5, bytes.fromhex("8d940292feffff"), bytes.fromhex("8d940212feffff")),
-    (0x52D1F2, bytes.fromhex("c7442410e3000000"), bytes.fromhex("c744241063000000")),
-
-    (0x52ED89, bytes.fromhex("8d940292feffff"), bytes.fromhex("8d940212feffff")),
-    (0x52ED90, bytes.fromhex("81fae3000000"), bytes.fromhex("81fa63000000")),
-    (0x52ED9C, bytes.fromhex("c7442410e3000000"), bytes.fromhex("c744241063000000")),
-    (0x527A84, bytes.fromhex("c7442410e3000000"), bytes.fromhex("c744241063000000")),
-    (0x527A9A, bytes.fromhex("c7442410e3000000"), bytes.fromhex("c744241063000000")),
-
-    (0x554521, bytes.fromhex("8d940ab0feffff"), bytes.fromhex("8d940a30feffff")),
-    (0x55452A, bytes.fromhex("bae3000000"), bytes.fromhex("ba63000000")),
-    (0x55460A, bytes.fromhex("8d8c0288feffff"), bytes.fromhex("8d8c0208feffff")),
-    (0x55461E, bytes.fromhex("b9dc000000"), bytes.fromhex("b95c000000")),
-
     *widths(0x587C52, 0x587C5C, stock=308, wide=600),
     *widths(0x542B30, 0x542B50, 0x542B5A, stock=308, wide=600),
 
@@ -700,6 +670,57 @@ X360_PANELS = [
     *cell_then(0x49EB1F, "8b4620 85c0 7434", 0x5F5F40, 24, 0x20, 0x49EB5A),
 ]
 
+# The weapon row (0x595050: plate, name, skill pips) is the MOZ row, WEAPON_ROW_GROWTH wider than stock, with its
+# pips moved right by the same amount. One rule keeps it inside every list that draws it: each frame drawn around the
+# row grows by WEAPON_ROW_GROWTH, and a list whose right edge is held (a card or panel sits right of it) moves left
+# by it, so nothing right of the list moves. WEAPON_ROW_FRAMES has every call of the row in the stock exe;
+# WEAPON_LIST_ORIGINS every call of the functions that draw those frames (tests/test_runtime_stock_screens.py checks
+# both lists against the exe, so a list left out stays at stock width under the wider row).
+WEAPON_ROW = 0x595050
+WEAPON_ROW_GROWTH = 128
+# Call of the row -> (function it is in, its frame's width push, stock frame width).
+WEAPON_ROW_FRAMES = {
+    0x5952DF: (0x5951B0, 0x5951E6, 366),  # the menu weapon lists' wrapper, from nine calls
+    0x526ED6: (0x526DB0, 0x526DE4, 378),  # list from 0x527690 and 0x5279C0
+    0x554419: (0x554370, 0x554387, 376),  # list beside a portrait and a weapon card (0x5544F0)
+    0x584475: (0x584300, 0x584368, 366),  # end-of-battle list of weapons to discard
+}
+# Call of a frame's function -> the sites that place that list, (site, opcode bytes, stock 32-bit value, step), each
+# value moved by step * WEAPON_ROW_GROWTH. Step -1: an x of a list whose right edge is held (its resting x, the
+# off-screen x it slides in from, a clamp at its resting x) or of the portrait aligned to its left edge. Step +1: the
+# length of a slide between such an x and one that does not move. No sites: the list keeps its left edge and grows
+# into the empty right half of the screen.
+WEAPON_LIST_ORIGINS = {
+    0x529721: [(0x5296DC, "69ff", 0x19C, 1), (0x5296F0, "8d940a", 0xE3, -1)],  # rests at 639; slides from 0x529912's x
+    0x529912: [(0x529868, "69d2", 0x19E, 1), (0x5298AF, "8d9402", -0x16E, -1), (0x5298EC, "c744240c", 0xE3, -1)],
+    0x52D21A: [(0x52D16E, "69d2", 0x1A4, 1), (0x52D1B5, "8d9402", -0x16E, -1), (0x52D1F2, "c7442410", 0xE3, -1)],
+    0x52D8ED: [],  # rests at 639; slides in from x 35, where no weapon list rests
+    0x52EDC5: [(0x52ED89, "8d9402", -0x16E, -1), (0x52ED90, "81fa", 0xE3, -1), (0x52ED9C, "c7442410", 0xE3, -1)],
+    0x5319CF: [(0x531914, "8d8402", -0x150, -1), (0x53191D, "b8", 0xD4, -1),  # portrait
+               (0x531976, "8d8c02", -0x150, -1), (0x531983, "c7442410", 0xD4, -1)],
+    0x531D20: [],  # rests at 598
+    0x53C97C: [(0x53C8C1, "8d8402", -0x150, -1), (0x53C8CA, "b8", 0xE3, -1),  # portrait
+               (0x53C920, "8dbc02", -0x150, -1), (0x53C92D, "c744240c", 0xE3, -1)],
+    0x53CCB2: [],  # rests at 598
+    0x5278C9: [],  # rests at 741
+    0x527AC9: [(0x527A84, "c7442410", 0xE3, -1), (0x527A9A, "c7442410", 0xE3, -1)],
+    0x55462C: [(0x554521, "8d940a", -0x150, -1), (0x55452A, "ba", 0xE3, -1),  # portrait
+               (0x55460A, "8d8c02", -0x178, -1), (0x55461E, "b9", 0xDC, -1)],
+    # The list and the portrait above it, both off the page's slide x (ebx); the card at +0x264 stays.
+    0x5846C3: [(0x5845FC, "8d93", 0xEB, -1), (0x5846B9, "8d93", 0xE8, -1)],
+}
+
+
+def weapon_row_edits() -> list:
+    """The wider weapon row, every frame drawn around it, and every list origin that moves with it."""
+    grow = WEAPON_ROW_GROWTH
+    return [*widths(0x59506C, stock=350, wide=350 + grow), immediate(0x595135, "8dbc39", 0x118, 0x118 + grow),
+            *[edit for _, frame, stock in WEAPON_ROW_FRAMES.values()
+              for edit in widths(frame, stock=stock, wide=stock + grow)],
+            *[immediate(va, opcode, stock, stock + step * grow)
+              for sites in WEAPON_LIST_ORIGINS.values() for va, opcode, stock, step in sites]]
+
+
 # Screens that keep the MOZ layout (the pre-wave-4 panels): VS and Survival rules panel moved left and
 # widened, the weapon rows and their skill squares widened, the treasure list and detail panel, the
 # narration panel. The gallery weapon list (0x55B540) keeps its X360 plate with the name centred in it
@@ -711,11 +732,7 @@ MOZ_LAYOUT = [
     (0x580780, bytes.fromhex("beb6010000"), bytes.fromhex("beab000000")),
     (0x58076A, bytes.fromhex("68b6010000"), bytes.fromhex("68ab000000")),
     *widths(0x580791, stock=641, wide=906),
-    *widths(0x59506C, stock=350, wide=478),
-    (0x595135, bytes.fromhex("8dbc3918010000"), bytes.fromhex("8dbc3998010000")),
-    *widths(0x5951E6, stock=366, wide=494),
-    *widths(0x526DE4, stock=378, wide=506),
-    *widths(0x554387, stock=376, wide=504),
+    *weapon_row_edits(),
     *widths(0x552E76, stock=212, wide=362), *widths(0x552F09, stock=189, wide=339),
     *widths(0x552F7F, stock=392, wide=472),
     (0x553139, bytes.fromhex("69c96c010000"), bytes.fromhex("69c949010000")),
