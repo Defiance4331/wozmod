@@ -412,3 +412,35 @@ def test_a_wrong_donor_archive_ends_the_art_stage_with_an_install_error_naming_i
     with pytest.raises(InstallError) as caught:
         installer._menu_art(tmp_path / "game", donors.root, bundle, tmp_path / "art", tmp_path / "out", 1)
     assert str(caught.value) == f"Menu art: {title} disc: Wrong donor member hash: linkdata_ens.lnk"
+
+
+def _exe_header(stamp: int, image_size: int) -> bytes:
+    """A PE header as the linker writes it: e_lfanew at 0x3C, the file header (i386) and the optional header."""
+    header = bytearray(0x200)
+    header[:2], header[0x3C:0x40] = b"MZ", (0x80).to_bytes(4, "little")
+    header[0x80:0x86] = b"PE\0\0" + (0x14C).to_bytes(2, "little")
+    header[0x88:0x8C] = stamp.to_bytes(4, "little")
+    header[0x80 + 24 + 56:0x80 + 24 + 60] = image_size.to_bytes(4, "little")
+    return bytes(header)
+
+
+def test_only_the_1_01_update_exe_is_named_as_the_update(game):
+    # Bug: a game with the 1.01 update is only told its exe is not the stock release (so the player reinstalls and
+    # patches again), or another exe, or the update's LINKDATA4 beside a stock 1.00 exe, is called the update.
+    # Linker stamps and image sizes as read from the two releases' exes.
+    generic = "OROCHI_Z.exe is not the stock Japanese PC release. Reinstall the game, then pick its folder."
+    rows = {
+        "1.01 exe": (_exe_header(0x4B5E99A7, 0x1194000), None, installer.UPDATE_101_FOUND),
+        "1.01 stamp, other image size": (_exe_header(0x4B5E99A7, 0x1196000), None, generic),
+        "a changed 1.00 exe": (_exe_header(0x4AF69DF7, 0x101A000), None, generic),
+        "not an exe": (b"MZ", None, generic),
+        "1.00 exe and the update's LINKDATA4": (b"stock exe", b"update archive", None),
+    }
+    found = {}
+    for name, (exe, linkdata4, _) in rows.items():
+        (game / "OROCHI_Z.exe").write_bytes(exe)
+        (game / "LINKDATA4.BIN").unlink(missing_ok=True)
+        if linkdata4:
+            (game / "LINKDATA4.BIN").write_bytes(linkdata4)
+        found[name] = installer.check_input("game", game)
+    assert found == {name: expected for name, (*_, expected) in rows.items()}

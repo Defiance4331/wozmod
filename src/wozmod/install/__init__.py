@@ -9,6 +9,7 @@ import queue
 import re
 import shutil
 import signal
+import struct
 import sys
 import tempfile
 import threading
@@ -23,6 +24,7 @@ from wozmod import __version__ as VERSION
 from wozmod import progress as reporting
 from wozmod import process, remembered, resources
 from wozmod.donors.discs import DISCS, DonorsFolder
+from wozmod.formats import pe
 from wozmod.progress import Cancelled, Progress
 
 MANIFEST = "wozmod/install.json"
@@ -40,9 +42,14 @@ STOCK_FILES = {
     "LINKDATA2.BIN": (1_837_785_088, "fb1004797008ff84f26c7f65c5a40c672ef09abd8083534bf67ebc3ce11711b0"),
     "data/Sound/Voice/Voice.bin": (971_871_792, "6d30494571b62dc1f56983c7c84c0f834c6203714ccec089a288e1a38d62f630"),
 }
+# The OROCHI_Z.exe of the 1.01 update, told by its PE header: linked 2010-01-26 07:28:39 UTC, SizeOfImage 0x1194000
+# (1.00's: 2009-11-08 10:31:19 UTC, 0x101A000). The update's LINKDATA4 beside a 1.00 exe changes nothing wozmod reads.
+UPDATE_101 = (0x4B5E99A7, 0x1194000)
+UPDATE_101_FOUND = ("This game has the 1.01 update. wozmod needs version 1.00, and adds the update's sound and menu fixes "
+                    "itself. Reinstall the game from its disc without the update, then pick its folder.")
 # Release assets built by us; a release updates both pins with the files it ships.
 LETTERING = (18_399_206, "5c45d5a0d200c3fe55f31140285f9ac6c22cff172850a79484fe3dbb5a4c6ec0")
-DLL = (230_323, "c1e7dc3012b350e2aeb82097c7f0086fce556555b9ddc02037b4f0af0106a3aa")
+DLL = (231_545, "72235aabac43c635513a703cf462f337512abd96601372ebc9d190e27e0fb90f")
 
 _MOD_PATH = re.compile(r"d3d9\.dll|wozmod(/[A-Za-z0-9_][A-Za-z0-9_.-]*)+")
 
@@ -101,6 +108,15 @@ def worker_count() -> int:
 def _sha256(path: Path) -> str:
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def _updated(exe: Path) -> bool:
+    """Whether the exe's PE header is the 1.01 update's."""
+    try:
+        with exe.open("rb") as file:
+            return pe.build_stamp(file.read(0x1000)) == UPDATE_101
+    except (OSError, pe.PEError, struct.error):
+        return False
 
 
 def _pinned(path: Path, pin: tuple[int, str]) -> str | None:
@@ -296,6 +312,8 @@ def check_input(name: str, path: Path | str) -> str | None:
         with ThreadPoolExecutor(len(STOCK_FILES)) as pool:  # hashlib lets go of the GIL: hash the big files side by side
             results = list(pool.map(lambda item: _pinned(path / item[0], item[1]), STOCK_FILES.items()))
         for stock, wrong in zip(STOCK_FILES, results, strict=True):
+            if wrong and stock == "OROCHI_Z.exe" and wrong != "missing" and _updated(path / stock):
+                return UPDATE_101_FOUND
             if wrong:
                 return (f"{stock} is missing. Pick the folder that contains the game's .exe (the Japanese PC release)."
                         if wrong == "missing" else

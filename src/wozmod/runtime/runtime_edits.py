@@ -880,3 +880,22 @@ STANDARD_CAMERA = [
             bytes.fromhex("24f8 0c01 6a01 6a01")),
     (0x570C98, bytes.fromhex("80a40208158000fe"), bytes.fromhex("808c020815800001")),  # DEFAULT: or 1, not and 0xFE
 ]
+
+# Version 1.01's menu fixes, for version 1.00. A 2D draw-state packet (0x58E370(0): kinds 0x44 and 0x43) queued again
+# after a draw that changes that state: after the cursor in each pre-battle army list row (0x536630), and after a
+# panel of a post-battle page (0x582E10, named from its callers). 1.01 calls its 0x58E4D0 at both places. And one
+# icon column on the camp's Upgrade Skills page moved 6 px right and 2 px down, as 1.01 moves it: in the officer
+# panel (0x527690) its x from the panel's x + 46 to + 52 and its first row's y from 171 to 173, and in the second
+# panel (0x5279C0) the same x and the first row from the panel's y + 5 to + 7. Both are relative to the panel, which
+# the X360 layout moves (0x527882, 0x5278A8) and widens only to the right (0x526DE4, 0x59506C).
+DRAW_STATE = 0x58E370
+V101_FIXES = [
+    *detour(0x536868, bytes.fromhex("0fb65630 8b442428"), CAVE + 0xAA0, 0x536870,
+            assembled(CAVE + 0xAA0, bytes.fromhex("6a00"), DRAW_STATE, bytes.fromhex("83c404 0fb65630 8b442428"))),
+    *detour(0x582F2D, bytes.fromhex("83c43c 8b442410"), CAVE + 0xAC0, 0x582F34,
+            assembled(CAVE + 0xAC0, bytes.fromhex("83c43c 6a00"), DRAW_STATE, bytes.fromhex("83c404 8b442410"))),
+    imm8(0x5278ED, "8d6f", 0x2E, 0x34),
+    immediate(0x5278F8, "bf", 0xAB, 0xAD),
+    imm8(0x527AF8, "83c3", 5, 7),
+    imm8(0x527B5B, "83c0", 0x2E, 0x34),
+]

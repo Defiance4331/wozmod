@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import struct
 from pathlib import Path
@@ -133,3 +134,84 @@ def test_xbox_defaults_bind_each_camera_action_to_its_right_stick_half() -> None
         19: {"axis": 1, "direction": 1, "index": 3},  # Camera Left
         20: {"axis": 1, "direction": 0, "index": 3},  # Camera Right
     }
+
+
+
+def _run(code: bytes, at: int):
+    """Walk straight-line code: its instructions other than push imm and add esp, imm, each [esp+n] in them made
+    relative to esp at the start; each call's target and the value it finds at [esp]; and where it jumps, with esp's
+    offset there (None when it runs off the end, and the offset at the end)."""
+    import capstone
+
+    x86, depth, stack, ops, calls = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32), 0, {}, [], []
+    for i in x86.disasm(code, at):
+        text = f"{i.mnemonic} {i.op_str}"
+        if i.mnemonic == "push" and re.fullmatch(r"(0x)?[0-9a-f]+", i.op_str):
+            depth -= 4
+            stack[depth] = int(i.op_str, 0)
+        elif i.mnemonic == "add" and i.op_str.startswith("esp, "):
+            depth += int(i.op_str[5:], 0)
+        elif i.mnemonic == "jmp":
+            return ops, calls, (int(i.op_str, 0), depth)
+        else:
+            if i.mnemonic == "call":
+                calls.append((int(i.op_str, 0), stack.get(depth)))
+            ops.append(re.sub(r"\[esp(?: \+ ((?:0x)?[0-9a-f]+))?\]",
+                              lambda m: f"[esp{int(m[1] or '0', 0) + depth:+}]", text))
+    return ops, calls, (None, depth)
+
+
+@pytest.mark.parametrize("site", [0x536868, 0x582F2D], ids=hex)
+def test_each_draw_state_reset_runs_the_moved_code_at_its_stack_depth_and_returns_past_it(site) -> None:
+    """Bug: the reset's argument left on the stack (or one too many taken off), so the moved [esp+n] reads and the
+    function's own cleanup are off by 4; a moved instruction dropped; the reset called with another argument; or the
+    return lands inside the overwritten span. 1.01 queues 0x58E4D0(0) (1.00's 0x58E370) at both places."""
+    edits = {va: (before, after) for va, before, after in runtime_edits.V101_FIXES}
+    stock, jump = edits[site]
+    cave = site + 5 + struct.unpack_from("<i", jump, 1)[0]
+    ops, calls, back = _run(edits[cave][1], cave)
+    stock_ops, _, (_, stock_depth) = _run(stock, site)
+    reset = f"call {runtime_edits.DRAW_STATE:#x}"
+    assert calls == [(runtime_edits.DRAW_STATE, 0)]
+    assert [op for op in ops if op != reset] == stock_ops
+    assert back == (site + len(stock), stock_depth)
+
+
+def _shape(code: bytes, start: int) -> list[str]:
+    """The function's instructions with what moves between versions taken out: a branch inside it as its offset from
+    the start, any other address as ADDR."""
+    import capstone
+
+    def number(m):
+        value = int(m[0], 16)
+        return f"+{value - start:#x}" if start <= value < start + len(code) else "ADDR" if value >= 0x400000 else m[0]
+
+    x86 = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    return [re.sub(r"0x[0-9a-f]+", number, f"{i.mnemonic} {i.op_str}") for i in x86.disasm(code, start)]
+
+
+def test_the_icon_nudge_makes_both_upgrade_skills_panels_as_version_101_draws_them() -> None:
+    """Bug: a nudge value other than 1.01's (x +52, first row y 173 and +7), a nudge site missed, or an edit on the
+    wrong instruction. Differential: each 1.00 panel function with the nudge applied against the same function in
+    the 1.01 exe (0x140 later), instruction by instruction, with moved addresses taken out."""
+    pytest.importorskip("capstone")
+    exe = Path(os.environ.get("WOZMOD_GAME") or "", "OROCHI_Z.exe")
+    update = Path(os.environ.get("WOZMOD_V101_EXE") or "")
+    if not exe.is_file() or not update.is_file():
+        pytest.skip("set WOZMOD_GAME to the stock game folder and WOZMOD_V101_EXE to the 1.01 OROCHI_Z.exe")
+    images = {name: (image := path.read_bytes(), pe.layout(image)) for name, path in (("1.00", exe), ("1.01", update))}
+
+    def code(name, start, end):
+        image, layout = images[name]
+        return bytearray(image[pe.file_offset(layout, start):pe.file_offset(layout, end)])
+
+    differ = {}
+    for start, end in ((0x527690, 0x5279C0), (0x5279C0, 0x527F60)):
+        nudged = code("1.00", start, end)
+        for va, before, after in runtime_edits.V101_FIXES:
+            if start <= va < end:
+                assert nudged[va - start:va - start + len(before)] == before
+                nudged[va - start:va - start + len(after)] = after
+        ours, theirs = _shape(bytes(nudged), start), _shape(bytes(code("1.01", start + 0x140, end + 0x140)), start + 0x140)
+        differ[hex(start)] = [(a, b) for a, b in zip(ours, theirs, strict=True) if a != b]
+    assert differ == {"0x527690": [], "0x5279c0": []}

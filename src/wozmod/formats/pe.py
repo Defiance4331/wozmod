@@ -22,6 +22,14 @@ def sections(header: bytes) -> list[dict]:
     return found
 
 
+def build_stamp(header: bytes) -> tuple[int, int]:
+    """The image's TimeDateStamp (the linker's build time, Unix seconds) and SizeOfImage, from its headers."""
+    pe = struct.unpack_from("<I", header, 0x3C)[0]
+    if header[pe:pe + 4] != b"PE\0\0" or struct.unpack_from("<H", header, pe + 4)[0] != 0x14C:
+        raise PEError("not an i386 PE image")
+    return struct.unpack_from("<I", header, pe + 8)[0], struct.unpack_from("<I", header, pe + 24 + 56)[0]
+
+
 def layout(image: bytes) -> dict:
     """The sections and image base that file_offset maps a VA through."""
     found = sections(image)

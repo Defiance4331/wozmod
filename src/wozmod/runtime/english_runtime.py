@@ -79,6 +79,7 @@ ALWAYS_HOOKS = [
     (0x5D59C0, "8b442404 83f87d", 39, 4),       # SE bank header size (thiscall)
     (0x5D59F0, "8b542404 83fa7d", 40, 4),       # SE bank data offset (thiscall)
     (0x5D5A20, "8b442404 83f87d", 41, 4),       # SE bank data size (thiscall)
+    (0x5D5E30, "51 55 56 8be9 57", 119, 0),     # sound-effect poll (ecx the manager): version 1.01's, se_cutoff.h
     (0x428E33, "d9ee d99d20020000", 45, None),  # battle camera FOV stored (mid-function)
     (0x428FB4, "8d442438 d9ee", 46, None),      # 40-degree battle camera FOV stored (mid-function)
     (0x5E4F64, "8b8660010000", 47, None),       # joystick state read (mid-function)

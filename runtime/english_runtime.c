@@ -21,6 +21,7 @@
 #include "glyph_raster.h"
 #include "display_fit.h"
 #include "voice_play.h"
+#include "se_cutoff.h"
 #include "pad_buttons.h"
 #include "pad_map.h"
 #include "prompt_hires.h"
@@ -1932,6 +1933,25 @@ static struct voice_play kept_play = {VOICE_NONE, 0, {0}, VOICE_NONE};
 #define SE_BANK L"voice\\SE.bin"
 static HANDLE se_bank = INVALID_HANDLE_VALUE;
 static u32 *se_table, se_banks;
+
+/* Version 1.01's falling-rock cutoff (se_cutoff.h): the sound-effect poll, with the stock routines it calls. */
+#define STAGE_MAP (*(volatile u32 *)SE_MAP_AT)
+static struct se_cutoff se_cut;
+static int se_playing(unsigned char *m, unsigned int handle)
+{
+    u32 state;
+    ((int (__thiscall *)(void *, u32, u32 *))0x670730)(*(void **)(*(u8 **)(m + 4) + 0xC), handle, &state);
+    return state & 1;
+}
+static void se_stop(unsigned char *m, const unsigned int *slot)
+{
+    ((u32 (__thiscall *)(void *, u32, u32, u32, u32))0x5D5D80)(m, slot[1], slot[2], slot[3], slot[4]);
+}
+static unsigned int se_release(unsigned char *m, unsigned int i)
+{
+    return ((u32 (__thiscall *)(void *, u32))0x5D5DC0)(m, i);
+}
+static const struct se_stock se_routines = {se_playing, se_stop, se_release};
 
 
 
@@ -5225,6 +5245,16 @@ static int always(u32 id, struct frame *f, u32 *replace)
             kept_play.slot = VOICE_NONE;
         }
         return 1;
+    case 119: {  /* the sound-effect poll (ecx the manager): version 1.01's, with its falling-rock cutoff */
+        u32 cut;
+        f->eax = se_poll(&se_cut, (u8 *)f->ecx, STAGE_MAP, &se_routines, &cut), *replace = 1;
+        if (cut < SE_SLOTS) {
+            char line[] = "v101: sound stopped after 180 polls, slot 00";
+            put_hex(line + sizeof line - 3, cut, 2);
+            note(line, 0);
+        }
+        return 1;
+    }
     case 38:
     case 39:
     case 40:
