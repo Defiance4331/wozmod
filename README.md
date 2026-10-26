@@ -172,16 +172,22 @@ change.
   is not signed, so Windows does not know the publisher. Click **More info**,
   then **Run anyway**.
 - **The game is still in Japanese, and the new settings are missing.** The game
-  did not load wozmod. Make sure that `d3d9.dll` is in the same folder as
-  `OROCHI_Z.exe`. On Linux, add the launch options from
-  [Extra steps on Linux](#extra-steps-on-linux).
-- **`wozmod/runtime.log` says "refused: OROCHI_Z.exe is not the stock
-  executable".** Your `OROCHI_Z.exe` is not the version that wozmod supports.
-  If you installed a different English patch, reinstall the game. Then install
-  wozmod again.
-- **`wozmod/runtime.log` has another line that starts with "refused".** wozmod
-  switched that part off because something did not match. If the line names a
-  file in the `wozmod` folder, install wozmod again.
+  did not load wozmod, or wozmod turned itself off. Make sure that `d3d9.dll`
+  is in the same folder as `OROCHI_Z.exe`. On Linux, add the launch options from
+  [Extra steps on Linux](#extra-steps-on-linux). If `wozmod/runtime.log` ends
+  with "wozmod is off", the entries below explain the "refused" lines before it.
+- **`wozmod/runtime.log` says "refused: OROCHI_Z.exe is not version 1.00".**
+  Your `OROCHI_Z.exe` is another version, such as the 1.01 update. wozmod needs
+  version 1.00, and adds the update's sound and menu fixes itself. Reinstall the
+  game from its disc without the update. Then install wozmod again.
+- **`wozmod/runtime.log` says "refused: 120 FPS, the code differs from stock
+  at …"** (or another feature in place of 120 FPS). Another mod changed
+  `OROCHI_Z.exe` where wozmod patches it. wozmod works only with all of its
+  changes, so it turned itself off and the game runs as it was. Put back the
+  original `OROCHI_Z.exe`, or remove that mod.
+- **`wozmod/runtime.log` has another line that starts with "refused".** Something
+  wozmod needs did not match, so it turned itself off and the game runs as it
+  was. If the line names a file in the `wozmod` folder, install wozmod again.
 - **The screen stays black at start (Linux).** The game must start in its own
   folder. If you added it to Steam as a non-Steam game, set **Start In** to the
   game folder.

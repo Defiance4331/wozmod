@@ -49,7 +49,7 @@ UPDATE_101_FOUND = ("This game has the 1.01 update. wozmod needs version 1.00, a
                     "itself. Reinstall the game from its disc without the update, then pick its folder.")
 # Release assets built by us; a release updates both pins with the files it ships.
 LETTERING = (18_399_206, "5c45d5a0d200c3fe55f31140285f9ac6c22cff172850a79484fe3dbb5a4c6ec0")
-DLL = (231_545, "72235aabac43c635513a703cf462f337512abd96601372ebc9d190e27e0fb90f")
+DLL = (248_985, "2382aa2b6c6729cc2e723d410a2deeb166059269e000f69c73d681e19aba8a46")
 
 _MOD_PATH = re.compile(r"d3d9\.dll|wozmod(/[A-Za-z0-9_][A-Za-z0-9_.-]*)+")
 

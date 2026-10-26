@@ -30,4 +30,19 @@ static inline unsigned int prompt_hires_find(const unsigned char *data, unsigned
     return 0;
 }
 
+/* 1 when data is whole: its header, then every slot's rows at every scale it lists, and nothing after them. */
+static inline int prompt_hires_whole(const unsigned char *data, unsigned int size)
+{
+    const unsigned int *head = (const unsigned int *)data;
+    unsigned int slots, scales, k, j;
+    unsigned long long at;
+    if (!data || size < 12 || head[0] != PROMPT_HIRES_MAGIC || (slots = head[1]) > PROMPT_HIRES_MOST
+        || (scales = head[2]) > PROMPT_HIRES_MOST || 12 + 4 * (scales + 2 * slots) > size)
+        return 0;
+    for (k = 0, at = 12 + 4 * (scales + 2 * slots); k < scales; k++)
+        for (j = 0; j < slots; j++)
+            at += (unsigned long long)head[3 + scales + slots + j] * head[3 + k] * 32 * head[3 + k] * 4;
+    return at == size;
+}
+
 #endif

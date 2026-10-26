@@ -10,6 +10,7 @@ by a run killed outright (SIGKILL) is removed when the next run starts. WOZMOD_I
 
 from __future__ import annotations
 
+import ctypes
 import fcntl
 import filecmp
 import hashlib
@@ -106,6 +107,67 @@ def test_install_finishes_within_its_time_budget(installed, capsys):
         print(f"\ninstall: {seconds:.0f} s (budget {budget:.0f} s, WOZMOD_JOBS={os.environ.get('WOZMOD_JOBS', 'CPU count')})")
         print("\n".join(line for line in log if line.endswith(" s)")))
     assert seconds <= budget
+
+
+ACCEPTS = r'''
+#include "startup_files.h"
+#include "prompt_hires.h"
+#include "glyph_raster.h"
+int record_names(const char *json, char *out, unsigned size)
+{
+    const char *at = record_files(json);
+    int count = 0, next;
+    if (!at)
+        return -1;
+    while ((next = record_next(&at, out, size)) > 0) {
+        while (*out)
+            out++, size--;
+        out++, size--, count++;
+    }
+    return next < 0 ? -1 : count;
+}
+int table(const unsigned *t, unsigned size) { return table_ok(t, size); }
+int lips(const unsigned char *d, unsigned size) { return lips_ok(d, size); }
+int package(const unsigned char *d, unsigned size, const unsigned char *slots, unsigned n)
+{
+    return package_items_ok(d, size, slots, n);
+}
+int copies(const unsigned char *d, unsigned size, unsigned slot)
+{
+    unsigned w;
+    return prompt_hires_whole(d, size) && prompt_hires_find(d, size, slot, 2, &w) && prompt_hires_find(d, size, slot, 4, &w);
+}
+int glyphs(const unsigned char *d, unsigned size)
+{
+    struct gr_font font;
+    unsigned head = size < 4 ? 0 : d[0] | d[1] << 8 | d[2] << 16 | (unsigned)d[3] << 24;
+    return size >= 4 && size - 4 >= head && gr_open(&font, d + 4 + head, size - 4 - head);
+}
+'''
+
+
+def test_the_dll_accepts_every_file_the_install_wrote(installed, c_library):
+    # Bug: the DLL's checks at start (runtime/startup_files.h) refuse a file the installer writes, so wozmod turns
+    # itself off for every player: a record name it cannot read or does not find, a table, Lips.bin, glyph file,
+    # prompt package or sharper copy it calls damaged. (hires.bin's reader has its own writer test, test_art_hires.)
+    from wozmod.runtime.prompts import PROMPT_SLOTS, STICK_ITEMS
+
+    lib = c_library("accepts", ACCEPTS)
+    game, folder = installed[0], installed[0] / "wozmod"
+    out = ctypes.create_string_buffer(1 << 20)
+    count = lib.record_names((folder / "install.json").read_bytes(), out, len(out))
+    names = [n.decode() for n in out.raw.split(b"\0")[:count]] if count >= 0 else []
+    slots = bytes(PROMPT_SLOTS + STICK_ITEMS)
+    data = {name: (folder / name).read_bytes() for name in ("table.bin", "voice/Lips.bin", "glyphs.bin",
+                                                           *(f"prompts-{family}{kind}.bin" for family in
+                                                             ("xbox", "playstation") for kind in ("", "-hires")))}
+    refused = {name for name, d in data.items() if not (
+        lib.table(d, len(d)) if name == "table.bin" else lib.lips(d, len(d)) if name == "voice/Lips.bin"
+        else lib.glyphs(d, len(d)) if name == "glyphs.bin"
+        else lib.copies(d, len(d), slots[0]) if "hires" in name
+        else lib.package(d, len(d), slots, len(slots)))}
+    assert (count, sorted(n for n in names if not (game / n).is_file()), refused) == (
+        len(json.loads((folder / "install.json").read_text())["files"]), [], set())
 
 
 def test_install_lists_every_file_it_wrote_and_uninstall_restores_the_stock_folder(installed):

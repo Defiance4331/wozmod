@@ -1,4 +1,4 @@
-"""Sections, file offsets and pointer-table strings of an i386 PE image."""
+"""Sections, file offsets, exports and pointer-table strings of an i386 PE image."""
 
 from __future__ import annotations
 
@@ -53,4 +53,23 @@ def pointer_strings(image: bytes, table_va: int, count: int, stride: int) -> lis
     for i in range(count):
         at = file_offset(where, struct.unpack_from("<I", image, file_offset(where, table_va + stride * i))[0])
         found.append(image[at:image.index(b"\0", at)])
+    return found
+
+
+def exports(image: bytes) -> dict[str, int]:
+    """Each exported name's VA, from the export directory (the optional header's first data directory)."""
+    where = layout(image)
+    base = where["image_base"]
+    directory = struct.unpack_from("<I", image, struct.unpack_from("<I", image, 0x3C)[0] + 24 + 96)[0]
+    if not directory:
+        return {}
+    at = file_offset(where, base + directory)
+    names, functions, name_table, ordinals = (struct.unpack_from("<I", image, at + offset)[0]
+                                              for offset in (24, 28, 32, 36))
+    found = {}
+    for i in range(names):
+        name_at = file_offset(where, base + struct.unpack_from("<I", image, file_offset(where, base + name_table + 4 * i))[0])
+        ordinal = struct.unpack_from("<H", image, file_offset(where, base + ordinals + 2 * i))[0]
+        rva = struct.unpack_from("<I", image, file_offset(where, base + functions + 4 * ordinal))[0]
+        found[image[name_at:image.index(b"\0", name_at)].decode("ascii")] = base + rva
     return found

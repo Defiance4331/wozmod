@@ -16,9 +16,11 @@ unsigned int find(const unsigned char *d, unsigned int n, unsigned int slot, uns
 {
     return prompt_hires_find(d, n, slot, scale, w);
 }
+int whole(const unsigned char *d, unsigned int n) { return prompt_hires_whole(d, n); }
 ''')
     lib.find.argtypes = [ctypes.c_char_p, ctypes.c_uint, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_uint)]
     lib.find.restype = ctypes.c_uint
+    lib.find.whole = lib.whole
     return lib.find
 
 
@@ -37,3 +39,10 @@ def test_the_reader_finds_each_slots_copy_at_each_scale(find):
                 wrong.append((scale, slot, at, w.value))
     w = ctypes.c_uint()
     assert wrong == [] and find(data, len(data), 44, 4, ctypes.byref(w)) == 0
+
+
+def test_the_dlls_start_check_takes_a_whole_file_of_copies_and_refuses_a_cut_one(find):
+    """Bug: the check the DLL makes at start refuses the copies the art build writes, so wozmod turns itself off for
+    every player; or it takes a file cut short, whose last slots then quietly keep their small icons."""
+    data = prompt_hires("xbox")
+    assert [find.whole(d, len(d)) for d in (data, data[:-4], data[:12], data + b"\0" * 4)] == [1, 0, 0, 0]

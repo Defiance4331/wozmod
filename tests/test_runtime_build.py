@@ -14,7 +14,7 @@ import pytest
 from synthetic import pe_image
 from wozmod.formats import pe
 from wozmod.install import STOCK_FILES
-from wozmod.runtime import build, layout, text_boxes
+from wozmod.runtime import build, guards, layout, text_boxes
 from wozmod.runtime import english_runtime as runtime
 from wozmod.runtime.latin_font import LATIN_GLYPH
 from wozmod.runtime.prompts import PROMPT_SLOTS, STICK_ITEMS
@@ -47,24 +47,29 @@ def test_colliding_keys_keep_both_rows_and_aligned_shared_name_pointers() -> Non
 
 
 def test_data_header_keeps_group_lengths_terminator_and_hook_return_flags() -> None:
+    """Bugs: an edit record or hook row loses its text-mode group, so the runtime installs it in the wrong mode; the
+    guard list exported is not the build's."""
     image = pe_image(0x1200, (b".fixture", 0x1000, 0x9B000, 0x1000, 0x200), image_base=0x700000)
-    edits = {0: [(0x79B010, b"abc", b"xyz")], 1: [(0x79B020, b"de", b"fg")],
-             2: [(0x79B020, b"de", b"hi")]}
+    edits = [(0, "CODE_EDITS", [(0x79B010, b"abc", b"xyz")]), (1, "settings rows", [(0x79B020, b"de", b"fg")]),
+             (2, "settings rows", [(0x79B020, b"de", b"hi")])]
     hooks = [(0x79B030, b"hello", 7, None, True), (0x79B040, b"later", 8, 4, False),
              (0x79B050, b"after", 9, 0, True), (0x79B060, b"world", 10, None, False)]
-    for va, before, _ in [entry for group in edits.values() for entry in group]:
+    features = [guards.Feature("text", "text", hooks=(7, 9), edits=("CODE_EDITS",)),
+                guards.Feature("rows", "rows", hooks=(8, 10), edits=("settings rows",))]
+    for va, before, _ in [entry for _, _, group in edits for entry in group]:
         at = 0x200 + va - 0x79B000
         image[at:at + len(before)] = before
     for va, before, *_ in hooks:
         at = 0x200 + va - 0x79B000
         image[at:at + len(before)] = before
-    header = runtime.data_header(bytes(image), edits, hooks, b"\x05\x07", "12" * 32)
+    header = runtime.data_header(bytes(image), edits, hooks, b"\x05\x07", (), features)
     assert bytes(layout.c_array("enrt_edits", header)) == (
         b"\0" + struct.pack("<IH", 0x79B010, 3) + b"abcxyz"
         + b"\x01" + struct.pack("<IH", 0x79B020, 2) + b"defg"
         + b"\x02" + struct.pack("<IH", 0x79B020, 2) + b"dehi" + b"\xff"
     )
-    assert bytes(layout.c_array("enrt_stock_sha256", header)) == bytes([0x12]) * 32
+    assert bytes(layout.c_array("wozmod_guards", header)) == guards.blob(*guards.guard_list(
+        bytes(image), edits, hooks, (), features))
     assert bytes(layout.c_array("enrt_widths", header)) == b"\x05\x07"
     assert layout.defines(header) == {"WIDTH_POINTER": 0x79BAC0, "GLYPH_LATIN": LATIN_GLYPH, "WIDE_TEXT": 1024,
                                       "PROMPT_SLOTS": len(PROMPT_SLOTS), "PROMPT_ITEMS": len(PROMPT_SLOTS) + len(STICK_ITEMS)}
@@ -166,8 +171,9 @@ def test_build_puts_each_edit_list_in_its_text_mode_group(stock_builds, variant:
         0: {(b"\x74\x04", b"\x90\x90")} if options.get("preview") else set(), 1: set(), 2: set()}
 
 
+_EVERY_FEATURE = guards.features(("ENRT_RENDER_DISTANCE", "ENRT_MOVING_FIX", "ENRT_TEST"))
 SYNTHETIC_HEADER = "\n".join([
-    "static const u8 enrt_stock_sha256[32] = {0};",
+    f"__declspec(dllexport) const u8 wozmod_guards[] = {{{','.join(map(str, guards.blob(_EVERY_FEATURE, [])))}}};",
     "static const u8 enrt_edits[] = {0xff};",
     "static const struct site enrt_hooks[] = {{0x5c9fd0, 0, 24, 0, 5, {0x83,0xec,0x1c,0x53,0x55}}};",
     "static const u8 enrt_widths[1] = {24};",
@@ -206,7 +212,7 @@ def compiled(tmp_path_factory: pytest.TempPathFactory):
 def test_release_runtime_has_no_render_distance_row_key_or_patch(compiled) -> None:
     """Bug: the release build still shows the unreleased RENDER DISTANCE row, reads or writes its settings.ini
     key, or patches the view getter. The development build is compiled as the control that the probes see them."""
-    probes = [b"RENDER DISTANCE", "distance".encode("utf-16-le"), "refused: RENDER DISTANCE".encode()]
+    probes = [b"RENDER DISTANCE", "distance".encode("utf-16-le"), struct.pack("<I", 0x475B6C)]  # crowd getter + 0xC
     release, development = compiled(RELEASE), compiled(("ENRT_RENDER_DISTANCE",))
     assert [probe in release for probe in probes] == [False] * 3
     assert [probe in development for probe in probes] == [True] * 3
@@ -280,8 +286,9 @@ def test_scene_command_calls_the_scene_starter_the_games_own_scene_command_calls
     assert play_scene in targets
 
 
-# The instruction bytes under the immediates the runtime rewrites without a stock check: the Xbox prompt icon widths.
-UNCHECKED = {"START_WIDTH": b"\x6a\x1e", "STICK_WIDTH": b"\x6a\x1e",
+# The instructions whose immediate the runtime rewrites (the pad prompt icon widths, guarded by controllers), which
+# runtime_writes lists without their bytes.
+INSTRUCTIONS = {"START_WIDTH": b"\x6a\x1e", "STICK_WIDTH": b"\x6a\x1e",
              "WIDE_LAST_DRAW": b"\x83\xf8\x14", "WIDE_LAST_MEASURE": b"\x83\xf8\x14"}
 
 
@@ -295,8 +302,8 @@ def test_stock_code_the_runtime_writes_is_stock_and_clear_of_every_build_edit(st
     writes = layout.runtime_writes()
     wrong = []
     for name, va, expected, _ in writes:
-        if expected is None and name in UNCHECKED:
-            va, expected = va + 1 - len(UNCHECKED[name]), UNCHECKED[name]
+        if expected is None and name in INSTRUCTIONS:
+            va, expected = va + 1 - len(INSTRUCTIONS[name]), INSTRUCTIONS[name]
         at = pe.file_offset(image, va)
         if expected is not None and stock[at:at + len(expected)] != expected:
             wrong.append(("not stock", name, hex(va), stock[at:at + len(expected)].hex()))
