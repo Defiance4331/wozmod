@@ -58,6 +58,7 @@ def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_unde
 
     assert {str(p.relative_to(output)): p.read_bytes() for p in output.rglob("*") if p.is_file()} == {
         "voice/Voice.bin": struct.pack("<I", 22665) + bytes(181324),
+        "voice/Slots.bin": struct.pack("<I", 0),  # no two lines share a voice id here
         "voice/SE.bin": struct.pack("<I", 122) + bytes(1964),
         "voice/Lips.bin": struct.pack("<I", 22665) + bytes(8 * 22665),
     }

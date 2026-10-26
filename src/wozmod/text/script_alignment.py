@@ -8,6 +8,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from difflib import SequenceMatcher
 from functools import cached_property, partial
+from itertools import accumulate
 from pathlib import Path
 from typing import Callable
 
@@ -252,11 +253,12 @@ def _record_pairs(ours: list, theirs: list) -> list[tuple[int, int]]:
     aligns, and the records between two aligned neighbours (or a table end), in order, where each side holds as many.
     That gap fill is order within an equal-count gap, not code: no donor command links these records. Its guard is
     speech recognition of the takes it gives (tests/test_subtitle_contexts.py,
-    test_no_reviewed_voice_shows_a_neighbours_line; the old take of Dream 60.47 says its subtitle).
+    test_no_reviewed_voice_shows_a_neighbours_line), and stage_join's stream alignments override it.
     Those are records whose keys MOZ changed but not their place: a line the donor holds but no donor command speaks,
-    which MOZ speaks, or a line MOZ gave another speaker. On the real data the fill pairs Dream stage 60 line 47, the
-    one Dream or Z Dream line it pairs, and story lines WO1 X360 94.29 and WO2 X360 5.13 and 28.5, whose voice
-    suffixes agree. A record MOZ inserts or drops leaves the counts unequal, so nothing there pairs."""
+    which MOZ speaks, or a line MOZ gave another speaker. On the real data the fill pairs Dream stage 60 line 47,
+    which the streams then give the donor line its trigger speaks, and story lines WO1 X360 94.29 and WO2 X360 5.13
+    and 28.5, whose voice suffixes agree. A record MOZ inserts or drops leaves the counts unequal, so nothing there
+    pairs."""
     pairs = []
     for tag, i1, i2, j1, j2 in SequenceMatcher(None, ours, theirs, autojunk=False).get_opcodes():
         if tag == "equal" or (tag == "replace" and i2 - i1 == j2 - j1):
@@ -281,7 +283,18 @@ def stage_join(moz: Script, donor: Script, persons: dict[int, int]) -> dict[tupl
     (_record_pairs), and of the command streams (opcodes, and speak commands by speaker). A line pairs by its table;
     one its table leaves unpaired (MOZ moved it: Dream stage 51 speaks lines 57 and 58 where WO2 X360 speaks its lines
     26 and 27) pairs by the streams, with a donor line no other line took. A line no command speaks pairs with
-    nothing. Notices pair through notice_join."""
+    nothing. Notices pair through notice_join.
+
+    Both of those can be wrong where MOZ moved or swapped lines, so the optimal alignments of the streams decide last
+    (the notice join's, below): a line whose speaks the earliest and the latest both put on one donor line takes it,
+    and the line that held it by table or greedy stream loses it, unless the alignments put that line's own speak
+    there too, when both keep it (the trigger: decisions ledger text rows 22 and 25). Dream stage 60 line 54 speaks
+    WO2 X360 line 27 at its trigger, where stock line 27, other words by the same officer, has no counterpart; Dream
+    stage 48 speaks lines 33 and 34 in the event where WO2 X360 speaks its lines 36 and 37, and the other way round,
+    so the table's order pairs each with the other's sentence; Dream stage 60 speaks its new line 47 where WO2 X360
+    speaks line 39 a second time. A line the alignments put on two donor lines keeps its pair (Dream stage 50 line 5:
+    four of its events speak donor line 5, one donor line 8). The greedy match alone is never enough: Dream stage 46
+    line 66 and twelve more lines match a donor line greedily that neither optimal alignment gives them."""
     def person(stock_person: int) -> object:
         return persons.get(stock_person, ("stock", stock_person))
 
@@ -293,8 +306,18 @@ def stage_join(moz: Script, donor: Script, persons: dict[int, int]) -> dict[tupl
         if ours[i][0][0] == SPEAK:
             spoken[ours[i][1][2]].add(theirs[j][1][2])
     taken = set(joined.values())
-    return joined | {("dialog", r): d for r, (d, *more) in spoken.items()
-                     if ("dialog", r) not in joined and not more and d not in taken}
+    streamed = {r: d for r, (d, *more) in spoken.items() if ("dialog", r) not in joined and not more}
+    pairs = joined | {("dialog", r): d for r, d in streamed.items() if d not in taken}
+    earliest, latest = _alignment(moz, donor, persons, pairs, SPEAK)
+    holders = defaultdict(set)
+    for (_, r), d in pairs.items():
+        holders[d].add(r)
+    moved = {r: d for r, (d, *more) in latest.items() if not more and earliest.get(r) == {d}
+             and pairs.get(("dialog", r)) != d}
+    lost = {h for d in moved.values() for h in holders[d] - moved.keys()
+            if d not in earliest.get(h, set()) | latest.get(h, set())}
+    return {("dialog", r): d for (_, r), d in pairs.items() if r not in moved and r not in lost} | {
+        ("dialog", r): d for r, d in moved.items()}
 
 
 @dataclass(frozen=True)
@@ -311,7 +334,7 @@ class StageJoin:
 
     @cached_property
     def notices(self) -> dict[tuple[str, int], int]:
-        """("notices", stock notice) to donor notice, as notice_join pairs them (development only: it needs numpy)."""
+        """("notices", stock notice) to donor notice, as notice_join pairs them."""
         return {("notices", r): d for r, d in notice_join(self).items()}
 
 
@@ -368,51 +391,64 @@ def _command_rows(script: Script, speaker: Callable[[int], object], line: Callab
     return rows, events
 
 
-def notice_join(join: StageJoin) -> dict[int, int]:
-    """Each shown stock notice of a stage join's stock script with its donor notice: the one its commands'
-    counterparts show (see above)."""
-    import numpy as np  # a development dependency: the installer never pairs notices
+def _alignment(stock: Script, donor: Script, persons: dict[int, int], pairs: dict[tuple[str, int], int],
+               opcode: int) -> tuple[dict[int, set[int]], dict[int, set[int]]]:
+    """The earliest and the latest optimal alignment of two stage scripts' command streams (see above; pairs are the
+    stock lines' donor lines so far, persons the stock persons' donor persons), each as the donor records the
+    counterparts of each stock record's opcode commands (NOTICE or SPEAK) show."""
+    lines = {r: d for (table, r), d in pairs.items() if table == "dialog"}
+    ours, oe = _command_rows(stock, lambda p: persons.get(p, ("stock", p)), lambda r: lines.get(r, ("stock", r)))
+    theirs, te = _command_rows(donor, lambda p: p, lambda r: r)
 
-    lines = {r: d for (table, r), d in join.pairs.items() if table == "dialog"}
-    ours, oe = _command_rows(join.stock, lambda p: join.persons.get(p, ("stock", p)), lambda r: lines.get(r, ("stock", r)))
-    theirs, te = _command_rows(join.donor, lambda p: p, lambda r: r)
-    vocab: dict[tuple, int] = {}
-    counts = []
-    for rows, events, size in ((ours, oe, len(join.stock.events)), (theirs, te, len(join.donor.events))):
-        index = [vocab.setdefault(bag, len(vocab)) for _, bag, _ in rows]
-        counts.append((index, events, size))
-    bags = []
-    for index, events, size in counts:
-        bag = np.zeros((size, len(vocab)), np.int64)
-        np.add.at(bag, (events, index), 1)
-        bags.append(bag)
-    mine, yours = bags
-    larger = np.maximum(mine.sum(1)[:, None], yours.sum(1)[None, :]).clip(min=1)
-    # likeness in thousandths, so that the scores are exact and ties compare equal
-    likeness = np.array([np.minimum(row, yours).sum(1) for row in mine]).reshape(len(mine), len(yours))
-    likeness = likeness * 1000 // larger
-    tokens: dict[tuple, int] = {}
-    a = np.array([tokens.setdefault(t, len(tokens)) for t, _, _ in ours])
-    b = np.array([tokens.setdefault(t, len(tokens)) for t, _, _ in theirs])
-    weight = np.array([(2000 * (len(a) + len(b)) + 1) if c is not None and c[0] in (NOTICE, SPEAK) else 1000
-                       for _, _, c in ours], np.int64)
-    n, m = len(a), len(b)
-    gain = np.where(a[:, None] == b[None, :], weight[:, None] + likeness[np.array(oe)][:, np.array(te)], 0)
-    score = np.zeros((n + 1, m + 1), np.int64)
-    for i in range(n):  # a row never falls along j, so adding gain 0 where nothing pairs changes no maximum
-        row = score[i + 1, 1:]
-        np.add(score[i, :-1], gain[i], out=row)
-        np.maximum(row, score[i, 1:], out=row)
-        np.maximum.accumulate(row, out=row)
+    # Two events' likeness: the commands they have in common (likeness tokens, by count) over the larger event's
+    # count, in thousandths, so that the scores are exact and ties compare equal.
+    holders: dict[tuple, Counter] = defaultdict(Counter)
+    for (_, bag, _), f in zip(theirs, te, strict=True):
+        holders[bag][f] += 1
+    sizes, their_sizes = Counter(oe), [te.count(f) for f in range(len(donor.events))]
+    likeness = [[0] * len(their_sizes) for _ in stock.events]
+    for (e, bag), count in Counter(zip(oe, (bag for _, bag, _ in ours), strict=True)).items():
+        for f, their_count in holders[bag].items():
+            likeness[e][f] += min(count, their_count)
+    for e, row in enumerate(likeness):
+        row[:] = [k * 1000 // max(sizes[e], their_size) for k, their_size in zip(row, their_sizes, strict=True)]
+    n, m = len(ours), len(theirs)
+    heavy = 2000 * (n + m) + 1
 
-    def traced(earliest: bool) -> set[tuple[int, int]]:
-        found, i, j = set(), n, m
+    def gain(i: int, j: int) -> int:
+        """What pairing our row i with their row j scores: 0 unless their tokens agree."""
+        if ours[i][0] != theirs[j][0]:
+            return 0
+        c = ours[i][2]
+        return (heavy if c is not None and c[0] in (NOTICE, SPEAK) else 1000) + likeness[oe[i]][te[j]]
+
+    places = defaultdict(list)
+    for j, (token, _, _) in enumerate(theirs):
+        places[token].append(j)
+    pairs_at: dict[tuple, list[tuple[int, int]]] = {}  # (j, gain) for each place a row's token pairs, by row kind
+    score = [[0] * (m + 1)]
+    for i in range(n):
+        # Rows rise along j, so a place where the tokens differ adds nothing to the row above: start from it, raise
+        # each place j + 1 a pair at j reaches, then carry each maximum on along the row.
+        if (kind := (ours[i][0], oe[i], ours[i][2] and ours[i][2][0])) not in pairs_at:
+            pairs_at[kind] = [(j, gain(i, j)) for j in places[ours[i][0]]]
+        above, row = score[-1], score[-1].copy()
+        for j, g in pairs_at[kind]:
+            if (value := above[j] + g) > row[j + 1]:
+                row[j + 1] = value
+        score.append(list(accumulate(row, max)))
+
+    def traced(earliest: bool) -> dict[int, set[int]]:
+        found, i, j = defaultdict(set), n, m
         while i and j:
-            g = gain[i - 1, j - 1]
-            pair = g > 0 and score[i, j] == score[i - 1, j - 1] + g
-            up, left = score[i, j] == score[i - 1, j], score[i, j] == score[i, j - 1]
+            g = gain(i - 1, j - 1)
+            here = score[i][j]
+            pair = g > 0 and here == score[i - 1][j - 1] + g
+            up, left = here == score[i - 1][j], here == score[i][j - 1]
             if pair and not (earliest and (up or left)):
-                found.add((i - 1, j - 1))
+                c = ours[i - 1][2]
+                if c is not None and c[0] == opcode:
+                    found[c[1 if opcode == NOTICE else 2]].add(theirs[j - 1][2][1 if opcode == NOTICE else 2])
                 i, j = i - 1, j - 1
             elif up:
                 i -= 1
@@ -420,14 +456,13 @@ def notice_join(join: StageJoin) -> dict[int, int]:
                 j -= 1
         return found
 
-    def shown(pairs: set[tuple[int, int]]) -> dict[int, set[int]]:
-        found = defaultdict(set)
-        for i, j in pairs:
-            if ours[i][2] is not None and ours[i][2][0] == NOTICE:
-                found[ours[i][2][1]].add(theirs[j][2][1])
-        return found
+    return traced(True), traced(False)
 
-    latest, earliest = shown(traced(False)), shown(traced(True))
+
+def notice_join(join: StageJoin) -> dict[int, int]:
+    """Each shown stock notice of a stage join's stock script with its donor notice: the one its commands'
+    counterparts show (see above)."""
+    earliest, latest = _alignment(join.stock, join.donor, join.persons, join.pairs, NOTICE)
     return {r: d for r, (d, *more) in latest.items() if not more and earliest.get(r) == {d}}
 
 
@@ -436,19 +471,6 @@ def joined_pairs(moz: Script, join: StageJoin, tables: tuple[str, ...]) -> list[
     pairs = join.pairs | (join.notices if "notices" in tables else {})
     return _decoded((getattr(moz, t).records[r].text_bytes, getattr(join.donor, t).records[d].text_bytes)
                     for (t, r), d in pairs.items() if t in tables)
-
-
-def voice_pairs(moz: Script, donor: Script) -> list[tuple[bytes, str]]:
-    """Pair spoken lines by unique voice suffix."""
-    pairs = []
-    by_voice: dict[bytes, list[bytes]] = {}
-    for record in donor.dialog.records:
-        by_voice.setdefault(record.dialog_suffix, []).append(record.text_bytes)
-    for record in moz.dialog.records:
-        english = by_voice.get(record.dialog_suffix) if record.dialog_suffix else None
-        if english and len(english) == 1:
-            pairs.append((record.text_bytes, english[0]))
-    return _decoded(pairs)
 
 
 def _decoded(pairs) -> list[tuple[bytes, str]]:
@@ -563,9 +585,8 @@ def official_pairs(stock: Path, wo1: Path, wo2_donor: Wo2Donor) -> dict[bytes, t
     linkdata1, linkdata2 = archive(stock / "LINKDATA1"), archive(stock / "LINKDATA2")
     moz = moz_scripts(stock / "LINKDATA2")
     wo1_by_ordinal, wo2 = wo1_scripts(wo1), wo2_donor.scripts()
-    dream = {o for o, _ in DREAM_SCRIPTS}
-    found = [(joined_pairs(moz[o], j, ("notices", "dialog") if o in dream else ("notices",))
-              + ([] if o in dream else voice_pairs(moz[o], j.donor)), j.source)
+    # A spoken line, story or Dream, pairs with the donor line its speak command's counterpart speaks.
+    found = [(joined_pairs(moz[o], j, ("notices", "dialog")), j.source)
              for o, j in stage_joins(moz, wo1_by_ordinal, wo2).items()]
     events = [(o, source, o + shift) for ordinals, source, shift in EVENTS for o in ordinals]
     briefing_entry, briefing_members, _ = BRIEFINGS

@@ -16,8 +16,8 @@ from wozmod.text.stock import resolve_stock_ref, stock_key, stock_strings
 
 TABLE = Path(__file__).resolve().parents[1] / "data/text/table.json"
 # The shipped table's rows: their count and the SHA-256 of their sorted keys, one per line.
-ROW_COUNT = 23919
-ROW_KEYS_SHA256 = "6b4ca1a7599bfbd42d1de2e2791a10e980b76e9b78cb455fc703bef49ea55d6d"
+ROW_COUNT = 23927
+ROW_KEYS_SHA256 = "c42c606facb4804b0be6a52cdc8974e568fef45003b122ed2b463378c382d3eb"
 
 
 def test_shipped_table_is_valid_and_keeps_every_row() -> None:
@@ -106,12 +106,13 @@ def synthetic_stock(tmp_path: Path) -> tuple[Path, list[bytes]]:
     _archive(stock, 1, {4071: _mesc(values["narration"]), 4084: quote, 4190: _mesc(values["briefing"])})
     (stock / "OROCHI_Z.exe").write_bytes(_stock_pe(values["name"], values["unmapped"], values["message"]))
     return stock, [*values.values(), values["officer"] + b"@1234", indexed, chr(0x3042).encode("cp932"), voiced,
-                   voiced + b"@V2808"]
+                   voiced + b"@V2808", values["dialog"] + b"@0001@L0.0"]
 
 
 def test_stock_catalog_does_not_drop_archive_keys_or_quote_voice_suffixes(synthetic_stock) -> None:
     # Bugs: a dropped archive key; a quote or stage line listed without its @NNNN voice suffix; an event line not
-    # listed with its "@V" voice id, so a row keyed by an event line's voice cannot build.
+    # listed with its "@V" voice id, so a row keyed by an event line's voice cannot build; a spoken stage line not
+    # listed with its stage and line, so the own row of a line that shares its string (voice slots) cannot build.
     stock, values = synthetic_stock
     catalog = stock_strings(stock)
     missing = [hashlib.sha256(value).hexdigest() for value in values

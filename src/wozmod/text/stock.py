@@ -33,6 +33,13 @@ def event_voice_form(text: bytes, voice: int) -> bytes:
     return text + b"@V%04d" % voice
 
 
+def stage_line_form(text: bytes, stage: int, line: int) -> bytes:
+    """A spoken stage line (its text with its @NNNN suffix) with its stage and dialog line, as the runtime looks it up
+    before the line alone (runtime spoken_text, voice_slots.h): two lines can carry one string yet play different
+    takes (wozmod.voices.maps.voice_slots), and each needs its own row."""
+    return text + b"@L%d.%d" % (stage, line)
+
+
 def event_voices(linkdata2) -> dict[int, tuple[int, int]]:
     """Stock event ordinal to (voice id of line 0, voiced line count): the voice start adds a line's index to its
     story's base."""
@@ -47,7 +54,7 @@ def stock_strings(stock: Path) -> dict[str, bytes]:
     A spoken line or officer quote is also listed with its @NNNN voice suffix: the runtime looks the whole line up
     first (runtime voiced_line), so a row keyed that way gives one voiced line its own English where another line
     with the same text is voiced from another donor. An event line, a WO1 narration page line and a still event's
-    line (camp talk) are listed with their voice id the same way."""
+    line (camp talk) are listed with their voice id the same way, and a spoken stage line with its stage and line."""
     found: dict[str, bytes] = {}
 
     def add(value: bytes) -> None:
@@ -74,13 +81,14 @@ def stock_strings(stock: Path) -> dict[str, bytes]:
         if lines := [line for block in mesc_blocks(data) for line in block]:
             for value, voice in zip(lines, line_voices(exe, entry, data), strict=True):
                 add(event_voice_form(value, voice))
-    for script in moz_scripts(stock / "LINKDATA2").values():
+    for stage, script in moz_scripts(stock / "LINKDATA2").items():
         for record in script.notices.records:  # every record, also those no command shows (the inventory's are shown)
             add(record.text_bytes)
-        for record in script.dialog.records:
+        for line, record in enumerate(script.dialog.records):
             add(record.text_bytes)
             if record.dialog_suffix:
                 add(record.value[2:])
+                add(stage_line_form(record.value[2:], stage, line))
     for match in EXE_STRING.finditer(exe):
         add(match.group())
     for value in pointer_strings(exe, NAME_TABLE, NAME_PARTS, 8):

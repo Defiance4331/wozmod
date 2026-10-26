@@ -1,6 +1,9 @@
 """English dialogue and attack voice banks."""
 
 from .build import PSP_VOICE_FILES, VOICE_DONOR_FILES, build_voice_banks
-from .maps import dialogue_voice_maps, psp_voice_map, wo1_voice_map, wo2_voice_map
+from .maps import (
+    VoiceSlot, dialogue_voice_maps, lines_apart, psp_voice_map, slot_records, slot_table, stage_triggers, voice_slots,
+)
 
-__all__ = ["PSP_VOICE_FILES", "VOICE_DONOR_FILES", "build_voice_banks", "dialogue_voice_maps", "psp_voice_map", "wo1_voice_map", "wo2_voice_map"]
+__all__ = ["PSP_VOICE_FILES", "VOICE_DONOR_FILES", "VoiceSlot", "build_voice_banks", "dialogue_voice_maps", "lines_apart",
+           "psp_voice_map", "slot_records", "slot_table", "stage_triggers", "voice_slots"]

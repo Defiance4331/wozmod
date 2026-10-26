@@ -197,7 +197,9 @@ def test_contexts_cover_every_subtitle_and_every_english_clip(world, contexts) -
     # Bug: the context builder drops a source (events 384-413, camp talk 4073, a movie slot, unvoiced dialog lines),
     # so every other test here passes without looking at it. Oracle: text.inventory (the stock strings and their
     # draw sites) and the installer's voice choice, two enumerations the contexts do not use.
-    from wozmod.formats.audio import WO1_EVENT_VOICES, WO1_NARRATION_VOICES, WO2_EVENT_VOICES, WO2_NARRATION_VOICES
+    from wozmod.formats.audio import (
+        PSP_BRIEFING_VOICES, WO1_EVENT_VOICES, WO1_NARRATION_VOICES, WO2_EVENT_VOICES, WO2_NARRATION_VOICES,
+    )
     from wozmod.formats.scripts import quote_text
     from wozmod.text.inventory import inventory
 
@@ -222,7 +224,7 @@ def test_contexts_cover_every_subtitle_and_every_english_clip(world, contexts) -
     unspoken = {stage_voice(int(c.id[5:].split(".")[0]), int(suffix.group(1)), 0) for c in contexts["english"]
                 if c.kind == "stage" and c.voice_id is None and (suffix := re.search(rb"@([0-9]+)$", c.stock))}
     blocks = {"select voices": range(0, 96), "unspoken stage lines": unspoken}
-    for base, _, count in (*WO1_NARRATION_VOICES, *WO2_NARRATION_VOICES):
+    for base, _, count in (*WO1_NARRATION_VOICES, *WO2_NARRATION_VOICES, PSP_BRIEFING_VOICES):
         blocks[f"narration ids {base}+"] = range(base, base + count)
     for name, (base, _, count) in (("WO1 event", WO1_EVENT_VOICES), ("WO2 event", WO2_EVENT_VOICES)):
         blocks[f"{name} ids"] = range(base, base + count)

@@ -22,10 +22,12 @@
 #include "display_fit.h"
 #include "voice_play.h"
 #include "pad_buttons.h"
+#include "pad_map.h"
 #include "prompt_hires.h"
 #include "device_hooks.h"
 #include "crash_log.h"
 #include "event_line.h"
+#include "voice_slots.h"
 
 typedef unsigned int u32;
 typedef unsigned short u16;
@@ -836,6 +838,29 @@ static u32 text(u32 s, u32 id, const struct frame *f)
 
 
 
+/* The speak command (opcode 0x26, handler 0x4F17E0, hook 118, esi at its word 1) shows dialog line [esi+2] of the
+   loaded stage script and plays its voice. It calls 0x4F4C50(0x9C91C8, line), its only caller, which parses the
+   line's record with 0x4F4B50 (hook 9, returning to 0x4F4C73): the text into 0x9C91C8 and its @NNNN suffix less one
+   into 0x9C92D0. Then 0x4F4F80 plays that index on the base 0x5137F0 picks, through 0x5D8540 and the load 0x5D8160,
+   which asks 0x5D7CE0 (hook 36) for the id's offset and 0x5D7D30 (hook 37) for its size; nothing loads another
+   voice in between. The stage is the one the stage script was loaded for (0x4F06D0: LINKDATA2 entry [0x801AA0]). */
+#define SPEAK_PARSE 0x4F4C73
+#define SCRIPT_STAGE (*(volatile u32 *)0x801AA0)
+#define NO_LINE 0xFFFFFFFFu
+static u32 spoken_stage = NO_LINE, spoken_line = NO_LINE;  /* the line the speak being made shows */
+
+/* A spoken stage line's own row: its text keyed with its stage and line (voice_slots.h), which a line has when
+   another line carries its very string but plays another take. */
+static const char *spoken_text(const char *s, const struct frame *f)
+{
+    static char key[512];
+    const char *en;
+    if (f->ret != SPEAK_PARSE || !stage_line_key(s, spoken_stage, spoken_line, key, sizeof key))
+        return 0;
+    en = enrt_translate(key);
+    return en == key ? 0 : en;
+}
+
 static u32 voiced_line(u32 line, u32 id, const struct frame *f)
 {
     static char out[256];
@@ -847,7 +872,8 @@ static u32 voiced_line(u32 line, u32 id, const struct frame *f)
             at = p;
     if (!at)
         return line;
-    en = (const char *)text(line + 2, id, f);
+    if (!(en = spoken_text(s + 2, f)))
+        en = (const char *)text(line + 2, id, f);
     if (en == s + 2 || 2 + len(en) + len(at) >= sizeof out)
         return line;
     out[0] = s[0], out[1] = s[1];
@@ -1926,14 +1952,19 @@ static HANDLE open_bank(const WCHAR *file, u32 max, u32 words, u32 **table, u32 
 }
 
 #define LIPS_BANK L"voice\\Lips.bin"
+#define SLOTS_BANK L"voice\\Slots.bin"
+static u8 *slots;  /* voice_slots.h */
+static u32 slots_size;
 static u8 *lips;
 static u32 lips_size;
 
 static void open_voices(void)
 {
     WCHAR name[MAX_PATH];
-    voice_bank = open_bank(VOICE_BANK, 0x5889, 2, &voice_table, &voice_ids);
+    voice_bank = open_bank(VOICE_BANK, 0x10000, 2, &voice_table, &voice_ids);  /* the stock ids, then the slots */
     note("English voice ids:", voice_ids);
+    slots = load(path(name, SLOTS_BANK), &slots_size);
+    note("Slots.bin bytes:", slots_size);
     lips = load(path(name, LIPS_BANK), &lips_size);
     note("Lips.bin bytes:", lips_size);
     se_bank = open_bank(SE_BANK, 0x7E, 4, &se_table, &se_banks);
@@ -3299,8 +3330,11 @@ static void pad_read(const u8 *pad)
             note(PAD_AUTO(0) ? "pad: player 1 auto-set" : "pad: player 1 auto-set failed", 0);
     }
     for (i = 0; i < 2; i++)
-        if ((maps_loaded >> i & 1) && PLAYER_JOY[i] < 8)
+        if ((maps_loaded >> i & 1) && PLAYER_JOY[i] < 8) {
+            if (pad_map_relink(PLAYER_MAP(i), PLAYER_JOY[i]))
+                note("pad: saved bindings put back on the pad for player", i + 1);
             camera_default(i);
+        }
     maps_loaded = 0;
     if (family == PAD_XBOX)
         s[5] = s[3];
@@ -4931,6 +4965,7 @@ static int always(u32 id, struct frame *f, u32 *replace)
     struct loose *e;
     const u32 *voice, *se;
     const u8 *lip = 0;
+    u32 slot;
     *replace = 0;
     if (id >= 75 && id <= 104)
         return display_hook(id, f, replace);
@@ -5141,19 +5176,26 @@ static int always(u32 id, struct frame *f, u32 *replace)
             f->eax = ~0u, *replace = 1;
 
         return 1;
+    case 118:  /* the speak command starts: the line it shows and voices, whatever the text language */
+        spoken_stage = SCRIPT_STAGE, spoken_line = *(const u16 *)(f->esi + 2);
+        return 1;
     case 36:
-    case 37:
-        if ((voice = english_voice(f->arg[1])))
+    case 37:  /* the load asks for the offset (36), then the size (37): the speak's line names its own load only */
+        slot = voice_slot(slots, slots_size, spoken_stage, spoken_line, f->arg[1]);
+        if ((voice = english_voice(slot)))
             f->eax = id == 36 ? VOICE_TAG | voice[0] : voice[1], *replace = 1;
 #ifdef ENRT_LOG
         if (id == 36) {
-            char line[] = "voice ja 0000 mode 0 stage 00";
+            char line[] = "voice ja 0000 mode 0 stage 00 slot 0000";
             if (voice)
                 line[6] = 'e', line[7] = 'n';
             put_hex(line + 9, f->arg[1], 4), line[19] = '0' + (VOICE_MODE & 1), put_hex(line + 27, VOICE_STAGE, 2);
-            note(line, 0);
+            put_hex(line + 35, slot, 4);
+            note(line, spoken_line);
         }
 #endif
+        if (id == 37)
+            spoken_stage = spoken_line = NO_LINE;
         return 1;
     case 71:  /* the speak command (0x49E560) calls with edi at the line record: u32 -1, u16 voice index, u16 size;
                * the state's +0x5C already holds the next line's index once the voice has started */

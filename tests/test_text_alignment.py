@@ -23,7 +23,6 @@ from wozmod.text.script_alignment import (
     person_map,
     quote_pairs,
     stage_join,
-    voice_pairs,
     x360_members,
 )
 from synthetic import event_file, mesc, script, spans, strings, write_ens
@@ -80,19 +79,6 @@ def test_script_pairing_chooses_the_best_union_ratio_instead_of_raw_shared_count
     assert pair_scripts({3: stock}, [too_many_extra, exact_subset]) == {3: exact_subset}
 
 
-def test_voice_pairing_drops_duplicate_voice_candidates():
-    stock = _script(
-        [b"Stock notice"],
-        [(b"@0001", b"S1"), (b"@0002", b"S2"), (b"@0003", b"S3"), (None, b"S4")],
-    )
-    donor = _script(
-        [b"Fixture first", b"Fixture second"],
-        [(b"@0001", b"Fixture A"), (b"@0002", b"Fixture B"), (b"@0002", b"Fixture C"),
-         (b"@0003", b"\x82\xa0"), (None, b"Fixture unsuffixed")],
-    )
-    assert voice_pairs(stock, donor) == [(b"S1", "Fixture A")]
-
-
 def _notice(record, form=0):
     return (0x25, record, 0, 0, form, 0, 0, 0)
 
@@ -141,6 +127,52 @@ def test_stage_join_pairs_the_lines_between_aligned_neighbours_where_each_side_h
     stock = replace(_script([], [(None, b"D%d" % i) for i in range(7)]), events=speaks(5, 21, 5, 22, 6, 30, 6))
     assert stage_join(stock, donor, {5: 5, 6: 6}) == {("dialog", i): d for i, d in ((0, 0), (1, 1), (2, 2), (3, 3),
                                                                                     (4, 4), (6, 5))}
+
+
+def test_a_line_whose_speak_the_streams_align_takes_the_donor_line_from_the_speaker_set_pair():
+    # Bug: the table pairs donor line 1 with stock line 1 by speaker set alone (both person 32), and the stream pair
+    # of stock line 2, whose speak sits where the donor speaks line 1 (same event, same commands around it), is
+    # refused because that donor line is taken: line 2 keeps the Japanese voice and line 1 plays line 2's English
+    # take (Dream stage 60 lines 27 and 54, decisions ledger text rows 22 and 25). Expected by hand.
+    a, b, c, d = ((op, 0, 0, 0, 0, 0, 0, 0) for op in (5, 6, 7, 8))
+    donor = replace(_script([], [(None, b"d0"), (None, b"d1")]), events=((_speak(1, 0), a), (b, _speak(32, 1), c)))
+    stock = replace(_script([], [(None, b"D0"), (None, b"Other words"), (None, b"D1")]), events=(
+        (_speak(1, 0), a), (b, _speak(32, 2), c), (d, _speak(32, 1))))
+    assert stage_join(stock, donor, {1: 1, 32: 32}) == {("dialog", 0): 0, ("dialog", 2): 1}
+
+
+def test_lines_whose_speaks_cross_follow_the_streams_not_the_table_order():
+    # Bug: the table pairs one person's lines in their order (stock 1 and 2 with donor 1 and 2), where MOZ speaks
+    # line 2 in the event in which the donor speaks line 1 and the other way round, so each plays and shows the
+    # other's sentence (Dream stage 48 lines 33/34 and 36/37, decisions ledger text row 22). Expected by hand.
+    a, b, c = ((op, 0, 0, 0, 0, 0, 0, 0) for op in (5, 6, 7))
+    donor = replace(_script([], [(None, b"d0"), (None, b"d1"), (None, b"d2")]), events=(
+        (a, _speak(1, 0)), (b, _speak(2, 1)), (c, _speak(2, 2))))
+    stock = replace(_script([], [(None, b"D0"), (None, b"D2"), (None, b"D1")]), events=(
+        (a, _speak(1, 0)), (b, _speak(2, 2)), (c, _speak(2, 1))))
+    assert stage_join(stock, donor, {1: 1, 2: 2}) == {("dialog", 0): 0, ("dialog", 1): 2, ("dialog", 2): 1}
+
+
+def test_a_new_line_spoken_where_the_donor_repeats_a_line_takes_that_line_too():
+    # Bug: the table's gap fill gives a line MOZ added (stock 1) the donor line no donor command speaks (donor 1),
+    # where the donor speaks line 0 a second time; or the line that takes donor line 0 there takes it from stock line
+    # 0, whose own speak is donor line 0's too (Dream stage 60 lines 39 and 47). Expected by hand.
+    a, b = ((op, 0, 0, 0, 0, 0, 0, 0) for op in (5, 6))
+    donor = replace(_script([], [(None, b"d0"), (None, b"d1")]), events=((a, _speak(1, 0)), (b, _speak(1, 0))))
+    stock = replace(_script([], [(None, b"D0"), (None, b"New")]), events=((a, _speak(1, 0)), (b, _speak(1, 1))))
+    assert stage_join(stock, donor, {1: 1}) == {("dialog", 0): 0, ("dialog", 1): 0}
+
+
+def test_a_greedy_stream_match_alone_does_not_take_a_paired_donor_line():
+    # Bug: the stream pass takes a donor line from its table pair on the greedy match's word: the greedy match puts
+    # stock line 2's speak on donor line 1 (the run "5, speak"), where the optimal alignments do not, and line 1
+    # loses its take to a line the donor never speaks there (Dream stage 46 line 66 and twelve more lines).
+    five, six = (5, 0, 0, 0, 0, 0, 0, 0), (6, 0, 0, 0, 0, 0, 0, 0)
+    donor = replace(_script([], [(None, b"d0"), (None, b"d1")]), events=(
+        (), (_speak(1, 0),), (six, five, _speak(2, 1))))
+    stock = replace(_script([], [(None, b"D0"), (None, b"D1"), (None, b"D2")]), events=(
+        (five, five, _speak(1, 0)), (five, five, _speak(2, 2), _speak(2, 1)), ()))
+    assert stage_join(stock, donor, {1: 1, 2: 2}) == {("dialog", 0): 0, ("dialog", 1): 1}
 
 
 def test_notice_join_pairs_each_notice_with_the_one_its_commands_counterpart_shows():

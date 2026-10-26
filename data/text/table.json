@@ -24258,6 +24258,17 @@
       ]
     },
     {
+      "key": "9c5e7fdf974a344f4a665d99f78a3864cd693e46a5fe9efeabacf2c9463d736a",
+      "source": "wo2-x360",
+      "ref": [
+        "wo2-x360",
+        "ens",
+        104,
+        "dialog",
+        12
+      ]
+    },
+    {
       "key": "5d3993b883984952e1cd4e87cd738fba72fcbc5df8a8d46b5e0c543d93be4775",
       "source": "wo2-x360",
       "ref": [
@@ -57197,6 +57208,17 @@
       ]
     },
     {
+      "key": "35689fff3bef826252b19b44d25573fc525e7754a130303c00041149e8801add",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        112,
+        "dialog",
+        84
+      ]
+    },
+    {
       "key": "175053db7ac932954f9feb8fad4b0744c2fca65d84888ac837e13b697ff1500b",
       "source": "wo2-x360",
       "ref": [
@@ -62283,6 +62305,17 @@
       ]
     },
     {
+      "key": "deba06f6f2ba311b84aff73dfc65ddb780baf43b662920297dfb2c0590814efd",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        117,
+        "dialog",
+        63
+      ]
+    },
+    {
       "key": "d876e0cb16dbb5495add1c4e98931094630c7e1eff07392137114efea7ba531b",
       "source": "wo2-x360",
       "ref": [
@@ -64753,6 +64786,17 @@
         "wo1-x360",
         "ens",
         89,
+        "dialog",
+        8
+      ]
+    },
+    {
+      "key": "b9c70cc77087cbe45355a2d67528485944ac62b36496ba0d972cf64af611ffb4",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        129,
         "dialog",
         8
       ]
@@ -72200,7 +72244,7 @@
         "ens",
         97,
         "dialog",
-        10
+        9
       ]
     },
     {
@@ -100350,7 +100394,7 @@
         "ens",
         123,
         "dialog",
-        32
+        31
       ]
     },
     {
@@ -100361,7 +100405,7 @@
         "ens",
         123,
         "dialog",
-        31
+        32
       ]
     },
     {
@@ -133370,6 +133414,17 @@
       ]
     },
     {
+      "key": "4817cb41e6aeab316186363c26cb1b0d7edafed2ca2851cee8aef0eece0c69ac",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        126,
+        "dialog",
+        66
+      ]
+    },
+    {
       "key": "a05662a882d469ad97c3bfcfc20b86d9a02036815318a4f741447b69ecc1ada8",
       "source": "wo2-x360",
       "ref": [
@@ -138464,7 +138519,7 @@
         "ens",
         151,
         "dialog",
-        33
+        36
       ]
     },
     {
@@ -138475,7 +138530,7 @@
         "ens",
         151,
         "dialog",
-        34
+        37
       ]
     },
     {
@@ -138497,7 +138552,7 @@
         "ens",
         151,
         "dialog",
-        36
+        33
       ]
     },
     {
@@ -138508,7 +138563,7 @@
         "ens",
         151,
         "dialog",
-        37
+        34
       ]
     },
     {
@@ -143733,6 +143788,17 @@
       ]
     },
     {
+      "key": "2e1d0b9880094d3ea1f3ed67a8358cf4f6cdd3900e287b12bda783cae182dca4",
+      "source": "wo2-x360",
+      "ref": [
+        "wo2-x360",
+        "ens",
+        141,
+        "dialog",
+        82
+      ]
+    },
+    {
       "key": "011ef35fef1845bb630c04a2f1082ad69f87f598f9efa5429951eb97bb3be24a",
       "source": "wo2-x360",
       "ref": [
@@ -147518,6 +147584,17 @@
       ]
     },
     {
+      "key": "a1b727bd0ba6b3434c6ea97c6f6405c1cf485f67064b6fe93d3d91b78cda98a4",
+      "source": "wo2-x360",
+      "ref": [
+        "wo2-x360",
+        "ens",
+        131,
+        "dialog",
+        14
+      ]
+    },
+    {
       "key": "bd2655a885de5286f64b9efbd53b5fba28d4c603c7081b257da156a580d4ef1f",
       "source": "wo2-x360",
       "ref": [
@@ -149367,14 +149444,8 @@
     },
     {
       "key": "72c4b3bb791373ab230b80e564c6da99445984f775d09eea1e5278692974bdb4",
-      "source": "wo2-x360",
-      "ref": [
-        "wo2-x360",
-        "ens",
-        163,
-        "dialog",
-        27
-      ]
+      "source": "authored",
+      "en": "Then I'll go too... No, no, I've got to hold this spot."
     },
     {
       "key": "0f6f31a6e08ee1dcbd23f3a5b21d5f1966a89ab8da241dbe1ff5ad57f1eb1824",
@@ -149593,7 +149664,7 @@
         "ens",
         163,
         "dialog",
-        47
+        39
       ]
     },
     {
@@ -155711,6 +155782,17 @@
         170,
         "dialog",
         15
+      ]
+    },
+    {
+      "key": "b9d7dd71dbac059dd28e95dae3ffb958cc054b6ca1c48ec8f2cc81daa28f86cc",
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        112,
+        "dialog",
+        85
       ]
     },
     {
@@ -242296,8 +242378,14 @@
     },
     {
       "key": "46b187d2fecb3d4b6c9f8662bd47369d489980de3c50f24bc823f3f6c4f67f04",
-      "source": "authored",
-      "en": "Hey, looks like somebody's really cuttin' it up out there!"
+      "source": "wo2-x360",
+      "ref": [
+        "wo2-x360",
+        "ens",
+        163,
+        "dialog",
+        27
+      ]
     },
     {
       "key": "a3ebce7de5d1920946b549bc26d0c83b6f1a0a6b1cd05e7b75ef44322efd5821",
@@ -242845,8 +242933,14 @@
     },
     {
       "key": "4bacc4a2051fa30507921e7dadfbfc22494acf034b719ed0783fc460e66bec6d",
-      "source": "authored",
-      "en": "Blast, they've seen through our ambush!"
+      "source": "wo1-x360",
+      "ref": [
+        "wo1-x360",
+        "ens",
+        98,
+        "dialog",
+        11
+      ]
     },
     {
       "key": "bc20a2a3a23b4c9e3c126ac94a1f8d44dff3c1ef4302a67a7b24d2343b464dfc",

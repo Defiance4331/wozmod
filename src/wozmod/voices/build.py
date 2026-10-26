@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import struct
 from dataclasses import dataclass
 from pathlib import Path
 
-from wozmod import resources
 from wozmod.donors import WO1_X360, WO2_X360, DonorsFolder
 from wozmod.formats.audio import (
     MOZ_VOICE_IDS, SE_BANKS, WO1_EVENT_VOICES, WO2_EVENT_VOICES, english_se_bank, english_voice_bank,
@@ -17,12 +15,12 @@ from wozmod.formats.linkdata import archive, decoded_member, ps2_members
 from wozmod.formats.scripts import Script, parse_script
 from wozmod.text.script_alignment import (
     EVENTS, PSP_QUOTE_INSERT, PSP_QUOTES, PSP_STAGE_MEMBERS, QUOTES, WO1_QUOTE_INSERT, donor_event_entries, moz_scripts,
-    paired_quote_tables, wo1_scripts, wo2_x360,
+    paired_quote_tables, stage_joins, wo1_scripts, wo2_x360,
 )
 
 from .events import build_event_schedules
 from .lips import donor_lips, english_lips, lip_bank, stock_lips, wo1_fits, x360_fits
-from .maps import dialogue_voice_maps, psp_voice_map, shown_lines
+from .maps import dialogue_voice_maps, psp_voice_map, slot_records, slot_table, stage_triggers, voice_slots
 
 
 VOICE_DONOR_FILES = (
@@ -32,7 +30,6 @@ VOICE_DONOR_FILES = (
 PSP_TEXT, PSP_VOICES = "PSP_GAME/USRDIR/LINKDATA_NA.FNS", "PSP_GAME/USRDIR/sound/voice_na.bns"
 PSP_SHOUTS, PSP_ENGLISH_SHOUTS = "PSP_GAME/USRDIR/LINKDATA.ENS", 1  # the English sound pack (EBOOT 0x1BEE48)
 PSP_VOICE_FILES = (PSP_TEXT, PSP_VOICES, PSP_SHOUTS)
-TEXT_TABLE = resources.root() / "data/text/table.json"
 
 
 def psp_text_voice_map(moz: dict[int, Script], quotes: bytes, fns: Path) -> dict[int, int]:
@@ -53,15 +50,9 @@ class VoiceBuildResult:
     lip_tiers: dict[str, int]
 
 
-def table_rows(table: Path = TEXT_TABLE) -> dict[str, dict]:
-    """The translation rows by key: a stage line's row decides which donor line, and so which voice, it pairs with."""
-    return {row["key"]: row for row in json.loads(table.read_text(encoding="utf-8"))["rows"]}
-
-
-def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | None = None,
-                      table: Path = TEXT_TABLE) -> VoiceBuildResult:
-    """Write voice/Voice.bin, voice/Lips.bin and voice/SE.bin below the supplied mod folder; jobs caps the ffmpeg
-    processes and table is the translation table."""
+def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | None = None) -> VoiceBuildResult:
+    """Write voice/Voice.bin, voice/Slots.bin, voice/Lips.bin and voice/SE.bin below the supplied mod folder; jobs
+    caps the ffmpeg processes."""
     stock, donors, output_dir = Path(stock), Path(donors), Path(output_dir)
     folders = DonorsFolder(donors)
     wo1, wo2, psp = folders.folder("wo1-x360"), folders.folder("wo2-x360"), folders.folder("wo2-psp")
@@ -72,22 +63,26 @@ def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | N
     quotes = linkdata1[quotes_entry]
     wo1_tables = paired_quote_tables(quotes, wo1_ens[wo1_quotes], ">", insert=WO1_QUOTE_INSERT)
     wo2_tables = paired_quote_tables(quotes, wo2_donor.members([wo2_quotes])[wo2_quotes], wo2_donor.order)
-    one, two = dialogue_voice_maps(
-        moz, wo1_scripts(wo1 / "linkdata_ens"),
-        wo2_donor.scripts(), wo1_tables, wo2_tables, shown_lines(moz, table_rows(table)),
-    )
+    wo1_by_ens, wo2_by_member = wo1_scripts(wo1 / "linkdata_ens"), wo2_donor.scripts()
+    joins = stage_joins(moz, wo1_by_ens, wo2_by_member)
+    one, two = dialogue_voice_maps(moz, wo1_by_ens, wo2_by_member, wo1_tables, wo2_tables, joins)
+    # A line that shares its voice id with a line whose trigger plays another take gets an id of its own.
+    slots = voice_slots(stage_triggers(moz, joins), one, two)
+    one, two = one | slot_records(slots, WO1_X360.name), two | slot_records(slots, WO2_X360.name)
     three = psp_text_voice_map(moz, quotes, psp / PSP_TEXT)
     voiceidx = decoded_member(linkdata1[4058])
     clips, sources = english_voice_clips(
         one, (wo1 / "linkdata_ans.idx").read_bytes(), wo1 / "link_vodat.bdx",
         two, (wo2 / "linkdata_ans.idx").read_bytes(), wo2 / "link_vodat.bdx",
         voiceidx, stock / "data/Sound/Voice/Voice.bin", jobs, psp=(three, psp / PSP_VOICES),
+        stock_ids={s.slot: s.voices[0] for s in slots.values()},
     )
     dialogue_tiers = {tier: sum(s == tier for s in sources.values()) for tier in ("wo1-x360", "wo2-x360", "wo2-psp")}
     destination = output_dir / "voice"
     destination.mkdir(parents=True, exist_ok=True)
     voice_path = destination / "Voice.bin"
     voice_path.write_bytes(english_voice_bank(clips))
+    (destination / "Slots.bin").write_bytes(slot_table(slots))
     stock_events = linkdata2.read([o for ordinals, _, _ in EVENTS for o in ordinals])
     wo1_events = wo1_ens.read(donor_event_entries(WO1_X360.name))
     wo2_events = wo2_donor.members(donor_event_entries(WO2_X360.name))
@@ -112,4 +107,4 @@ def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | N
     se_path.write_bytes(bank)
     english = sum(struct.unpack_from("<I", bank, 8 + 16 * b)[0] > 0 for b in range(SE_BANKS))
     return VoiceBuildResult(voice_path, se_path, dialogue_tiers, attack_tiers,
-                            MOZ_VOICE_IDS - len(clips), english, lip_tiers)
+                            MOZ_VOICE_IDS - sum(i < MOZ_VOICE_IDS for i in clips), english, lip_tiers)

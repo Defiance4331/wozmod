@@ -358,6 +358,11 @@ WO2_NEW_OFFICER_SELECT_VOICES = {0x5875: 0x28F4, 0x5883: 0x2902}
 # MOZ plays select voice = officer id (0x512B20). The X360 lacks officers 94 and 95; the PSP bank holds their voices
 # at 94 and 95 (inferred: its first 76 clips are the stock takes, and 94 and 95 are the stock ones less the padding).
 PSP_SELECT_VOICES = (94, 94, 2)
+# The Z Dream briefings, which only the PSP voices. MOZ stage s from 0x84 plays s + 0x1C0 (0x548C10). WO2 PSP
+# 0x2113F0 plays voice_na.bns member stage + 0x102 from its stage 0x48, + 0x106 below (0x211430 to 0x211458, the
+# stage at 0x126FE64), through 0x1BDF60, which reads the bank table 0x1C0F4C reads for 0x1BE014. Its stages 0x48-0x53
+# are MOZ's 0x84-0x8F (script_alignment.PSP_STAGE_MEMBERS), so voices 580-591 are records 330-341.
+PSP_BRIEFING_VOICES = (0x84 + 0x1C0, 0x48 + 0x102, 12)
 
 
 # Narration, still events and briefings: the donor game picks the same page, scene, record or stage as MOZ
@@ -365,7 +370,8 @@ PSP_SELECT_VOICES = (94, 94, 2)
 # item. WO1 pages: 0x8226E778(page) = table + 0x50, MOZ's table less 1 from its entry 209 on (MOZ adds a slot there).
 # WO1 camp talk: 0x8228F958(scene) = table + 0x149, MOZ's table. WO2 Z pages: record word 0 + 0x5C (0x822B09E4),
 # and from 92 + 166 the stage briefings, stage + 0x102 (0x8229F6D4), Dream 40-67 included. WO2 Z stills: command
-# word 2 + 0x146 (0x822DC8F4).
+# word 2 + 0x146 (0x822DC8F4). The run ends at voice 579, the last of those briefings: the Z Dream briefings after it
+# (580-591) are PSP_BRIEFING_VOICES.
 WO1_NARRATION_VOICES = ((96, 80, 209), (306, 289, 40), (592, 329, 628))
 WO2_NARRATION_VOICES = ((346, 92, 234), (1220, 326, 1072))
 
@@ -535,10 +541,12 @@ def english_voice_clips(wo1_mapping: dict[int, int], wo1_index: bytes, wo1_bank:
                         wo2_mapping: dict[int, int], wo2_index: bytes, wo2_bank: Path,
                         stock_index: bytes, stock_bank: Path,
                         jobs: int | None = None, *, psp: tuple[dict[int, int], Path] | None = None,
-                        ) -> tuple[dict[int, bytes], dict[int, str]]:
+                        stock_ids: dict[int, int] | None = None) -> tuple[dict[int, bytes], dict[int, str]]:
     """Select usable WO2 X360 clips, then WO1 X360 ones, then WO2 PSP ones (lower quality: only for a line neither
     Xbox 360 disc has), with each clip's source; jobs is the ffmpeg process count. A WO1 clip as long as the stock
-    clip is the stock take, not an English one, and is left out."""
+    clip is the stock take, not an English one, and is left out; stock_ids names the stock id whose take a voice slot
+    stands in for."""
+    stock_ids = stock_ids or {}
     banks = [("wo2-x360", wo2_mapping, wo2_voice_records(wo2_index), wo2_bank),
              ("wo1-x360", wo1_mapping, wo2_voice_records(wo1_index), wo1_bank)]
     if psp:
@@ -547,7 +555,8 @@ def english_voice_clips(wo1_mapping: dict[int, int], wo1_index: bytes, wo1_bank:
     samples = lambda record: parse_kovs_record(record, verify_checksums=False)[2].sample_count  # noqa: E731
     with stock_bank.open("rb") as stock:
         stock_takes = {moz_id for moz_id, source in sources.items() if source == "wo1-x360" and samples(clips[moz_id])
-                       == samples(_read_at(stock, *struct.unpack_from(">II", stock_index, 8 + 8 * moz_id)))}
+                       == samples(_read_at(stock, *struct.unpack_from(">II", stock_index,
+                                                                      8 + 8 * stock_ids.get(moz_id, moz_id))))}
     return ({i: clip for i, clip in clips.items() if i not in stock_takes},
             {i: source for i, source in sources.items() if i not in stock_takes})
 
@@ -558,9 +567,11 @@ def _read_at(stream: BinaryIO, offset: int, size: int) -> bytes:
 
 
 def english_voice_bank(clips: dict[int, bytes]) -> bytes:
-    """Assemble an indexed bank of validated mono 48 kHz clips."""
-    table, body = bytearray(_aligned_size(4 + 8 * MOZ_VOICE_IDS)), bytearray()
-    struct.pack_into("<I", table, 0, MOZ_VOICE_IDS)
+    """Assemble an indexed bank of validated mono 48 kHz clips: every stock voice id, then any voice slot past them
+    (wozmod.voices.maps.voice_slots)."""
+    ids = max(MOZ_VOICE_IDS, max(clips, default=0) + 1)
+    table, body = bytearray(_aligned_size(4 + 8 * ids)), bytearray()
+    struct.pack_into("<I", table, 0, ids)
     for moz_id, data in sorted(clips.items()):
         ogg = parse_kovs_record(data, ordinal=moz_id)[2]
         if (ogg.sample_rate, ogg.channels) != (48_000, 1) or len(data) > SLOT_BYTES:

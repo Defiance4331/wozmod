@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+TABLE = Path(__file__).resolve().parents[1] / "data/text/table.json"
+
 pytestmark = pytest.mark.skipif(not (os.environ.get("WOZMOD_GAME") and os.environ.get("WOZMOD_DONORS")),
                                 reason="set WOZMOD_GAME and WOZMOD_DONORS")
 
@@ -49,27 +51,24 @@ def files():
 def maps(files):
     """The installer's two X360 voice maps, built as voices.build builds them."""
     from wozmod.text.script_alignment import WO1_QUOTE_INSERT, paired_quote_tables, wo1_scripts
-    from wozmod.voices.build import table_rows
-    from wozmod.voices.maps import dialogue_voice_maps, shown_lines
+    from wozmod.voices.maps import dialogue_voice_maps
 
     return dialogue_voice_maps(
         files["moz"], wo1_scripts(files["wo1_dir"] / "linkdata_ens"), files["wo2_donor"].scripts(),
         paired_quote_tables(files["stock"], files["wo1"], ">", insert=WO1_QUOTE_INSERT),
-        paired_quote_tables(files["stock"], files["wo2"], files["wo2_donor"].order),
-        shown_lines(files["moz"], table_rows()))
+        paired_quote_tables(files["stock"], files["wo2"], files["wo2_donor"].order))
 
 
 def test_quote_voices_and_rows_follow_the_slot_the_quote_pickers_read(files, maps) -> None:
     # Bugs: a quote slot paired one off, or a table paired with another officer's, plays and shows another line; a
     # row points at a donor line other than the one at its slot. Oracle: each game reads slot k of the officer's
     # table for the same event (script_alignment.QUOTE_SLOTS), so the stock line at slot k plays the donor clip at
-    # slot k (a WO1 clip where its English is the X360 line's) and its row shows that donor line's words. A row keyed
-    # by a string several slots show passes when it shows one of their lines.
+    # slot k (a WO1 clip whatever its words, a fallback for a missing X360 clip) and its row shows that donor line's
+    # words. A row keyed by a string several slots show passes when it shows one of their lines.
     from wozmod.formats.audio import WO1_RECORD_BASE, WO2_CLIP_BASE, quote_voice
     from wozmod.formats.scripts import quote_tables, quote_text
     from wozmod.text.script_alignment import QUOTE_INSERT, QUOTE_SLOTS, WO1_QUOTE_INSERT
     from wozmod.text.stock import stock_key
-    from wozmod.voices.build import TEXT_TABLE
 
     stock = quote_tables(files["stock"])
     donors = {"wo2-x360": (quote_tables(files["wo2"], ">"), QUOTE_INSERT, WO2_CLIP_BASE, 17),
@@ -82,7 +81,7 @@ def test_quote_voices_and_rows_follow_the_slot_the_quote_pickers_read(files, map
         return tables[at][k] if at is not None and at < len(tables) and k < len(tables[at]) else b""
 
     failing, shown, voiced = [], {}, 0
-    rows = {row["key"]: row for row in json.loads(TEXT_TABLE.read_text(encoding="utf-8"))["rows"]}
+    rows = {row["key"]: row for row in json.loads(TABLE.read_text(encoding="utf-8"))["rows"]}
     for t, table in enumerate(stock):
         for k, line in enumerate(table):
             if not line or (t >= 2 and k not in QUOTE_SLOTS):
@@ -99,7 +98,7 @@ def test_quote_voices_and_rows_follow_the_slot_the_quote_pickers_read(files, map
                 if wo2_map.get(voice) != WO2_CLIP_BASE + clip - 1:
                     failing.append(f"quote {t}.{k} voice {voice:#x}: X360 {wo2_map.get(voice)}, "
                                    f"slot {WO2_CLIP_BASE + clip - 1}")
-            if (clip := _suffix(wo1)) is not None and x360 and quote_text(wo1) == quote_text(x360):
+            if (clip := _suffix(wo1)) is not None:
                 if wo1_map.get(voice) != WO1_RECORD_BASE + clip - 1:
                     failing.append(f"quote {t}.{k} voice {voice:#x}: WO1 {wo1_map.get(voice)}, "
                                    f"slot {WO1_RECORD_BASE + clip - 1}")
@@ -128,14 +127,14 @@ def test_psp_quote_voices_and_rows_follow_the_slot_both_pickers_read(files) -> N
     from wozmod.text.psp_alignment import psp_quote_text
     from wozmod.text.script_alignment import PSP_QUOTES, QUOTE_SLOTS
     from wozmod.text.stock import stock_key
-    from wozmod.voices.build import PSP_TEXT, TEXT_TABLE, psp_text_voice_map
+    from wozmod.voices.build import PSP_TEXT, psp_text_voice_map
 
     fns = files["folders"].folder("wo2-psp") / PSP_TEXT
     if not fns.is_file():
         pytest.skip("the WO2 PSP donor is not extracted")
     stock, psp = quote_tables(files["stock"]), quote_tables(ps2_members(fns, [PSP_QUOTES])[PSP_QUOTES])
     voices = psp_text_voice_map(files["moz"], files["stock"], fns)
-    rows = {row["key"]: row for row in json.loads(TEXT_TABLE.read_text(encoding="utf-8"))["rows"]}
+    rows = {row["key"]: row for row in json.loads(TABLE.read_text(encoding="utf-8"))["rows"]}
 
     def joined(t: int, k: int) -> bytes:
         return psp[t][k] if t < len(psp) and k < len(psp[t]) else b""

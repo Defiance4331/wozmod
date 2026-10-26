@@ -140,25 +140,28 @@ def test_each_text_hook_looks_up_the_key_the_context_model_uses(tmp_path: Path) 
     # suffix first, or the suffix row never tried), or served() picks another loose folder than contexts.served_entry
     # (the Japanese voice served the English-voice schedule, or the voice folder losing to the other), or a still
     # event's or WO1 page's draw stops trying its line with the voice key (camp talk then shows the shared row's
-    # English) while VOICE_KEYED_MESC says it does. The C under test is the runtime's own enrt_translate, text,
-    # event_line, overridden_part, voiced_line and served, compiled from english_runtime.c; page_voice, which reads
-    # the game's memory, is a stub.
+    # English) while VOICE_KEYED_MESC says it does; a spoken stage line's own row (its stage and line) is not tried
+    # first, or is tried for a line parsed outside a speak (a quote), or for the other line of its string. The C
+    # under test is the runtime's own enrt_translate, text, event_line, overridden_part, spoken_text, voiced_line and
+    # served, compiled from english_runtime.c; page_voice, which reads the game's memory, is a stub.
     if not (shutil.which("i686-w64-mingw32-gcc") and shutil.which("wine")):
         pytest.skip("i686-w64-mingw32-gcc or wine absent")
     source = (RUNTIME / "english_runtime.c").read_text()
     rows = {b"line@0012": b"Own wording", b"line": b"Shared wording", b"other": b"Other", b"quote": b"Quote",
-            b"line@V0942": b"Voiced wording"}
+            b"line@V0942": b"Voiced wording", b"line@0012@L1.12": b"Line wording"}
     stills = [(site, voice, text) for site, voice in (("STILL_DRAW", 942), ("STILL_Z_DRAW", 1480),
                                                       ("NARRATION_DRAW", 942))
               for text in (b"line", b"other")]
     blob = table_blob(rows)
     lines = [b"00line@0012", b"00line@0013", b"00other@0001", b"00none@0002", b"01quote@00042", b"00line"]
+    speaks = [(b"00line@0012", (1, 12)), (b"00line@0012", (1, 11)), (b"00line@0012", (2, 12)), (b"00line", (1, 12))]
     folders = [name.replace("\\\\", "/").rstrip("/") for name in
                re.findall(r'L"([^"]*)"', re.search(r"loose_dirs\[\d+\] = \{([^}]*)\}", source).group(1))]
     assert folders == [f for f, _ in contexts.LOOSE_FOLDERS], "contexts.LOOSE_FOLDERS is not the runtime's loose_dirs"
     cases = [(held, mode) for held in product((0, 1), repeat=len(folders)) for mode in contexts.MODES]
     glue = "\n".join([
         "#include <windows.h>", "#include <stdio.h>", "#include <string.h>", '#include "text_fit.h"',
+        '#include "voice_slots.h"',
         '#include "event_line.h"' if (RUNTIME / "event_line.h").exists() else "",
         "typedef unsigned int u32; typedef unsigned short u16; typedef unsigned char u8;",
         "static u32 inner; static const u32 *enrt_table; static u32 voice_saved;",
@@ -177,16 +180,25 @@ def test_each_text_hook_looks_up_the_key_the_context_model_uses(tmp_path: Path) 
         "static u32 page_voice(u32 ret) { return ret == STILL_Z_DRAW ? 1480 : 942; }",
         *([_c_function(source, r"static const char \*event_line\(const char \*s, u32 ret\)\n\{")]
           if "static const char *event_line(const char *s, u32 ret)\n{" in source else []),
-        _c_function(source, r"static u32 text\("), _c_function(source, r"static u32 voiced_line\("),
+        _c_function(source, r"static u32 text\("),
+        *(re.search(rf"^#define {macro}\b.*$", source, re.M).group(0) for macro in ("SPEAK_PARSE", "NO_LINE")),
+        re.search(r"^static u32 spoken_stage\b.*$", source, re.M).group(0),
+        _c_function(source, r"static const char \*spoken_text\("), _c_function(source, r"static u32 voiced_line\("),
         _c_function(source, r"static struct loose \*served\("),
         "static const unsigned char blob[] = {" + ",".join(map(str, blob)) + "};",
-        "static const char *shown(const char *line) {  /* hook 9, then the window hook 6 on the bare text */",
-        "    static char bare[256]; const char *v = (const char *)voiced_line((u32)line, 9, &no_frame), *at = strrchr(v + 2, '@');",
+        "static const char *shown_by(const char *line, const struct frame *f) {  /* hook 9, then hook 6 on the bare text */",
+        "    static char bare[256]; const char *v = (const char *)voiced_line((u32)line, 9, f), *at = strrchr(v + 2, '@');",
         "    size_t n = at ? (size_t)(at - (v + 2)) : strlen(v + 2);",
         "    memcpy(bare, v + 2, n), bare[n] = 0;", "    return (const char *)text((u32)bare, 6, &no_frame);", "}",
+        "static const char *shown(const char *line) { return shown_by(line, &no_frame); }",
+        "static const char *spoken(const char *line, u32 stage, u32 at) {  /* the speak (hook 118) set the line */",
+        "    static struct frame f = {.ret = SPEAK_PARSE};",
+        "    spoken_stage = stage, spoken_line = at;", "    return shown_by(line, &f);", "}",
         "int main(void) {", "    enrt_table = (const u32 *)blob;",
         "    loose = loose_store;" if re.search(r"^static struct loose \{.*\} \*loose;", source, re.M) else "",
         *(f'    puts(shown("{line.decode()}"));' for line in lines),
+        *(f'    puts(spoken("{line.decode()}", {stage}, {at}));' for line, (stage, at) in speaks),
+        '    puts(shown("00line@0012"));  /* another parse (a quote) while the last speak said stage 1 line 12 */',
         *(f'    puts((const char *)text((u32)"{line[2:].decode()}", 1, &no_frame));' for line in lines),
         *(f'    {{ static struct frame f = {{.ret = {site}}}; puts((const char *)text((u32)"{text.decode()}", 1, &f)); }}'
           for site, _, text in stills),
@@ -204,9 +216,14 @@ def test_each_text_hook_looks_up_the_key_the_context_model_uses(tmp_path: Path) 
     out = subprocess.run(["wine", str(tmp_path / "keys.exe")], env={**env, "WINEDLLOVERRIDES": "winedbg.exe=d;mscoree,mshtml="},
                          check=True, capture_output=True, timeout=120).stdout
     got = out.decode().replace("\r", "").split("\n")
-    voiced, drawn, still = got[:len(lines)], got[len(lines):2 * len(lines)], got[2 * len(lines):2 * len(lines) + len(stills)]
-    served = got[2 * len(lines) + len(stills):-1]
+    voiced, got = got[:len(lines)], got[len(lines):]
+    said, got = got[:len(speaks) + 1], got[len(speaks) + 1:]
+    drawn, still = got[:len(lines)], got[len(lines):len(lines) + len(stills)]
+    served = got[len(lines) + len(stills):-1]
     assert voiced == [contexts.shown_text(blob, "stage", line[2:])[0].decode() for line in lines]
+    assert said == [*(contexts.shown_text(blob, "stage", line[2:], line=at)[0].decode() for line, at in speaks),
+                    contexts.shown_text(blob, "quote", b"line@0012")[0].decode()]
+    assert said[:2] == ["Line wording", "Own wording"]  # the model and the runtime could agree on no lookup at all
     assert drawn == [contexts.shown_text(blob, "event", line[2:])[0].decode() for line in lines]
     assert still == [contexts.shown_text(blob, "mesc", text, voice)[0].decode() for _, voice, text in stills]
     expected = []

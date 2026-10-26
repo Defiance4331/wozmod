@@ -20,7 +20,9 @@ Verified in the stock executable (disassembly, 2026-10-24); the tables are read 
 - 4071, Z chapter narration: record word 0 + 0x15A (0x55FB26), and word 0 equals the text index in every record.
   The records of stage s are container entry s + 1 (0x55FB0E, the stage [0x801AA0]).
 - 4190, briefings: stage s plays voice s + 0x200 (0x548C1D), or s + 0x1C0 from stage 0x84 (0x548C10), and shows
-  entry s - 0x28, or s - 0x68 from 0x84 (0x548C4A).
+  entry s - 0x28, or s - 0x68 from 0x84 (0x548C4A). The English takes: WO2 X360 voices the stages below 0x84
+  (formats.audio WO2_NARRATION_VOICES, voices 552-579), and only WO2 PSP the Z Dream stages from 0x84
+  (PSP_BRIEFING_VOICES, voices 580-591).
 
 Under the WO1 voice mode the Z screens would add 0x250 or 0x60; the Z story plays them in mode 0, as modelled here.
 """

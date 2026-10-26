@@ -18,8 +18,8 @@ from wozmod.formats.linkdata import archive
 from wozmod.formats.scripts import mesc_blocks
 from wozmod.text.contexts import DONOR_MESC, mesc_records
 from wozmod.text.narration_voices import (
-    PAGE_TABLE, SCENE_TABLE, STILL_LINES, Z_NARRATION_BASE, Z_STILL_BASE, briefing_voices, camp_voices, container,
-    line_voices, page_voices,
+    BRIEFING_VOICES, PAGE_TABLE, SCENE_TABLE, STILL_LINES, Z_NARRATION_BASE, Z_STILL_BASE, briefing_voices, camp_voices,
+    container, line_voices, page_voices,
 )
 from wozmod.text.script_alignment import BRIEFINGS, X360_ENS
 
@@ -226,3 +226,48 @@ def test_narration_blocks_give_each_line_the_record_its_donor_plays_with_the_sam
                       if plays.get((entry, *line.pointer[4:])) != clip[1]]
     print(f"{donor}: {len(items)} lines joined")
     assert not wrong, f"{len(wrong)} disagreements: " + "; ".join(wrong[:20])
+
+
+def test_psp_briefings_give_each_z_dream_stage_the_record_the_psp_plays_with_its_briefing(inputs) -> None:
+    # Bug: the PSP briefing block starts one record off or on the wrong base (the X360's Dream 40-67 add 0x106 on the
+    # PSP), or another map overrides it, so a Z Dream briefing speaks its neighbour's or another screen's English; or
+    # the briefing text pairing (BRIEFINGS[2]) shows another stage's text than the PSP draws beside that take. Oracle:
+    # the PSP program read for the same stage. Its stage s is the one whose script is FNS member s + 198 (0x1524E4,
+    # PSP_STAGE_MEMBERS); from stage 0x48 (0x2111CC, 0x211444) it shows member s - 11 (0x2111DC) and plays
+    # voice_na.bns member s + 0x102 (0x211454) through 0x1BDF60 (0x21145C), which reads the bank table 0x1C0F4C reads
+    # for the story lines' player 0x1BE014 (via 0x1C0768).
+    from wozmod.formats.linkdata import archive as stock_archive
+    from wozmod.text.script_alignment import PSP_STAGE_MEMBERS, QUOTES, moz_scripts
+    from wozmod.voices.build import PSP_TEXT, psp_text_voice_map
+
+    donors, game = Path(os.environ["WOZMOD_DONORS"]), Path(os.environ["WOZMOD_GAME"])
+    psp = (donors / "wo2-psp/eboot.prx").read_bytes()
+
+    def mips(va: int, opcode: int) -> int:  # the signed immediate of a PSP instruction (code segment at file 0x54)
+        word = struct.unpack_from("<I", psp, 0x54 + va)[0]
+        assert word >> 26 == opcode, f"{va:#x} is not opcode {opcode}"
+        return (word & 0xFFFF) - ((word & 0x8000) << 1)
+
+    def jal(va: int) -> int:
+        word = struct.unpack_from("<I", psp, 0x54 + va)[0]
+        assert word >> 26 == 3, f"{va:#x} is not a jal"
+        return (word & 0x03FFFFFF) << 2
+
+    assert (jal(0x21145C), jal(0x1BDF8C), jal(0x1BE064), jal(0x1C078C)) == (0x1BDF60, 0x1C0F4C, 0x1C0768, 0x1C0F4C)
+    split, text_split = mips(0x211444, 10), mips(0x2111CC, 10)  # slti stage, 0x48
+    script, shown, record = mips(0x1524E4, 9), mips(0x2111DC, 9), mips(0x211454, 9)  # addiu
+    voices = psp_text_voice_map(moz_scripts(game / "LINKDATA2"), stock_archive(game / "LINKDATA1")[QUOTES[0]],
+                                donors / "wo2-psp" / PSP_TEXT)
+    by_entry = briefing_voices(inputs["exe"])
+    _, z_dream, entry_shift = BRIEFING_VOICES[1]  # MOZ stages 0x84-0x8F show entry s - 0x68 (0x548C4A)
+    assert sorted(PSP_STAGE_MEMBERS) == list(z_dream)
+    wrong = []
+    for moz_stage in z_dream:
+        entry, stage = moz_stage - entry_shift, PSP_STAGE_MEMBERS[moz_stage] - script
+        assert stage >= split == text_split, f"PSP stage {stage} takes the other briefing branch"
+        voice, member = by_entry[entry], BRIEFINGS[2][entry - len(BRIEFINGS[1])]
+        if member != stage + shown:
+            wrong.append(f"4190 entry {entry}: paired with PSP member {member}, the PSP shows {stage + shown}")
+        if voices.get(voice) != stage + record:
+            wrong.append(f"4190 entry {entry}: voice {voice} maps to {voices.get(voice)}, the PSP plays {stage + record}")
+    assert not wrong, "; ".join(wrong)

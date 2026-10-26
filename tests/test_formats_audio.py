@@ -106,13 +106,15 @@ def test_wo2_voice_index_requires_contiguous_sector_starts() -> None:
 
 
 def test_voice_bank_table_serves_sparse_ids_with_their_own_aligned_records() -> None:
-    clips = {MOZ_VOICE_IDS - 1: _record(90, serial=1), 5: _record(101, serial=2)}
+    # Bugs: a record served under another id or misaligned; a voice slot past the stock ids (voices.maps.voice_slots)
+    # left out of the count, so the runtime (english_voice: id < count) never plays it.
+    clips = {MOZ_VOICE_IDS - 1: _record(90, serial=1), 5: _record(101, serial=2), MOZ_VOICE_IDS + 1: _record(80, serial=3)}
     bank = english_voice_bank(clips)
-    table = [struct.unpack_from("<II", bank, 4 + 8 * i) for i in range(MOZ_VOICE_IDS)]
+    count = struct.unpack_from("<I", bank)[0]
+    table = [struct.unpack_from("<II", bank, 4 + 8 * i) for i in range(count)]
 
-    assert struct.unpack_from("<I", bank)[0] == MOZ_VOICE_IDS
+    assert count == MOZ_VOICE_IDS + 2
     assert {i: (off % 16, bank[off:off + size]) for i, (off, size) in enumerate(table) if size} == {i: (0, clip) for i, clip in clips.items()}
-    assert len(bank) == 181_536
 
 
 def test_se_replacement_keeps_each_clip_offset_and_preserves_non_audio_fields() -> None:

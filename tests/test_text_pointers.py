@@ -126,7 +126,7 @@ def test_series_titles_use_the_western_number():
 @pytest.mark.skipif(not (os.environ.get("WOZMOD_DONORS") and os.environ.get("WOZMOD_GAME")),
                     reason="set WOZMOD_DONORS and WOZMOD_GAME")
 @pytest.mark.slow_first
-def test_each_shown_notice_and_dream_line_takes_the_donor_record_its_command_shows():
+def test_each_shown_notice_and_spoken_line_takes_the_donor_record_its_command_shows():
     # Bugs: a notice or Dream line row paired by its place in its table, so a record MOZ inserts or drops (Dream stage
     # 46's notices) puts every later row one donor record off; a pointer typed one record off; a shared string's row
     # (one that points into another donor file than the stages that show it) whose words none of those stages gives.
@@ -134,12 +134,13 @@ def test_each_shown_notice_and_dream_line_takes_the_donor_record_its_command_sho
     # tables. Each site (stage, record) a command shows is checked whose row points into a donor stage table. The row's
     # words must be what the join gives that site or another site of the same stock string. Where the join gives a
     # site of the string nothing, the row must not take a donor record the join gives another stock string. Story
-    # lines pair by voice suffix (C1) instead.
+    # lines pair as Dream lines do, by the speak command's counterpart (WO1 82.11 shows the line its trigger speaks,
+    # decisions ledger text row 22), not by voice suffix.
     from wozmod.donors import DonorsFolder
     from wozmod.formats.linkdata import decoded_member, ps2_members
     from wozmod.formats.scripts import NOTICE, SPEAK, donor_text, parse_script
     from wozmod.text.resolver import DonorResolver
-    from wozmod.text.script_alignment import DREAM_SCRIPTS, PSP_STAGE_MEMBERS, moz_scripts, stage_joins, wo1_scripts, wo2_x360
+    from wozmod.text.script_alignment import PSP_STAGE_MEMBERS, moz_scripts, stage_joins, wo1_scripts, wo2_x360
     from wozmod.text.stock import stock_key
     from wozmod.voices.build import PSP_TEXT
 
@@ -151,16 +152,12 @@ def test_each_shown_notice_and_dream_line_takes_the_donor_record_its_command_sho
                         wo2_x360(folders.folder("wo2-x360") / "linkdata_ens").scripts(), psp)
     rows = {row["key"]: row for row in json.loads(TABLE.read_text())["rows"]}
     resolver = DonorResolver(Path(os.environ["WOZMOD_DONORS"]))
-    dream = {o for o, _ in DREAM_SCRIPTS} | set(psp)
 
     sites, backs, claims = [], {}, {}
     for o, join in joins.items():
         pairs = join.pairs | join.notices
         shown = {("notices", c[1]) if c[0] == NOTICE else ("dialog", c[2])
                  for event in moz[o].events for c in event if c[0] in (NOTICE, SPEAK)}
-        by_voice = {}
-        for record in join.donor.dialog.records:
-            by_voice.setdefault(record.dialog_suffix, []).append(record.text_bytes)
         for table in ("notices", "dialog"):
             theirs = getattr(join.donor, table).records
             site = [join.source, "fns" if join.source == "wo2-psp" else "ens", join.entry, table]
@@ -168,10 +165,6 @@ def test_each_shown_notice_and_dream_line_takes_the_donor_record_its_command_sho
                 key = next((k[0] for raw in (line.value[2:], line.text_bytes) if (k := stock_key(raw)) and k[0] in rows),
                            None)
                 ref = rows[key].get("ref") if key else None
-                if o not in dream and table == "dialog":
-                    if key and line.dialog_suffix and len(voiced := by_voice.get(line.dialog_suffix, ())) == 1:
-                        backs.setdefault(key, set()).add(donor_text(voiced[0]))  # a story line, by voice suffix (C1)
-                    continue
                 if (table, r) not in shown or not ref or len(ref) != 5 or ref[3] not in ("notices", "dialog"):
                     continue
                 joined = pairs.get((table, r))
