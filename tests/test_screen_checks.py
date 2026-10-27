@@ -97,14 +97,37 @@ def test_the_weapon_rows_pips_are_measured_against_the_frame_that_holds_the_row(
     assert not sc.quad_within_box(shown(pip(584)), "4079.81", "0x999").ok
 
 
-def test_a_list_frame_past_the_screen_edge_fails_though_its_names_and_pips_fit():
-    """Bug: the upgrade skills' weapon list rests at 831 and grew to 506 wide, so its frame ends at 1337 on a 1280
-    screen while every name and pip (to 1267) is inside it; only the frame's own end shows it."""
-    frame = {"x": 831, "y": 166, "width": 506, "height": 183, "caller": "0x526df1", "count": 1}
-    c = sc.box_within_edge({"boxes": [frame]}, "0x526df1")
-    assert not c.ok and c.numbers["worst_over"] == 57
-    assert sc.box_within_edge({"boxes": [{**frame, "width": 449}]}, "0x526df1").ok  # ends on the edge, 1280
-    assert not sc.box_within_edge({"boxes": [frame]}, "0x999").ok
+def test_a_box_past_either_safe_edge_fails_and_only_named_full_width_art_is_exempt():
+    """Bug: the weapon card at 627, 645 wide, ends at 1272, inside the 1280 screen but 56 past the safe edge 1216;
+    the old screen-edge check passed it. A box starting left of 64 breaks the same rule on the other side."""
+    def box(x, width, caller="0x5955c8"):
+        return {"x": x, "y": 160, "width": width, "height": 224, "caller": caller, "count": 1}
+    c = sc.box_within_safe_area({"boxes": [box(560, 645), box(627, 645), box(56, 400, "0x5951f3")]})
+    assert not c.ok and c.numbers["outside"] == [{"caller": "0x5955c8", "x": 627, "right": 1272},
+                                                 {"caller": "0x5951f3", "x": 56, "right": 456}]
+    assert sc.box_within_safe_area({"boxes": [box(64, 1152)]}).ok  # both edges exactly on the safe area
+    assert sc.box_within_safe_area({"boxes": [box(560, 645), box(0, 1280, "0x58d319")]}).ok  # the backdrop
+    assert not sc.box_within_safe_area({"boxes": [box(0, 1280, "0x999")]}).ok  # any other full-width box
+    assert not sc.box_within_safe_area({"boxes": [box(0, 1280, "0x58d319")]}).ok  # nothing left to check
+
+
+def test_a_name_one_px_off_the_inset_in_its_own_row_plate_fails():
+    """Bug: the officer lists draw names 7 in and the weapon rows 11 in, against the 10 of section 4; or the check
+    measures from the list's frame (drawn by the same caller, further left) instead of the row's own plate."""
+    def plate(x, y, width=321, caller="0x595b10"):
+        return {"x": x, "y": y, "width": width, "height": 38, "caller": caller, "count": 1}
+    frame = plate(496, 100, 337, "0x595b10") | {"height": 400}  # the list's frame around the rows, same caller
+    rows = [plate(504, 120), plate(504, 162)]
+    shown = lambda *names: {"texts": list(names), "boxes": [frame, *rows]}
+    assert sc.text_inset(shown(text(514, 128, 90), text(514, 170, 90)), None, "0x595b10").ok
+    c = sc.text_inset(shown(text(514, 128, 90), text(511, 170, 90)), None, "0x595b10")
+    assert not c.ok and c.numbers["off"] == [{"text_at": (511, 170), "inset": 7}]
+    assert not sc.text_inset(shown(text(515, 128, 90)), None, "0x595b10").ok  # 11 in
+    assert not sc.text_inset(shown(text(514, 600, 90)), {"caller": "0x1"}, "0x595b10").ok  # on no plate
+    unlogged = {"texts": [text(511, 182, 124)], "boxes": [plate(482, 140, 321, "0x595ace") | {"height": 402}]}
+    assert not sc.text_inset(unlogged, None, "0x595ace", plate_x=22).ok  # 29 into the frame: 7 into the plate
+    assert sc.text_inset(unlogged | {"texts": [text(514, 182, 124), text(100, 182, 50)]}, None, "0x595ace",
+                         plate_x=22).ok  # with no selector, only the texts on the frame
 
 
 def test_squished_text_is_measured_by_its_ink_not_its_reported_width():

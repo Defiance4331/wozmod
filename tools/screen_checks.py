@@ -30,6 +30,7 @@ from PIL import Image
 from wozmod.runtime import layout, text_boxes
 from wozmod.runtime.english_runtime import DLL_BASE
 from wozmod.runtime.latin_font import width as _table_width
+from wozmod.runtime.runtime_edits import SAFE_LEFT, SAFE_RIGHT
 
 LAYOUT_W = 1280
 TEXT_H = 28  # one glyph row, layout px
@@ -272,14 +273,50 @@ def quad_within_box(screen: dict, quad: str, box: str, caller: str | None = None
                                "outside": outside})
 
 
-def box_within_edge(screen: dict, box: str, edge: int = LAYOUT_W, allow_empty: bool = False) -> Check:
-    """Each box drawn by caller `box` ends at or before `edge`: a list's frame that grew with the wider weapon row must
-    not hang past the screen, however well its names and pips stay inside it."""
+# docs/design-language.md, section 4: a list's names start this far inside their plates.
+TEXT_INSET = 10
+
+
+def text_inset(screen: dict, text: dict | None = None, box: str = "", inset: int = TEXT_INSET, plate_x: int = 0,
+               tol: float = 0.5, allow_empty: bool = False) -> Check:
+    """Each selected text starts `inset` px right of the left edge of its plate: the nearest box drawn by caller
+    `box` that starts at or left of the text and whose height holds its y (a row's plate, not the list's frame
+    around it, when one caller draws both). `plate_x`: where a list draws its rows' plates in the logged frame when
+    the plates themselves are not logged (the Weapon pages' officer list, 0x595AA0). With no `text` selector, the
+    texts that start on such a box (names the runtime draws, whose caller is in the DLL)."""
     bs = [b for b in screen.get("boxes", []) if b["caller"].lower() == box.lower()]
+    on = lambda t, b: b["y"] <= t["y"] < b["y"] + b["height"] and b["x"] <= t["x"] < b["x"] + b["width"]
+    ts = [t for t in _texts(screen, text) if text is not None or any(on(t, b) for b in bs)]
+    if not ts or not bs:
+        return _empty(f"texts={len(ts)} boxes={len(bs)}", allow_empty)
+    off, insets = [], []
+    for t in ts:
+        plates = [b for b in bs if on(t, b)]
+        got = round(t["x"] - max(b["x"] for b in plates) - plate_x, 2) if plates else None
+        insets.append(got)
+        if got is None or abs(got - inset) > tol:
+            off.append({"text_at": (t["x"], t["y"]), "inset": got})
+    return Check(not off, {"texts": len(ts), "inset": inset, "insets": sorted(set(insets), key=str), "off": off})
+
+
+# Stock full-width art that keeps its stock place (docs/design-language.md, section 2): box caller -> what it is.
+SAFE_AREA_FULL_WIDTH = {
+    "0x58d319": "the camp menus' full-screen backdrop (0x58D270), 1280 x 720",
+    "0x537919": "the pre-battle menu's full-screen backdrop (0x5378E0), left half 640 x 720",
+    "0x537958": "the same backdrop's mirrored right half",
+    "0x585874": "the battle results' full-screen backdrop (0x585830), 1280 x 720",
+}
+
+
+def box_within_safe_area(screen: dict, allow_empty: bool = False) -> Check:
+    """Every logged box on the screen (frames, plates, thumbnails, cursors) lies within the safe area's x range
+    (docs/design-language.md, section 2), but the stock full-width art in SAFE_AREA_FULL_WIDTH."""
+    bs = [b for b in screen.get("boxes", []) if b["caller"].lower() not in SAFE_AREA_FULL_WIDTH]
     if not bs:
         return _empty("boxes=0", allow_empty)
-    ends = [b["x"] + b["width"] for b in bs]
-    return Check(max(ends) <= edge, {"right_ends": ends, "edge": edge, "worst_over": max(0, max(ends) - edge)})
+    outside = [{"caller": b["caller"], "x": b["x"], "right": b["x"] + b["width"]} for b in bs
+               if b["x"] < SAFE_LEFT or b["x"] + b["width"] > SAFE_RIGHT]
+    return Check(not outside, {"boxes": len(bs), "safe": (SAFE_LEFT, SAFE_RIGHT), "outside": outside})
 
 
 def text_position(screen: dict, text: dict | None, x: int | None = None, y: int | None = None,
@@ -605,7 +642,8 @@ ASSERTIONS: dict[str, tuple[Callable[..., Check], bool]] = {
     "text_within_edge": (text_within_edge, False),
     "text_within_box": (text_within_box, False),
     "quad_within_box": (quad_within_box, False),
-    "box_within_edge": (box_within_edge, False),
+    "box_within_safe_area": (box_within_safe_area, False),
+    "text_inset": (text_inset, False),
     "text_position": (text_position, False),
     "text_box": (text_box, False),
     "text_cell": (text_cell, False),

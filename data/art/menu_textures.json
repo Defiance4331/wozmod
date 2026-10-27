@@ -3883,7 +3883,15 @@
         [
           {
             "face": "help",
-            "text": "Please select the character whose weapon you wish to use to create an upgrade skill."
+            "text": {
+              "ref": [
+                "wo2-psp",
+                "prx",
+                88430
+              ],
+              "sha256": "ebab93d6080d604753e4c1765317060817c13477797c50673e1f8d2ad56eec3b"
+            },
+            "room": 588
           }
         ]
       ],
@@ -17155,7 +17163,7 @@
               95,
               98
             ],
-            "width": 150
+            "width": 149
           }
         }
       ],
@@ -17341,7 +17349,7 @@
           198,
           0
         ],
-        "width": 138,
+        "width": 145,
         "column": 3,
         "right": 2
       },
@@ -17516,7 +17524,7 @@
           213,
           0
         ],
-        "width": 138,
+        "width": 145,
         "column": 35,
         "right": 2
       },

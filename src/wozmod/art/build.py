@@ -174,6 +174,9 @@ def composed(stock: Image.Image, rows: list[list[dict]], donors: dict, align: st
             line.alpha_composite(part, (x, dy))
             x += part.width + gap
         line = line.crop(ink(line))
+        room = pieces[0].get("room")  # a hint row's strip: wider ink condenses to it, in place
+        if room and line.width > room and donors.get("squish", True):
+            line = line.resize((room, line.height), Image.Resampling.LANCZOS)
         window = pieces[0].get("window")
         if window:
             x0, x1 = window

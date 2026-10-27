@@ -304,9 +304,11 @@ MENU_RASTER = "wozmod.fonts.menu"
 MENU_STYLE = {name: f"dark.{name}" for name in
               ("pause", "help", "controls", "plate", "records", "results", "camp", "attributes")}
 
+# The quad each hint is drawn in, as the runtime pushes it (0x533200's width). 4060.10's holds its row condensed to
+# its room (588, menu_textures.json), ink from x 1 to 589 plus 2, in 4 px steps: 592 (0x5276E7).
 HELP_QUAD_WIDTH = {(4060, i): width for i, width in
                    [(2, 548), (3, 544), (4, 392), (5, 400), (6, 476),
-                    (7, 420), (8, 448), (9, 528), (10, 560), (11, 632), (13, 648)]}
+                    (7, 420), (8, 448), (9, 528), (10, 592), (11, 632), (13, 648)]}
 HELP_QUAD_WIDTH[(4074, 10)] = 420
 BUTTON_RASTER = "wozmod.fonts.buttonraster"
 VECTOR_WINDOW = {(4069, 2): (101, 411), (4060, 14): (0, 288), (4064, 5): (100, 412), (4080, 0): (0, 208),
@@ -536,6 +538,12 @@ def stock_split(band: Image.Image, gap: int) -> int:
         x += 1
     return x
 
+def help_fit(geometry: tuple, piece: dict) -> tuple:
+    """The width a hint row's ink may take: its official row, and no more than the room its strip leaves
+    (the row's "room"), so a hint condenses only as far as it needs to fit both."""
+    room = piece.get("room")
+    return geometry if room is None else (geometry[0], min(geometry[1], geometry[0] + room), geometry[2])
+
 def help_layout(entry: int, item: int, right: float, width: float) -> tuple[float, int]:
 
     quad = HELP_QUAD_WIDTH.get((entry, item))
@@ -568,7 +576,7 @@ def vector_art(edit: dict, served: Image.Image, texts: list, scale: int, window=
             options = menu_render_options(render_entry, render_item, k, piece, "help",
                                           destination=(edit["entry"], edit["item"]))
             label, metrics = lettering.header(text, scale, MENU_RASTER, *options)
-            label, metrics = lettering.squeezed(label, metrics, geometry, scale, squeeze)
+            label, metrics = lettering.squeezed(label, metrics, help_fit(geometry, piece), scale, squeeze)
             help_labels[k] = label, metrics
             geometries.append(geometry)
             widths.append((metrics["ink"][2] - metrics["ink"][0]) / scale)

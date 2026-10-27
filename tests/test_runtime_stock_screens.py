@@ -90,21 +90,65 @@ def test_every_list_that_draws_the_weapon_row_grows_with_it(code, calls) -> None
     assert drawn_from == set(runtime_edits.WEAPON_LIST_ORIGINS)
 
 
-def test_the_discard_list_grows_like_the_menu_list_and_keeps_its_right_edge(code) -> None:
-    """Bug: the end-of-battle discard list (0x584300) grows but keeps its stock x, so it runs into the weapon card
-    right of it, or moves without the portrait drawn above it at a 3 px inset."""
-    assert code(0x584368, 1) == code(0x5951E6, 1) == b"\x68"
-    assert code(0x5846B9, 2) == code(0x5845FC, 2) == bytes.fromhex("8d93")  # lea edx, [ebx + disp32]
-    width = lambda va, edited: struct.unpack("<I", code(va + 1, 4, edited))[0]
-    x = lambda va, edited: struct.unpack("<i", code(va + 2, 4, edited))[0]
-    assert width(0x584368, True) == width(0x5951E6, True)
-    grow = width(0x584368, True) - width(0x584368, False)
-    assert x(0x5846B9, True) + width(0x584368, True) == x(0x5846B9, False) + width(0x584368, False)
-    assert x(0x5845FC, True) - x(0x5846B9, True) == x(0x5845FC, False) - x(0x5846B9, False) == 3
-    assert x(0x5846B9, True) == x(0x5846B9, False) - grow
+# Pages that set a list beside a weapon card: (list x, list width, column x: the card and any info box stacked with it,
+# column width), each a site and the offset of its 32-bit value in the instruction; and the (rest, travel) sites of the
+# column's slides from x 0x500. INFO_WIDTH: the info boxes' width, pushed in their detours' caves (runtime_edits).
+CARD_PAGE_SITES = {
+    "discard": ((0x5846B9, 2), (0x584368, 1), [(0x5846EF, 2)], (0x59858F, 1), []),
+    "weapon pick": ((0x5298EC, 4), (0x5951E6, 1), [(0x529A90, 1)], (0x53375B, 1), [(0x529A90, 0x529A71)]),
+    "camp weapon panel": ((0x531983, 4), (0x5951E6, 1), [(0x531B5E, 1)], (0x59858F, 1), [(0x531B5E, 0x531B3F)]),
+    "pre-battle weapon panel": ((0x53C92D, 4), (0x5951E6, 1), [(0x53CAF5, 1)], (0x59858F, 1), [(0x53CAF5, 0x53CAD6)]),
+    "upgrade skills weapons": ((0x527A84, 4), (0x526DE4, 1), [(0x527D47, 1), (0x527BE8, 1)], (0x5955BB, 1),
+                               [(0x527D47, 0x527D28), (0x527BE8, 0x527BF2)]),
+    "attributes": ((0x528F27, 1), (0x5332F8, 1), [(0x529012, 1), (0x52921D, 1)], (0x53375B, 1), [(0x52921D, 0x529227)]),
+    "fusion weapons": ((0x52D1F2, 4), (0x5951E6, 1), [(0x52D4E8, 1)], (0x53375B, 1), [(0x52D4E8, 0x52D3A4)]),
+    "fusion transfer": ((0x52F9A2, 1), (0x52E5CD, 1), [(0x52FC5A, 1), (0x52FA59, 1)], (0x52D077, 1),
+                        [(0x52FA59, 0x52FA3A), (0x52FB5B, 0x52FB6A)]),
+    "fusion confirm": ((0x52ED9C, 4), (0x5951E6, 1), [(0x52EEFC, 1)], (0x52D077, 1), []),
+    # the pre-battle officer page (0x598B70): the card column (rows over the card), then the portrait column
+    "pre-battle officer page": ((0x598DF0, 1), (0x598E01, 1), [(0x5988C8, 1)], (0x5988DA, 1), [(0x5988C8, 0x5988A7)]),
+}
+INFO_WIDTH = [runtime_edits.CAVE + 0x540 + 11, runtime_edits.CAVE + 0x560 + 11]
+# The attributes page draws its card over the weapon pick's at one absolute x, so its group is not centred; the
+# fusion card keeps one x on every fusion step (docs/design-language.md, Panels on a page, step 5).
+SHARED_CARD = {"attributes": "weapon pick", "fusion transfer": "fusion weapons", "fusion confirm": "fusion weapons"}
 
 
-LENGTHS = {0x6A: 2, 0x68: 5, 0x6B: 3, 0x69: 6, 0x99: 1, 0x83: 3, 0x81: 6, 0xB9: 5, **dict.fromkeys(range(0x50, 0x58), 1)}
+def test_card_pages_set_list_and_card_column_a_panel_gap_apart_centred_in_the_safe_area(code) -> None:
+    """Bug: a page's list grows but keeps its stock x and runs into the card; a card or info box keeps its stock x and
+    leaves the safe area; an info box stacked with a card keeps its own x or width; a slide keeps its stock travel and
+    lands off the new rest; or the discard list moves without the portrait drawn above it at a 3 px inset.
+    docs/design-language.md: side-by-side panels 28 apart, centred in x 64..1216; a column's panels share both edges."""
+    value = lambda site, edited=True: struct.unpack("<i", code(site[0] + site[1], 4, edited))[0]
+    info_width = {struct.unpack("<i", code(va, 4, True))[0] for va in INFO_WIDTH}
+    bad, columns = [], {}
+    for page, (list_x, list_w, column, column_w, slides) in CARD_PAGE_SITES.items():
+        lx, lw, cw = value(list_x), value(list_w), value(column_w)
+        cx = {value(site) for site in column}
+        columns[page] = cx
+        right = max(cx) + cw
+        if len(cx) != 1 or (len(column) > 1 and info_width != {cw}):
+            bad.append((page, "column edges", sorted(cx), cw, info_width))
+        if min(cx) - (lx + lw) != 28 or lx < 64 or right > 1216:
+            bad.append((page, "gap or safe area", lx, lw, sorted(cx), right))
+        if page not in SHARED_CARD and abs((lx - 64) - (1216 - right)) > 1:
+            bad.append((page, "not centred", lx - 64, 1216 - right))
+        for rest, travel in slides:
+            if 0x500 - value((travel, 2)) != value((rest, 1)):
+                bad.append((page, "slide", hex(rest), 0x500 - value((travel, 2)), value((rest, 1))))
+    bad += [(page, "card moves between steps", columns[page], columns[other])
+            for page, other in SHARED_CARD.items() if columns[page] != columns[other]]
+    rows = value((0x598BBD, 1))  # the officer page's rows: the name x; plate at -0x60, first row y at the lea's disp
+    if rows - 0x60 != value((0x598DF0, 1)) or rows + struct.unpack("<b", code(0x598BD7, 1, True))[0] != 131:
+        bad.append(("pre-battle officer page", "rows", rows - 0x60, value((0x598DF0, 1))))
+    portrait = (0x5845FC, 2)
+    if value(portrait) - value((0x5846B9, 2)) != value(portrait, False) - value((0x5846B9, 2), False) != 3:
+        bad.append(("discard", "portrait inset", value(portrait) - value((0x5846B9, 2))))
+    assert not bad
+
+
+LENGTHS = {0x6A: 2, 0x68: 5, 0x6B: 3, 0x69: 6, 0x99: 1, 0x83: 3, 0x81: 6, 0xB9: 5, 0x8D: 4, **dict.fromkeys(range(0x50, 0x58), 1)}
+# (0x8D only in its lea r, [r + r + disp8] form, the one the walked runs use)
 
 
 def edited_run(code, va: int, n: int) -> list[bytes]:
@@ -127,6 +171,47 @@ def immediate(ins: bytes) -> int:
             0x83: lambda: struct.unpack("<b", ins[2:3])[0], 0x81: lambda: struct.unpack("<i", ins[2:6])[0]}[ins[0]]()
 
 
+# Parts drawn at an absolute x on a fusion step, at a fixed offset from that step's card: (site, stock card x).
+FUSION_CARD_PARTS = {
+    0x52D604: 0x273, 0x52D5CD: 0x273,  # 0x52D0D0's second card at rest, and where mode 5 moves it from
+    0x52EEFC: 0x273, 0x52EF14: 0x273, 0x52EF88: 0x273,  # 0x52ECC0: card, fusion overlay, heading tab
+    0x52ED42: 0x273, 0x52ED32: 0x273,  # and the dialog under the card, at rest and its slide's end
+    0x52FC5A: 0x274, 0x52FC69: 0x274, 0x52FCD9: 0x274,  # 0x52F940: card, fusion overlay, heading tab
+    0x52FA59: 0x274, 0x52FB5B: 0x274,  # and the info box under it and the count box on its left edge
+}
+
+
+def test_fusion_steps_draw_every_part_of_the_card_where_the_one_fusion_card_is(code) -> None:
+    """The fusion draws its weapon card on three steps (0x52D0D0, 0x52F940, 0x52ECC0), each at an absolute x; the
+    overlay, heading tab, thumbnail, info, count and dialog boxes, page arrow and the cursor over the card at their own.
+    Bug: a part left at its stock x when the card moves, so it floats beside the card on a step no route reaches; or
+    the cursor (0x52CBE0) framing the stock grid or tags instead of the card's."""
+    value = lambda va, at=1, edited=True: struct.unpack("<i", code(va + at, 4, edited))[0]
+    card = value(0x52D4E8)
+    wrong = [f"{va:#x} at card {value(va) - card:+}, stock {value(va, edited=False) - stock:+}"
+             for va, stock in FUSION_CARD_PARTS.items() if value(va) - card != value(va, edited=False) - stock]
+    thumbnail = value(0x529052) - value(0x529012)  # the weapon pick's thumbnail and card
+    wrong += [f"thumbnail {va:#x} at card {value(va) - card:+}" for va in (0x52EF51, 0x52FCA2) if value(va) - card != thumbnail]
+    width = value(0x53375B)
+    if value(0x52D555) + 21 != card + width // 2:  # the 42 px page arrow between the two cards, on their centre
+        wrong.append(f"page arrow centre {value(0x52D555) + 21}, card centre {card + width // 2}")
+    step, grid = edited_run(code, 0x52CCA5, 2)
+    card_step = immediate(edited_run(code, 0x595528, 1)[0])
+    grid_x = struct.unpack("<b", edited_run(code, 0x595528, 2)[1][3:4])[0]
+    if (immediate(step), immediate(grid) - card) != (card_step, grid_x):
+        wrong.append(f"grid cursor steps {immediate(step)} from card {immediate(grid) - card:+}")
+    tag_step = immediate(edited_run(code, 0x5954B9, 3)[2])
+    _, tag_w, _, tag_x, tag_y = edited_run(code, 0x52CD02, 5)
+    card_y = 0xDD  # 0x52F940's card at rest (stock lerp 0x95 -> 0xDD), which the cursor frames
+    expected = (tag_step, layout.DEFINES["TAG_WIDTH"], immediate(edited_run(code, 0x59549D, 1)[0]),
+                struct.unpack("<b", code(0x5954AC, 1, True))[0])
+    got = (immediate(edited_run(code, 0x52CCF2, 1)[0]), immediate(tag_w), immediate(tag_x) - card,
+           immediate(tag_y) - card_y)
+    if got != expected:
+        wrong.append(f"tag cursor (step, width, x, y) {got}, the card's tags {expected}")
+    assert not wrong
+
+
 def test_attribute_grids_step_past_the_filled_cell_and_draw_empty_slots_as_wide(code) -> None:
     """The filled attribute cell (0x591810) is one width wherever it is drawn. A grid left at the stock column step
     or empty slot width (98) shows filled cells wider than the grey empty slots (weapon card), or lets the next slot
@@ -140,6 +225,10 @@ def test_attribute_grids_step_past_the_filled_cell_and_draw_empty_slots_as_wide(
         step, slot = immediate(edited_run(code, step_at, 1)[0]), immediate(edited_run(code, slot_at, 2)[1])
         if step < cell or slot != cell:
             wrong.append(f"{grid}: cell {cell}, column step {step}, empty slot {slot}")
+    plate = [e["draw"][0]["splice"]["width"] for e in json.loads(Path("data/art/menu_textures.json").read_text())[
+        "textures"] if e["entry"] == 4079 and e.get("item") == 98]  # the grey cell's art, drawn at the cell's width
+    if plate != [cell]:
+        wrong.append(f"the cell art 4079.98 is {plate} wide, not the {cell} px cell")
     assert not wrong
 
 
@@ -156,16 +245,19 @@ def test_skill_tag_rows_step_one_tag_and_stay_on_the_weapon_card(code) -> None:
     ends = {struct.unpack("<i", code(va + 2, 4, True))[0] for va in (0x529156, 0x5291F4)}  # cmp edi, end of row
     outline = immediate(edited_run(code, 0x52913C, 2)[1])  # the frame on the chosen slot
     cell, column = immediate(edited_run(code, 0x591844, 4)[3]), immediate(edited_run(code, 0x595528, 1)[0])
-    grid_right = 0x13 + 3 * column + cell  # the card's attribute grid, from the card's left edge
+    grid_x = struct.unpack("<b", edited_run(code, 0x595528, 2)[1][3:4])[0]  # lea ecx, [ecx + edx + x]
+    grid_right = grid_x + 3 * column + cell  # the card's attribute grid, from the card's left edge
+    tag_x = immediate(edited_run(code, 0x59549D, 1)[0])  # add ebp, x: the card's first tag
     plates = {e["item"]: e["plate"]["width"] for e in json.loads(Path("data/art/menu_textures.json").read_text())[
         "textures"] if e["entry"] == 4079 and e.get("item") in (198, 213)}
     wrong = [f"{row} steps {s}, not past the {tag} px tag" for row, s in step.items() if s <= tag]
     if len(set(step.values())) != 1:
         wrong.append(f"the rows step differently: {step}")
-    if ends != {0x343 + 3 * step["card"]}:
+    starts = {struct.unpack("<i", code(va + 1, 4, True))[0] for va in (0x5290EA, 0x5291CC)}  # mov edi, first tag
+    if len(starts) != 1 or ends != {next(iter(starts)) + 3 * step["card"]}:
         wrong.append(f"the upgrade rows end at {sorted(ends)}, not after three steps of {step['card']}")
-    if 0xD0 + 2 * step["card"] + tag > grid_right:
-        wrong.append(f"three tags end at card x {0xD0 + 2 * step['card'] + tag}, past the grid at {grid_right}")
+    if tag_x + 2 * step["card"] + tag > grid_right:
+        wrong.append(f"three tags end at card x {tag_x + 2 * step['card'] + tag}, past the grid at {grid_right}")
     if {outline, *plates.values()} != {tag}:
         wrong.append(f"outline {outline} and blank plates {plates} are not the {tag} px tag")
     assert not wrong

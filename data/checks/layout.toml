@@ -187,9 +187,9 @@ name = "camp-weapons"
 route = "camp-weapons"
 
   [[screen.assert]]
-  kind = "quad_position"            # the skill squares in the MOZ column (886 on the X360 rows)
-  quad = "4079.82"
-  left = 1014
+  kind = "quad_position"            # the skill squares in the MOZ column: row x 606 + 0x118 + WEAPON_ROW_GROWTH 91
+  quad = "4079.82"                  # (886 on the X360 rows)
+  left = 977
 
   [[screen.assert]]
   kind = "text_position"
@@ -224,9 +224,12 @@ name = "camp-weapon-panel"
 route = "camp-weapon-panel"
 
   [[screen.assert]]
-  kind = "quad_position"            # the panel's skill squares in the MOZ column (372 on the X360 rows)
-  quad = "4079.82"
-  left = 500
+  kind = "box_within_safe_area"     # every frame, plate and thumbnail inside x 64..1216
+
+  [[screen.assert]]
+  kind = "quad_position"            # the panel's skill squares in the MOZ column (372 on the X360 rows): the list at
+  quad = "4079.82"                  # CARD_PAGE_LIST_X 75 (runtime_edits), its rows 8 in, squares at row +0x118 + 91
+  left = 454
 
   [[screen.assert]]
   kind = "no_cjk"
@@ -276,19 +279,30 @@ route = "customize-upgrade-skills"
   text = { caller = "0x533497" }
   box = "0x533305"
 
-# Descriptions (Mixed): the description text in the X360 413 box (the MOZ build wrapped it at 516).
+# Descriptions (Mixed): the description wrapped at the X360 516, in its info box grown to the card's width.
 [[screen]]
 name = "customize-weapon-attributes"
 route = "customize-weapon-attributes"
 
   [[screen.assert]]
-  kind = "text_within_edge"         # the upgrade skill description condensed into the X360 413 box from x 658
+  kind = "box_within_safe_area"     # every frame, plate and thumbnail inside x 64..1216
+
+  [[screen.assert]]
+  kind = "text_within_box"          # the upgrade skill description inside its info box, as wide as the card below it
   text = { caller = "0x5956fa" }
-  edge = 1071
+  box = "0x5956b3"
 
 [[screen]]
 name = "customize-fusion-officers"
 route = "customize-fusion-officers"
+
+  [[screen.assert]]
+  kind = "text_inset"               # officer names 10 into their row plates, drawn (unlogged) 22 into the frame
+  box = "0x595ace"
+  plate_x = 22
+
+  [[screen.assert]]
+  kind = "box_within_safe_area"     # every frame, plate and thumbnail inside x 64..1216
 
   [[screen.assert]]
   kind = "text_position"
@@ -316,6 +330,14 @@ route = "customize-fusion-officers"
 [[screen]]
 name = "customize-weapon-upgrade"
 route = "customize-weapon-upgrade"
+
+  [[screen.assert]]
+  kind = "text_inset"               # officer names 10 into their row plates, drawn (unlogged) 22 into the frame
+  box = "0x595ace"
+  plate_x = 22
+
+  [[screen.assert]]
+  kind = "box_within_safe_area"     # every frame, plate and thumbnail inside x 64..1216
 
   [[screen.assert]]
   kind = "no_cjk"
@@ -451,6 +473,9 @@ name = "pre-battle-weapons"
 route = "pre-battle-weapons"
 
   [[screen.assert]]
+  kind = "box_within_safe_area"     # every frame, plate and thumbnail inside x 64..1216
+
+  [[screen.assert]]
   kind = "text_position"
   text = { caller = "0x5950ec" }
   x = 707
@@ -478,6 +503,9 @@ name = "pre-battle-weapon-panel"
 route = "pre-battle-weapon-panel"
 
   [[screen.assert]]
+  kind = "box_within_safe_area"     # every frame, plate and thumbnail inside x 64..1216
+
+  [[screen.assert]]
   kind = "text_within_edge"         # panel names: lane 303 from x 208
   text = { caller = "0x5950ec" }
   edge = 511
@@ -499,9 +527,12 @@ name = "pre-battle-officers"
 route = "pre-battle-officers"
 
   [[screen.assert]]
-  kind = "text_within_edge"         # army title lane 252 from x 140
+  kind = "box_within_safe_area"     # the army list from x 64, the officer panel ending at 1216
+
+  [[screen.assert]]
+  kind = "text_within_edge"         # army title lane 252 from x 148 (the list at 64)
   text = { caller = "0x536785" }
-  edge = 392
+  edge = 400
 
 # Battle windows (Old): window 1 with the speaker on the left at the stock x 164 (the X360 x was 251).
 [[screen]]
@@ -570,6 +601,9 @@ name = "customize-weapon-pick"
 route = "customize-weapon-pick"
 
   [[screen.assert]]
+  kind = "box_within_safe_area"     # every frame, plate and thumbnail inside x 64..1216
+
+  [[screen.assert]]
   kind = "no_cjk"
   allow_empty = true
 
@@ -592,14 +626,18 @@ name = "customize-fusion-weapons"
 route = "customize-fusion-weapons"
 
   [[screen.assert]]
-  kind = "quad_position"            # the fusion list's skill squares in the MOZ column (387 on the X360 rows)
-  quad = "4079.81"
-  left = 515
+  kind = "box_within_safe_area"     # every frame, plate and thumbnail inside x 64..1216
+                                    # (list at 75 and card at 560, as on every fusion step)
 
   [[screen.assert]]
-  kind = "text_within_edge"         # the panel list's long names at full size in the MOZ row (lane 303 from x 208)
+  kind = "quad_position"            # the fusion list's skill squares in the MOZ column, list x 75 + 379
+  quad = "4079.81"
+  left = 454
+
+  [[screen.assert]]
+  kind = "text_within_edge"         # the panel list's long names at full size, ending before those squares
   text = { caller = "0x5950ec" }
-  edge = 511
+  edge = 450
 
   [[screen.assert]]
   kind = "text_within_box"          # names inside the list's frame (it grew with the wider weapon row)
@@ -761,6 +799,19 @@ name = "customize-upgrade-officers"
 route = "customize-upgrade-officers"
 
   [[screen.assert]]
+  kind = "ink_clear_of_quad_edge"   # the hint (4060.10) condenses into its strip, never cut at its quad's end (1183)
+  quad = "4060.10"
+  side = "right"
+
+  [[screen.assert]]
+  kind = "text_inset"               # officer names 10 into their row plates, drawn (unlogged) 22 into the frame
+  box = "0x595ace"
+  plate_x = 22
+
+  [[screen.assert]]
+  kind = "box_within_safe_area"     # every frame, plate and thumbnail inside x 64..1216
+
+  [[screen.assert]]
   kind = "text_within_box"          # names inside the weapon list's frame
   text = { caller = "0x5950ec" }
   box = "0x526df1"
@@ -771,13 +822,12 @@ route = "customize-upgrade-officers"
   caller = "0x59518b"
   box = "0x526df1"
 
-  [[screen.assert]]
-  kind = "box_within_edge"          # the frame itself ends on the screen
-  box = "0x526df1"
-
 [[screen]]
 name = "customize-upgrade-weapons"
 route = "customize-upgrade-weapons"
+
+  [[screen.assert]]
+  kind = "box_within_safe_area"     # every frame, plate and thumbnail inside x 64..1216
 
   [[screen.assert]]
   kind = "text_within_box"
@@ -790,9 +840,6 @@ route = "customize-upgrade-weapons"
   caller = "0x59518b"
   box = "0x526df1"
 
-  [[screen.assert]]
-  kind = "box_within_edge"
-  box = "0x526df1"
 
 # The weapon discard list after a battle's drop, when the officer holds 8 weapons. English grows its frame with the
 # wider weapon row and moves it left, so its right edge (598) and the detail card beside it (612) stay put; the pips
@@ -800,6 +847,9 @@ route = "customize-upgrade-weapons"
 [[screen]]
 name = "results-discard"
 route = "results-discard"
+
+  [[screen.assert]]
+  kind = "box_within_safe_area"     # every frame, plate and thumbnail inside x 64..1216
 
   [[screen.assert]]
   kind = "text_within_box"          # names inside the frame

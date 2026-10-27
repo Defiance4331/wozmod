@@ -13,6 +13,60 @@ from .text_boxes import box
 CAVE = 0x5F5100
 PAD_PROMPTS = 0x1413FEC
 
+# Tokens of docs/design-language.md.
+SAFE_LEFT, SAFE_RIGHT = 64, 1216  # the safe area's x range on the 1280 layout
+SPACING_UNIT = 7
+TRAILING_GAP = 2 * SPACING_UNIT  # a name lane's end to the next element in its row
+TEXT_INSET = 10  # a plate's left edge to the name drawn on it
+
+# The weapon card (0x595310, at its origin; docs/design-language.md, Cards), from the tokens and measured art:
+# [padding][thumbnail][gap][text column: name, Base Attack, three skill tags][padding] over a grid of four
+# attribute cells. A cell is [unit][label art][unit][two level digits][unit] for the widest label (4079.89, whose
+# art is ATTRIBUTE_QUAD_MINIMUM's widest in wozmod.art.vector) and a two-digit level.
+WIDEST_ATTRIBUTE_LABEL = 92  # 4079.89's quad
+LEVEL_DIGIT = 18  # the level's digit sprite 4079.78, as 0x591810 draws it
+ATTRIBUTE_LABEL_X = SPACING_UNIT  # in the cell
+ATTRIBUTE_CELL = ATTRIBUTE_LABEL_X + WIDEST_ATTRIBUTE_LABEL + SPACING_UNIT + 2 * LEVEL_DIGIT + SPACING_UNIT
+ATTRIBUTE_STEP = ATTRIBUTE_CELL + SPACING_UNIT
+LEVEL_ONES_X = ATTRIBUTE_CELL - SPACING_UNIT - LEVEL_DIGIT  # right-aligned: the ones digit ends a unit in
+LEVEL_TENS_X = LEVEL_ONES_X - LEVEL_DIGIT
+CARD_PADDING = TRAILING_GAP
+CARD_CONTENT = 3 * ATTRIBUTE_STEP + ATTRIBUTE_CELL
+CARD_WIDTH = CARD_PADDING + CARD_CONTENT + CARD_PADDING
+CARD_RIGHT = CARD_PADDING + CARD_CONTENT  # the content's right edge
+THUMBNAIL_X, THUMBNAIL_WIDTH = CARD_PADDING, 154  # the thumbnail box each page draws (stock +21)
+TEXT_COLUMN = THUMBNAIL_X + THUMBNAIL_WIDTH + TRAILING_GAP  # name, Base Attack label and the first tag
+TAG_WIDTH = (CARD_RIGHT - TEXT_COLUMN - 2 * SPACING_UNIT) // 3  # three tags a unit apart fill the column
+TAG_STEP = TAG_WIDTH + SPACING_UNIT
+# Ink measured on 1.5x captures (logical px; run 2026-10-27_1603-wcard-digits and the survey's), each from its
+# element's pen or quad: the digit sprites 4079.52 (21 wide) draw the +N and the Base Attack value.
+PLUS_INK_LEFT = 14 / 3  # the "+" sprite's ink from its quad's left
+NAME_INK_TRAIL = 4 / 3  # a name's ink ends this short of its measured width (its last glyph's side bearing)
+DIGIT_INK_LEFT = {"1": 6, "2": 4, "3": 10 / 3, "4": 8 / 3, "5": 4, "6": 10 / 3, "7": 4, "8": 10 / 3, "9": 8 / 3}
+ATTACK_LABEL_INK_RIGHT = 134  # the label art 4079.80's ink, from its quad's left
+NAME_INK = (5 / 3, 67 / 3)  # a name's cap top and descender bottom, from its pen y (cell 24)
+DIGIT_INK = (7 / 3, 77 / 3)  # the +N digit sprites' ink top and bottom ("+20"), from the quad's y
+VALUE_INK = (3, 77 / 3)  # the Base Attack value's ("76"), from its quad's y
+ATTACK_LABEL_INK = (22 / 3, 26)  # the label art's ink top and bottom, from its quad's y
+ATTACK_VALUE_DROP = 0x4B - 0x48  # the value's quad sits this far under the label's (stock)
+TAG_HEIGHT = 0x1C
+THUMBNAIL_Y, THUMBNAIL_HEIGHT = 0x12, 112
+# +N: its "+" ink starts a trailing gap after the name's ink.
+PLUS_PEN_GAP = round(TRAILING_GAP - PLUS_INK_LEFT - NAME_INK_TRAIL)
+# Base Attack: the value is drawn left-aligned ("%d", not the stock "%3d" field); its leading digit's ink starts
+# a trailing gap after the label's ink, the pen set back by that digit's own ink offset (DIGIT_INK_TABLE).
+ATTACK_VALUE_INK_X = TEXT_COLUMN + ATTACK_LABEL_INK_RIGHT + TRAILING_GAP
+# Beside the thumbnail, three rows: the name line (name and +N), the Base Attack line (label and value) and the
+# tags. The name's cap top meets the thumbnail's top, the tags' bottom its bottom, and the two gaps between the
+# rows' ink (the tags' plates) are equal. The attribute grid below keeps its stock y (0x8F).
+NAME_Y = round(THUMBNAIL_Y - NAME_INK[0])
+NAME_LINE = (NAME_Y + min(NAME_INK[0], DIGIT_INK[0]), NAME_Y + max(NAME_INK[1], DIGIT_INK[1]))
+ATTACK_LINE = (min(ATTACK_LABEL_INK[0], ATTACK_VALUE_DROP + VALUE_INK[0]),
+               max(ATTACK_LABEL_INK[1], ATTACK_VALUE_DROP + VALUE_INK[1]))  # from the label's y
+TAG_Y = THUMBNAIL_Y + THUMBNAIL_HEIGHT - TAG_HEIGHT
+ROW_GAP = (TAG_Y - NAME_LINE[1] - (ATTACK_LINE[1] - ATTACK_LINE[0])) / 2
+ATTACK_LABEL_Y = round(NAME_LINE[1] + ROW_GAP - ATTACK_LINE[0])
+
 ABILITY_CELL_GROWTH = 40
 ABILITY_NAME_GROWTH = 40
 
@@ -75,6 +129,7 @@ def scale_ends(site: int, stock: str, test: str, cave: int, top: int, leave: int
     return [(site, head + rest, rel32(b"\xe9", site, cave) + b"\x90" * (len(head) + len(rest) - 5)),
             (cave, b"\xcc" * len(code), code)]
 
+PORTRAIT_WIDTH = 340  # the officer portrait boxes beside weapon lists and cards (stock 336)
 CODE_EDITS = [
     (0x5695C5, bytes.fromhex("8b0783f802"), bytes.fromhex("e98b000000")),
 
@@ -87,7 +142,7 @@ CODE_EDITS = [
 
     *widths(0x55453E, 0x554549, 0x531931, 0x53193C, 0x53C8DB, 0x53C8E6,
             0x5845E8, 0x5845F3, 0x591C6C, 0x591C81, 0x5988DA, 0x5988E5,
-            stock=336, wide=340),
+            stock=336, wide=PORTRAIT_WIDTH),
 
     (0x525F85, bytes.fromhex("68c4000000"), bytes.fromhex("6800010000")),
     (0x525F8F, bytes.fromhex("68c4000000"), bytes.fromhex("6800010000")),
@@ -123,25 +178,25 @@ CODE_EDITS = [
     (0x53336D, bytes.fromhex("6a46"), bytes.fromhex("6a70")),
     (0x533372, bytes.fromhex("8d5642"), bytes.fromhex("8d562e")),
 
-    *widths(0x5955BB, 0x52D077, 0x52D091, 0x53375B, 0x53376D, 0x59858F, 0x598E01, stock=0x1D8, wide=650),
+    *widths(0x5955BB, 0x52D077, 0x52D091, 0x53375B, 0x53376D, 0x59858F, 0x598E01, stock=0x1D8, wide=CARD_WIDTH),
 
-    (0x598DD3, bytes.fromhex("69f6bb020000"), bytes.fromhex("69f6bd020000")),
-    (0x598DE7, bytes.fromhex("8db40228feffff"), bytes.fromhex("8db40276fdffff")),
-    (0x598DF0, bytes.fromhex("bee3000000"), bytes.fromhex("be33000000")),
 
     *detour(0x52CC8C, bytes.fromhex("6a1c 6a62 056c010000"), CAVE + 0x740, 0x52CC95,
-            bytes.fromhex("6a1c 6896000000 056c010000")),
+            bytes.fromhex("6a1c 68") + p32(ATTRIBUTE_CELL) + bytes.fromhex("056c010000")),
 
+    # The two info boxes (0x5955F0, 0x595690) at the X360 height; each sits in a column with a weapon card on every
+    # page that draws it, so it takes the card's width (docs/design-language.md, Panels on a page, step 4).
     *detour(0x595612, bytes.fromhex("6880000000 6a7c 68d8010000"), CAVE + 0x540, 0x59561E,
-            bytes.fromhex("6880000000 6896000000 68d8010000")),
+            bytes.fromhex("6880000000 6896000000 68") + p32(CARD_WIDTH)),
     *detour(0x59569E, bytes.fromhex("6880000000 6a7c 68d8010000"), CAVE + 0x560, 0x5956AA,
-            bytes.fromhex("6880000000 6896000000 68d8010000")),
+            bytes.fromhex("6880000000 6896000000 68") + p32(CARD_WIDTH)),
 
     *widths(0x52BBD1, stock=364, wide=400), *widths(0x52BBD8, stock=884, wide=848),
     *widths(0x52BBE1, stock=532, wide=548), *widths(0x52BBE8, stock=716, wide=700),
     *widths(0x529548, 0x52D736, stock=476, wide=544),
     *widths(0x52954F, 0x52D73D, stock=741, wide=673),
     *widths(0x5273F9, stock=392, wide=528), *widths(0x527400, stock=825, wide=689),
+    *widths(0x5276E7, stock=560, wide=592), *widths(0x5276EE, stock=657, wide=625),
     *widths(0x527A2B, stock=392, wide=632), *widths(0x527A32, stock=825, wide=585),
     *widths(0x528EE5, stock=434, wide=648), *widths(0x528EEC, stock=786, wide=572),
 
@@ -311,25 +366,27 @@ CODE_EDITS = [
     (0x598819, bytes.fromhex("69c9bd000000"), b"\x69\xc9" + p32(189 + ABILITY_CELL_GROWTH)),
 
     *detour(0x595528, bytes.fromhex("6bc969 8d4c1113"), CAVE + 0x6A0, 0x59552F,
-            bytes.fromhex("69c99c000000 8d4c1113")),
+            b"\x69\xc9" + p32(ATTRIBUTE_STEP) + bytes.fromhex("8d4c11") + bytes([CARD_PADDING])),
     *detour(0x591844, bytes.fromhex("6a04 6880000000 50 6a62 56 b938000000"),
             CAVE + 0x6C0, 0x591854,
-            bytes.fromhex("6a04 6880000000 50 6896000000 56 b938000000")),
+            bytes.fromhex("6a04 6880000000 50") + b"\x68" + p32(ATTRIBUTE_CELL) + bytes.fromhex("56 b938000000")),
     *detour(0x591856, bytes.fromhex("6a62 55 57 6689742440"), CAVE + 0x6E0, 0x59185F,
-            bytes.fromhex("6896000000 55 57 6689742440")),
-    (0x591A9A, bytes.fromhex("83c03b"), bytes.fromhex("83c06d")),
-    (0x591ADC, bytes.fromhex("83c14d"), bytes.fromhex("83c17f")),
-    *detour(0x52CCA5, bytes.fromhex("6bc969 81c187020000"), CAVE + 0x700, 0x52CCAE,
-            bytes.fromhex("69c99c000000 81c187020000")),
+            b"\x68" + p32(ATTRIBUTE_CELL) + bytes.fromhex("55 57 6689742440")),
+    (0x5919F3, bytes.fromhex("83c303"), bytes.fromhex("83c3") + bytes([ATTRIBUTE_LABEL_X])),  # the cell's label art
+    (0x591A9A, bytes.fromhex("83c03b"), bytes.fromhex("83c0") + bytes([LEVEL_TENS_X])),  # and its level's digits
+    (0x591ADC, bytes.fromhex("83c14d"), bytes.fromhex("83c1") + bytes([LEVEL_ONES_X])),
     *detour(0x598652, bytes.fromhex("6bc969 8d441113"), CAVE + 0x720, 0x598659,
-            bytes.fromhex("69c99c000000 8d441113")),
+            b"\x69\xc9" + p32(ATTRIBUTE_STEP) + bytes.fromhex("8d4411") + bytes([CARD_PADDING])),
     *detour(0x598632, bytes.fromhex("6a1c 6a62 8bcb"), CAVE + 0x760, 0x598638,
-            bytes.fromhex("6a1c 6896000000 8bcb")),
+            bytes.fromhex("6a1c 68") + p32(ATTRIBUTE_CELL) + bytes.fromhex("8bcb")),
 
     *detour(0x52EC14, bytes.fromhex("6bd269 8b4c2468"), CAVE + 0x780, 0x52EC1B,
-            bytes.fromhex("69d29c000000 8b4c2468")),
+            b"\x69\xd2" + p32(ATTRIBUTE_STEP) + bytes.fromhex("8b4c2468")),
+    (0x52EC1B, bytes.fromhex("8d7c0213"), bytes.fromhex("8d7c02") + bytes([CARD_PADDING])),  # path B's grid x
+    *detour(0x52EAE9, bytes.fromhex("6bd269 8d6c0213"), CAVE + 0xB20, 0x52EAF0,  # path A's grid
+            b"\x69\xd2" + p32(ATTRIBUTE_STEP) + bytes.fromhex("8d6c02") + bytes([CARD_PADDING])),
     *detour(0x52EC7A, bytes.fromhex("6a1c 6a62 6a00 53 57"), CAVE + 0x7A0, 0x52EC82,
-            bytes.fromhex("6a1c 6896000000 6a00 53 57")),
+            bytes.fromhex("6a1c 68") + p32(ATTRIBUTE_CELL) + bytes.fromhex("6a00 53 57")),
 
     *widths(0x598CC5, 0x598CCF, stock=210, wide=332),
 
@@ -549,14 +606,28 @@ X360_LAYOUT = [
     immediate(0x49EAFE, "b8", 628, 652), immediate(0x49EB39, "b8", 664, 680),
 ]
 
+# The pre-battle army list (0x536630, slid by 0x536960) and the officer panel (0x535E20, base slid by 0x535FF0) at
+# the X360 x and widths (0x82290888, 0x8228FD74, 0x8228FD64), each moved just inside the safe area where that x would
+# leave it: the stock 3D battle map fills the space between them, so they are not one group (docs/design-language.md,
+# Panels on a page). The panel's frame starts ARMY_PANEL_X from its base (stock 826).
+ARMY_LIST_WIDTH, ARMY_PANEL_X, ARMY_PANEL_WIDTH = 335, -22, 413
+ARMY_LIST_X = max(56, SAFE_LEFT)
+ARMY_PANEL_BASE = min(826, SAFE_RIGHT - ARMY_PANEL_WIDTH - ARMY_PANEL_X)
+ARMY_PANEL = [immediate(0x536026, "bf", 826, ARMY_PANEL_BASE),  # the officer panel's base at rest
+              immediate(0x536007, "69d2", 0x500 - 826, 0x500 - ARMY_PANEL_BASE)]  # its slide from x 0x500
+# The officer list (0x595AA0, the Weapon pages' officers): its rows' plates at their X360 x in the list (0x822D9278).
+OFFICER_PLATE_X = 22
+# The fusion's attribute list (0x52E580) at its X360 width (0x82289EA0).
+ATTRIBUTE_LIST_WIDTH = 391
+
 # X360 panels: lists, cards, plates and boxes of the same screens.
 X360_PANELS = [
     # Officer list (0x595AA0) and gallery lists (0x556D60, 0x55B540) at the X360 width,
     # their callers' x and slides, and neighbour panels.
     immediate(0x595AC1, "68", 225, 321),
     imm8(0x595B3D, "83c2", 25, 35),
-    imm8(0x595B6E, "8d47", 17, 22),
-    imm8(0x595B71, "83c7", 28, 29),
+    imm8(0x595B6E, "8d47", 17, OFFICER_PLATE_X),  # each row's plate, from the list's x
+    imm8(0x595B71, "83c7", 28, OFFICER_PLATE_X + TEXT_INSET),  # its name (X360 29: 7 in)
     imm8(0x595B83, "83c7", 32, 42),
     immediate(0x595BB6, "68", 189, 296),
     immediate(0x556D81, "68", 215, 321),
@@ -580,13 +651,7 @@ X360_PANELS = [
     immediate(0x52D792, "8db402", -604, -572),
     immediate(0x52D7A4, "be", 299, 234),
     immediate(0x527705, "69c9", 430, 454),
-    immediate(0x527719, "8d840a", -203, -267),
-    immediate(0x527722, "b8", 227, 187),
-    immediate(0x52776D, "bb", 474, 482),
-    immediate(0x5277C7, "69c9", 806, 798),
-    immediate(0x527882, "bf", 741, 831),
-    immediate(0x527890, "69ff", 806, 798),
-    immediate(0x5278A8, "b8", 1547, 1629),
+    immediate(0x5278A8, "b8", 1547, 1629),  # the rest of this page: UPGRADE_SKILLS_PANELS
     immediate(0x55742F, "69c9", 463, 537),
     immediate(0x557443, "8d9c0a", -215, -321),
     immediate(0x557456, "bb", 248, 216),
@@ -618,11 +683,8 @@ X360_PANELS = [
     *detour(0x55BBA3, bytes.fromhex("689200000083c749"), 0x5F5E20, 0x55BBAB, bytes.fromhex("689100000081c782000000")),
     # Attribute list panel and slide; skill list panel, grade row and slides. The weapon row keeps
     # its stock name x: MOZ draws the weapon thumbnail at row x+0x26..+0x5E, where the X360 name starts.
-    immediate(0x52E5CD, "68", 378, 391),
-    immediate(0x52F9A2, "b9", 223, 227),
-    imm8(0x52F9A9, "8d69", -95, -99),
-    immediate(0x52F9BA, "69c9", 601, 618),
-    immediate(0x52F9CE, "8d8c02", -378, -391),
+    immediate(0x52E5CD, "68", 378, ATTRIBUTE_LIST_WIDTH),
+    immediate(0x52F9CE, "8d8c02", -378, -ATTRIBUTE_LIST_WIDTH),  # its rest and travel: FUSION_PAGE
     imm8(0x52FA17, "6a", 122, 121),
     immediate(0x5332F8, "68", 203, 267),
     immediate(0x53343A, "68", 189, 253),
@@ -633,9 +695,7 @@ X360_PANELS = [
     immediate(0x527418, "69c9", 510, 454),
     immediate(0x52742C, "8dbc02", -203, -267),
     immediate(0x527464, "bf", 307, 187),
-    immediate(0x528F05, "69c9", 511, 494),
-    immediate(0x528F19, "8d8c0a", -203, -267),
-    immediate(0x528F27, "b9", 308, 227),
+    immediate(0x528F19, "8d8c0a", -203, -267),  # its rest and travel: ATTRIBUTES_PAGE
     # Pre-battle army list (0x536630) and its slide; officer card box, no reading line.
     immediate(0x536654, "68", 245, 335),
     imm8(0x536675, "8d4d", 7, 12),
@@ -647,11 +707,11 @@ X360_PANELS = [
     immediate(0x536828, "68", 189, 280),
     immediate(0x5368C4, "81c2", 210, 307),
     immediate(0x5368F3, "05", 210, 307),
-    immediate(0x536970, "69d2", 351, 391),
-    immediate(0x536984, "8db402", -245, -335),
-    immediate(0x53699B, "be", 106, 56),
-    imm8(0x535E6C, "8d53", -8, -22),
-    immediate(0x535E5D, "68", 294, 413),
+    immediate(0x536970, "69d2", 351, ARMY_LIST_X + ARMY_LIST_WIDTH),  # its slide from x -ARMY_LIST_WIDTH
+    immediate(0x536984, "8db402", -245, -ARMY_LIST_WIDTH),
+    immediate(0x53699B, "be", 106, ARMY_LIST_X),  # the army list at rest
+    imm8(0x535E6C, "8d53", -8, ARMY_PANEL_X),
+    immediate(0x535E5D, "68", 294, ARMY_PANEL_WIDTH),
     (0x535EC1, bytes.fromhex("e80a590100"), bytes.fromhex("0f1f440000")),
     imm8(0x535EDB, "8d4e", 24, 12),
     # Pre-battle army line cell and TIME plate; battle banner backing and label cell.
@@ -677,7 +737,11 @@ X360_PANELS = [
 # WEAPON_LIST_ORIGINS every call of the functions that draw those frames (tests/test_runtime_stock_screens.py checks
 # both lists against the exe, so a list left out stays at stock width under the wider row).
 WEAPON_ROW = 0x595050
-WEAPON_ROW_GROWTH = 128
+# docs/design-language.md: the name lane (stock: name at +0x65, skill squares at +0x118) holds the widest English
+# weapon name at cell 24, WIDEST_WEAPON_NAME (weapon 345), then the trailing gap; the row grows by the smallest
+# multiple of the spacing unit that makes room for both.
+WIDEST_WEAPON_NAME = 254
+WEAPON_ROW_GROWTH = -(-(0x65 + WIDEST_WEAPON_NAME + TRAILING_GAP - 0x118) // SPACING_UNIT) * SPACING_UNIT
 # Call of the row -> (function it is in, its frame's width push, stock frame width).
 WEAPON_ROW_FRAMES = {
     0x5952DF: (0x5951B0, 0x5951E6, 366),  # the menu weapon lists' wrapper, from nine calls
@@ -702,13 +766,206 @@ WEAPON_LIST_ORIGINS = {
     0x53C97C: [(0x53C8C1, "8d8402", -0x150, -1), (0x53C8CA, "b8", 0xE3, -1),  # portrait
                (0x53C920, "8dbc02", -0x150, -1), (0x53C92D, "c744240c", 0xE3, -1)],
     0x53CCB2: [],  # rests at 598
-    0x5278C9: [],  # rests at 741
+    0x5278C9: [],  # rests at 741; its page moves the whole row of lists (UPGRADE_SKILLS_PANELS)
     0x527AC9: [(0x527A84, "c7442410", 0xE3, -1), (0x527A9A, "c7442410", 0xE3, -1)],
     0x55462C: [(0x554521, "8d940a", -0x150, -1), (0x55452A, "ba", 0xE3, -1),  # portrait
                (0x55460A, "8d8c02", -0x178, -1), (0x55461E, "b9", 0xDC, -1)],
     # The list and the portrait above it, both off the page's slide x (ebx); the card at +0x264 stays.
     0x5846C3: [(0x5845FC, "8d93", 0xEB, -1), (0x5846B9, "8d93", 0xE8, -1)],
 }
+
+# The camp's Upgrade Skills officer page (0x527690) sets its skill list, officer list and weapon list side by side,
+# 28 apart, at the X360 x's (187, 482, 831). With the grown weapon row the group (skill list to the weapon list's
+# right edge) leaves the safe area, so the page is laid out again by docs/design-language.md: the same order and
+# gaps, the group centred in the safe area. Each list still slides in from where it did.
+UPGRADE_SKILLS_GROUP = 831 - 187 + 378 + WEAPON_ROW_GROWTH
+UPGRADE_SKILLS_SHIFT = 187 - (SAFE_LEFT + (SAFE_RIGHT - SAFE_LEFT - UPGRADE_SKILLS_GROUP) // 2)
+UPGRADE_SKILLS_PANELS = [
+    immediate(0x527719, "8d840a", -203, -267 - UPGRADE_SKILLS_SHIFT),  # skill list, sliding in from the left
+    immediate(0x527722, "b8", 227, 187 - UPGRADE_SKILLS_SHIFT),  # and at rest
+    immediate(0x52776D, "bb", 474, 482 - UPGRADE_SKILLS_SHIFT),  # officer list at rest
+    immediate(0x5277C7, "69c9", 806, 798 + UPGRADE_SKILLS_SHIFT),  # its slide from the right edge
+    immediate(0x527882, "bf", 741, 831 - UPGRADE_SKILLS_SHIFT),  # weapon list at rest
+    immediate(0x527890, "69ff", 806, 798 + UPGRADE_SKILLS_SHIFT),  # its slide from x 1629 (0x5278A8)
+]
+
+
+# Pages that set a weapon list beside a weapon card (docs/design-language.md, Panels on a page): the list (with
+# what is tied to it) and the card sit PANEL_GAP apart, the pair centred in the safe area. Each list's origins move
+# by its own shift instead of the row growth (call of the list's frame -> its stock x at rest).
+PANEL_GAP = 4 * SPACING_UNIT
+WEAPON_LIST_WIDTH = 366 + WEAPON_ROW_GROWTH
+CARD_PAGE_LIST_X = SAFE_LEFT + (SAFE_RIGHT - SAFE_LEFT - (WEAPON_LIST_WIDTH + PANEL_GAP + CARD_WIDTH)) // 2
+CARD_PAGE_CARD_X = CARD_PAGE_LIST_X + WEAPON_LIST_WIDTH + PANEL_GAP
+# The fusion (0x52FD40 draws its steps: 0x52D0D0 weapons, 0x52F940 attribute transfer, 0x52ECC0 confirm) keeps its
+# weapon card at one x on every step (docs/design-language.md, Panels on a page, step 5). The step with the widest
+# group sets it: that group, PANEL_GAP apart, centred in the safe area. On the other steps the list sits PANEL_GAP
+# left of the card. Stock draws the card at 0x273 (0x274 on 0x52F940); its parts keep their offsets from it.
+FUSION_LISTS = {"weapons": WEAPON_LIST_WIDTH, "attributes": ATTRIBUTE_LIST_WIDTH}
+FUSION_WIDEST_LIST = max(FUSION_LISTS.values())
+FUSION_CARD_X = (SAFE_LEFT + (SAFE_RIGHT - SAFE_LEFT - (FUSION_WIDEST_LIST + PANEL_GAP + CARD_WIDTH)) // 2
+                 + FUSION_WIDEST_LIST + PANEL_GAP)
+FUSION_WEAPON_LIST_X = FUSION_CARD_X - PANEL_GAP - WEAPON_LIST_WIDTH
+FUSION_ATTRIBUTE_LIST_X = FUSION_CARD_X - PANEL_GAP - ATTRIBUTE_LIST_WIDTH
+STOCK_FUSION_CARD_X, STOCK_TRANSFER_CARD_X, STOCK_ATTRIBUTE_LIST_X = 0x273, 0x274, 0xDF
+# The Upgrade Skills weapon page (0x5279C0): its weapon list (frame 0x526DB0, 378 wide in stock), PANEL_GAP, then one
+# column of the Upgrade Skill info box (0x595690) over the Source Weapon card, both CARD_WIDTH wide; the group centred
+# in the safe area. In stock the column is the card's 0x1D8 at 0x27C: the page arrow between the box and the card
+# sits on the column's centre (0x353 = 0x27C + 0x1D8 / 2 - 21), and the upgrade message 60 in (0x2B8).
+UPGRADE_LIST_WIDTH = 378 + WEAPON_ROW_GROWTH
+UPGRADE_LIST_X = SAFE_LEFT + (SAFE_RIGHT - SAFE_LEFT - (UPGRADE_LIST_WIDTH + PANEL_GAP + CARD_WIDTH)) // 2
+UPGRADE_COLUMN_X = UPGRADE_LIST_X + UPGRADE_LIST_WIDTH + PANEL_GAP
+STOCK_UPGRADE_COLUMN_X, STOCK_CARD_WIDTH, PAGE_ARROW = 0x27C, 0x1D8, 42
+UPGRADE_ARROW_X = UPGRADE_COLUMN_X + CARD_WIDTH // 2 - PAGE_ARROW // 2
+UPGRADE_MESSAGE_X = UPGRADE_COLUMN_X + 0x2B8 - STOCK_UPGRADE_COLUMN_X
+CARD_PAGE_LIST_SHIFT = {
+    0x5846C3: 0xE8 - CARD_PAGE_LIST_X,  # discard: the list and the portrait above it
+    0x529912: 0xE3 - CARD_PAGE_LIST_X,  # weapon pick
+    0x529721: 0xE3 - CARD_PAGE_LIST_X,  # the same list sliding from the pick's x to 639
+    0x5319CF: 0xD4 - CARD_PAGE_LIST_X,  # camp weapon panel: the list and the portrait above it
+    0x527AC9: 0xE3 - UPGRADE_LIST_X,  # Upgrade Skills weapon page (UPGRADE_WEAPONS_PAGE)
+    0x53C97C: 0xE3 - CARD_PAGE_LIST_X,  # pre-battle weapon panel (0x53C860): the list and the portrait above it
+    0x52D21A: 0xE3 - FUSION_WEAPON_LIST_X,  # fusion weapons step (0x52D0D0)
+    0x52EDC5: 0xE3 - FUSION_WEAPON_LIST_X,  # fusion confirm step (0x52ECC0)
+}
+UPGRADE_WEAPONS_PAGE = [  # each slide keeps its 0x500 start; only the travel changes
+    immediate(0x527BE8, "bf", STOCK_UPGRADE_COLUMN_X, UPGRADE_COLUMN_X),  # info box at rest
+    immediate(0x527BF2, "69c9", 0x500 - STOCK_UPGRADE_COLUMN_X, 0x500 - UPGRADE_COLUMN_X),  # its slide
+    immediate(0x527C92, "b9", STOCK_UPGRADE_COLUMN_X + STOCK_CARD_WIDTH // 2 - PAGE_ARROW // 2, UPGRADE_ARROW_X),
+    immediate(0x527C61, "69c9", 0x500 - 0x353, 0x500 - UPGRADE_ARROW_X),  # the page arrow's slide
+    immediate(0x527D47, "bb", STOCK_UPGRADE_COLUMN_X, UPGRADE_COLUMN_X),  # card at rest
+    immediate(0x527D28, "69c9", 0x500 - STOCK_UPGRADE_COLUMN_X, 0x500 - UPGRADE_COLUMN_X),  # its slide
+    immediate(0x527E62, "68", 0x2B8, UPGRADE_MESSAGE_X),  # the upgrade message sliding in over the card
+    immediate(0x527E80, "bf", 0x2B8, UPGRADE_MESSAGE_X),  # and at rest
+]
+# Those pages' cards: x at rest, and the slide from 0x500 (each keeps its start; only the travel changes). The
+# Weapon Upgrade tag rows (0x528E40) are drawn over the weapon pick's card at its absolute x.
+STOCK_PICK_CARD_X = 0x273
+CARD_PAGES = [
+    immediate(0x5846EF, "8d83", 0x264, CARD_PAGE_CARD_X),  # discard card, off the page's slide x (ebx)
+    immediate(0x5847AD, "81c3", 0x279, CARD_PAGE_CARD_X + THUMBNAIL_X),  # and its thumbnail
+    immediate(0x584635, "8dab", 0x2F7, CARD_PAGE_CARD_X + 0x2F7 - 0x264),  # the bar over the card's top right
+    immediate(0x529A90, "be", STOCK_PICK_CARD_X, CARD_PAGE_CARD_X),  # weapon pick card at rest
+    immediate(0x529A71, "69f6", 0x500 - STOCK_PICK_CARD_X, 0x500 - CARD_PAGE_CARD_X),  # its slide
+    immediate(0x529012, "68", STOCK_PICK_CARD_X, CARD_PAGE_CARD_X),  # the tag rows' card
+    immediate(0x529052, "68", STOCK_PICK_CARD_X + 0x15, CARD_PAGE_CARD_X + THUMBNAIL_X),  # and its thumbnail
+    *[immediate(va, "bf", STOCK_PICK_CARD_X + 0xD0, CARD_PAGE_CARD_X + TEXT_COLUMN) for va in (0x5290EA, 0x5291CC)],
+    immediate(0x531B5E, "bb", 0x25D, CARD_PAGE_CARD_X),  # camp weapon panel card at rest
+    immediate(0x531B3F, "69c9", 0x500 - 0x25D, 0x500 - CARD_PAGE_CARD_X),  # its slide
+    immediate(0x53CAF5, "bf", 0x267, CARD_PAGE_CARD_X),  # pre-battle weapon panel card at rest
+    immediate(0x53CAD6, "69c9", 0x500 - 0x267, 0x500 - CARD_PAGE_CARD_X),  # its slide
+    immediate(0x52908A, "68", STOCK_PICK_CARD_X + 0x10, CARD_PAGE_CARD_X + 0x10),  # the tag rows' card's heading tab
+]
+# The attributes page (0x528E40) draws its card over the weapon pick's, at the same absolute x, so the card stays at
+# CARD_PAGE_CARD_X between the two steps. Its column is the Upgrade Skill info box (0x595690) over that card, with the
+# page arrow on the column's centre and the description of modes 7 and 9 at its stock 53 in from the card; the skill
+# list (0x533280, X360 width 267) sits PANEL_GAP left of the column. Each slide keeps its start.
+SKILL_LIST_WIDTH = 267
+ATTRIBUTES_LIST_X = CARD_PAGE_CARD_X - PANEL_GAP - SKILL_LIST_WIDTH
+ATTRIBUTES_ARROW_X = CARD_PAGE_CARD_X + CARD_WIDTH // 2 - PAGE_ARROW // 2
+ATTRIBUTES_TEXT_X = CARD_PAGE_CARD_X + 0x2A8 - STOCK_PICK_CARD_X
+ATTRIBUTES_PAGE = [
+    immediate(0x528F27, "b9", 308, ATTRIBUTES_LIST_X),  # skill list at rest
+    immediate(0x528F05, "69c9", 511, ATTRIBUTES_LIST_X + SKILL_LIST_WIDTH),  # its slide from x -267 (0x528F19)
+    immediate(0x52921D, "bf", 0x276, CARD_PAGE_CARD_X),  # info box at rest
+    immediate(0x529227, "69c9", 0x500 - 0x276, 0x500 - CARD_PAGE_CARD_X),  # its slide
+    immediate(0x5292A8, "b9", 0x350, ATTRIBUTES_ARROW_X),  # page arrow at rest
+    immediate(0x5292BB, "69c9", 0x500 - 0x350, 0x500 - ATTRIBUTES_ARROW_X),  # its slide
+    immediate(0x52934A, "be", 0x2A8, ATTRIBUTES_TEXT_X),  # description (modes 7, 9) at rest
+    immediate(0x52931F, "69db", 0x500 - 0x2A8, 0x500 - ATTRIBUTES_TEXT_X),  # its slide
+]
+# The fusion steps (FUSION_CARD_X above). Card slides keep their 0x500 start; only the travel changes.
+FUSION_ARROW_X = FUSION_CARD_X + CARD_WIDTH // 2 - PAGE_ARROW // 2  # stock 0x34A: on the card's centre
+FUSION_DIALOG_X = FUSION_CARD_X + 0x2A5 - STOCK_FUSION_CARD_X  # the confirm dialog, at its stock offset
+TRANSFER_CARD_Y = 0xDD  # 0x52F940's card at rest, which its cursor (0x52CBE0) frames
+ATTRIBUTE_ALPHA = 0x80  # 0x52F940 derives the attribute list's resting alpha from its resting x
+# In modes 5 and 10 of 0x52D0D0 the attribute list's frame (0x5949E0, stock 0xDF and 0x17A wide, as on 0x52F940) takes
+# the weapon list's place, and the second card moves onto it at its stock offset (0xF1 - 0xDF); in mode 10 the card's
+# y is computed from that x (lea ebx, [edi - 0x5A]: y 0x97).
+FUSION_SECOND_CARD_X = FUSION_ATTRIBUTE_LIST_X + 0xF1 - STOCK_ATTRIBUTE_LIST_X
+FUSION_PAGE = [
+    # 0x52D0D0, weapons: card A, card B, the page arrow between them, the attribute frame of modes 5 and 10
+    immediate(0x52D4E8, "bf", STOCK_FUSION_CARD_X, FUSION_CARD_X),  # card A at rest
+    immediate(0x52D3A4, "69c9", 0x500 - STOCK_FUSION_CARD_X, 0x500 - FUSION_CARD_X),  # its slide
+    immediate(0x52D604, "bf", STOCK_FUSION_CARD_X, FUSION_CARD_X),  # card B at rest (modes 1, 6)
+    immediate(0x52D59E, "69c9", 0x500 - STOCK_FUSION_CARD_X, 0x500 - FUSION_CARD_X),  # its slide (mode 4)
+    immediate(0x52D5CD, "68", STOCK_FUSION_CARD_X, FUSION_CARD_X),  # mode 5: card B from its rest
+    immediate(0x52D5C8, "68", 0xF1, FUSION_SECOND_CARD_X),  # to the attribute frame
+    immediate(0x52D5FA, "bf", 0xF1, FUSION_SECOND_CARD_X),  # mode 10: card B there
+    imm8(0x52D5FF, "8d5f", -0x5A, 0x97 - FUSION_SECOND_CARD_X),  # and its y, kept at 0x97
+    immediate(0x52D555, "b9", 0x34A, FUSION_ARROW_X),  # page arrow at rest
+    immediate(0x52D524, "69c9", 0x500 - 0x34A, 0x500 - FUSION_ARROW_X),  # its slide
+    immediate(0x52D465, "b9", STOCK_ATTRIBUTE_LIST_X, FUSION_ATTRIBUTE_LIST_X),  # attribute frame at rest (mode 10)
+    immediate(0x52D46F, "69c9", 0x259, FUSION_ATTRIBUTE_LIST_X + ATTRIBUTE_LIST_WIDTH),  # its slide (mode 5)
+    immediate(0x52D483, "8d8c0a", -0x17A, -ATTRIBUTE_LIST_WIDTH),  # from just off the left edge
+    immediate(0x52D48A, "81f9", STOCK_ATTRIBUTE_LIST_X, FUSION_ATTRIBUTE_LIST_X),  # clamped at its rest
+    immediate(0x52D492, "b9", STOCK_ATTRIBUTE_LIST_X, FUSION_ATTRIBUTE_LIST_X),
+    immediate(0x52D4B7, "68", 0x17A, ATTRIBUTE_LIST_WIDTH),  # its width
+    # 0x52ECC0, confirm: the card, the fusion overlay over it (0x52E940), its heading tab and the dialog under it
+    immediate(0x52EEFC, "68", STOCK_FUSION_CARD_X, FUSION_CARD_X),
+    immediate(0x52EF14, "68", STOCK_FUSION_CARD_X, FUSION_CARD_X),
+    immediate(0x52EF88, "68", STOCK_FUSION_CARD_X + 0x10, FUSION_CARD_X + 0x10),
+    immediate(0x52ED42, "b8", 0x2A5, FUSION_DIALOG_X),  # dialog at rest
+    immediate(0x52ED32, "68", 0x2A5, FUSION_DIALOG_X),  # and its slide's end
+    # 0x52F940, attribute transfer: the card, the overlay, its heading tab, the info box under it, the count box on
+    # its left edge, and the attribute list PANEL_GAP to its left (sliding in from x -ATTRIBUTE_LIST_WIDTH)
+    immediate(0x52FC5A, "68", STOCK_TRANSFER_CARD_X, FUSION_CARD_X),
+    immediate(0x52FC69, "68", STOCK_TRANSFER_CARD_X, FUSION_CARD_X),
+    immediate(0x52FCD9, "68", STOCK_TRANSFER_CARD_X + 0x10, FUSION_CARD_X + 0x10),
+    immediate(0x52FA59, "b8", STOCK_TRANSFER_CARD_X, FUSION_CARD_X),  # info box at rest
+    immediate(0x52FA3A, "69c9", 0x500 - STOCK_TRANSFER_CARD_X, 0x500 - FUSION_CARD_X),  # its slide
+    immediate(0x52FB5B, "bf", STOCK_TRANSFER_CARD_X, FUSION_CARD_X),  # count box at rest
+    immediate(0x52FB6A, "69c9", 0x500 - STOCK_TRANSFER_CARD_X, 0x500 - FUSION_CARD_X),  # its slide
+    immediate(0x52F9A2, "b9", STOCK_ATTRIBUTE_LIST_X, FUSION_ATTRIBUTE_LIST_X),  # attribute list at rest
+    imm8(0x52F9A9, "8d69", ATTRIBUTE_ALPHA - STOCK_ATTRIBUTE_LIST_X, ATTRIBUTE_ALPHA - FUSION_ATTRIBUTE_LIST_X),
+    immediate(0x52F9BA, "69c9", 0x259, FUSION_ATTRIBUTE_LIST_X + ATTRIBUTE_LIST_WIDTH),  # its slide (mode 4)
+    # 0x52CBE0, the cursor over 0x52F940's card: the attribute grid (step and x) and the skill tags (step, x, y, width)
+    *detour(0x52CCA5, bytes.fromhex("6bc969 81c187020000"), CAVE + 0x700, 0x52CCAE,
+            b"\x69\xc9" + p32(ATTRIBUTE_STEP) + b"\x81\xc1" + p32(FUSION_CARD_X + CARD_PADDING)),
+    *detour(0x52CCF2, bytes.fromhex("6bc94d 99 83e21f"), CAVE + 0xBA0, 0x52CCF9,
+            b"\x69\xc9" + p32(TAG_STEP) + bytes.fromhex("99 83e21f")),
+    *detour(0x52CD02, bytes.fromhex("6a1c 6a46 6a00 81c144030000 684a010000"), CAVE + 0xBC0, 0x52CD13,
+            bytes.fromhex("6a1c 68") + p32(TAG_WIDTH) + bytes.fromhex("6a00 81c1") + p32(FUSION_CARD_X + TEXT_COLUMN)
+            + b"\x68" + p32(TRANSFER_CARD_Y + TAG_Y)),
+]
+# The officer page of the pre-battle menu (0x598B70; harness story-officer-page) has two columns side by side: the
+# menu rows (plates 402 wide at row x - 96, from y 131 on a 52 step) over the weapon card, and the portrait box over
+# the stat panel (0x598870, stock 20 in from the portrait) and the proficiency box (0x595C20, 8 in). With the card at
+# CARD_WIDTH the stock places overlap, so the page is laid out again (docs/design-language.md, Panels on a page): the
+# columns PANEL_GAP apart, centred in the safe area, each column's panels on its left edge or at their stock inset.
+# The card slides in from just off the left edge (stock: x -0x1D8), the rows from x -210, the right column from 0x500.
+EQUIPMENT_LEFT = SAFE_LEFT + (SAFE_RIGHT - SAFE_LEFT - (CARD_WIDTH + PANEL_GAP + PORTRAIT_WIDTH)) // 2
+EQUIPMENT_RIGHT = EQUIPMENT_LEFT + CARD_WIDTH + PANEL_GAP
+EQUIPMENT_ROW_PLATE, EQUIPMENT_FIRST_ROW_Y, EQUIPMENT_ROW_START = -0x60, 131, -210
+EQUIPMENT_ROW_X = EQUIPMENT_LEFT - EQUIPMENT_ROW_PLATE
+EQUIPMENT_STAT_X, EQUIPMENT_PROFICIENCY_X = EQUIPMENT_RIGHT + 0x2E8 - 0x2D4, EQUIPMENT_RIGHT + 0x2DC - 0x2D4
+EQUIPMENT_PAGE = [
+    immediate(0x598DF0, "be", 0xE3, EQUIPMENT_LEFT),  # card at rest
+    immediate(0x598DE7, "8db402", -0x1D8, -CARD_WIDTH),  # its slide's start
+    immediate(0x598DD3, "69f6", 0xE3 + 0x1D8, EQUIPMENT_LEFT + CARD_WIDTH),  # and travel
+    immediate(0x598BBD, "be", 0xEA, EQUIPMENT_ROW_X),  # rows at rest (the name; the plate at EQUIPMENT_ROW_PLATE)
+    imm8(0x598BD5, "8d7e", EQUIPMENT_FIRST_ROW_Y - 0xEA, EQUIPMENT_FIRST_ROW_Y - EQUIPMENT_ROW_X),  # y from that x
+    immediate(0x598C0C, "69c0", 0xEA - EQUIPMENT_ROW_START, EQUIPMENT_ROW_X - EQUIPMENT_ROW_START),  # their slide
+    immediate(0x5988C8, "b8", 0x2D4, EQUIPMENT_RIGHT),  # portrait box at rest
+    immediate(0x5988A7, "69c9", 0x500 - 0x2D4, 0x500 - EQUIPMENT_RIGHT),  # its slide
+    immediate(0x598954, "c744243c", 0x2E8, EQUIPMENT_STAT_X),  # stat panel at rest
+    immediate(0x59892F, "69c9", 0x500 - 0x2E8, 0x500 - EQUIPMENT_STAT_X),  # its slide
+    immediate(0x598B4A, "b8", 0x2DC, EQUIPMENT_PROFICIENCY_X),  # proficiency box at rest
+    immediate(0x598B2B, "69d2", 0x500 - 0x2DC, 0x500 - EQUIPMENT_PROFICIENCY_X),  # its slide
+]
+# The battle results' weapon-acquired card (0x583B20, beside a full-height officer picture; its slides are offsets from
+# this x): the stock x, or ending on the safe edge where the wider card would pass it; its thumbnail follows.
+RESULT_CARD_X = min(0x241, SAFE_RIGHT - CARD_WIDTH)
+RESULT_CARD = [immediate(0x583D47, "8d8f", 0x241, RESULT_CARD_X),
+               immediate(0x583D86, "81c7", 0x241 + 0x15, RESULT_CARD_X + THUMBNAIL_X)]
+# Every other card's thumbnail, card x + 0x15 (THUMBNAIL_X now).
+CARD_THUMBNAILS = [
+    *[(va, bytes.fromhex(op + "15"), bytes.fromhex(op) + bytes([THUMBNAIL_X])) for va, op in (
+        (0x531BD7, "83c3"), (0x529AD8, "8d46"), (0x527DEC, "8d43"), (0x52D408, "8d57"), (0x52D69C, "8d4f"),
+        (0x598E55, "8d4e"), (0x55480F, "83c6"), (0x5546C5, "83c7"), (0x53CB6B, "83c7"))],
+    immediate(0x52EF51, "68", STOCK_FUSION_CARD_X + 0x15, FUSION_CARD_X + THUMBNAIL_X),  # fusion confirm step
+    immediate(0x52FCA2, "68", STOCK_TRANSFER_CARD_X + 0x15, FUSION_CARD_X + THUMBNAIL_X),  # attribute transfer step
+]
 
 
 def weapon_row_edits() -> list:
@@ -717,8 +974,8 @@ def weapon_row_edits() -> list:
     return [*widths(0x59506C, stock=350, wide=350 + grow), immediate(0x595135, "8dbc39", 0x118, 0x118 + grow),
             *[edit for _, frame, stock in WEAPON_ROW_FRAMES.values()
               for edit in widths(frame, stock=stock, wide=stock + grow)],
-            *[immediate(va, opcode, stock, stock + step * grow)
-              for sites in WEAPON_LIST_ORIGINS.values() for va, opcode, stock, step in sites]]
+            *[immediate(va, opcode, stock, stock + step * CARD_PAGE_LIST_SHIFT.get(call, grow))
+              for call, sites in WEAPON_LIST_ORIGINS.items() for va, opcode, stock, step in sites]]
 
 
 # Screens that keep the MOZ layout (the pre-wave-4 panels): VS and Survival rules panel moved left and
@@ -782,18 +1039,39 @@ CAPTION_LINES = [
 # and in the upgrade skill effects (0x526B70).
 ATTRIBUTE_GRIDS = [
     *detour(0x59556B, bytes.fromhex("6a1c 6a62 53 52 51"), CAVE + 0x1C0, 0x595572,
-            bytes.fromhex("6a1c 6896000000 53 52 51")),
+            bytes.fromhex("6a1c 68") + p32(ATTRIBUTE_CELL) + bytes.fromhex("53 52 51")),
     *detour(0x526C51, bytes.fromhex("6bc969 99 83e203"), CAVE + 0x1E0, 0x526C58,
-            bytes.fromhex("69c99c000000 99 83e203")),
+            b"\x69\xc9" + p32(ATTRIBUTE_STEP) + bytes.fromhex("99 83e203")),
     *detour(0x526C98, bytes.fromhex("6a1c 6a62 56 52 51"), CAVE + 0x200, 0x526C9F,
-            bytes.fromhex("6a1c 6896000000 56 52 51")),
+            bytes.fromhex("6a1c 68") + p32(ATTRIBUTE_CELL) + bytes.fromhex("56 52 51")),
 ]
 
 # Skill tags are TAG_WIDTH wide (runtime hook 108 draws them on 0x593CE0's calls), so every row of three
 # on a weapon card steps TAG_STEP: the card itself (0x595310), the fusion overlay over it (0x52E940, both paths) and
 # the upgrade's tag rows over it (0x528E40, modes 6 and 7/9, which end at the third tag and frame the chosen one).
-TAG_WIDTH = 138
-TAG_STEP = TAG_WIDTH + 7
+# The card body itself (0x595310, origin x in esi then edx, y in ebp): the text column, the +N after the name, the
+# left-aligned Base Attack value ("%d", the tail of the "+%d" string at 0x719798, not the "%3d" field at 0x71979C),
+# and where the tags and the attribute grid start. The cell inside (0x591810) is ATTRIBUTE_GRIDS' and above.
+# Each digit's ink offset in its sprite, rounded to the pen's whole px ("0" never leads a value).
+DIGIT_INK_TABLE = bytes([0] + [round(DIGIT_INK_LEFT[d]) for d in "123456789"])
+WEAPON_CARD = [
+    immediate(0x595360, "81c6", 0xBB, TEXT_COLUMN),  # the name, and the Base Attack label that reuses its x
+    immediate(0x5953BF, "8d9408", 0xBD, TEXT_COLUMN + PLUS_PEN_GAP),  # +N: origin + name width + this
+    immediate(0x595437, "68", 0x71979C, 0x719799),  # the value's format
+    # the value: x from its leading digit's ink offset (edx is free until 0x595465)
+    *detour(0x595452, bytes.fromhex("81c147010000 8d442454"), CAVE + 0xB40, 0x59545C,
+            b"\x81\xc1" + p32(ATTACK_VALUE_INK_X) + bytes.fromhex("8d442454 0fb610 0fbe92")
+            + p32(CAVE + 0xB80 - ord("0")) + bytes.fromhex("29d1")),
+    (CAVE + 0xB80, b"\xcc" * 10, DIGIT_INK_TABLE),
+    immediate(0x59549D, "81c5", 0xD0, TEXT_COLUMN),  # the first skill tag
+    *[(va, bytes.fromhex(op) + bytes([stock]), bytes.fromhex(op) + bytes([new])) for va, op, stock, new in (
+        (0x59537F, "8d45", 0x2D, NAME_Y), (0x5953E2, "8d45", 0x2D, NAME_Y),  # name, +N
+        (0x59540E, "8d55", 0x48, ATTACK_LABEL_Y), (0x59544E, "83c5", 0x4B, ATTACK_LABEL_Y + ATTACK_VALUE_DROP),
+        (0x5954AA, "83c0", 0x6D, TAG_Y), (0x52EA7C, "83c0", 0x6D, TAG_Y), (0x52EBB3, "83c1", 0x6D, TAG_Y),
+        (0x5986DE, "8d4b", 0x6D, TAG_Y))],  # the card's tags, the fusion overlay's, the selected tag's frame
+    *[immediate(va, "68", 0xA0 + 0x6D, 0xA0 + TAG_Y) for va in (0x5290F8, 0x529142, 0x5291DF)],  # upgrade rows
+]
+
 SKILL_TAGS = [
     *detour(0x5954B9, bytes.fromhex("83c601 83c414 83c54d"), CAVE + 0x220, 0x5954C2,
             bytes.fromhex("83c601 83c414 81c5") + p32(TAG_STEP)),
@@ -807,7 +1085,14 @@ SKILL_TAGS = [
             bytes.fromhex("81c7") + p32(TAG_STEP) + bytes.fromhex("83c501")),
     *detour(0x5291EB, bytes.fromhex("83c74d 83c414"), CAVE + 0x2C0, 0x5291F1,
             bytes.fromhex("81c7") + p32(TAG_STEP) + bytes.fromhex("83c414")),
-    *[(va, bytes.fromhex("81ff2a040000"), b"\x81\xff" + p32(0x343 + 3 * TAG_STEP)) for va in (0x529156, 0x5291F4)],
+    *[(va, bytes.fromhex("81ff2a040000"), b"\x81\xff" + p32(CARD_PAGE_CARD_X + TEXT_COLUMN + 3 * TAG_STEP))
+      for va in (0x529156, 0x5291F4)],
+    immediate(0x52EA4C, "81c3", 0xD0, TEXT_COLUMN),  # the fusion overlay's first tag, path A
+    immediate(0x52EB99, "81c6", 0xD0, TEXT_COLUMN),  # and path B
+    # the selected tag's frame on the camp and discard card (0x598570): step, width, first tag
+    *detour(0x5986D6, bytes.fromhex("6bd24d 6a1c 6a46"), CAVE + 0xB00, 0x5986DD,
+            b"\x69\xd2" + p32(TAG_STEP) + bytes.fromhex("6a1c 68") + p32(TAG_WIDTH)),
+    immediate(0x5986E2, "8d842a", 0xD0, TEXT_COLUMN),
 ]
 
 # Kept art and clearance edits that the X360 panels replace.
@@ -819,7 +1104,9 @@ X360_REPLACED = {
     0x533315, 0x53332F, 0x533349, 0x533372, 0x533346, 0x533365, 0x53336D,
 }
 CODE_EDITS = ([edit for edit in CODE_EDITS if edit[0] not in X360_REPLACED] + MOZ_LAYOUT + X360_LAYOUT + X360_PANELS
-              + LAYOUT_TWEAKS + PAGE_ORIGIN + CAPTION_LINES + ATTRIBUTE_GRIDS + SKILL_TAGS)
+              + UPGRADE_SKILLS_PANELS + LAYOUT_TWEAKS + PAGE_ORIGIN + CAPTION_LINES + ATTRIBUTE_GRIDS + SKILL_TAGS + WEAPON_CARD
+              + CARD_PAGES + CARD_THUMBNAILS + UPGRADE_WEAPONS_PAGE
+              + ATTRIBUTES_PAGE + FUSION_PAGE + RESULT_CARD + ARMY_PANEL + EQUIPMENT_PAGE)
 
 LATIN_TOKEN = 0x1000
 

@@ -698,6 +698,27 @@ def test_row_with_a_quad_window_is_centred_and_condensed_inside_it():
     assert squish_off.getchannel("A").getbbox() == (0, 10, 90, 22)
 
 
+def test_a_hint_wider_than_its_room_condenses_to_it_at_both_sizes(letters):
+    """Bug: a hint wider than its strip was lettered at full width, so its quad showed only its first words."""
+    stock = Image.new("RGBA", (1024, 32))
+    stock.paste(FILL, (1, 8, 300, 24))
+    word = Image.new("RGBA", (800, 20))
+    word.paste(FILL, (0, 4, 800, 16))
+    face = type("Face", (), {"render": lambda self, text: (word, 16)})()
+    rows = [[{"face": "help", "text": "Hint", "room": 588}]]
+    small = build.composed(stock, rows, {"faces": {"help": face}}, "left", 0, [(0, 32)])
+    assert small.getchannel("A").getbbox()[::2] == (1, 589)  # 800 condensed to 588, from the row's own left
+    # the large art: its official row as wide as the full-width small one, the room still the limit
+    served = Image.new("RGBA", (1024, 32))
+    served.paste((38, 38, 38, 255), (1, 8, 801, 24))
+    label = Image.new("RGBA", (1608, 48))
+    label.paste((38, 38, 38, 255), (4, 8, 1604, 40))
+    letters(lambda request: (label, {"ink": [4, 8, 1604, 40], "baseline": 40}))
+    edit = {"entry": 4060, "item": 10, "style": "help", "rows": rows, "bands": [(0, 32)]}
+    box = vector.vector_art(edit, served, ["Hint"], 2, squeeze=True).getchannel("A").getbbox()
+    assert box[2] - box[0] == pytest.approx(2 * 588, abs=2)
+
+
 def test_worker_pool_falls_back_to_threads_where_fork_does_not_exist(monkeypatch):
     # Bug: get_context("fork") raises ValueError on Windows, so the art stage (and the install) cannot start there.
     from concurrent.futures import ThreadPoolExecutor

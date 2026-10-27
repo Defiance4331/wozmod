@@ -1403,7 +1403,9 @@ static const u32 boxed[][2] = {
     {0x5A686C, 705}, {0x580876, 705},
     {0x5530FC, 416},
     {0x526BE8, 641},
-    {0x595679, 413}, {0x5956FA, 413},
+    /* the info boxes' descriptions: the X360 413, grown with the box to the card's width (runtime_edits.CARD_WIDTH
+       645 from the stock 472), so the lines wrapped at the X360 516 draw at full size */
+    {0x595679, 586}, {0x5956FA, 586},
     {0x598125, 604}, {0x59818B, 604},
     {0x593E56, 480}, {0x593EAE, 480},
 };
@@ -1568,9 +1570,9 @@ static const u32 described[][2] = {
 };
 
 static const u32 single_line[][2] = {
-    {0x595BF9, 287}, {0x556ED0, 289}, {0x55B699, 293},
+    {0x595BF9, 284}, {0x556ED0, 289}, {0x55B699, 293},
     {0x53693D, 269}, {0x535EE7, 305}, {0x594F77, 229},
-    {0x543382, 175}, {0x5950EC, 303}, {0x52B6FD, 181},
+    {0x543382, 175}, {0x5950EC, 256}, {0x52B6FD, 181},
     {0x5983CB, 276}, {0x52E78F, 196}, {0x533469, 170},
     {0x538C65, 835}, {0x536742, 252}, {0x536785, 252},
     {0x5A6805, 705}, {0x580811, 705},
@@ -2161,7 +2163,7 @@ static void shadowed(const char *s, u32 x, u32 y, u32 cell, const u32 *colour)
    line through the official letters' row fills (official row 8's thin dark line aside): our anti-aliased cores keep
    about 0.85 of their colour over the plate, so each end is set past its target, clamped to 0..255. Tag 0xF is an
    empty slot: the blank alone. */
-#define TAG_WIDTH 0x8A
+#define TAG_WIDTH 145  /* runtime_edits.TAG_WIDTH: three tags a unit apart fill the card's text column */
 #define TAG_PAD 8  /* the plate kept clear at each end: a name wider than TAG_WIDTH - 2 * TAG_PAD condenses */
 #define TAG_NAMES ((const char *const *)0x6FD310)
 #define TAG_TEXTURE ((unsigned long long (*)(u32))0x58E180)
@@ -2962,7 +2964,7 @@ static void camp_help_position(const struct hires *r, struct frame *f, u32 width
         {4,392,664,1175,89}, {5,400,785,1175,89},
         {6,476,610,1175,89}, {7,420,614,1175,88},
         {8,448,683,1175,87}, {9,528,1050,1175,90},
-        {10,560,1103,0,90}, {11,632,1259,1175,90},
+        {10,592,1178,1175,90}, {11,632,1259,1175,90},
         {12,0,971,1175,90}, {13,648,1011,1175,90},
     };
     u32 i, growth, right, minimum = r->band >> 16;

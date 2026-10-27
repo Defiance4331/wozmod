@@ -26,29 +26,28 @@ CELL_EDITS = {0x49EAA1: 0x822EA2E8, 0x538C4E: 0x822935C0, 0x550821: 0x822A622C}
 # Panel edits (X360_PANELS) -> the X360 instruction that holds the same value.
 PANEL_EDITS = {
     0x59A712: 0x822DDCE8, 0x59A706: 0x822DDCFC,
-    0x595AC1: 0x822D91B8, 0x595B3D: 0x822D924C, 0x595B6E: 0x822D9278, 0x595B71: 0x822D927C,
+    0x595AC1: 0x822D91B8, 0x595B3D: 0x822D924C, 0x595B6E: 0x822D9278,
     0x595B83: 0x822D9280, 0x595BB6: 0x822D92B4, 0x556D81: 0x822A973C,
     0x556E7A: 0x822A9834, 0x55B55A: 0x822AB3B8, 0x55B55E: 0x822AB3BC,
     0x55B578: 0x822AB3D4, 0x55B5DA: 0x822AB450, 0x55B612: 0x822AB484,
     0x55B656: 0x822AB4F8, 0x56A7A1: 0x822BA428, 0x56A7B5: 0x822BA430,
     0x52959B: 0x82282064, 0x5295B0: 0x82282080, 0x5295C4: 0x82282088, 0x5295DC: 0x82282094,
     0x52D757: 0x822880C4, 0x52D76B: 0x822880D0, 0x52D77E: 0x822880E0, 0x52D792: 0x822880EC,
-    0x52D7A4: 0x822880F8, 0x527705: 0x822830DC, 0x527719: 0x822830E4, 0x527722: 0x822830EC,
-    0x52776D: 0x82283154, 0x5277C7: 0x822831C0, 0x527882: 0x82283298, 0x527890: 0x822832A4,
+    0x52D7A4: 0x822880F8, 0x527705: 0x822830DC,
     0x5278A8: 0x822832AC, 0x55742F: 0x822A9B18, 0x557443: 0x822A9B20, 0x557456: 0x822A9B2C,
     0x557506: 0x822A9C2C, 0x557529: 0x822A9C3C, 0x55BAF0: 0x822AC104, 0x55BB04: 0x822AC10C,
     0x55BB15: 0x822AC004, 0x595ADE: 0x822D91EC, 0x595AF2: 0x822D9208, 0x595B0F: 0x822D9224,
     0x556D9F: 0x822A9768, 0x556DB7: 0x822A9784, 0x556DD5: 0x822A97A0, 0x55B57B: 0x822AB3EC,
     0x55B5AC: 0x822AB424, 0x56A859: 0x822BA4C4, 0x529666: 0x82282114,
     0x52D82A: 0x82288180, 0x527832: 0x822831FC, 0x5574F0: 0x822A9BC8,
-    0x52E5CD: 0x82289EA0, 0x52F9A2: 0x8228B370,
-    0x52F9BA: 0x8228B3A4, 0x52F9CE: 0x8228B3B0, 0x52FA17: 0x8228B3FC, 0x5332F8: 0x8228E38C,
+    0x52E5CD: 0x82289EA0,
+    0x52F9CE: 0x8228B3B0, 0x52FA17: 0x8228B3FC, 0x5332F8: 0x8228E38C,
     0x53343A: 0x8228E530, 0x533315: 0x8228E3B8, 0x53332F: 0x8228E3D4, 0x533349: 0x8228E3F0,
     0x533372: 0x8228E400, 0x527418: 0x82282E24, 0x52742C: 0x82282E2C, 0x527464: 0x82282E6C,
-    0x528F05: 0x82284AE4, 0x528F19: 0x82284AEC, 0x528F27: 0x82284AF8, 0x536654: 0x822903F4,
+    0x528F19: 0x82284AEC, 0x536654: 0x822903F4,
     0x536675: 0x82290410, 0x53669A: 0x8229044C, 0x536694: 0x82290440, 0x5366FD: 0x82290534,
     0x53670E: 0x8229054C, 0x536791: 0x822905CC, 0x536828: 0x822906AC, 0x5368C4: 0x8229073C,
-    0x5368F3: 0x8229078C, 0x536970: 0x82290874, 0x536984: 0x8229087C, 0x53699B: 0x82290888,
+    0x5368F3: 0x8229078C, 0x536984: 0x8229087C,
     0x535E6C: 0x8228FD74, 0x535E5D: 0x8228FD64, 0x535EDB: 0x8228FDB8, 0x538CB0: 0x8229362C,
     0x538CA3: 0x82293614, 0x538C9C: 0x8229360C, 0x56A160: 0x822B9C14, 0x56A1A8: 0x822B9C1C}
 # Panel values computed from X360 values; x reads an X360 immediate.
@@ -56,12 +55,21 @@ DERIVED = {
     0x529587: lambda x: x(0x82282094) + x(0x822D91B8),  # slide travel = resting x + panel width
     0x55BC0A: lambda x: x(0x822AC004) + x(0x822AB3BC) + 43,  # weapon panel after the list, stock 43 px gap
     0x55BBE7: lambda x: 1280 - x(0x822AC004) - x(0x822AB3BC) - 43,  # its travel from the right edge
-    0x52F9A9: lambda x: x(0x8228B374) - x(0x8228B370),  # resting alpha 0x80 from the resting x
+    # the pre-battle army list at the X360 x, moved inside the safe area (runtime_edits.ARMY_LIST_X)
+    0x53699B: lambda x: max(x(0x82290888), runtime_edits.SAFE_LEFT),
+    0x536970: lambda x: max(x(0x82290888), runtime_edits.SAFE_LEFT) - x(0x8229087C),
+    0x595B71: lambda x: x(0x822D9278) + runtime_edits.TEXT_INSET,  # officer names 10 in their plates (X360: 7)
     0x54FE19: lambda x: x(0x822A5990) - 0x800,  # banner backing corner without the X360 pack bias
     # The art viewer's selection frame, description bar, its text and page arrow keep their stock place under
     # the thumbnail panel moved to the X360 x: the panel's x, and the thumbnails' column-0 x 24 px in.
     **{va: (lambda x: x(0x822A9C3C)) for va in (0x5579F7, 0x557AAF, 0x557B6D)},
     **{va: (lambda x: x(0x822A9C3C) + 24) for va in (0x5577C0, 0x557AE8, 0x557B92, 0x557BA9)},
+    # Upgrade Skills: the three lists left of the X360 x by the shift that fits the wider weapon row, and the
+    # slides from the right edge longer by as much.
+    **{va: (lambda x, at=at: x(at) - runtime_edits.UPGRADE_SKILLS_SHIFT)
+       for va, at in ((0x527719, 0x822830E4), (0x527722, 0x822830EC), (0x52776D, 0x82283154), (0x527882, 0x82283298))},
+    **{va: (lambda x, at=at: x(at) + runtime_edits.UPGRADE_SKILLS_SHIFT)
+       for va, at in ((0x5277C7, 0x822831C0), (0x527890, 0x822832A4))},
 }
 # Detour sites -> cave, and the cave values: (offset in the cave, size, value).
 DETOURS = {0x55B58C: 0x5F5E00, 0x55BBA3: 0x5F5E20, 0x49EAE4: 0x5F5F00, 0x49EB1F: 0x5F5F40}
@@ -73,11 +81,13 @@ CAVES = {
 # The officer card's reading-line call, which the X360 card does not make.
 NOPS = {0x535EC1}
 
-# Site: the X360 wrap width and the cell w it wraps at; the box is that width unless our art moves it.
+# Site: the X360 wrap width and the cell w it wraps at; the box is that width unless our art moves it (False), or
+# that width grown as its info box grew to the card's width (CARD: docs/design-language.md, Panels on a page).
+CARD = runtime_edits.CARD_WIDTH - runtime_edits.STOCK_CARD_WIDTH
 WRAPS = {
     0x595F93: (0x822D974C, 0x822D972C, True), 0x5975C6: (0x822DB240, 0x822DB224, False),
-    0x593B98: (0x822DB318, 0x822DB224, True), 0x595679: (0x822D8D30, 0x822D8D20, True),
-    0x5956FA: (0x822D8D30, 0x822D8D20, True), 0x53C225: (0x82296084, 0x82296070, True),
+    0x593B98: (0x822DB318, 0x822DB224, True), 0x595679: (0x822D8D30, 0x822D8D20, CARD),
+    0x5956FA: (0x822D8D30, 0x822D8D20, CARD), 0x53C225: (0x82296084, 0x82296070, True),
     0x53C2A5: (0x8229611C, 0x82296108, True), 0x526BE8: (0x822824E0, 0x822824B8, False),
     0x539F9F: (0x822941E4, 0x822941D4, True), 0x598125: (0x822DBA6C, 0x822DBA3C, True),
     0x59818B: (0x822DBB0C, 0x822DBAC8, True),
@@ -110,7 +120,10 @@ def ours(edit: tuple) -> int:
 
 
 def test_layout_values_do_not_drift_from_the_x360_screens(x360: bytes) -> None:
-    panels = {edit[0]: edit for edit in runtime_edits.X360_LAYOUT + runtime_edits.X360_PANELS}
+    # (the attributes page's skill list rests PANEL_GAP left of the card column, runtime_edits.ATTRIBUTES_PAGE, and
+    # the fusion's attribute list PANEL_GAP left of the fusion card, runtime_edits.FUSION_PAGE)
+    panels = {edit[0]: edit for edit in runtime_edits.X360_LAYOUT + runtime_edits.X360_PANELS
+              + runtime_edits.UPGRADE_SKILLS_PANELS}
     edits = {va: ours(edit) for va, edit in panels.items()}
     rows = [(f"edit {va:#x}", edits[va], immediate(x360, at)) for va, at in EDITS.items()]
     rows += [(f"edit {va:#x}", edits[va], round(immediate(x360, at) * 24 / 20)) for va, at in CELL_EDITS.items()]
@@ -118,8 +131,8 @@ def test_layout_values_do_not_drift_from_the_x360_screens(x360: bytes) -> None:
     for site, (width_at, cell_at, boxed) in WRAPS.items():
         width, cell = immediate(x360, width_at), immediate(x360, cell_at)
         rows.append((f"wrap {site}", wraps.get(site, boxes[site][0]), round(width * 20 / cell)))
-        if boxed:
-            rows.append((f"box {site}", boxes[site][0], width))
+        if boxed is not False:
+            rows.append((f"box {site}", boxes[site][0], width + (0 if boxed is True else boxed)))
     x = lambda at: immediate(x360, at)
     rows += [(f"panel {va:#x}", ours(panels[va]), x(at)) for va, at in PANEL_EDITS.items()]
     rows += [(f"panel {va:#x}", ours(panels[va]), value(x)) for va, value in DERIVED.items()]
