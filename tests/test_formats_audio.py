@@ -291,6 +291,37 @@ def test_psp_atrac3plus_clip_declares_its_whole_length(tmp_path: Path) -> None:
     english_voice_bank(clips)
 
 
+def _atrac_frames(riff: bytes) -> tuple[int, int, int]:
+    """(channels, block align, frame count) of an ATRAC3plus RIFF."""
+    fmt = riff.find(b"fmt ")
+    channels, align = struct.unpack_from("<H", riff, fmt + 10)[0], struct.unpack_from("<H", riff, fmt + 20)[0]
+    data = riff.find(b"data")
+    return channels, align, struct.unpack_from("<I", riff, data + 4)[0] // align
+
+
+@pytest.mark.skipif(os.environ.get("WOZMOD_AUDIO") != "1" or not os.environ.get("WOZMOD_DONORS")
+                    or not shutil.which("ffmpeg"),
+                    reason="set WOZMOD_AUDIO=1 and WOZMOD_DONORS, with ffmpeg")
+def test_psp_stereo_dialogue_keeps_the_samples_of_a_22050_hz_source(tmp_path: Path) -> None:
+    # Bug: voice_na.bns stereo dialogue is 22050 Hz audio in a 44100 Hz header, so the built clip has half
+    # the samples and plays an octave high. A mono clip from the same bank is a stock take at the labeled rate.
+    from synthetic import write_ps2_archive
+
+    from wozmod.formats.audio import PSP_CLIP_BASE, donor_voice_clips
+    from wozmod.formats.linkdata import ps2_extents, ps2_members
+
+    bank_path = Path(os.environ["WOZMOD_DONORS"]) / "wo2-psp/PSP_GAME/USRDIR/sound/voice_na.bns"
+    members = ps2_members(bank_path, [0, PSP_CLIP_BASE])
+    bank = write_ps2_archive(tmp_path / "voice_na.bns", members)
+    clips, _ = donor_voice_clips([("wo2-psp", {1: 0, 2: PSP_CLIP_BASE}, ps2_extents(bank), bank)])
+
+    for moz_id, member, rate in ((1, 0, 44_100), (2, PSP_CLIP_BASE, 22_050)):
+        _channels, _align, frames = _atrac_frames(members[member])
+        samples = parse_kovs_record(clips[moz_id])[2].sample_count
+        expect = round(frames * 2048 * 48_000 / rate)
+        assert abs(samples - expect) <= 2048, (moz_id, samples, expect)
+
+
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
 def test_voice_bank_refuses_a_clip_that_declares_less_than_it_holds(tmp_path: Path) -> None:
     # Bug: a clip whose final granule position is short of its audio ships, and the game cuts the line there.

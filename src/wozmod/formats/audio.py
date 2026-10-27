@@ -506,6 +506,49 @@ def donor_voice_choice(banks: list[tuple[str, dict[int, int], list[tuple[int, in
     return chosen
 
 
+# KSDATAFORMAT_SUBTYPE_ATRAC3PLUS. Stereo dialogue in voice_na.bns (members from PSP_CLIP_BASE on, 280-byte
+# frames) is 22050 Hz audio in a header that says 44100: the same line on the Xbox 360 disc is twice as long and
+# an octave lower, and rewriting this rate makes them match, apart from the Xbox clip's trailing padding. Mono
+# clips earlier in the bank are the stock takes at the labeled 44100.
+_ATRAC3PLUS_GUID = bytes.fromhex("bfaa23e958cb7144a119fffa01e4ce62")
+
+
+def _fmt_body(riff: bytes) -> tuple[int, int] | None:
+    """The fmt chunk's body offset and size, or None when riff is not a WAVE file with one."""
+    if len(riff) < 12 or riff[:4] != b"RIFF" or riff[8:12] != b"WAVE":
+        return None
+    position = 12
+    while position + 8 <= len(riff):
+        size = struct.unpack_from("<I", riff, position + 4)[0]
+        if riff[position:position + 4] == b"fmt ":
+            return position + 8, size
+        position += 8 + size + (size & 1)
+        if size > len(riff):
+            return None
+    return None
+
+
+def _psp_dialogue_riff(riff: bytes) -> bytes:
+    """The rate ffmpeg should resample this PSP clip from.
+
+    A stereo ATRAC3plus clip labeled 44100 is 22050 Hz dialogue: each frame is 2048 samples of that slower
+    waveform, and the header's byte rate was computed from the wrong rate. Mono clips are not that dialogue.
+    """
+    found = _fmt_body(riff)
+    if found is None:
+        return riff
+    body, size = found
+    if size < 40 or body + size > len(riff):
+        return riff
+    tag, channels, rate, _average, align = struct.unpack_from("<HHIIH", riff, body)
+    if (tag, channels, rate, align) != (0xFFFE, 2, 44_100, 280) or riff[body + 24:body + 40] != _ATRAC3PLUS_GUID:
+        return riff
+    out = bytearray(riff)
+    struct.pack_into("<I", out, body + 4, 22_050)
+    struct.pack_into("<I", out, body + 8, align * 22_050 // 2048)  # one ATRAC3plus frame is 2048 samples
+    return bytes(out)
+
+
 def donor_voice_clips(banks: list[tuple[str, dict[int, int], list[tuple[int, int]], Path]],
                       jobs: int | None = None) -> tuple[dict[int, bytes], dict[int, str]]:
     """Convert the donor RIFF clips donor_voice_choice picks, with each clip's source. ffmpeg reads any RIFF codec
@@ -516,7 +559,8 @@ def donor_voice_clips(banks: list[tuple[str, dict[int, int], list[tuple[int, int
         with bank.open("rb") as stream:
             for moz_id, (picked, clip) in chosen.items():
                 if picked == source:
-                    riffs[moz_id], sources[moz_id] = _read_at(stream, *records[clip]), source
+                    data = _read_at(stream, *records[clip])
+                    riffs[moz_id], sources[moz_id] = (_psp_dialogue_riff(data) if source == "wo2-psp" else data), source
     def encode(moz_ids: list[int], quality: int, span: tuple[float, float]) -> dict[int, bytes]:
         # The Ogg granule positions, which the game reads as the clip's length, come from the frame timestamps.
         # ffmpeg's RIFF reader packs two ATRAC3plus frames per packet but stamps one frame's duration, so the PSP
