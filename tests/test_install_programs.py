@@ -60,11 +60,10 @@ def _runs(tool: Path) -> int:
 
 def test_the_programs_output_is_what_the_text_build_reads_and_the_program_runs_once(tmp_path):
     # Bug: the file lands under the wrong name, one Xbox 360 disc's program is never made, the program runs
-    # again for the check, the window and the build (minutes lost on each), or its padding is installed with it.
+    # again for the check, the window and the build (minutes lost on each), or its padding is installed with it; or
+    # it is written only where a disc member was extracted first (an update that rebuilds only the art).
     image = _xbox_image(tmp_path, b"default.xex", ENCRYPTED)
     tool = fake(tmp_path / "xextool", "xextool", zeros=32_768, body=COUNT)
-    for folder in ("wo2-x360", "wo1-x360", "wo2-psp"):
-        (tmp_path / "donors" / folder).mkdir(parents=True)
 
     assert decrypt_with_tool("wo2-x360", tool, image) == DECRYPTED  # the window's check
     assert decrypt_with_tool("wo2-x360", tool, image) == DECRYPTED  # the install's check

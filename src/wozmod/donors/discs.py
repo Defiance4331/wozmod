@@ -92,5 +92,7 @@ class DonorsFolder:
         return data
 
     def stage_program(self, disc: str, data: bytes) -> None:
-        """Write the disc's decrypted program where `program` reads it."""
+        """Write the disc's decrypted program where `program` reads it. An update that rebuilds only the art extracts
+        no member of the PSP disc, so the disc's folder may not exist yet."""
+        self.folder(disc).mkdir(parents=True, exist_ok=True)
         (self.folder(disc) / DISCS[disc].program.staged).write_bytes(data)
