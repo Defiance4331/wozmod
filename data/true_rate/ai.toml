@@ -1,0 +1,201 @@
+# The true frame rate catalogue (format: see the top of character.toml). This file: the AI and army layer.
+#
+# 0x4421E0 (from 0x4AF960 once a tick, no dt) runs the army and AI layer: 0x4371B0 spawns and despawns units,
+# 0x4482C0 lets AI squads think (a round robin with a time budget), 0x439820 updates the off-field army units (the
+# same), 0x4450E0 runs each AI squad's per-tick part (0x4486D0: wait timers, reactions, turning), 0x436810 counts each
+# unit's combat and hazard time, 0x441CE0 times reinforcements. Turning in 0x4486D0's subtree steps the yaw by the
+# character step chr+0x1908 times a stock angle (0x447080, 0x4476F0, 0x455FA0, 0x456DD0, 0x458AD0, 0x459370,
+# 0x45BB90): the tick's share, which is what a per-tick turn needs.
+
+# ---- Thinking: decisions at the stock rate. The AI's inputs (chr+0xEDC buttons, +0x188C move vector) and the units'
+# targets persist between thinks; at stock the time budget already leaves some of them without a think on a tick.
+
+[[site]]
+va = 0x4421E0
+stock = "e8cb4fffff"
+kind = "gate"
+class = "d"
+what = """unit spawn and despawn pass (0x4371B0): its battle timer schedule (unit index % 10), the spawn radius ramp of
+50 a call at 0x441540 and the spawn decisions run 60 times a second"""
+code = "{call:0x4371b0}"
+
+[[site]]
+va = 0x4421E5
+stock = "e8d6600000"
+kind = "gate"
+class = "d"
+what = """AI squads' think (0x4482C0 round robin: goals, paths, the decision rolls of 0x447C10, the path-follow counter
+0x4AA220 and the formation slot step 0x44C210) runs 60 times a second, each squad thinking once per stock tick"""
+code = "{call:0x4482c0}"
+
+# 0x439820 measures the calls a second from the performance counter and grows the soldier budget 0x140A340 above 55,
+# shrinks it below, at most once per 60 calls (hysteresis 0x140A2CC). It runs every tick, so the threshold is N
+# ticks' worth of 55/60, and the hysteresis counts 60 Hz periods. Its unit loop thinks at the stock rate.
+[[site]]
+va = 0x439920
+stock = "890dcca24001"
+kind = "gate"
+class = "c"
+what = """soldier budget hysteresis 0x140A2CC steps one toward 0 a tick; ecx, which the grow and shrink checks read,
+keeps the count that did not move"""
+alt = "mov ecx, dword ptr [0x140a2cc]"
+
+[[site]]
+va = 0x439983
+stock = "8b3d64ab7e00 33ed eb03"
+kind = "gate"
+class = "d"
+what = """army unit round robin (0x4397A0, 0x4396E0: targets, the 1-in-10 retarget roll of 0x439380, combat rounds,
+hazard damage) runs 60 times a second; on the other ticks the cursor 0x7EAB64 is stored back unchanged"""
+code = "mov edi, dword ptr [0x7eab64]; xor ebp, ebp"
+alt = "mov edi, dword ptr [0x7eab64]; {jmp:0x439a4b}"
+
+# ---- Army unit counts (0x436810 calls 0x434CA0 for each active unit once a tick; edi = unit).
+
+# +0x64 counts ticks fighting (state 2; a combat round at 240 deals damage in proportion to it) and is zeroed out of
+# combat; +0x68 counts ticks on a hazard cell (damage at 80, 160 or 320). On the other ticks eax = 0 adds nothing.
+[[site]]
+va = 0x434CA0
+stock = "807f7802 b801000000 7505 014764 eb07"
+kind = "gate"
+class = "c"
+what = "army unit combat count +0x64 and hazard count +0x68 (eax, added at 0x434CB7) step by one a tick"
+code = """cmp byte ptr [edi+0x78], 2; mov eax, 1; jne 1f; add dword ptr [edi+0x64], eax; jmp 2f;
+1: mov dword ptr [edi+0x64], 0; 2: {jmp:0x434cb7}"""
+alt = "cmp byte ptr [edi+0x78], 2; mov eax, 0; je 2f; mov dword ptr [edi+0x64], 0; 2: {jmp:0x434cb7}"
+
+[[site]]
+va = 0x434CFC
+stock = "83c0ff 8904b5b8ab7e00"
+kind = "gate"
+class = "c"
+what = "escort countdown 0x7EABB8[side] of a unit with flag 0x200000 (the unit retreats at 0)"
+
+[[site]]
+va = 0x441D69
+stock = "8304b594ab7e00ff"
+kind = "gate"
+class = "c"
+what = "reinforcement interval 0x7EAB94[force] (a new interval is rolled and a unit may spawn at 0)"
+
+# 0x434260 (once a tick, from 0x507890) keeps the groups of 0x7DACF0 (stride 0x6C).
+[[site]]
+va = 0x4323F7
+stock = "83c0ff 894150"
+kind = "gate"
+class = "c"
+what = "group re-evaluation timer +0x50 (0x432E50 checks strength and morale at 0)"
+
+[[site]]
+va = 0x434320
+stock = "83c0ff 8945e8"
+kind = "gate"
+class = "c"
+what = "group disband timer +0x50 (each member leaves at 0)"
+
+# ---- AI squads' per-tick part (0x4450E0 over the squads of 0x7DDC30, stride 0xD0; 0x4486D0 for AI squads).
+
+[[site]]
+va = 0x44511C
+stock = "83c0ff 668946c8"
+kind = "gate"
+class = "c"
+what = "player squads' health bar damage trail +0x84 drains one a tick toward the health +0x82"
+
+[[site]]
+va = 0x448793
+stock = "83c0ff 66898684000000"
+kind = "gate"
+class = "c"
+what = "AI squads' health bar damage trail +0x84 drains one a tick toward the health +0x82"
+
+[[site]]
+va = 0x4486EA
+stock = "83c0ff 66894678"
+kind = "gate"
+class = "c"
+what = """AI wait +0x78: the think's decisions (0x447C10) and the timed actions of states 3 to 5 (0x447BC0, 0x447A20)
+wait for it to reach 0"""
+
+[[site]]
+va = 0x445B9F
+stock = "83c1ff 668988a4000000"
+kind = "gate"
+class = "c"
+what = "AI buff duration +0xA4 (attack and defence multipliers +0x98/+0x9C reset at 0)"
+
+# Per-tick rolls: 0x446200 (percent roll) decides a reaction for 0x447340 (guard or counter against an attacking
+# target), 0x447430, 0x4476F0 (counter in state 6) and the think's 0x447C10. 0x4474E0 (action script or attack
+# when the target is far or near) and 0x4484C0 (reaction while hit, motions 0x70/0x72) roll inline. On the ticks
+# between 60 Hz periods each says no, as a failed roll does, without drawing a random number.
+[[site]]
+va = 0x446200
+stock = "a18ca34001"
+kind = "gate"
+class = "d"
+what = "AI percent roll (0x446200) decides 60 times a second"
+alt = "xor eax, eax; ret"
+
+[[site]]
+va = 0x4474E0
+stock = "83ec2c 53 8b5e14"
+kind = "gate"
+class = "d"
+what = "AI officer's action script or attack decision (0x4474E0, rolls at 0x4475DF and 0x4476AF) 60 times a second"
+alt = "xor eax, eax; ret"
+
+[[site]]
+va = 0x4484C0
+stock = "83ec14 55 56"
+kind = "gate"
+class = "d"
+what = "AI reaction decision while hit (0x4484C0, roll at 0x448546) 60 times a second"
+alt = "xor eax, eax; ret"
+
+# ---- Character-layer counts reached from the AI findings (inside a character's update: when = once).
+
+# 0x417720 (from the character step, 0x40FEE0) charges the musou gauge by 0.125 x (1 + 0.1 x squad+0xA8) a call while
+# the character holds the charge motion; 0x464660 keeps the fraction in 1/16 units (chr+0x1828), too coarse for a
+# share of the step at a high rate, so the whole charge applies once per stock call. Its result is not read.
+[[site]]
+va = 0x41773C
+stock = "e81fcf0400"
+kind = "gate"
+when = "once"
+class = "a"
+what = "musou charge while holding the charge button (0x464660 with 0.125 a call), once per stock character update"
+code = "{call:0x464660}"
+
+# 0x467A60 runs the special sequence of chr+0x17F0 (players, and characters with +0x17EC & 0x40 and +0xEFD = 0xB):
+# 0x464A00, 0x464ED0 and 0x465BC0 count chr+0x17C8 by one a call and start its effects, sounds and motions on
+# counts (== 0, == 10, >= +0x17F8 ...), so each runs once per stock update.
+[[site]]
+va = 0x467AC3
+stock = "e808d4ffff"
+kind = "gate"
+when = "once"
+class = "c"
+what = "special sequence stage 0x464ED0 (+0x17F0 & 0x20), counting chr+0x17C8 by one a call"
+code = "{call:0x464ed0}"
+
+[[site]]
+va = 0x467ACE
+stock = "e8ede0ffff"
+kind = "gate"
+when = "once"
+class = "c"
+what = "special sequence stage 0x465BC0 (+0x17F0 & 0x40), counting chr+0x17C8 by one a call"
+code = "{call:0x465bc0}"
+
+[[site]]
+va = 0x467AD5
+stock = "e826cfffff"
+kind = "gate"
+when = "once"
+class = "c"
+what = "special sequence stage 0x464A00, counting chr+0x17C8 by one a call"
+code = "{call:0x464a00}"
+
+# 0x439820 measures how often its unit loop ran (the counter frequency over the time since the loop last stamped
+# 0x7CDEA0) and grows the soldier budget while that is over 55 a second. The loop is gated to the 60 Hz phase above,
+# so the measure is in stock terms and its 55 stays as it is.

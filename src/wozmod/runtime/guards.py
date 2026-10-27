@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 from wozmod.formats import pe
 
-from . import layout
+from . import layout, true_rate
 from .text_room import ROOMS, WIDE
 
 V100 = (0x4AF69DF7, 0x101A000)  # version 1.00's TimeDateStamp (2009-11-08 10:31:19 UTC) and SizeOfImage
@@ -111,11 +111,10 @@ FEATURES = (
             + (0x5E4570,),  # the pad enumeration callback handed to EnumDevices
             spans=((layout.DEFINES["START_WIDTH"] - 1, 2), (layout.DEFINES["STICK_WIDTH"] - 1, 2),  # push 0x1E
                    (layout.DEFINES["WIDE_LAST_DRAW"] - 2, 3), (layout.DEFINES["WIDE_LAST_MEASURE"] - 2, 3))),  # cmp eax, 0x14
-    Feature("fps", "120 FPS", requires=("core",), hooks=(53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64),
-            calls=_c("BATTLE_DRAW", "FLASH_DRAW", "WINDOWS_DRAW", "NOTICES_DRAW", "FRAME_END_FROM_FADES", "CAMERA_REBUILD",
-                     "SCENE_BEGIN", "SCENE_BEGAN", "DRAW_PREPARED", "DRAW_PREPARE", "DRAW_PREPARE_2", "FX_MODELS_RELEASE",
-                     "SCENE_CAMERA_BUILD"),
-            spans=((layout.DEFINES["FPS_LIMITER"], 2),)),  # push 60
+    Feature("fps", "frame rate", requires=("core",), hooks=(114, 115, 116, 117),
+            calls=_c("DISPLAY_APPLY_AT"),  # a FRAME RATE or VSYNC change applies the display at once
+            spans=((layout.DEFINES["FPS_LIMITER"], 2),)  # push 60
+            + tuple((site.va, len(site.stock)) for site in true_rate.load())),  # the catalogue rewrites each
     Feature("art", "sharp menu art", requires=("core",), hooks=(21, 22),
             calls=_c("TEXTURE_HANDLE", "GAME_QUAD") + (0x5DE620,),
             returns=(0x53326A,)),  # the camp help plate (entry 4060)

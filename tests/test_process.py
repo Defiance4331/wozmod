@@ -9,7 +9,7 @@ from wozmod import process
 
 SOURCE = Path(__file__).resolve().parents[1] / "src/wozmod"
 # Developer-only starts (the DLL build) may open what they like.
-DEVELOPER_ONLY = {"runtime/english_runtime.py", "process.py"}
+DEVELOPER_ONLY = {"runtime/english_runtime.py", "runtime/true_rate.py", "process.py"}
 STARTS = {"subprocess": {"run", "Popen", "call", "check_call", "check_output", "getoutput", "getstatusoutput"},
           "os": {"system", "popen", "startfile", "spawnl", "spawnle", "spawnlp", "spawnlpe", "spawnv", "spawnve",
                  "spawnvp", "spawnvpe", "execl", "execle", "execlp", "execlpe", "execv", "execve", "execvp",

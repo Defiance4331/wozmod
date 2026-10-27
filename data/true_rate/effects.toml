@@ -1,0 +1,658 @@
+# The true frame rate catalogue: projectiles, effects, items, lights and cloth. The format is described once, at the
+# top of character.toml.
+
+# ---- Projectiles and attack hit points (0x42C230: projectile, dt). The pool (0x9D12D8, 64 x 0x128) is updated once a
+# tick from 0x506BC0, before the character loop; the four slots at chr+0x1870 from the character's own update
+# (0x467A60). The motion, size and lifetime already take the projectile step; these terms were left without it.
+
+# A character's attached projectiles get 1.0 as their dt: a stock tick's length, not this tick's.
+[[site]]
+va = 0x468A6D
+stock = "d9e8 51 d91c24"
+kind = "patch"
+class = "e"
+what = "attached projectiles (chr+0x1870) are stepped by a stock tick (1.0): by the tick's share instead"
+code = "fld dword ptr [{step}]; push ecx; fstp dword ptr [esp]"
+
+[[site]]
+va = 0x42C324
+stock = "db442414 d8859c000000"
+kind = "patch"
+class = "a"
+what = "projectile hit point's distance from its origin (+0x9C) grows by attack-data byte +0x4B a tick: times the tick's share"
+code = "fild dword ptr [esp+0x14]; fmul dword ptr [{step}]; fadd dword ptr [ebp+0x9c]"
+
+# Motion type 0 turns the hit-point offset (+0x20) by attack-data byte +0x4A degrees a tick (types 1 and 2 already
+# multiply their angle by the step): pi / 180 becomes pi x 60/N / 180 for this instruction only.
+[[site]]
+va = 0x42C8F6
+stock = "dc0d40e46c00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "a"
+what = "orbiting hit point (motion type 0) turns by +0x4A degrees a stock tick"
+
+[[site]]
+va = 0x42CAC1
+stock = "d84504 d95d04"
+kind = "patch"
+class = "a"
+what = "rising projectile (data flag +0x38 & 4): its speed +0xEC gains the step, its height gains the speed a tick; times the tick's share"
+code = "fmul dword ptr [{step}]; fadd dword ptr [ebp+4]; fstp dword ptr [ebp+4]"
+
+# Curving and homing projectiles (data flag +0x3A & 1) add the pull +0x50 to their direction +0x10 a tick, then
+# normalise it (0x4130A0): the pull is a turn per stock tick.
+[[site]]
+va = 0x42CC17
+stock = "d94550 8d4510 d800 50 50 d918 d94554 d84004 d95804 d94558 d84008 d95808 d9455c d8400c d9580c"
+kind = "patch"
+class = "a"
+what = "curving and homing projectiles turn by the pull +0x50 a stock tick: the pull times the tick's share"
+code = """fld dword ptr [ebp+0x50]; fmul dword ptr [{step}]; lea eax, [ebp+0x10]; fadd dword ptr [eax]; push eax; push eax;
+fstp dword ptr [eax];
+fld dword ptr [ebp+0x54]; fmul dword ptr [{step}]; fadd dword ptr [eax+4]; fstp dword ptr [eax+4];
+fld dword ptr [ebp+0x58]; fmul dword ptr [{step}]; fadd dword ptr [eax+8]; fstp dword ptr [eax+8];
+fld dword ptr [ebp+0x5c]; fmul dword ptr [{step}]; fadd dword ptr [eax+0xc]; fstp dword ptr [eax+0xc]"""
+
+# The age counts calls. Called from a character's update (attached slots) the window's once is right; from the pool
+# loop in 0x506BC0 and the duel-mode loops (0x4FC149, 0x4FDAD5, 0x4FE822) the window is that of a near character
+# (lod 1: once = tick60), set at the start of the tick or by the 0x412280 call just before.
+[[site]]
+va = 0x42D106
+stock = "8385e800000001"
+kind = "gate"
+when = "once"
+class = "c"
+what = "projectile age +0xE8 in ticks (homing starts after 5 and ramps over 60)"
+
+# ---- Rumble (0x4210D0, once a tick for the players): it fires when attack-data frame +5 (or +0x16) lies in
+# [frame, frame + w), w the motion frames a stock tick advances (0x403AA0: the speed factor). A tick advances w x 60/N.
+[[site]]
+va = 0x421219
+stock = "d91c24 d986d8180000"
+kind = "patch"
+class = "d"
+what = "rumble window on attack-data frame +5: one tick's frame advance, the stock one times the tick's share"
+code = "fmul dword ptr [{step}]; fstp dword ptr [esp]; fld dword ptr [esi+0x18d8]"
+
+[[site]]
+va = 0x42125F
+stock = "d91c24 d986d8180000"
+kind = "patch"
+class = "d"
+what = "rumble window on attack-data frame +0x16: one tick's frame advance, the stock one times the tick's share"
+code = "fmul dword ptr [{step}]; fstp dword ptr [esp]; fld dword ptr [esi+0x18d8]"
+
+# ---- Screen tint countdown (0x46C580, once a tick from the end of 0x506BC0, after the character loop).
+[[site]]
+va = 0x46C58A
+stock = "832dccfb7e0001"
+kind = "gate"
+class = "c"
+what = "screen tint/flash countdown 0x7EFBCC (clears 0x7EFBC8 at 0)"
+
+# ---- Effect instances (0x487500 and its inline copies in 0x488130, once a tick): the phase +0xC gains 1/60 s a tick,
+# or [0x140A238] x 1/60 when [0x140A2D0] is set. The 1/60 is a stock tick's length in both branches.
+[[site]]
+va = 0x487537
+stock = "dc0518ed6f00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "e"
+what = "effect phase +0xC (first list) gains a stock tick's length (1/60 s)"
+
+[[site]]
+va = 0x487545
+stock = "dc0d18ed6f00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "e"
+what = "effect phase +0xC (first list) gains [0x140A238] stock ticks' length"
+
+[[site]]
+va = 0x4881D6
+stock = "dc0518ed6f00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "e"
+what = "effect phase +0xC (second list) gains a stock tick's length (1/60 s)"
+
+[[site]]
+va = 0x4881E4
+stock = "dc0d18ed6f00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "e"
+what = "effect phase +0xC (second list) gains [0x140A238] stock ticks' length"
+
+[[site]]
+va = 0x488253
+stock = "dc0518ed6f00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "e"
+what = "effect phase +0xC (bone-attached list) gains a stock tick's length (1/60 s)"
+
+[[site]]
+va = 0x488261
+stock = "dc0d18ed6f00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "e"
+what = "effect phase +0xC (bone-attached list) gains [0x140A238] stock ticks' length"
+
+# An expired effect whose particles still live asks them to stop each tick (0x487460 -> 0x47D690 -> 0x47FC00): calls
+# 2..8 stop softly, the 9th kills. The grace is counted in ticks.
+[[site]]
+va = 0x47FC5B
+stock = "83c001 56 89827c0a0000"
+kind = "gate"
+class = "c"
+what = "expired effect's soft-stop count (+0xA7C of its particle slot): hard kill after 8 ticks of grace"
+alt = "push esi"
+
+[[site]]
+va = 0x48AD19
+stock = "dc05b0287000"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "a"
+what = "ramp 0x83C7D8 from 0 to 1 at 1/30 a tick (clears 0x853F98 at 1)"
+
+[[site]]
+va = 0x499551
+stock = "dd05e03c7000"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "a"
+what = "item pickup aura lifetime (0x899830 + i x 0x10) +1/18 a tick, freed at 25/18"
+
+# ---- Weapon trails (0x491530, once a tick for each weapon from the pose stage 0x507890): each call starts a new
+# history step (flips the double buffer +0xB, shifts the segment mask 10 bits, length +10 up to 62) and writes the
+# newest samples from the weapon's current pose. The history steps once per 60 Hz period, so the trail covers the
+# stock time; on the other ticks the same step is rewritten from the newer pose, so the trail's head stays on the
+# blade. The draw (0x490F20) picks a buffer by the present index 0x140A290, which flips every present: at stock a
+# slot's flip and the present's stay in step, at N they do not, and the draw would take the open step and the last
+# finished one on alternate presents (a doubled, longer-looking trail). It reads the slot's own buffer instead.
+[[site]]
+va = 0x491592
+stock = "83c001 2501000080"
+kind = "gate"
+class = "c"
+what = "weapon trail double buffer +0xB flips once a history step (alt: the same buffer is rewritten)"
+alt = "and eax, 0x80000001"
+
+[[site]]
+va = 0x4915CB
+stock = "0fa4ca0a c1e10a"
+kind = "gate"
+class = "c"
+what = "weapon trail segment mask (+0x0, +0x4) shifts by one history step (10 samples)"
+
+[[site]]
+va = 0x4916BB
+stock = "0fb6c9 83c10a"
+kind = "gate"
+class = "c"
+what = "weapon trail length +0x9 grows by 10 samples a history step, up to 62"
+alt = "movzx ecx, cl"
+
+[[site]]
+va = 0x490F6E
+stock = "a190a24001"
+kind = "patch"
+class = "c"
+what = "weapon trail draw reads the buffer the slot just wrote (+0xB), not the present index 0x140A290 (EBX is the slot)"
+code = "movzx eax, byte ptr [ebx+0xb]"
+
+# ---- Player glow pulse (0x4969D0, from 0x497A20 on the tick that ends a drawn frame): a 240-tick triangle wave.
+[[site]]
+va = 0x496A2B
+stock = "83c001 3df0000000"
+kind = "gate"
+class = "c"
+what = "player glow pulse phase 0x8923F8, 0..239 (a 4 s wave)"
+alt = "cmp eax, 0xf0"
+
+# ---- Character effect slots (0x497A20, once a tick from 0x48AD50 -> 0x489AC0): each type's update (switch 0x4973B0).
+# Types 0x2D and 0x2E age +0x1C by a stock tick's length; 0x2D draws with age x 4, 0x2E is freed at 1.0.
+[[site]]
+va = 0x493232
+stock = "dc0518ed6f00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "a"
+what = "character effect type 0x2D age +0x1C gains a stock tick's length (1/60 s)"
+
+[[site]]
+va = 0x496855
+stock = "dc0518ed6f00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "a"
+what = "character effect type 0x2E age +0x1C gains a stock tick's length (1/60 s); freed at 1 s"
+
+# Type 0 (0x493DB0, the Musou charge aura) steps its phase +0x1C by 1/6 a tick through 12 segments, then frees or
+# restarts itself (0x493CB0), and spawns two loose particles (0x48A280) every other tick. It attaches nothing that
+# needs a per-tick update, so the whole update runs once a period.
+[[site]]
+va = 0x493DB0
+stock = "83ec14 55 8b6c241c"
+kind = "gate"
+class = "c"
+what = "Musou charge aura: phase segments, restart and particle spawns step once a period"
+alt = "ret"
+
+# Type 1 (0x496CF0, effect 0x2A at a bone) turns its spin +0x94 by 2 degrees a tick.
+[[site]]
+va = 0x496D28
+stock = "dc0598f06c00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "a"
+what = "character effect type 1 spin +0x94 gains 2 degrees a stock tick"
+
+# Type 6 (weapon clash, 0x494910) rolls the game's generator 0x140A38C each tick: 1 in 20 starts screen effect 0.
+[[site]]
+va = 0x494A62
+stock = "a18ca34001 69c06d4ec641"
+kind = "gate"
+class = "d"
+what = "weapon clash rolls 1 in 20 for screen effect 0 once a period"
+alt = "{jmp:0x494acd}"
+
+# ---- Player marker pulse (0x490140, from 0x4908F0 once a tick for each controlled player, via 0x48AC90): the time
+# 0x854130 gains a stock tick's length and drives a triangle wave.
+[[site]]
+va = 0x49014A
+stock = "dc0518ed6f00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "a"
+what = "player marker pulse time 0x854130 gains a stock tick's length (1/60 s)"
+
+# ---- Dropped items (0x4B5820, once a tick): each item's matrix is multiplied by a 2 degree turn about Y
+# (0x8A4AD8, built once at load by 0x4B46E0 from 0x6D1AE8 about 0x140A480). The turn is per stock tick: this tick's
+# turn is built from the angle times the tick's share, the same way.
+[[slot]]
+name = "item_spin_angle"
+source = 0x6D1AE8
+type = "f32"
+transform = "scale"
+what = "dropped item turn a tick (stock 2 degrees)"
+
+[[site]]
+va = 0x4B59C0
+stock = "56 68d84a8a00 56 81eab4000000 8954241c db44241c d95c241c e8b0591300"
+kind = "patch"
+class = "a"
+what = "dropped item spin, 2 degrees a stock tick (120 a second): a turn of 2 x 60/N degrees built for this tick"
+code = """sub edx, 0xb4; mov dword ptr [esp+0x10], edx; fild dword ptr [esp+0x10]; fstp dword ptr [esp+0x10];
+sub esp, 0x40;
+push ecx; fld dword ptr [{slot:item_spin_angle}]; fstp dword ptr [esp]; push 0x140a480; lea eax, [esp+8]; push eax;
+{call:0x4133d0}; add esp, 0xc;
+mov eax, esp; push esi; push eax; push esi; {call:0x5eb38e}; add esp, 0x40"""
+
+# ---- Skeleton updates since the motion was set (model +0x170, 0x4BC2B0 from the pose stage): bone hit checks
+# (0x40D050) and the fall check (0x5076C0) wait for 2. Counted at 60 Hz the wait keeps its stock length, and the
+# skeleton has still been evaluated at least twice.
+[[site]]
+va = 0x4BC66E
+stock = "83c001 898670010000"
+kind = "gate"
+class = "c"
+what = "model +0x170 skeleton update count since the motion was set (bone hits wait for 2)"
+
+# ---- The effects clock (0x517CB0, once a tick from 0x4AF960 with its dt). It makes the step of the timed effects
+# (0x4C1430), the timed objects (0x4C4150) and the floor push: 0xC0F7D8 = time scale / (60 x dt), 0xC0F7D4 its
+# inverse. dt enters inverted: a tick of dt stock ticks lasts dt / 60 s. Given 1/dt (dt itself still decides
+# whether to run), the step is dt x time scale / 60.
+[[site]]
+va = 0x517CB0
+stock = "d9442404 dc1538e56c00"
+kind = "patch"
+class = "e"
+what = "effects clock: its dt enters inverted, so it gets 1/dt and its step 0xC0F7D8 becomes dt x time scale / 60"
+code = "fld1; fdiv dword ptr [esp+4]; fld dword ptr [esp+4]; fcomp qword ptr [0x6ce538]"
+
+# Timed-effect slots (0x9AC430, 50 x 12) whose type has flag 0x10 step their clock by a stock tick's length and set
+# the ticks a second (0x9AEE8C, unread) to 60.
+[[site]]
+va = 0x4C14A3
+stock = "d905703a6d00"
+kind = "operand"
+operand = 2
+type = "f32"
+transform = "scale"
+class = "e"
+what = "timed-effect slot clock (type flag 0x10) steps by a stock tick's length (1/60 s)"
+
+[[site]]
+va = 0x4C14AF
+stock = "d9051ce66c00"
+kind = "operand"
+operand = 2
+type = "f32"
+transform = "inverse"
+class = "e"
+what = "timed-effect ticks a second 0x9AEE8C (type flag 0x10) is 60: N"
+
+# Timed objects (0x4C4150 calls each object's update with the clock's step): the third type (0x4C2D90, made by
+# 0x4C2D40, freed by 0x4C2D70, which sets its owner's +0x69 bit 2) ages by a stock tick's length, not the step, and
+# lives 0.5 s.
+[[site]]
+va = 0x4C2D9A
+stock = "dc0518ed6f00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "a"
+what = "timed object (update 0x4C2D90) age gains a stock tick's length (1/60 s); freed at 0.5 s"
+
+[[site]]
+va = 0x4C2B89
+stock = "0401 8881f80e9b00"
+kind = "gate"
+class = "c"
+what = "5-entry pool 0x9B0EF8: each entry's age in ticks, freed at 60"
+
+# The floor push (conveyor floors, 0x51CE40) is the clock's step x 200 (or 2000) along the floor's direction, stored
+# in the ground result (chr+0x140) as a speed per stock tick: 0x407BF0 moves the character by it times the character
+# step. It takes the clock's step without the tick's share.
+[[site]]
+va = 0x51CEAE
+stock = "d905d8f7c000"
+kind = "patch"
+class = "e"
+what = "floor push speed (ground result +0x20) per stock tick: the effects clock's step over the tick's share"
+code = "fld dword ptr [0xc0f7d8]; fdiv dword ptr [{step}]"
+
+# ---- Area lights (0x51B560 once a tick, 0x51A740 for players 0 and 1 from it).
+[[site]]
+va = 0x51AC6E
+stock = "dc0520ea7000"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "a"
+what = "area light/fog blend 0xC25040 + 4p rises 1/240 a tick toward 1"
+
+[[site]]
+va = 0x51ACD9
+stock = "dc2520ea7000"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "a"
+what = "area light/fog blend 0xC25040 + 4p falls 1/240 a tick toward the area's target"
+
+[[site]]
+va = 0x51B609
+stock = "dc05e03c7000"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "a"
+what = "lighting flash ramp 0x79A298 +1/18 a tick while below 1"
+
+[[site]]
+va = 0x51B625
+stock = "dc0550ea7000"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "a"
+what = "light sway phase 0xC25290 +0.0238 rad a tick"
+
+[[site]]
+va = 0x51B682
+stock = "dc0550ea7000"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "a"
+what = "light flicker phase 0xC25254 +0.0238 rad a tick"
+
+# Light fades 0..29: progress 0xC25150 + 4i gains the rate 0xC238A0 + 4i a tick until 0.99, and the 24 colour
+# components gain their deltas (0xC23940 + 16i ..., the rate times the colour change, set by 0x519200, 0x519500,
+# 0x519690, 0x51AD50 and others). Rate and deltas are per stock tick.
+[[site]]
+va = 0x51B877
+stock = "d904b5a038c200"
+kind = "patch"
+class = "a"
+what = "light fade progress 0xC25150 + 4i gains its rate a stock tick: the rate times the tick's share"
+code = "fld dword ptr [esi*4+0xc238a0]; fmul dword ptr [{step}]"
+
+[[site]]
+va = 0x51B894
+stock = "d9814039c200 d881602dc200 d999602dc200 d9814439c200 d881642dc200 d999642dc200 d9814839c200 d881682dc200 d999682dc200 d9814c39c200 d8816c2dc200 d9996c2dc200 d981203bc200 d881402fc200 d999402fc200 d981243bc200 d881442fc200 d999442fc200 d981283bc200 d881482fc200 d999482fc200 d9812c3bc200 d8814c2fc200 d9994c2fc200 d981003dc200 d8812031c200 d9992031c200 d981043dc200 d8812431c200 d9992431c200 d981083dc200 d8812831c200 d9992831c200 d9810c3dc200 d8812c31c200 d9992c31c200 d981e03ec200 d8810033c200 d9990033c200 d981e43ec200 d8810433c200 d9990433c200 d981e83ec200 d8810833c200 d9990833c200 d981ec3ec200 d8810c33c200 d9990c33c200 d981e034c200 d881c040c200 d999e034c200 d981c440c200 d881e434c200 d999e434c200 d981c840c200 d881e834c200 d999e834c200 d981cc40c200 d881ec34c200 d999ec34c200 d981a042c200 d881c036c200 d999c036c200 d981a442c200 d881c436c200 d999c436c200 d981a842c200 d881c836c200 d999c836c200 d981ac42c200 d881cc36c200 d999cc36c200"
+kind = "patch"
+class = "a"
+what = "light fade colours (24 components of fade i, from 0xC22D60 + 16i) gain their deltas a stock tick: times the tick's share"
+code = """fld dword ptr [ecx + 0xc23940]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc22d60]; fstp dword ptr [ecx + 0xc22d60];
+fld dword ptr [ecx + 0xc23944]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc22d64]; fstp dword ptr [ecx + 0xc22d64];
+fld dword ptr [ecx + 0xc23948]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc22d68]; fstp dword ptr [ecx + 0xc22d68];
+fld dword ptr [ecx + 0xc2394c]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc22d6c]; fstp dword ptr [ecx + 0xc22d6c];
+fld dword ptr [ecx + 0xc23b20]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc22f40]; fstp dword ptr [ecx + 0xc22f40];
+fld dword ptr [ecx + 0xc23b24]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc22f44]; fstp dword ptr [ecx + 0xc22f44];
+fld dword ptr [ecx + 0xc23b28]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc22f48]; fstp dword ptr [ecx + 0xc22f48];
+fld dword ptr [ecx + 0xc23b2c]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc22f4c]; fstp dword ptr [ecx + 0xc22f4c];
+fld dword ptr [ecx + 0xc23d00]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc23120]; fstp dword ptr [ecx + 0xc23120];
+fld dword ptr [ecx + 0xc23d04]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc23124]; fstp dword ptr [ecx + 0xc23124];
+fld dword ptr [ecx + 0xc23d08]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc23128]; fstp dword ptr [ecx + 0xc23128];
+fld dword ptr [ecx + 0xc23d0c]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc2312c]; fstp dword ptr [ecx + 0xc2312c];
+fld dword ptr [ecx + 0xc23ee0]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc23300]; fstp dword ptr [ecx + 0xc23300];
+fld dword ptr [ecx + 0xc23ee4]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc23304]; fstp dword ptr [ecx + 0xc23304];
+fld dword ptr [ecx + 0xc23ee8]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc23308]; fstp dword ptr [ecx + 0xc23308];
+fld dword ptr [ecx + 0xc23eec]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc2330c]; fstp dword ptr [ecx + 0xc2330c];
+fld dword ptr [ecx + 0xc240c0]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc234e0]; fstp dword ptr [ecx + 0xc234e0];
+fld dword ptr [ecx + 0xc240c4]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc234e4]; fstp dword ptr [ecx + 0xc234e4];
+fld dword ptr [ecx + 0xc240c8]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc234e8]; fstp dword ptr [ecx + 0xc234e8];
+fld dword ptr [ecx + 0xc240cc]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc234ec]; fstp dword ptr [ecx + 0xc234ec];
+fld dword ptr [ecx + 0xc242a0]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc236c0]; fstp dword ptr [ecx + 0xc236c0];
+fld dword ptr [ecx + 0xc242a4]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc236c4]; fstp dword ptr [ecx + 0xc236c4];
+fld dword ptr [ecx + 0xc242a8]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc236c8]; fstp dword ptr [ecx + 0xc236c8];
+fld dword ptr [ecx + 0xc242ac]; fmul dword ptr [{step}]; fadd dword ptr [ecx + 0xc236cc]; fstp dword ptr [ecx + 0xc236cc]"""
+
+# ---- Particle effect containers (ksg2, 0x6387B0: the dt it gets is the time its effects advance). Their callers run
+# once a drawn frame. Stock passes a tick's length, or (0x47DC90) the ticks the frame's pass ran over 60. Effects
+# spawn every tick, so all four advance by the frame time: the ticks since the last present, k after a catch-up of k,
+# none on a frame that repeats.
+[[site]]
+va = 0x47E2CD
+stock = "d905703a6d00"
+kind = "patch"
+class = "e"
+what = "particle container 0x822D88 advances by the frame time (0x47E290)"
+code = "fld dword ptr [{frame_dt}]"
+
+[[site]]
+va = 0x47F540
+stock = "d905703a6d00"
+kind = "patch"
+class = "e"
+what = "particle containers of 0x47F4D0 advance by the frame time"
+code = "fld dword ptr [{frame_dt}]"
+
+[[site]]
+va = 0x47F660
+stock = "d905703a6d00"
+kind = "patch"
+class = "e"
+what = "particle containers of 0x47F5D0 advance by the frame time"
+code = "fld dword ptr [{frame_dt}]"
+
+# 0x47DC90 passes int(0x7AB0C0), the ticks the frame's pass ran, over 60 ticks a second. The game's count is the
+# pass's debt and keeps the last pass's on a pass that runs no tick; the frame time counts the ticks themselves.
+[[site]]
+va = 0x47DCC0
+stock = "dd05c0b07a00 e8e5ed2100 89442404 db442404 51 b9882d8200 dc35a0e56c00"
+kind = "patch"
+class = "e"
+what = "particle container time a frame (0x47DC90) is the frame time"
+code = "push ecx; mov ecx, 0x822d88; fld dword ptr [{frame_dt}]"
+
+# Emitters of modes other than 1 and 2 (+4 & 7) emit +0x5C particles each update, a count per stock frame (modes 1
+# and 2 emit +0x5C x dt). The fraction is carried in +0x64 (0x652EB0). Before this, the emitter's modifiers (list at
+# +0x80, count +0x6C, type at +4, target field offset at +8; dispatch 0x75F1C0) run in list order and each one that
+# targets +0x5C replaces it: a curve (types 0..3, 0x659B30: a function of a source field such as age) gives a rate a
+# stock frame, as does the template's constant when nothing targets +0x5C. A key list (type 5, 0x659850, and type 14,
+# 0x6599B0, times a base) gives the sum of the keys in this update's window [age, age + dt): a count that already
+# follows real time (one-shot rings and sparks, e.g. Ma Chao's mounted charge, effect 0x72). So the last modifier that
+# targets +0x5C decides: a key list's count is kept, a rate takes the tick's share.
+[[site]]
+va = 0x6534E0
+stock = "d9465c eb29"
+kind = "patch"
+class = "a"
+what = """particle emitter (mode 0, 3..7) emits +0x5C particles a stock frame: times the tick's share, unless the last
+modifier that sets +0x5C is a key list (types 5, 14), whose count already covers this update's time"""
+code = """fld dword ptr [{step}]; mov ecx, dword ptr [esi+0x6c]; lea edx, [esi+0x80];
+next: test ecx, ecx; jz rate; dec ecx;
+mov eax, dword ptr [edx]; lea eax, [eax+ecx*4]; add eax, edx; add eax, dword ptr [eax];
+cmp dword ptr [eax+8], 0x5c; jne next;
+cmp dword ptr [eax+4], 14; je count; cmp dword ptr [eax+4], 5; jne rate;
+count: fstp st(0); fld1;
+rate: fmul dword ptr [esi+0x5c]; {jmp:0x65350e}"""
+
+# ---- Cloth and hair (ksg2 0x627540 and 0x41EA90 -> 0x627540, once a rendered frame per character; the solvers are
+# real-time accumulators). Their dt is chr+0xF14, a stock tick's length (1/60 s) written once when the character is
+# made (0x45FC6D), or the 1/60 constant itself.
+[[site]]
+va = 0x41E00F
+stock = "d980140f0000"
+kind = "patch"
+class = "e"
+what = "cloth step chr+0xF14 is a stock tick's length (1/60 s): times the tick's share (0x41DFD0)"
+code = "fld dword ptr [eax+0xf14]; fmul dword ptr [{step}]"
+
+[[site]]
+va = 0x41E227
+stock = "d987140f0000"
+kind = "patch"
+class = "e"
+what = "cloth step chr+0xF14 is a stock tick's length (1/60 s): times the tick's share (0x41E180)"
+code = "fld dword ptr [edi+0xf14]; fmul dword ptr [{step}]"
+
+[[site]]
+va = 0x469A1C
+stock = "d987140f0000"
+kind = "patch"
+class = "e"
+what = "cloth step chr+0xF14 is a stock tick's length (1/60 s): times the tick's share (0x469930)"
+code = "fld dword ptr [edi+0xf14]; fmul dword ptr [{step}]"
+
+[[site]]
+va = 0x469B50
+stock = "d987140f0000"
+kind = "patch"
+class = "e"
+what = "cloth step chr+0xF14 is a stock tick's length (1/60 s): times the tick's share (0x469930, second)"
+code = "fld dword ptr [edi+0xf14]; fmul dword ptr [{step}]"
+
+[[site]]
+va = 0x46B1B0
+stock = "d983140f0000"
+kind = "patch"
+class = "e"
+what = "cloth step chr+0xF14 is a stock tick's length (1/60 s): times the tick's share (0x46ACB0)"
+code = "fld dword ptr [ebx+0xf14]; fmul dword ptr [{step}]"
+
+[[site]]
+va = 0x46BA21
+stock = "d986140f0000"
+kind = "patch"
+class = "e"
+what = "cloth step chr+0xF14 is a stock tick's length (1/60 s): times the tick's share (0x46ACB0, second)"
+code = "fld dword ptr [esi+0xf14]; fmul dword ptr [{step}]"
+
+[[site]]
+va = 0x46BB7A
+stock = "d983140f0000"
+kind = "patch"
+class = "e"
+what = "cloth step chr+0xF14 is a stock tick's length (1/60 s): times the tick's share (0x46ACB0 -> 0x41EA90)"
+code = "fld dword ptr [ebx+0xf14]; fmul dword ptr [{step}]"
+
+[[site]]
+va = 0x46EBB5
+stock = "d905703a6d00"
+kind = "operand"
+operand = 2
+type = "f32"
+transform = "scale"
+class = "e"
+what = "cloth step (0x46E5C0) is a stock tick's length (1/60 s)"
+
+[[site]]
+va = 0x46ED5D
+stock = "d905703a6d00"
+kind = "operand"
+operand = 2
+type = "f32"
+transform = "scale"
+class = "e"
+what = "cloth step (0x46E5C0, second) is a stock tick's length (1/60 s)"
+
+[[site]]
+va = 0x4A4E90
+stock = "d905703a6d00"
+kind = "operand"
+operand = 2
+type = "f32"
+transform = "scale"
+class = "e"
+what = "cloth step (0x4A4D10 -> 0x41EA90) is a stock tick's length (1/60 s)"
+
+[[site]]
+va = 0x4A51FC
+stock = "d905703a6d00"
+kind = "operand"
+operand = 2
+type = "f32"
+transform = "scale"
+class = "e"
+what = "cloth step (0x4A5180) is a stock tick's length (1/60 s)"
+
+[[site]]
+va = 0x4A5347
+stock = "d905703a6d00"
+kind = "operand"
+operand = 2
+type = "f32"
+transform = "scale"
+class = "e"
+what = "cloth step (0x4A5260) is a stock tick's length (1/60 s)"

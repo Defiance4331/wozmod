@@ -16,11 +16,12 @@ def test_option_sheet_bands_follow_the_order_the_runtime_draws_them() -> None:
     """Bug: a text added to or dropped from OPTION_ROWS shifts every band after it, so the game shows
     FIELD OF VIEW under a FRAME RATE label or WINDOWED where it means FULLSCREEN."""
     rows = vector.OPTION_ROWS
-    assert rows[:5] == ["TEXT LANGUAGE", "VOICE LANGUAGE", "FIELD OF VIEW", "FRAME RATE", "MOVING CAMERA FIX"]
+    assert rows[:vector.OPTION_LABELS] == ["TEXT LANGUAGE", "VOICE LANGUAGE", "FIELD OF VIEW", "FRAME RATE",
+                                           "MOVING CAMERA FIX", "VSYNC"]
+    assert rows.index("VSYNC") == DEFINES["BAND_VSYNC"]
     assert rows.index("ENGLISH") == DEFINES["BAND_ENGLISH"] and rows[DEFINES["BAND_ENGLISH"] + 1] == "JAPANESE"
-    assert rows.index("60 FPS") == DEFINES["BAND_60"] and rows[DEFINES["BAND_60"] + 1] == "120 FPS"
     assert rows[DEFINES["BAND_DISPLAY"]:DEFINES["BAND_DISPLAY"] + 3] == ["FULLSCREEN", "WINDOWED", "BORDERLESS"]
-    assert len(rows) == DEFINES["BAND_DISPLAY"] + 3  # the field of view is plain text, not lettering
+    assert len(rows) == DEFINES["BAND_DISPLAY"] + 3  # the field of view and frame rate values are plain text
     assert (DEFINES["OPTION_W"], DEFINES["OPTION_BAND"]) == (vector.OPTION_W, vector.OPTION_BAND)
 
 

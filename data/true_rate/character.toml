@@ -1,0 +1,331 @@
+# The true frame rate catalogue (data/true_rate/*.toml, one file per subsystem): every place in OROCHI_Z.exe that
+# steps battle state once per tick (or once per drawn frame) without the frame's time, and how the runtime makes it
+# step by real time at N ticks a second. Packed by src/wozmod/runtime/true_rate.py, applied by runtime/true_rate.h;
+# at 60 every site keeps its stock bytes. This file: the character update. The format is described here once.
+#
+# kind:   operand (an instruction's constant address points at a transformed copy: scale, pow, ease, inverse),
+#         patch (code runs in place of the stock bytes), gate (the stock bytes or code run only on the ticks that
+#         complete a 60 Hz period, alt on the others).
+# class:  a continuous step, b easing or decay, c count of ticks, d once-per-tick event, e dt misuse fixed here.
+# Symbols in code: {step} f32 60/N, {step_d} f64 60/N, {tick60} u8, {slot:VA} the slot of an operand site at VA
+# (hex, no 0x), {call:VA} and {jmp:VA} branches out of the thunk.
+
+# The character step (0x412280: character, dt, far-update factor, flag) multiplies its dt in twice: once as the
+# tick's length (dt times the character's attack and move speed, 0x403AA0) and once as the time scale of the speed
+# modifiers (slow motion, 0x798314, hit stop, ...). The second must stay the time scale: dt / (60/N).
+[[site]]
+va = 0x412280
+stock = "51 837c241400"
+kind = "patch"
+class = "e"
+what = """character step entry: its dt argument without the tick's share is the time scale; the call's window (a far
+character's update covers 6 ticks) is set for the counts below it"""
+code = """push eax; push ecx; push edx; push dword ptr [esp+0x18]; call dword ptr [{character}]; add esp, 4;
+pop edx; pop ecx; pop eax;
+fld dword ptr [esp+8]; fdiv dword ptr [{step}]; fstp dword ptr [esp+8]; push ecx; cmp dword ptr [esp+0x14], 0"""
+
+[[site]]
+va = 0x412443
+stock = "d9442404 8bc6"
+kind = "patch"
+class = "e"
+what = "character step made (local at [esp+4]): times the tick's share, before it is stored at +0x1904/+0x1908"
+code = "fld dword ptr [esp+4]; fmul dword ptr [{step}]; mov eax, esi"
+
+# ---- Character counts: a character's update (0x412280 and 0x467A60) runs once a tick, or every 6th tick far away;
+# its window (once, n) says how many stock updates and 60 Hz periods the call covers.
+
+# 0x40DCD0 (a character sub-step) counts three timers down by one a call.
+[[site]]
+va = 0x40DDF8
+stock = "668186020f0000ffff"
+kind = "gate"
+when = "once"
+class = "c"
+what = "chr+0xF02 countdown (at 0 clears state flags 0xAC000 of +0x17EC)"
+
+[[site]]
+va = 0x40DE21
+stock = "2c01 8886450f0000"
+kind = "gate"
+when = "once"
+class = "c"
+what = "chr+0xF45 countdown (at 0 clears +0xF48); the jne after it reads the flags"
+alt = "test al, al"
+
+[[site]]
+va = 0x40DE3E
+stock = "83c0ff 668986780f0000"
+kind = "gate"
+when = "once"
+class = "c"
+what = "chr+0xF78 countdown"
+
+# 0x467A60 counts its timers down by int(max(dt, 1)): 1 a tick below a step of 1. The count is the 60 Hz periods
+# the call covers (n): the first conversion feeds +0xF22, +0xF90 and the others through ebx; from 0x467D7A the
+# function keeps dt and 1.0 on the FPU stack for its inline truncations of max(dt, 1), so n and 0 go there instead.
+[[site]]
+va = 0x467A82
+stock = "e829502300"
+kind = "patch"
+class = "c"
+what = "character timers' step: int(max(dt, 1)) becomes the 60 Hz periods the call covers"
+code = "fstp st(0); mov eax, dword ptr [{n}]"
+
+[[site]]
+va = 0x467D7A
+stock = "d9e8 6685c9 d944241c"
+kind = "patch"
+class = "c"
+what = "the item and buff durations (+0xF4E..+0xF8E, +0x1794.., +0x1808, +0x1834..) step by max(n, 0) = n"
+code = "fldz; test cx, cx; fld dword ptr [{nf}]"
+
+[[site]]
+va = 0x467BF8
+stock = "83c1ff 66898ecc0e0000"
+kind = "gate"
+when = "once"
+class = "c"
+what = "chr+0xECC despawn fade countdown"
+
+[[site]]
+va = 0x467D49
+stock = "83c001 668986cc0e0000"
+kind = "gate"
+when = "once"
+class = "c"
+what = "chr+0xECC spawn fade-in count up to +0xECE"
+
+[[site]]
+va = 0x468534
+stock = "8386d80e000001"
+kind = "gate"
+when = "once"
+class = "c"
+what = "chr+0xED8 the character's tick count since spawning (health and musou regeneration count on it)"
+
+[[site]]
+va = 0x506FEA
+stock = "2c01 884656"
+kind = "gate"
+when = "once"
+class = "c"
+what = "chr+0xEF6 countdown, in the character loop after the character's update"
+
+[[site]]
+va = 0x506BEB
+stock = "292dd8bd9d00"
+kind = "gate"
+class = "c"
+what = "slow motion countdown 0x9DBDD8 (dt x 0.25 while it runs); the jne after it ends slow motion at 0"
+alt = "cmp dword ptr [0x9dbdd8], 0"
+
+# Regeneration in 0x506BC0 fires when a player's tick count (chr+0xED8, counted above) is a multiple of 30, 40, 60
+# or 600. It now stays on that multiple for N/60 ticks: the check passes only on the tick it was reached. Players
+# are never far characters, so their count steps on tick60. alt makes the remainder nonzero.
+[[site]]
+va = 0x50705E
+stock = "bf1e000000 f7f7 85d2"
+kind = "gate"
+class = "c"
+what = "player squad health +1 every 30 of the player's ticks (in the character loop)"
+alt = "mov edi, 0x1e; mov edx, 1; test edx, edx"
+
+[[site]]
+va = 0x507101
+stock = "b91e000000 f7f1 85d2"
+kind = "gate"
+class = "c"
+what = "player 1 health +1 every 30 ticks (0x7CDF45 set)"
+alt = "mov ecx, 0x1e; mov edx, 1; test edx, edx"
+
+[[site]]
+va = 0x507130
+stock = "b91e000000 f7f1 85d2"
+kind = "gate"
+class = "c"
+what = "player 2 health +1 every 30 ticks (0x7CDFCD set)"
+alt = "mov ecx, 0x1e; mov edx, 1; test edx, edx"
+
+[[site]]
+va = 0x507157
+stock = "b91e000000 f7f1 85d2"
+kind = "gate"
+class = "c"
+what = "player 1 health +1 every 30 ticks while event flag 0x801EE5 & 8"
+alt = "mov ecx, 0x1e; mov edx, 1; test edx, edx"
+
+[[site]]
+va = 0x50717D
+stock = "b91e000000 f7f1 85d2"
+kind = "gate"
+class = "c"
+what = "player 2 health +1 every 30 ticks while event flag 0x801EE5 & 8"
+alt = "mov ecx, 0x1e; mov edx, 1; test edx, edx"
+
+[[site]]
+va = 0x507233
+stock = "33d2 f7742414 85d2"
+kind = "gate"
+class = "c"
+what = "reserve officers' gauge +1 every 30, 45 or 60 player ticks by difficulty"
+alt = "mov edx, 1; test edx, edx"
+
+[[site]]
+va = 0x5072A4
+stock = "bb3c000000 f7f3 85d2"
+kind = "gate"
+class = "c"
+what = "reserve officers' second gauge +3% every 60 player ticks"
+alt = "mov ebx, 0x3c; mov edx, 1; test edx, edx"
+
+[[site]]
+va = 0x5073C0
+stock = "b958020000 f7f1 b311 85d2"
+kind = "gate"
+class = "c"
+what = "player 1 item health and musou regeneration every 600 ticks"
+alt = "mov ecx, 0x258; mov bl, 0x11; mov edx, 1; test edx, edx"
+
+[[site]]
+va = 0x507479
+stock = "b958020000 f7f1 85d2"
+kind = "gate"
+class = "c"
+what = "player 2 item health and musou regeneration every 600 ticks"
+alt = "mov ecx, 0x258; mov edx, 1; test edx, edx"
+
+[[site]]
+va = 0x50754D
+stock = "b928000000 f7f1 85d2"
+kind = "gate"
+class = "c"
+what = "players' musou +1 every 40 ticks (battle mode 0xC)"
+alt = "mov ecx, 0x28; mov edx, 1; test edx, edx"
+
+[[site]]
+va = 0x5075AF
+stock = "b93c000000 f7f1 85d2"
+kind = "gate"
+class = "c"
+what = "players' musou +1 every 60 ticks with skill 0xC"
+alt = "mov ecx, 0x3c; mov edx, 1; test edx, edx"
+
+# 0x424750 (status effects, from 0x467A60) counts burn (+0xF00) and slow (+0xF1E) down by int(max(dt, 1)), and the
+# burn takes health when (3600 - +0xF00) is a multiple of +0xF1C: that check must pass only when the count moved.
+[[site]]
+va = 0x42476F
+stock = "e83c832700"
+kind = "patch"
+class = "c"
+what = "status timers' step int(max(dt, 1)) becomes the 60 Hz periods the call covers"
+code = "fstp st(0); mov eax, dword ptr [{n}]"
+
+[[site]]
+va = 0x4247D8
+stock = "99 f7fe 85d2"
+kind = "gate"
+when = "once"
+class = "c"
+what = "burn damage every +0xF1C ticks of its duration"
+alt = "mov edx, 1; test edx, edx"
+
+# Knockback slide (0x405460): pos += speed * step, then speed *= 0.5 unless the motion has flag 0x20. The decay is
+# per tick: 0.5^(60/N) keeps its rate, and the distance moved a tick takes decay_sum so the slide covers the stock
+# distance at every 60 Hz period (the stock slide is a discrete series; a plain finer step would end 15% short).
+[[slot]]
+name = "knockback_decay_sum"
+source = 0x6CE260
+type = "f64"
+transform = "decay_sum"
+what = "knockback slide distance share per tick for the 0.5 decay"
+
+[[site]]
+va = 0x405493
+stock = "d84c2418 d91c24"
+kind = "patch"
+class = "b"
+what = "knockback slide distance this tick (speed x step), times decay_sum when the slide decays"
+code = """fmul dword ptr [esp+0x18]; mov eax, dword ptr [ecx+0x18cc]; test byte ptr [eax+0x1c], 0x20; jne 1f;
+fmul qword ptr [{slot:knockback_decay_sum}]; 1: fstp dword ptr [esp]"""
+
+[[site]]
+va = 0x405509
+stock = "dc0d60e26c00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "pow"
+class = "b"
+what = "knockback slide speed halves each stock tick"
+
+# 0x408660 (character, step, speed) moves the character step x speed and keeps that product at +0x18E4, which the
+# rest of the movement code reads as a speed (and multiplies by the step again). +0x18E4 keeps the stock speed.
+[[site]]
+va = 0x4086C3
+stock = "d991e4180000"
+kind = "patch"
+class = "e"
+what = "move speed kept at +0x18E4: the stock value, the displacement over the tick's share"
+code = "fld st(0); fdiv dword ptr [{step}]; fstp dword ptr [ecx+0x18e4]"
+
+[[site]]
+va = 0x408705
+stock = "d991e4180000"
+kind = "patch"
+class = "e"
+what = "move speed kept at +0x18E4 (the other branch)"
+code = "fld st(0); fdiv dword ptr [{step}]; fstp dword ptr [ecx+0x18e4]"
+
+[[site]]
+va = 0x411E89
+stock = "dd05c8e56c00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "inverse"
+class = "e"
+what = "motions with flag 0x100 move at 8 x step per step (a speed of 8 times the time scale): 8 / (60/N) x step"
+
+# Projectiles and attack effects with an owner (0x42C230) step by the owner's character step (+0x1908, which now
+# holds the tick's share) times dt again.
+[[site]]
+va = 0x42C28A
+stock = "d88c24cc000000"
+kind = "patch"
+class = "e"
+what = "projectile step: the owner's character step alone, not times dt again"
+code = "nop"
+
+# Battle modes 0x44/0x45 turn a player toward the other by a fixed 3 degrees a tick.
+[[site]]
+va = 0x412208
+stock = "d9052ce76c00"
+kind = "operand"
+operand = 2
+type = "f32"
+transform = "scale"
+class = "a"
+what = "turn toward the other player, one way"
+
+[[site]]
+va = 0x412210
+stock = "d90508e76c00"
+kind = "operand"
+operand = 2
+type = "f32"
+transform = "scale"
+class = "a"
+what = "turn toward the other player, the other way"
+
+# A player's update pushes the player's pose (position, motion, frame) into a 30-entry history once a call
+# (0x466200), and afterimage clones (0x40AC70 case 0, chr+0x17EC & 0x40) replay it 9, 18 or 27 entries back. The
+# history keeps one entry a stock tick, so the clones trail by the stock time (and step with it).
+[[site]]
+va = 0x4125BD
+stock = "e83e3c0500"
+kind = "gate"
+when = "once"
+class = "c"
+what = "the player's pose history for afterimage clones gets one entry a stock tick"
+code = "{call:0x466200}"

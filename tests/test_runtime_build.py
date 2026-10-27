@@ -14,7 +14,7 @@ import pytest
 from synthetic import pe_image
 from wozmod.formats import pe
 from wozmod.install.stock import EXE, recorded
-from wozmod.runtime import build, guards, layout, text_boxes
+from wozmod.runtime import build, guards, layout, text_boxes, true_rate
 from wozmod.runtime import english_runtime as runtime
 from wozmod.runtime import text_table
 from wozmod.runtime.latin_font import LATIN_GLYPH
@@ -182,7 +182,7 @@ SYNTHETIC_HEADER = "\n".join([
     "#define WIDE_TEXT 1024", "static const u32 enrt_wide_writes[] = {0};", "static const u32 enrt_wide_reads[] = {0};",
     "#define PROMPT_SLOTS 1", "#define PROMPT_ITEMS 9", "#define PROMPT_SLOT_LIST 0, 1, 2, 3, 4, 5, 6, 7, 8",
     *text_boxes.c_header(), "",
-])
+]) + true_rate.header(None, [])
 
 
 RELEASE, TEST = (), ("ENRT_LOG", "ENRT_TEST")

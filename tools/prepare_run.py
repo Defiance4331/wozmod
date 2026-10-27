@@ -40,7 +40,7 @@ MANIFEST = installer.MANIFEST  # the installer's record of every file it wrote, 
 ART_FILES = re.compile(r"wozmod/(entries/[0-9]+\.bin|glyphs\.bin|hires\.bin|prompts-(xbox|playstation)(-hires)?\.bin)")
 # the mod's own settings, as its Settings menu writes them to wozmod/settings.ini: section.key -> allowed values
 SETTINGS = {"language.text": ("english", "japanese"), "language.voice": ("english", "japanese"),
-            "camera.fov": None, "camera.moving_fix": ("on", "off"), "display.fps": ("60", "120"),
+            "camera.fov": None, "camera.moving_fix": ("on", "off"), "display.fps": ("60", "120", "144", "165", "240", "monitor"), "display.vsync": ("on", "off"),
             "display.distance": ("on", "off"),
             "display.mode": ("fullscreen", "windowed", "borderless"),
             # the runtime's display size list, read from its one source

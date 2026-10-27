@@ -1129,15 +1129,22 @@ FONT_ROUTE = [
 ]
 
 def settings_rows(rows: int, distance: bool = False, moving_fix: bool = False) -> list:
-    """The cursor list: the stock rows, the language rows, FOV, frame rate and, in dev builds only, the moving camera
-    fix and render distance."""
+    """The cursor list: LIFE and EVENTS, the language rows, FOV, frame rate, vsync and, in dev builds only, the moving
+    camera fix and render distance, then DEFAULT.
+
+    FRAME SKIP has no row: frame skip is always on. Its getter (0x475B20), the only reader of its saved byte
+    (0x801525), returns 0 (on) whatever the save holds, so the present (0x5CB168) always runs the clock's catch-up and
+    a slow frame never slows the game. The stock row 2 toggle (0x56B91E) would flip the byte on the row now in its
+    place: it is jumped over, so only LIFE and EVENTS have a stock toggle (both stepped by the runtime's hook)."""
     count = 6 + rows + moving_fix + distance
     return [
+        (0x475B20, bytes.fromhex("0fb60525158000"), bytes.fromhex("33c0 9090909090")),
+        (0x56B91C, bytes.fromhex("7535"), bytes.fromhex("eb35")),
 
         (0x56B2ED, bytes.fromhex("015010 c740140b000000 c7401800000000"),
          bytes.fromhex(f"6a{count:02x} 8f4010 c740140b000000 83601800 90")),
-        (0x56B60B, bytes.fromhex("83ea01"), bytes([0x83, 0xEA, count - 3])),
-        (0x56B750, bytes.fromhex("83ea01"), bytes([0x83, 0xEA, count - 3])),
+        (0x56B60B, bytes.fromhex("83ea01"), bytes([0x83, 0xEA, count - 2])),
+        (0x56B750, bytes.fromhex("83ea01"), bytes([0x83, 0xEA, count - 2])),
         (0x56B7E4, bytes.fromhex("83fe03"), bytes([0x83, 0xFE, count - 1])),
         (0x56B806, bytes.fromhex("83fe03"), bytes([0x83, 0xFE, count - 1])),
 

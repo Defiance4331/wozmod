@@ -326,9 +326,9 @@ CONDENSED, CONDENSED_MIN = 0.75, 4.0
 # The rows wozmod adds to Game Settings: one sheet of 42 px bands in the stock label face (the runtime draws
 # them, tinted, where the stock code draws no row). Labels first, then the values; every text is centred in the
 # 310 px quad the stock labels use.
-OPTION_ROWS = ["TEXT LANGUAGE", "VOICE LANGUAGE", "FIELD OF VIEW", "FRAME RATE", "MOVING CAMERA FIX", "ENGLISH",
-               "JAPANESE", "60 FPS", "120 FPS", "FULLSCREEN", "WINDOWED", "BORDERLESS"]
-OPTION_LABELS = 5
+OPTION_ROWS = ["TEXT LANGUAGE", "VOICE LANGUAGE", "FIELD OF VIEW", "FRAME RATE", "MOVING CAMERA FIX", "VSYNC",
+               "ENGLISH", "JAPANESE", "FULLSCREEN", "WINDOWED", "BORDERLESS"]
+OPTION_LABELS = 6
 OPTION_W, OPTION_BAND, OPTION_ROOM = 310, 42, 300
 OPTION_BASELINES = (34, 31)  # labels, and values 3 px higher as the stock values sit against the stock labels
 # Every value's slot is its row's pitch less this one margin, so a word squeezed to its slot stops short of the next.

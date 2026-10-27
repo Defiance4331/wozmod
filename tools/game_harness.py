@@ -211,6 +211,10 @@ def tap_keys(names: list[str], hold: float, gap: float, settle: float | None = N
                 X_INPUT = None  # reopen and prime on the next call
                 raise RuntimeError("XTEST key press failed")
             x11.XFlush(display)
+            pressed = time.clock_gettime(time.CLOCK_MONOTONIC_RAW)
+            if os.environ.get("MUSOU_HARNESS_ROOT"):  # the game's performance counter runs on this clock (Wine)
+                with open(Path(os.environ["MUSOU_HARNESS_ROOT"], "evidence/key-presses.tsv"), "a") as log:
+                    log.write(f"{pressed:.7f}\t{names[n]}\n")
             time.sleep(hold)
         finally:
             xtst.XTestFakeKeyEvent(display, key, 0, 0)
@@ -519,7 +523,8 @@ def target_fps(game: Path) -> int:
     ini = game / "wozmod/settings.ini"
     text = ini.read_text(errors="replace") if ini.is_file() else ""
     section = re.search(r"(?ims)^\[display\](.*?)(?=^\[|\Z)", text)
-    return 120 if section and re.search(r"(?im)^fps\s*=\s*120\s*$", section.group(1)) else 60
+    fps = section and re.search(r"(?im)^fps\s*=\s*(\d+)\s*$", section.group(1))
+    return int(fps[1]) if fps and int(fps[1]) in (60, 120, 144, 165, 240) else 60  # runtime fps_rates; monitor: 60
 
 
 def run_target(root: Path) -> int:
@@ -1345,8 +1350,8 @@ def launch_in_slot(root: Path, args: argparse.Namespace, game: Path, launcher: P
     # The compositor refreshes at the rate the game's own display.fps setting asks for, so a 120 FPS run is not held
     # to 60 by the screen; MUSOU_HARNESS_HZ overrides it (a 60 Hz screen under a 120 FPS setting, for instance).
     hz = "60" if args.target == XENIA else os.environ.get("MUSOU_HARNESS_HZ") or str(target_fps(game))
-    if hz not in ("60", "120"):
-        raise ValueError("MUSOU_HARNESS_HZ must be 60 or 120")
+    if not hz.isdigit() or not 30 <= int(hz) <= 360:  # monitors players have: 60, 100, 144, 165, 180, 240
+        raise ValueError("MUSOU_HARNESS_HZ must be a refresh rate from 30 to 360")
     # The private audio server starts first: gamescope connects to PipeWire once, at start, for its screen stream.
     command += ["dbus-run-session", "--", sys.executable, str(Path(__file__).resolve()), "_audio", "--root", str(root),
                 "gamescope", "--backend", "headless",

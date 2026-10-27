@@ -94,18 +94,9 @@ ALWAYS_HOOKS = [
     (0x56FC91, "6a06 6a18 6a18", 52, None),      # Key Config waiting for input, drawn (mid-function)
     (0x5933B0, "8b0c8568ec7900", 65, 0),         # Move List key (eax, edx, ebx in registers): Xbox art for a pad
     # Frame-rate hooks.
-    (0x4B0D60, "a1a81a8000 a802", 53, 0),      # battle draw
-    (0x5ADE90, "83ec10 53 55", 54, 0),         # input and sound step
-    (0x5E0E80, "51 668b0d18a64001", 55, 0),    # fade ramp
-    (0x5DFB90, "a18ca34001", 56, 0),           # frame RNG step
-    (0x480300, "81ec5c010000", 57, 8),         # effect step (thiscall: slot, float seconds)
-    (0x47B050, "833dd8bd9d0000", 58, 0),       # frame end tail: player timers, play time
-    (0x47D720, "b9882d8200", 59, 0),           # effect model list release
-    (0x512EB0, "8b4c2404 8b542414", 60, 0),    # sound effect request
-    (0x48BE10, "833d0848840000", 61, 0),       # pooled object allocation (0 when full)
-    (0x576D50, "83ec54 81b8a00e000092000000", 62, None),  # place over a head (eax = character)
-    (0x576E13, "8b3570129d00", 64, None),      # the head bone's point, before its projection (mid-function)
-    (0x576BA0, "8b442408 83ec54", 63, None),   # project a world point (out, point)
+    (0x4AF960, "51 d9442408 56", 115, None),   # battle tick (cdecl: dt): the true frame rate's 60 Hz phase
+    (0x4AFB70, "51 d9442408 53", 116, None),   # the battle's tick after its end (cdecl: dt): the same
+    (0x499AC0, "a170a38900", 117, None),       # an event scene's tick (cdecl: dt): the same
     (0x5DDAB0, "8b0d08a24001", 21, None),       # draw quad: hi-res sheets
                                                 #   back past the beams (ENRT_LOG/ENRT_TEST: every quad logged)
     (0x5DE620, "8b442408 8b4c2404", 22, None),  # draw quad, second builder, the same
@@ -149,6 +140,7 @@ TEST_HOOKS = [
     (0x5DDDE0, "8b442424 8b4c241c", 73, None),  # sprite record builder (banner plates): a plain box in `screen`
     (0x590350, "83ec20 53 55", 74, None),       # nine-slice outline (the gallery selection frame), the same
     (0x4EEE60, "53 8a5c2414 80fb07", 112, 0),   # stage-script queue (cdecl): keep's no-defeat refuses kind 8
+    (0x4B0480, "51 dd05b0b07a00", 114, None),   # true rate: the battle's ticks begin
 ]
 class RuntimeBuildError(ValueError):
     """The stock executable, an edit or a hook site is not what the build expects."""

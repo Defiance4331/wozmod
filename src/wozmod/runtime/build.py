@@ -12,6 +12,7 @@ from .english_runtime import (
     data_header,
     hook_sites,
 )
+from . import true_rate
 from .latin_font import WIDTHS
 from . import camp_plate
 from .runtime_edits import (
@@ -66,7 +67,7 @@ def build_dll(
         + ("ENRT_MOVING_FIX",) * moving_fix
         + (f"ENRT_CELL={cell}",) * (cell != 24)
     )
-    header = data_header(stock, edits, hook_sites(defines), WIDTHS, defines)
+    header = data_header(stock, edits, hook_sites(defines), WIDTHS, defines) + true_rate.header(stock)
     output.parent.mkdir(parents=True, exist_ok=True)
     compile_dll(output, header, defines)
     return output

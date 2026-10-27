@@ -1,0 +1,118 @@
+# The battle's tick dispatcher (0x4B0480): each pass runs int(debt) ticks (debt = elapsed time x the clock's rate),
+# but a pass whose debt is at most 1.00001 still runs one tick. At 60 the limiter spaces passes 1/60 s apart, so the
+# debt reaches about 1 every pass. At N, passes the display holds back and then lets through in a burst carry less
+# than a tick's debt, and that path adds ticks the clock never earned: the game runs fast. A pass with under half a
+# tick of debt runs no tick (its frame repeats); from half a tick up it runs one and pays a whole tick from the debt,
+# which the stock path does only above 1.00001 (at N with jittered passes that cost 1% extra ticks). Frame skip is
+# always on (runtime_edits.settings_rows), so the clock keeps its debt across presents and these passes happen.
+[[site]]
+va = 0x4B04A7
+stock = "0f85ef000000"
+kind = "patch"
+class = "e"
+what = "battle dispatcher: a pass with under half a tick of debt runs no tick, one with more pays for its tick"
+code = """jne 1f; push 0x4b04ad; ret;
+1: fcom qword ptr [0x6ce260]; fnstsw ax; test ah, 1; jz 2f;
+fstp st(0); pop ebx; add esp, 4; ret;
+2: fld qword ptr [0x7ab0b0]; fsub qword ptr [0x6ce3c8]; fstp qword ptr [0x7ab0b0];
+push 0x4b059c; ret"""
+
+# The present limiter (0x5CA330) waits until 1/60 s after its last exit: push 60 is the divisor of the counter's
+# frequency. At N it lets N passes through a second (and leaves the pacing to VSYNC when the monitor reaches N).
+[[site]]
+va = 0x5CA36D
+stock = "6a3c 8bea 50"
+kind = "patch"
+class = "e"
+what = "present limiter: passes a second is the tick rate"
+code = "push dword ptr [{limit}]; mov ebp, edx; push eax"
+
+# A pass that runs several ticks (the machine fell behind) draws once and runs the frame end once; for each extra tick
+# the catch-up calls the input and sound step (0x5ADE90) and the fade ramp (0x5E0E80) in place of the skipped frame.
+# Those stand for a frame: they take one of the 60 Hz periods the pass's time holds beyond the first (the frame
+# end's), and the frame being drawn keeps its flag.
+[[site]]
+va = 0x4B0534
+stock = "e857d90f00 e842091300"
+kind = "patch"
+class = "c"
+what = "catch-up: a skipped frame's stand-in steps take a 60 Hz period of the pass's own"
+code = """push eax; push ecx; push edx; push 1; call dword ptr [{frame}]; add esp, 4; pop edx; pop ecx; pop eax;
+{call:0x5ade90}; {call:0x5e0e80};
+push eax; push ecx; push edx; push 0; call dword ptr [{frame}]; add esp, 4; pop edx; pop ecx; pop eax"""
+
+# After the battle ends the game ticks 0x4AFB70 instead of 0x4AF960 (its own hook advances the 60 Hz phase); it counts
+# the wait before the results (240, 300 or 540 ticks) once a tick.
+[[site]]
+va = 0x4AFC7C
+stock = "668105f6ac8900ffff"
+kind = "gate"
+class = "c"
+what = "the wait from the battle's end to the results, 0x89ACF6"
+
+# The frame end stirs the random generator once a drawn frame (0x5DFB90). It rolls nothing, but at N it would advance
+# the generator N times a second where stock advances it 60: the stir keeps its stock count.
+[[site]]
+va = 0x5DFBA0
+stock = "a38ca34001"
+kind = "gate"
+when = "frame60"
+class = "d"
+what = "the frame's stir of the random generator"
+
+# The frame sync (0x5D9920) resets the battle clock before each present outside the battle, so the in-engine event
+# scene runs exactly one tick a pass, each of 60/N of a stock tick: whenever the passes fall short of N a second (a
+# display that refreshes slower than the rate with VSYNC, or a slow frame) the event slows down with them. At a rate
+# above 60 the event scene keeps its clock like the battle: its dispatcher (0x49CEB0) then runs the ticks the time
+# elapsed calls for, as the battle's does.
+[[site]]
+va = 0x5D999E
+stock = "833d18857c0002 740a"
+kind = "patch"
+class = "e"
+what = "frame sync: the event scene keeps the clock's debt across presents, as the battle does"
+code = """cmp dword ptr [0x7c8518], 2; je 1f; cmp dword ptr [0x7c8518], 6; je 1f; push 0x5d99a7; ret;
+1: push 0x5d99b1; ret"""
+
+# The event scene's dispatcher has the battle's short-pass path too (see 0x4B04A7 above).
+[[site]]
+va = 0x49CECF
+stock = "0f85a5000000"
+kind = "patch"
+class = "e"
+what = "event dispatcher: a pass with under half a tick of debt runs no tick, one with more pays for its tick"
+code = """jne 1f; push 0x49ced5; ret;
+1: fcom qword ptr [0x6ce260]; fnstsw ax; test ah, 1; jz 2f;
+fstp st(0); pop esi; add esp, 4; ret;
+2: fld qword ptr [0x7ab0b0]; fsub qword ptr [0x6ce3c8]; fstp qword ptr [0x7ab0b0];
+push 0x49cf7a; ret"""
+
+# The event scene's frame function (0x4B2DF0, once a pass, before the pass's ticks) advances the event's timeline by
+# its dt (0x49CDF0: the event clock, camera paths, actor motions, movers), the effects clock and the weather. At 60
+# a pass is one tick. At N a pass covers as many ticks as the dispatcher above is about to run: when the display
+# holds the passes below N a second (VSYNC at a slower refresh), one tick's dt a pass slowed the whole event down.
+# dt becomes the ticks this pass runs (0, 1 or int(debt), as the dispatcher decides) times 60/N.
+[[site]]
+va = 0x4B2DF0
+stock = "51 56 6a00 e867ae0f00"
+kind = "patch"
+class = "e"
+what = "event scene: the timeline advances by the time the pass's ticks cover, not one tick's"
+code = """push eax;
+fld qword ptr [0x7ab0b0]; fld dword ptr [0x7040fc]; fcomp st(1); fnstsw ax; test ah, 1; jnz 2f;
+fcomp qword ptr [0x6ce260]; fnstsw ax; test ah, 1; jz 4f;
+fldz; fstp dword ptr [esp+8]; jmp 4f;
+2: fisttp dword ptr [esp]; fild dword ptr [esp]; fmul dword ptr [esp+8]; fstp dword ptr [esp+8];
+4: pop eax; push ecx; push esi; push 0; {call:0x5adc60}"""
+
+# The limiter waits only when a whole millisecond of its period is left (it converts the rest to milliseconds and
+# skips the wait at 0), so a pass can start up to a millisecond early. At 60 that is rare and small; at 240 (a 4.2 ms
+# period) passes ran at 250 a second, and the passes without a tick's debt repeated their frame. It waits out the
+# whole period.
+[[site]]
+va = 0x5CA3BC
+stock = "e8bf2c0d00 0bc2 7436"
+kind = "patch"
+class = "e"
+what = "present limiter: waits out the rest of its period, under a millisecond too"
+code = "add esp, 16"

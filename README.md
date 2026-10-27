@@ -27,7 +27,8 @@ options.
 - **English story movies** from the Xbox 360 games, where they have English
   voices or text.
 - **A language switch.** Choose English or Japanese for text and for voices.
-- **120 FPS** in battle.
+- **High frame rates** in battle and in-engine events: 120, 144, 165 or 240
+  FPS, or your monitor's refresh rate.
 - **A wider field of view**, up to 150%.
 - **More screen sizes**, up to the size of your monitor, and a borderless
   window mode.
@@ -156,7 +157,10 @@ Open **Options**, then **Game Settings**. wozmod adds these rows:
 | TEXT LANGUAGE | English or Japanese. The change applies the next time you start the game. |
 | VOICE LANGUAGE | English or Japanese. The change applies from the next line. |
 | FIELD OF VIEW | 100% (original) to 150%. |
-| FRAME RATE | 60 or 120 FPS in battle. |
+| FRAME RATE | 60, 120, 144, 165 or 240 FPS, or MONITOR (your monitor's refresh rate), in battle and in-engine events. |
+| VSYNC | ON waits for each refresh of the monitor, so the frame rate stays at most its refresh rate. OFF does not wait. |
+
+The stock FRAME SKIP row is gone: frame skip is always on, so a slow frame never slows the game down.
 
 In **Options**, then **Graphics**, wozmod changes these rows:
 
@@ -182,8 +186,8 @@ change.
   Your `OROCHI_Z.exe` is another version, such as the 1.01 update. wozmod needs
   version 1.00, and adds the update's sound and menu fixes itself. Reinstall the
   game from its disc without the update. Then install wozmod again.
-- **`wozmod/runtime.log` says "refused: 120 FPS, the code differs from stock
-  at …"** (or another feature in place of 120 FPS). Another mod changed
+- **`wozmod/runtime.log` says "refused: frame rate, the code differs from
+  stock at …"** (or another feature in place of frame rate). Another mod changed
   `OROCHI_Z.exe` where wozmod patches it. wozmod works only with all of its
   changes, so it turned itself off and the game runs as it was. Put back the
   original `OROCHI_Z.exe`, or remove that mod.

@@ -1,0 +1,346 @@
+# True frame rate catalogue (format: see character.toml): the character motion frame chr+0x18D8 (f32).
+#
+# 0x40D3A0 advances the frame by the character step times the playback rate (+0x18F0) each call. At 60 with rate 1
+# the frame takes whole values, each for one stock tick, so a frame value k stands for the time [k, k+1) stock ticks
+# after the motion began. At N ticks a second the frame passes through k + j x 60/N, so a test against an integer
+# mark that is not of the form `frame >= a` / `frame < a` changes its answer up to one stock tick early: `frame > b`
+# passes at b + 60/N instead of b + 1, and an inclusive window `a <= frame <= b` closes at b + 60/N. Those tests
+# read the frame's whole part here: floor(frame + 1/1024) (the step 60/N is not exact in binary, so 44.99999 counts
+# as 45), which gives the stock answer for every integer mark at any rate and equals the frame at 60. Reads that only
+# sample poses, blends or root motion keep the fractional frame. Crossing tests (frame <= m < frame + step, or the
+# integer-part change of the effect emitters) fire once per mark at any rate and need nothing, except where their
+# width is not the tick's step (0x4210D0, 0x421C70).
+#
+# floor: push 0x3a800000 (1/1024); fadd; set the x87 rounding control to round down (fnstcw, and 0xF3FF, or 0x400,
+# fldcw), frndint, put the control word back. The x87 stack depth and every register except EFLAGS stay as they
+# were (the stack slot is popped with lea). Where the stock code truncates with _ftol (0x69CAB0) only 1/1024 is added.
+
+# ---- The motion's end (0x40D3A0): `frame > last` (last = 0x4031A0, the motion's last frame index) ends a looping
+# motion, starts the next one or (0x15) restarts it. The loops keep the fraction past the end (frame - (last + 1)).
+# The motion that holds its last frame (next = -1, 0x40D835) keeps the stock test: it clamps to `last` either way,
+# and a floored test there would let the drawn frame run past the last key and back each stock tick.
+[[site]]
+va = 0x40D535
+stock = "d944240c d8d1 dfe0"
+kind = "patch"
+class = "e"
+what = "motion end, looping motion (+0x20 & 0x40, fewer than 4 loops): ends when the frame's whole part passes last"
+code = """fld dword ptr [esp+0xc]; fld st(1);
+push 0x3a800000; fadd dword ptr [esp]; fnstcw word ptr [esp]; fnstcw word ptr [esp+2]; and word ptr [esp+2], 0xf3ff; or word ptr [esp+2], 0x400; fldcw word ptr [esp+2]; frndint; fldcw word ptr [esp]; lea esp, [esp+4];
+fxch st(1); fcom st(1); fnstsw ax; fstp st(1)"""
+
+[[site]]
+va = 0x40D5A0
+stock = "ded9 dfe0 f6c405"
+kind = "patch"
+class = "e"
+what = "motion end, state 0x92 motion 0x15 (restarts at frame 0)"
+code = """fxch st(1);
+push 0x3a800000; fadd dword ptr [esp]; fnstcw word ptr [esp]; fnstcw word ptr [esp+2]; and word ptr [esp+2], 0xf3ff; or word ptr [esp+2], 0x400; fldcw word ptr [esp+2]; frndint; fldcw word ptr [esp]; lea esp, [esp+4];
+fxch st(1); fcompp; fnstsw ax; test ah, 5"""
+
+[[site]]
+va = 0x40D5C9
+stock = "d944240c d8d1 dfe0"
+kind = "patch"
+class = "e"
+what = "motion end, state 0x92 (a queued motion or a random one of three follows)"
+code = """fld dword ptr [esp+0xc]; fld st(1);
+push 0x3a800000; fadd dword ptr [esp]; fnstcw word ptr [esp]; fnstcw word ptr [esp+2]; and word ptr [esp+2], 0xf3ff; or word ptr [esp+2], 0x400; fldcw word ptr [esp+2]; frndint; fldcw word ptr [esp]; lea esp, [esp+4];
+fxch st(1); fcom st(1); fnstsw ax; fstp st(1)"""
+
+[[site]]
+va = 0x40D667
+stock = "d944240c d8d1 dfe0"
+kind = "patch"
+class = "e"
+what = "motion end, motion 0x13B in state 0xE of +0xEFD (motion 0xF follows)"
+code = """fld dword ptr [esp+0xc]; fld st(1);
+push 0x3a800000; fadd dword ptr [esp]; fnstcw word ptr [esp]; fnstcw word ptr [esp+2]; and word ptr [esp+2], 0xf3ff; or word ptr [esp+2], 0x400; fldcw word ptr [esp+2]; frndint; fldcw word ptr [esp]; lea esp, [esp+4];
+fxch st(1); fcom st(1); fnstsw ax; fstp st(1)"""
+
+[[site]]
+va = 0x40D6CF
+stock = "d944240c d8d1 dfe0"
+kind = "patch"
+class = "e"
+what = "motion end, a motion with another next motion (+4): the next motion starts"
+code = """fld dword ptr [esp+0xc]; fld st(1);
+push 0x3a800000; fadd dword ptr [esp]; fnstcw word ptr [esp]; fnstcw word ptr [esp+2]; and word ptr [esp+2], 0xf3ff; or word ptr [esp+2], 0x400; fldcw word ptr [esp+2]; frndint; fldcw word ptr [esp]; lea esp, [esp+4];
+fxch st(1); fcom st(1); fnstsw ax; fstp st(1)"""
+
+[[site]]
+va = 0x40D71B
+stock = "d944240c d8d1 dfe0"
+kind = "patch"
+class = "e"
+what = "motion end, a motion that loops to itself (loop count +0x18DC, root motion carried over)"
+code = """fld dword ptr [esp+0xc]; fld st(1);
+push 0x3a800000; fadd dword ptr [esp]; fnstcw word ptr [esp]; fnstcw word ptr [esp+2]; and word ptr [esp+2], 0xf3ff; or word ptr [esp+2], 0x400; fldcw word ptr [esp+2]; frndint; fldcw word ptr [esp]; lea esp, [esp+4];
+fxch st(1); fcom st(1); fnstsw ax; fstp st(1)"""
+
+[[site]]
+va = 0x40DA80
+stock = "d9442414 d8d1 dfe0"
+kind = "patch"
+class = "e"
+what = "motion end, a player's motion 0x58 that follows its partner's frame (+0x1944) and loops"
+code = """fld dword ptr [esp+0x14]; fld st(1);
+push 0x3a800000; fadd dword ptr [esp]; fnstcw word ptr [esp]; fnstcw word ptr [esp+2]; and word ptr [esp+2], 0xf3ff; or word ptr [esp+2], 0x400; fldcw word ptr [esp+2]; frndint; fldcw word ptr [esp]; lea esp, [esp+4];
+fxch st(1); fcom st(1); fnstsw ax; fstp st(1)"""
+
+# ---- Attack and hit windows: `a <= frame <= b` from the motion's attack data (+0x18 block, +5 .. +6).
+
+# 0x403470: both characters inside their attack windows (the clash test 0x404B00).
+[[site]]
+va = 0x403479
+stock = "d980d8180000"
+kind = "patch"
+class = "e"
+what = "attack window +5 <= frame <= +6 (0x403470, clash of two attacks)"
+code = """fld dword ptr [eax+0x18d8];
+push 0x3a800000; fadd dword ptr [esp]; fnstcw word ptr [esp]; fnstcw word ptr [esp+2]; and word ptr [esp+2], 0xf3ff; or word ptr [esp+2], 0x400; fldcw word ptr [esp+2]; frndint; fldcw word ptr [esp]; lea esp, [esp+4]"""
+
+# 0x407040 (from 0x40C890, for the frame +0x18D8 and the second motion's frame +0x1910): the active hitbox bones
+# (chr+0xEE8) while the frame passed in lies in the window.
+[[site]]
+va = 0x407056
+stock = "d9442408 0fb6c0"
+kind = "patch"
+class = "e"
+what = "hitbox window +5 <= frame <= +6 sets the attack's bones in chr+0xEE8 (0x407040)"
+code = """fld dword ptr [esp+8];
+push 0x3a800000; fadd dword ptr [esp]; fnstcw word ptr [esp]; fnstcw word ptr [esp+2]; and word ptr [esp+2], 0xf3ff; or word ptr [esp+2], 0x400; fldcw word ptr [esp+2]; frndint; fldcw word ptr [esp]; lea esp, [esp+4];
+movzx eax, al"""
+
+# 0x446530 and 0x461500: the same window test for the AI (0x4473CB, 0x447812, 0x44857A) and for 0x469xxx.
+[[site]]
+va = 0x446539
+stock = "d980d8180000"
+kind = "patch"
+class = "e"
+what = "attack window +5 <= frame <= +6 (0x446530, AI)"
+code = """fld dword ptr [eax+0x18d8];
+push 0x3a800000; fadd dword ptr [esp]; fnstcw word ptr [esp]; fnstcw word ptr [esp+2]; and word ptr [esp+2], 0xf3ff; or word ptr [esp+2], 0x400; fldcw word ptr [esp+2]; frndint; fldcw word ptr [esp]; lea esp, [esp+4]"""
+
+[[site]]
+va = 0x461509
+stock = "d980d8180000"
+kind = "patch"
+class = "e"
+what = "attack window +5 <= frame <= +6 (0x461500)"
+code = """fld dword ptr [eax+0x18d8];
+push 0x3a800000; fadd dword ptr [esp]; fnstcw word ptr [esp]; fnstcw word ptr [esp+2]; and word ptr [esp+2], 0xf3ff; or word ptr [esp+2], 0x400; fldcw word ptr [esp+2]; frndint; fldcw word ptr [esp]; lea esp, [esp+4]"""
+
+# 0x446590 (AI, 0x44781D): frame <= +0x26 of the attack data.
+[[site]]
+va = 0x4465A8
+stock = "d981d8180000"
+kind = "patch"
+class = "e"
+what = "AI: the frame has not passed the attack data's +0x26 mark (frame <= mark)"
+code = """fld dword ptr [ecx+0x18d8];
+push 0x3a800000; fadd dword ptr [esp]; fnstcw word ptr [esp]; fnstcw word ptr [esp+2]; and word ptr [esp+2], 0xf3ff; or word ptr [esp+2], 0x400; fldcw word ptr [esp+2]; frndint; fldcw word ptr [esp]; lea esp, [esp+4]"""
+
+# 0x468DC0 (weapon trails, per character from 0x507C03 and 0x429A57): the trail stays on while frame <= +6 of an
+# attack with +0x34 & 0x2000000, and restarts while frame <= 1.
+[[site]]
+va = 0x4697C7
+stock = "d985d8180000"
+kind = "patch"
+class = "e"
+what = "weapon trail on while frame <= attack end +6 (0x468DC0)"
+code = """fld dword ptr [ebp+0x18d8];
+push 0x3a800000; fadd dword ptr [esp]; fnstcw word ptr [esp]; fnstcw word ptr [esp+2]; and word ptr [esp+2], 0xf3ff; or word ptr [esp+2], 0x400; fldcw word ptr [esp+2]; frndint; fldcw word ptr [esp]; lea esp, [esp+4]"""
+
+[[site]]
+va = 0x469817
+stock = "d89dd8180000"
+kind = "patch"
+class = "e"
+what = "weapon trail restart while frame <= 1 (0x468DC0)"
+code = """fld dword ptr [ebp+0x18d8];
+push 0x3a800000; fadd dword ptr [esp]; fnstcw word ptr [esp]; fnstcw word ptr [esp+2]; and word ptr [esp+2], 0xf3ff; or word ptr [esp+2], 0x400; fldcw word ptr [esp+2]; frndint; fldcw word ptr [esp]; lea esp, [esp+4];
+fxch st(1); fcompp"""
+
+# ---- Effects cued by the frame (0x40C890, from 0x40D050 for +0x18D8 and +0x1910).
+
+# An attack effect window +0x16 .. +0x17 spawns once each time the frame's whole part changes (trunc(frame) against
+# trunc(frame - step)) while start <= frame <= end: the last spawn at `end` needs the whole part.
+[[site]]
+va = 0x40C9A9
+stock = "89542410 db442410 d8d9"
+kind = "patch"
+class = "e"
+what = "attack effect window: one spawn per whole frame while start <= frame <= end (+0x16, +0x17)"
+code = """mov dword ptr [esp+0x10], edx; fld st(0);
+push 0x3a800000; fadd dword ptr [esp]; fnstcw word ptr [esp]; fnstcw word ptr [esp+2]; and word ptr [esp+2], 0xf3ff; or word ptr [esp+2], 0x400; fldcw word ptr [esp+2]; frndint; fldcw word ptr [esp]; lea esp, [esp+4];
+fild dword ptr [esp+0x10]; fcompp"""
+
+# Attack data with +0x20 & 4 renews the character's effects 0x1F7..0x1F9, 0x29A, 0x29B when the whole part changes
+# and start <= frame <= start + step: at 60 that is the frames start and start + 1. The bound is one stock tick's
+# advance past start (step / (60/N)) and the frame its whole part.
+[[site]]
+va = 0x40CE42
+stock = "da442414 d95c2410 d9442410 ded9"
+kind = "patch"
+class = "e"
+what = "attached effect renewal at frames start .. start + one stock tick's step (+0x16, +0x20 & 4)"
+code = """fdiv dword ptr [{step}]; fiadd dword ptr [esp+0x14]; fstp dword ptr [esp+0x10];
+push 0x3a800000; fadd dword ptr [esp]; fnstcw word ptr [esp]; fnstcw word ptr [esp+2]; and word ptr [esp+2], 0xf3ff; or word ptr [esp+2], 0x400; fldcw word ptr [esp+2]; frndint; fldcw word ptr [esp]; lea esp, [esp+4];
+fld dword ptr [esp+0x10]; fcompp"""
+
+# ---- The hit and attack sequence in the character loop (0x506BC0, after the character's update).
+
+# 0x4210D0's rumble crossings (frame <= mark < frame + speed) take the tick's share in effects.toml (0x421219,
+# 0x42125F). A charged effect (0x504520, flag 0x40000000) is released once frame > +5.
+[[site]]
+va = 0x4212BF
+stock = "d986d8180000"
+kind = "patch"
+class = "e"
+what = "release of the character's charged effect when frame > +5 (0x4210D0)"
+code = """fld dword ptr [esi+0x18d8];
+push 0x3a800000; fadd dword ptr [esp]; fnstcw word ptr [esp]; fnstcw word ptr [esp+2]; and word ptr [esp+2], 0xf3ff; or word ptr [esp+2], 0x400; fldcw word ptr [esp+2]; frndint; fldcw word ptr [esp]; lea esp, [esp+4]"""
+
+# 0x421C70 starts an attack (0x4318F0, and the gauge gain of +0x28 through 0x41FF20) as the frame crosses +5, ends it
+# (0x431D80) as it crosses +6, and cues 0x431E00 at 44: crossings frame <= m < frame + w with w the attack speed
+# (0x403AA0) without the tick's share, so at N each fired on N/60 ticks. The width is the tick's advance.
+[[site]]
+va = 0x421C90
+stock = "d95c241c 0fb64e05"
+kind = "patch"
+class = "e"
+what = "attack start, end and cue crossings in 0x421C70: width speed x the tick's share"
+code = "fmul dword ptr [{step}]; fstp dword ptr [esp+0x1c]; movzx ecx, byte ptr [esi+5]"
+
+# A mark at frame 1 is also taken while 1 < frame < 2 (frame - w <= 1 < frame), for a motion that starts past it. At
+# 60 with whole frames that never holds; at N it would take the mark a second time on the tick after the crossing.
+# `1 < frame` reads the whole part.
+[[site]]
+va = 0x421D03
+stock = "d987d8180000"
+kind = "patch"
+class = "e"
+what = "attack start mark at frame 1: the late test 1 < frame < 2 reads the whole part (0x421C70)"
+code = """fld dword ptr [edi+0x18d8];
+push 0x3a800000; fadd dword ptr [esp]; fnstcw word ptr [esp]; fnstcw word ptr [esp+2]; and word ptr [esp+2], 0xf3ff; or word ptr [esp+2], 0x400; fldcw word ptr [esp+2]; frndint; fldcw word ptr [esp]; lea esp, [esp+4]"""
+
+[[site]]
+va = 0x421E0E
+stock = "d987d8180000"
+kind = "patch"
+class = "e"
+what = "attack end mark at frame 1: the late test 1 < frame < 2 reads the whole part (0x421C70)"
+code = """fld dword ptr [edi+0x18d8];
+push 0x3a800000; fadd dword ptr [esp]; fnstcw word ptr [esp]; fnstcw word ptr [esp+2]; and word ptr [esp+2], 0xf3ff; or word ptr [esp+2], 0x400; fldcw word ptr [esp+2]; frndint; fldcw word ptr [esp]; lea esp, [esp+4]"""
+
+# ---- Input and action windows.
+
+# 0x40FEE0 (the character step's input): character 0x5F's motion 0xA3 takes input flag 0x80 while 33 <= frame <= 84.
+[[site]]
+va = 0x41080C
+stock = "d89ed8180000"
+kind = "patch"
+class = "e"
+what = "character 0x5F motion 0xA3 input window 33 <= frame <= 84 (0x40FEE0)"
+code = """fld dword ptr [esi+0x18d8];
+push 0x3a800000; fadd dword ptr [esp]; fnstcw word ptr [esp]; fnstcw word ptr [esp+2]; and word ptr [esp+2], 0xf3ff; or word ptr [esp+2], 0x400; fldcw word ptr [esp+2]; frndint; fldcw word ptr [esp]; lea esp, [esp+4];
+fxch st(1); fcompp"""
+
+# 0x430090 (the next action while the current motion ends, 0x464953/0x4649E2) asks whether the frame has reached
+# `last - step` (and `last - 2 step`), with step the character step +0x1904: one and two ticks before the end at 60.
+# The tick's step is now 60/N of it; the marks are one and two stock ticks: step / (60/N).
+[[site]]
+va = 0x430126
+stock = "d864241c d9442410"
+kind = "patch"
+class = "e"
+what = "next action allowed from last - one stock tick's step (0x430090)"
+code = "fld dword ptr [esp+0x1c]; fdiv dword ptr [{step}]; fchs; faddp st(1), st; fld dword ptr [esp+0x10]"
+
+[[site]]
+va = 0x4301FB
+stock = "d944241c d9c0"
+kind = "patch"
+class = "e"
+what = "next action allowed from last - two stock ticks' steps (0x430090, motions 0xAB and 0xAF)"
+code = "fld dword ptr [esp+0x1c]; fdiv dword ptr [{step}]; fld st(0)"
+
+# 0x45D010 (AI): a motion with +0x1C & 0x20 counts as just begun while frame <= 2.
+[[site]]
+va = 0x45D1B5
+stock = "d89bd8180000"
+kind = "patch"
+class = "e"
+what = "AI: motion just begun while frame <= 2 (0x45D010)"
+code = """fld dword ptr [ebx+0x18d8];
+push 0x3a800000; fadd dword ptr [esp]; fnstcw word ptr [esp]; fnstcw word ptr [esp+2]; and word ptr [esp+2], 0xf3ff; or word ptr [esp+2], 0x400; fldcw word ptr [esp+2]; frndint; fldcw word ptr [esp]; lea esp, [esp+4];
+fxch st(1); fcompp"""
+
+# 0x50D020 (the scene of 0x50FEB0, which steps its character itself): voice and camera from 27 <= frame <= 30
+# (frame < 30.00001), or 0 <= frame <= last (frame < last + 0.00001).
+[[site]]
+va = 0x50D035
+stock = "d987d8180000"
+kind = "patch"
+class = "e"
+what = "scene 0x50D020 cue windows 27 <= frame <= 30 and 0 <= frame <= last"
+code = """fld dword ptr [edi+0x18d8];
+push 0x3a800000; fadd dword ptr [esp]; fnstcw word ptr [esp]; fnstcw word ptr [esp+2]; and word ptr [esp+2], 0xf3ff; or word ptr [esp+2], 0x400; fldcw word ptr [esp+2]; frndint; fldcw word ptr [esp]; lea esp, [esp+4]"""
+
+# ---- Tests that already truncate (_ftol): the whole part is right, 44.99999 still needs to count as 45.
+
+[[site]]
+va = 0x40511E
+stock = "d986d8180000"
+kind = "patch"
+class = "e"
+what = "turn toward the target until trunc(frame) passes +0x24 (0x405100)"
+code = "fld dword ptr [esi+0x18d8]; push 0x3a800000; fadd dword ptr [esp]; lea esp, [esp+4]"
+
+[[site]]
+va = 0x405EE7
+stock = "d986d8180000"
+kind = "patch"
+class = "e"
+what = "clash outcome once trunc(frame) reaches last (0x405E80)"
+code = "fld dword ptr [esi+0x18d8]; push 0x3a800000; fadd dword ptr [esp]; lea esp, [esp+4]"
+
+[[site]]
+va = 0x410098
+stock = "d986d8180000"
+kind = "patch"
+class = "e"
+what = "turn toward the target while trunc(frame) <= +0x24 (0x402000 from 0x40FEE0)"
+code = "fld dword ptr [esi+0x18d8]; push 0x3a800000; fadd dword ptr [esp]; lea esp, [esp+4]"
+
+[[site]]
+va = 0x43006E
+stock = "d986d8180000"
+kind = "patch"
+class = "e"
+what = "action allowed once trunc(frame) >= 30 (20 in state 0x4D) for motions with +0x20 & 0x20000 (0x430030)"
+code = "fld dword ptr [esi+0x18d8]; push 0x3a800000; fadd dword ptr [esp]; lea esp, [esp+4]"
+
+# The motion time +0x18F8 (+= the step each call, 0 at a motion's start): the musou charge motions 0x6D/0x6E.
+[[site]]
+va = 0x410206
+stock = "d986f8180000"
+kind = "patch"
+class = "e"
+what = "musou charge held longer than 30 (trunc(+0x18F8) > 30) calls 0x417720 with 1 (0x40FEE0)"
+code = "fld dword ptr [esi+0x18f8]; push 0x3a800000; fadd dword ptr [esp]; lea esp, [esp+4]"
+
+# 0x417720 pulses the pad's rumble when trunc(+0x18F8) > 30 is a multiple of 14: the whole part now stands for N/60
+# ticks. The test takes the whole part only on the tick it changed (the previous value: +0x18F8 less this call's
+# advance, +0x1914 x +0x18F0), and 0 otherwise, which fails the > 30 test after the span.
+[[site]]
+va = 0x41782D
+stock = "d986f8180000 e878522800"
+kind = "patch"
+class = "c"
+what = "musou charge rumble every 14 of +0x18F8: once per whole value (0x417720)"
+code = """fld dword ptr [esi+0x18f8]; push 0x3a800000; fadd dword ptr [esp]; lea esp, [esp+4];
+fld dword ptr [esi+0x1914]; fmul dword ptr [esi+0x18f0]; fchs; fadd st(0), st(1); {call:0x69cab0} push eax; {call:0x69cab0}
+pop ecx; cmp ecx, eax; jne 1f; xor eax, eax; 1:"""

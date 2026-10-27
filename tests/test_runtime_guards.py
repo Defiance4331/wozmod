@@ -27,7 +27,7 @@ V101 = (0x4B5E99A7, 0x1194000)  # the 1.01 update's OROCHI_Z.exe: stamp 2010-01-
 RANGE = "range bound: compares a return address with a whole code region, which no span can guard"
 # .text addresses the runtime names that no guard covers, each with its reason.
 UNGUARDED = {
-    0x401006: RANGE, 0x6C0000: RANGE,  # stack_calls (test build): a return address anywhere in the game's code
+    0x401000: "the whole of .text, made writable for the coverage probe's breakpoints (true_rate_probe.h, test build)",
     0x520000: RANGE,  # menu_word: a caller in the menus' code, 0x520000 to 0x5B0000
     layout.DEFINES["NARRATION_CODE"]: RANGE, layout.DEFINES["NARRATION_CODE_END"]: RANGE,  # a glyph count's caller
     layout.DEFINES["STILL_CODE"]: RANGE, layout.DEFINES["STILL_CODE_END"]: RANGE,
@@ -260,7 +260,7 @@ def test_the_dll_exports_the_guard_list_its_build_made(release) -> None:
 
 
 def test_another_mods_edit_names_only_the_feature_whose_code_it_changed(release) -> None:
-    """Bug: one changed byte at the 120 FPS limiter (0x5CA36D) or in the frame hook (core, 0x5C9FD0) is reported as
+    """Bug: one changed byte at the frame rate limiter (0x5CA36D) or in the frame hook (core, 0x5C9FD0) is reported as
     nothing, so the installer lets it through and the DLL turns all of wozmod off in game; or it is reported as
     other features than its own, so the installer names the wrong ones."""
     stock, dll = release
@@ -271,7 +271,7 @@ def test_another_mods_edit_names_only_the_feature_whose_code_it_changed(release)
         if va is not None:
             image[pe.file_offset(where, va)] ^= 1
         reports[va] = guard_report.refused_features(bytes(image), dll)
-    assert reports == {None: [], 0x5CA36D: ["120 FPS"], 0x5C9FD0: ["core"]}
+    assert reports == {None: [], 0x5CA36D: ["frame rate"], 0x5C9FD0: ["core"]}
 
 
 # A stand-in for the game: version 1.00's build stamp and image size (patched in below), and an image that reaches past

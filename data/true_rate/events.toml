@@ -1,0 +1,148 @@
+# True frame rate catalogue (format: see character.toml): the in-engine event scene (scene 6: frame 0x4B2DF0, tick
+# 0x4B2640, draw 0x4B2680), and the weather it shares with the battle.
+#
+# The event timeline runs on the frame float. The scene's frame function 0x4B2DF0 gets the frame float (0x7C8500,
+# 60/N) once a pass and hands it to 0x49CDF0, which adds it to the event clock (context +0x50, starting at 0) and to
+# the camera path's time (+0x54, 0x499F50), steps the actors' motion times (0x4A1C40), the movers (0x49BFE0) and the
+# sound timers (0x4A6640) by it, then runs every script command whose time the clock has reached (0x49D9A0); the
+# event ends when the clock passes its length (+0x58). Commands (tables at 0x792198) only start things: captions
+# (+0x20/+0x24, drawn by 0x49EAA0), voices (0x513720), cameras, actors, sounds, all advanced by the frame float, and
+# the closing fade starts 20 stock ticks before the end; the fade ramps (0x5E0E80) step per frame (timers.toml).
+# The tick chain (0x49CEB0 with the event context, not the frame float: 0x499AC0 cameras, 0x4A2D50 actor poses and
+# reins, 0x49C4D0, 0x4A6DA0, then the battle's effects 0x5176A0 and HUD 0x5135C0) and the draw (0x49CFC0, 0x5045C0)
+# run once a pass: what they step by a constant is below.
+
+# ---- The motion clock's integer marks: at 60 an actor's motion time takes whole values (half values for the
+# secondary motion, which steps by half the frame float), so `time > last frame` (strict) is "the time reached the
+# motion's length" and a looping motion's reset to 0 (script flag 0x40, command 0.5) drops nothing. At N the time
+# passes last + 60/N first: the loop would wrap up to a stock tick early every time round and drop its overshoot.
+# Past the last frame the loop now waits until the time reaches the length (last + s, s the stock step: 1, or 0.5
+# for the secondary motion; less 1/1024, as 60/N is not exact in binary) and wraps to the overshoot (time - last -
+# s), which is 0 at 60. A held motion (no flag) keeps the stock step back: it is posed at its last frame either way.
+[[site]]
+va = 0x4A1CEF
+stock = "ddd8 d9ee d95c2410"
+kind = "patch"
+class = "e"
+what = "actor motion (0x89AA00) loop: wraps when the time reached the length (last frame [esp+0x14] + 1), to the overshoot"
+code = """fld st(0); fisub dword ptr [esp+0x14]; fsub qword ptr [0x6ce3c8];
+push 0xba800000; fcom dword ptr [esp]; lea esp, [esp+4]; fnstsw ax; test ah, 1; jnz 1f;
+fstp st(1); jmp 2f; 1: fstp st(0); 2: fstp dword ptr [esp+0x10]"""
+
+[[site]]
+va = 0x4A1DB3
+stock = "ddd8 d9ee d95c2410"
+kind = "patch"
+class = "e"
+what = "actor secondary motion (0x89AA04, half steps) loop: wraps when the time reached last frame + 0.5, to the overshoot"
+code = """fld st(0); fisub dword ptr [esp+0x14]; fsub qword ptr [0x6ce260];
+push 0xba800000; fcom dword ptr [esp]; lea esp, [esp+4]; fnstsw ax; test ah, 1; jnz 1f;
+fstp st(1); jmp 2f; 1: fstp st(0); 2: fstp dword ptr [esp+0x10]"""
+
+[[site]]
+va = 0x4A1F14
+stock = "ddd8 d9ee d95c2410"
+kind = "patch"
+class = "e"
+what = "actor attachment motion (0x4BDE80 length) loop: wraps when the time reached last frame [esp+0x1c] + 1"
+code = """fld st(0); fisub dword ptr [esp+0x1c]; fsub qword ptr [0x6ce3c8];
+push 0xba800000; fcom dword ptr [esp]; lea esp, [esp+4]; fnstsw ax; test ah, 1; jnz 1f;
+fstp st(1); jmp 2f; 1: fstp st(0); 2: fstp dword ptr [esp+0x10]"""
+
+[[site]]
+va = 0x4A2069
+stock = "ddd8 d9ee d95c2410"
+kind = "patch"
+class = "e"
+what = "actor attachment motion (0x4BE400 length) loop: wraps when the time reached last frame [esp+0x1c] + 1"
+code = """fld st(0); fisub dword ptr [esp+0x1c]; fsub qword ptr [0x6ce3c8];
+push 0xba800000; fcom dword ptr [esp]; lea esp, [esp+4]; fnstsw ax; test ah, 1; jnz 1f;
+fstp st(1); jmp 2f; 1: fstp st(0); 2: fstp dword ptr [esp+0x10]"""
+
+# The event ends when its clock passes the length (+0x58 < +0x50, strict): at 60 on the first whole tick past it, at
+# N one step past it, up to a stock tick early. The clock's whole part keeps the stock end (floor as in motion.toml).
+[[site]]
+va = 0x49CE79
+stock = "d94650 83c404"
+kind = "patch"
+class = "e"
+what = "event end (0x49CDF0): the event clock's whole part passed the event's length +0x58"
+code = """fld dword ptr [esi+0x50];
+push 0x3a800000; fadd dword ptr [esp]; fnstcw word ptr [esp]; fnstcw word ptr [esp+2]; and word ptr [esp+2], 0xf3ff; or word ptr [esp+2], 0x400; fldcw word ptr [esp+2]; frndint; fldcw word ptr [esp]; lea esp, [esp+4];
+add esp, 4"""
+
+# ---- The event dispatcher (0x49CEB0) runs one tick a pass, and when the pass took two ticks or more it runs the
+# extra ticks first with the input and sound step (0x5ADE90) and the fade ramp (0x5E0E80) standing in for the frames
+# it skipped, as the battle's catch-up does (clock.toml): those stand-ins take a 60 Hz period of the pass's own.
+[[site]]
+va = 0x49CF20
+stock = "e86b0f1100 e8563f1400"
+kind = "patch"
+class = "c"
+what = "event catch-up: a skipped frame's stand-in steps take a 60 Hz period of the pass's own"
+code = """push eax; push ecx; push edx; push 1; call dword ptr [{frame}]; add esp, 4; pop edx; pop ecx; pop eax;
+{call:0x5ade90}; {call:0x5e0e80};
+push eax; push ecx; push edx; push 0; call dword ptr [{frame}]; add esp, 4; pop edx; pop ecx; pop eax"""
+
+# ---- Horse reins (event 0x8D: ropes at 0x89AA80, made by 0x4A4260, hung by command 3.11 0x4A37B0), simulated once
+# a tick from 0x4A2D50 by 0x50A580: Verlet, each node moves by its last tick's displacement plus the rope's gravity
+# (+0x00..+0x0C, (0, 0.98, 0, 0) a stock tick squared), then 36 passes of length constraints (rest 4.6) pinned to the
+# hands and the bit by 0x4A2BB0. The displacement already spans one tick of any length; the gravity is an
+# acceleration times a stock tick squared, so a tick of 60/N takes it times (60/N)^2.
+[[site]]
+va = 0x50A5EE
+stock = "d907 d844241c 8b4710 03c2 83c210 d95c241c d94704 d8442420 d95c2420 d94708 d8442424 d95c2424 d9470c d8442428 d95c2428"
+kind = "patch"
+class = "a"
+what = "rein node step: the rope's gravity (a stock tick squared) times (60/N)^2, added to the node's displacement"
+code = """fld dword ptr [edi]; fmul dword ptr [{step}]; fmul dword ptr [{step}]; fadd dword ptr [esp+0x1c];
+mov eax, dword ptr [edi+0x10]; add eax, edx; add edx, 0x10; fstp dword ptr [esp+0x1c];
+fld dword ptr [edi+4]; fmul dword ptr [{step}]; fmul dword ptr [{step}]; fadd dword ptr [esp+0x20]; fstp dword ptr [esp+0x20];
+fld dword ptr [edi+8]; fmul dword ptr [{step}]; fmul dword ptr [{step}]; fadd dword ptr [esp+0x24]; fstp dword ptr [esp+0x24];
+fld dword ptr [edi+0xc]; fmul dword ptr [{step}]; fmul dword ptr [{step}]; fadd dword ptr [esp+0x28]; fstp dword ptr [esp+0x28]"""
+
+# ---- Chained attachments (items 0x1B0..0x1B7, 0x41F8A0 objects) are posed in the event draw (0x4A5540 -> 0x4A4D10
+# -> 0x41EE70), once a drawn frame: each of the 7 links points from its parent toward where it was, bent down by 0.2
+# of its length (then normalised, length 15), and after a reset (0x41EE00) the chain copies the animation for 3 calls.
+[[site]]
+va = 0x41EE79
+stock = "83830c03000001"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "chained attachment's calls since its reset (+0x30C; it copies the animated pose until 3)"
+
+[[site]]
+va = 0x41F109
+stock = "dc05b8e56c00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "a"
+what = "chained attachment's links droop by 0.2 of their direction a drawn frame"
+
+# ---- Weather (0x4FF800 with the frame float: the battle's tick 0x4AF960 and 0x4AFB70, and the event frame
+# 0x4B2DF0). The rain and snow particles (0x500870, 0x502060) move by the frame float; the rain's fade by camera
+# 0x9CBFEC (+1 a call to 120 while the camera is under cover, -4 a call to 0 in the open; the rain's strength is
+# 1 - count / 120) counts calls.
+[[site]]
+va = 0x5020B4
+stock = "8304adecbf9c0001"
+kind = "gate"
+class = "c"
+what = "weather fade count 0x9CBFEC + 4p, +1 a tick under cover (capped at 120 just after)"
+
+[[site]]
+va = 0x5020E6
+stock = "83c0fc 8904adecbf9c00"
+kind = "gate"
+class = "c"
+what = "weather fade count 0x9CBFEC + 4p, -4 a tick in the open"
+
+[[site]]
+va = 0x5020F2
+stock = "c704adecbf9c0000000000"
+kind = "gate"
+class = "c"
+what = "weather fade count 0x9CBFEC + 4p, the last step down (4 or less) to 0"

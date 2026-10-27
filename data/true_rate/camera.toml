@@ -1,0 +1,248 @@
+# The battle camera (format: see character.toml). Each tick 0x4AF600 turns each player's camera by the right stick
+# (0x42E570), then calls 0x429790(controller, dt, 60.0), whose modes (follow 0x427E70, re-centre 0x427AA0, grab
+# 0x4280D0, two-character 0x428250, slow motion 0x426060, throw 0x429270, defeat 0x4290C0) build a wanted eye and
+# look-at point and move the camera toward them through 0x4259A0. Camera controllers: 0x9D1090, stride 0xF0; cameras
+# 0x9DA958, stride 0x240 (eye +0x1C0, look-at +0x1D0). The post-update 0x507890 (0x4F9BD0 per camera) only rebuilds
+# the view and projection matrices and the sound listener from that state: it steps nothing.
+
+# ---- The eases. 0x429790 hands its modes a rate b, the ticks a second (60.0): each ease moves a share 4 a / b of the
+# way a tick (a: the mode's rate, 4.0 at 0x6CE830: the spring's stiffness). The battle passes N, and the share becomes
+# the one that keeps the stock speed: 1 - (1 - 4 a / 60)^(60 / b), the stock share at b = 60 (other callers of
+# 0x429790 still pass 60). A share of 1 (a snap) or more has no slower equivalent and stays the share at 60.
+[[site]]
+va = 0x4AF779
+stock = "d9051ce66c00"
+kind = "operand"
+operand = 2
+type = "f32"
+transform = "inverse"
+class = "e"
+what = "the camera's ticks a second (60.0) handed to 0x429790 by the battle: N"
+
+[[site]]
+va = 0x42DD3D
+stock = "d944242c d8742430"
+kind = "patch"
+class = "b"
+what = """eye height ease (0x42DD20, from 0x4259A0): its share 4 a / b a tick becomes 1 - (1 - 4 a / 60)^(60 / b), the
+stock share at 60, the same speed at b ticks a second"""
+code = """fld dword ptr [esp+0x2c]; fmul dword ptr [0x6ce830]; fdiv dword ptr [0x6ce61c];
+fld1; fsub st(0), st(1); fstp st(1); fldz; fcomip st(0), st(1); jae 1f;
+fld dword ptr [0x6ce61c]; fdiv dword ptr [esp+0x30]; fxch st(1); fyl2x;
+fld st(0); frndint; fxch st(1); fsub st(0), st(1); f2xm1; fld1; faddp st(1), st(0); fscale; fstp st(1);
+1: fld1; fsub st(0), st(1); fstp st(1); fdiv dword ptr [0x6ce830]"""
+
+[[site]]
+va = 0x42DD9D
+stock = "d944242c d8742430"
+kind = "patch"
+class = "b"
+what = """camera yaw ease toward the re-centre angle (0x42DD80, from 0x427AA0): share 4 a / b a tick becomes
+1 - (1 - 4 a / 60)^(60 / b)"""
+code = """fld dword ptr [esp+0x2c]; fmul dword ptr [0x6ce830]; fdiv dword ptr [0x6ce61c];
+fld1; fsub st(0), st(1); fstp st(1); fldz; fcomip st(0), st(1); jae 1f;
+fld dword ptr [0x6ce61c]; fdiv dword ptr [esp+0x30]; fxch st(1); fyl2x;
+fld st(0); frndint; fxch st(1); fsub st(0), st(1); f2xm1; fld1; faddp st(1), st(0); fscale; fstp st(1);
+1: fld1; fsub st(0), st(1); fstp st(1); fdiv dword ptr [0x6ce830]"""
+
+[[site]]
+va = 0x42E550
+stock = "d9442430 d8742434"
+kind = "patch"
+class = "b"
+what = """eye and look-at spring toward their wanted points (0x42E520 -> 0x42E380, from 0x4259A0): share 4 a / b a
+tick becomes 1 - (1 - 4 a / 60)^(60 / b)"""
+code = """fld dword ptr [esp+0x30]; fmul dword ptr [0x6ce830]; fdiv dword ptr [0x6ce61c];
+fld1; fsub st(0), st(1); fstp st(1); fldz; fcomip st(0), st(1); jae 1f;
+fld dword ptr [0x6ce61c]; fdiv dword ptr [esp+0x34]; fxch st(1); fyl2x;
+fld st(0); frndint; fxch st(1); fsub st(0), st(1); f2xm1; fld1; faddp st(1), st(0); fscale; fstp st(1);
+1: fld1; fsub st(0), st(1); fstp st(1); fdiv dword ptr [0x6ce830]"""
+
+# The defeat camera (0x4290C0, when the player's unit is beaten) hands 0x4259A0 the frame's dt as its rate b, with
+# a = 0.25: a share of 1 at dt 1, but 0x429790 gives it dt = 60/N, a share of N/60 (above 1 the camera swings past its
+# point every tick). It is the same snap as the other modes write it: a = 0.25 x 60 at b = 60 / dt ticks a second.
+[[site]]
+va = 0x4291DA
+stock = "d9842484000000 83ec10 d95c240c 8d442430 d90528e76c00"
+kind = "patch"
+class = "e"
+what = "defeat camera ease rate: dt as a divisor becomes 60 / dt ticks a second, with its rate 0.25 x 60 a second"
+code = """fld dword ptr [0x6ce61c]; fdiv dword ptr [esp+0x84]; sub esp, 0x10; fstp dword ptr [esp+0xc];
+lea eax, [esp+0x30]; fld dword ptr [0x6ce728]; fmul dword ptr [0x6ce61c]"""
+
+# ---- Constant steps a tick.
+
+# The right stick turns the camera by stick x 1 degree (pitch) and x 2 degrees (yaw) a tick (0x42E570).
+[[site]]
+va = 0x42E673
+stock = "dc0d28f46c00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "a"
+what = "right stick camera pitch: degrees a tick at full tilt"
+
+[[site]]
+va = 0x42E698
+stock = "dc0d98f06c00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "a"
+what = "right stick camera yaw: degrees a tick at full tilt"
+
+# The camera distance (controller +0xC) approaches its wanted value by at most 1.0 a tick (27.5 in the zoomed mode)
+# (0x425650, from every follow mode). The limit is loaded once, negated into [esp+4] and kept on the FPU stack.
+[[site]]
+va = 0x4256CB
+stock = "d9442404 d9c0"
+kind = "patch"
+class = "a"
+what = "camera distance (controller +0xC) step limit a tick"
+code = "fld dword ptr [esp+4]; fmul dword ptr [{step}]; fld st(0)"
+
+# The pitch offset (controller +0x38) moves 0.1 degree a tick toward atan(height) x 0.7 (both ways at that step).
+[[site]]
+va = 0x426625
+stock = "dd0548f06c00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "a"
+what = "camera pitch offset (controller +0x38) step a tick, follow modes (0x426410)"
+
+[[site]]
+va = 0x426B3B
+stock = "dd0548f06c00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "a"
+what = "camera pitch offset (controller +0x38) step a tick, two-character mode (0x4269B0)"
+
+# The look-at height lead (controller +0x14) goes down by dot(camera, move) x 0.25 a tick while the character runs
+# (to -70) and back to 0 by 0.5 a tick otherwise (0x426E80); the grab mode and the blocked eye bring it back to 0 by
+# 0.5 and 5.0 a tick. Each limit's dead band is that same step.
+[[site]]
+va = 0x427068
+stock = "d80da4e67800"
+kind = "operand"
+operand = 2
+type = "f32"
+transform = "scale"
+class = "a"
+what = "look-at height lead (controller +0x14) drop a tick while the character runs"
+
+[[site]]
+va = 0x4270ED
+stock = "d905a4e67800"
+kind = "operand"
+operand = 2
+type = "f32"
+transform = "scale"
+class = "a"
+what = "look-at height lead (controller +0x14) return to 0 a tick (0.25 doubled)"
+
+[[site]]
+va = 0x428116
+stock = "d905a4e67800"
+kind = "operand"
+operand = 2
+type = "f32"
+transform = "scale"
+class = "a"
+what = "look-at height lead (controller +0x14) return to 0 a tick, grab mode (0x4280D0)"
+
+[[site]]
+va = 0x425C85
+stock = "dd05b0e56c00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "a"
+what = "look-at height lead (controller +0x14) return to 0 by 5.0 a tick while the eye is blocked (0x425BC0)"
+
+[[site]]
+va = 0x425CA5
+stock = "dc1d30f06c00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "a"
+what = "the same return's lower bound (-5.0), its step from below"
+
+# A blocked eye (0x4275E0) moves toward its free point by 60.0 a tick (and lands on it when within 60.0) while the
+# controller's +0x36 count runs; the count (15, from 0x4272C0) goes down each tick the eye sees the character.
+[[site]]
+va = 0x427768
+stock = "dd05a0e56c00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "a"
+what = "blocked eye's move toward its free point a tick (and the distance it lands from)"
+
+[[site]]
+va = 0x427855
+stock = "66814736ffff"
+kind = "gate"
+class = "c"
+what = "blocked eye's count (controller +0x36) of ticks with a clear view"
+
+# Re-centring (0x427AA0, the camera reset) gives up after 30 ticks (controller +0x18, set by 0x426DF0) unless the
+# yaw is within 5 degrees.
+[[site]]
+va = 0x427E54
+stock = "834518ff 5f"
+kind = "gate"
+class = "c"
+what = "camera re-centre timeout (controller +0x18) countdown"
+alt = "pop edi"
+
+# Two-character camera (0x428250, battle flag 0x2000000): a 120-tick count (0x7C8E1C) while it looks at the first
+# character, and the eye eases toward its point by 0.4 a tick when far.
+[[site]]
+va = 0x428778
+stock = "83051c8e7c0001"
+kind = "gate"
+class = "c"
+what = "two-character camera count 0x7C8E1C (120 ticks on one character, then the other)"
+
+[[site]]
+va = 0x4288FB
+stock = "dd05c8f06c00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "ease"
+class = "b"
+what = "two-character camera eye ease share a tick toward its point"
+
+[[site]]
+va = 0x428A2A
+stock = "dd05c8f06c00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "ease"
+class = "b"
+what = "two-character camera eye ease share a tick toward its point (the other side)"
+
+# Camera shake (0x4FA290, while controller +0x40 counts down from +0x44): each call pushes the eye and look-at
+# offsets 10 x left/full a tick along a direction and, past radius 5 (every call), picks a new random one: a random
+# jitter rolled once a tick. It runs 60 times a second; the offsets it leaves are applied on every tick between.
+[[site]]
+va = 0x42994C
+stock = "53 e83e090d00"
+kind = "gate"
+class = "d"
+what = "camera shake step: its random jitter and its countdown (controller +0x40) at the stock rate"
+code = "push ebx; {call:0x4fa290}"
+alt = "push ebx"

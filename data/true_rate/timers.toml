@@ -1,0 +1,311 @@
+# True frame rate catalogue (format: see character.toml): battle timers, stage scripts, spawning and sound.
+#
+# Everything here counts once per battle tick (in the tick chain from 0x4AF960 or 0x5135C0) or once per frame (the
+# battle scene's update 0x4B0600 and the frame end 0x4010B0, once a pass: up to N a second, fewer when the machine
+# presents fewer). A tick's count steps on the ticks that complete a 60 Hz period (tick60), and each reader that
+# fires on one value of a count fires only on the tick that reached it. A frame's count stands for 1/60 s and steps
+# on the passes whose real time completes a 60 Hz period (frame60), whatever the passes a second.
+
+# ---- The battle timer 0x801ECC: ticks since the battle began, capped at 0x34BC0 (60 minutes). The time limit
+# (0x801ED0), the objectives (0x47AD90, minutes), the HUD clock and the off-field march (0x438F10, timer difference
+# times speed) read it as a 60 Hz count.
+[[site]]
+va = 0x4AFB39
+stock = "83c001 3dc04b0300"
+kind = "gate"
+class = "c"
+what = "battle timer 0x801ECC +1 a tick (end of 0x4AF960); the jg after the cmp keeps the cap"
+alt = "cmp eax, 0x34bc0"
+
+# The HUD clock (0x573580) takes the timer back by one each time it is drawn at the cap, so it hides the clock while
+# the tick keeps pushing the timer to 0x34BC0: one step back for each step forward.
+[[site]]
+va = 0x57359D
+stock = "83c6ff 8935cc1e8000"
+kind = "gate"
+class = "c"
+what = "HUD clock steps the battle timer back by one at its cap, once a period as the tick steps it forward"
+
+# Off-field units (0x4371B0, the army layer, every tick) are checked for spawning in tenths: a unit whose index % 10
+# equals the timer % 10. The timer now stands on each value for N/60 ticks, so the check passes on one of them.
+[[site]]
+va = 0x4375EC
+stock = "2bd0 3b542420"
+kind = "gate"
+class = "c"
+what = "unit spawn check: index % 10 == battle timer % 10 passes once per timer value"
+alt = "sub edx, eax; {jmp:0x4375f4}"
+
+# Battle mode 0x46 officer AI (0x45D2E0, every tick per officer) reads the timer for one-off decisions.
+[[site]]
+va = 0x45CF83
+stock = "2bd6 83ff3c"
+kind = "gate"
+class = "c"
+what = "mode 0x46 AI aggression (+0x7B) raised when the timer equals 60, 120, 150 or 170, once at each"
+alt = "sub edx, esi; {jmp:0x45cfd2}"
+
+[[site]]
+va = 0x45D09B
+stock = "2bc8 33f6 83f905"
+kind = "gate"
+class = "d"
+what = "mode 0x46 AI rolls to start a chase in the first 5 ticks of every 300: one roll per timer value"
+alt = "sub ecx, eax; xor esi, esi; {jmp:0x45d1f6}"
+
+# ---- Battle flow counters.
+[[site]]
+va = 0x4AFE29
+stock = "66050100 663d7800"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "0x89ACF8 frames before mission 0x45 ends for the results (120, counted once a frame from 0x4B066F)"
+alt = "cmp ax, 0x78"
+
+[[site]]
+va = 0x508879
+stock = "83c001 83f83c"
+kind = "gate"
+class = "c"
+what = "0x801EF6 battle start count to 60 (modes 3 and 4) while the pads are ignored; the jl keeps the cap"
+alt = "cmp eax, 0x3c"
+
+[[site]]
+va = 0x56316B
+stock = "66050100 663d5802"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "0xC2F5DC 600-frame timeout (0x563090, once a frame from 0x4B0600) before it forces 0x5D9AE0(1)"
+alt = "cmp ax, 0x258"
+
+# 0x47B050 runs once a frame from the frame end 0x4010B0.
+[[site]]
+va = 0x47B0F4
+stock = "83c2ff 89948f481b8000"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "player buff timers 0x801B48 + p*0xC0 + slot*4 (item attack or defence up, 1800 or 600 frames) count down"
+
+[[site]]
+va = 0x47B16D
+stock = "83c101 8bd0"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "play time 0x801474 +1 a frame; the adc after it reads the carry, which stays clear when it does not move"
+alt = "add ecx, 0; mov edx, eax"
+
+# ---- Ring-out (battle mode 0x46, 0x4EE390 every tick): a unit out of the ring counts +0xC8 down from 16 in
+# 0x4ED5B0; at 0 it is out, and at 8 (the units with flags 0xC) the score and morale event fires.
+[[site]]
+va = 0x4ED5BC
+stock = "83c1ff 668988c8000000"
+kind = "gate"
+class = "c"
+what = "ring-out countdown unit+0xC8 (0x7DDC30 + u*0xD0) -1 a tick"
+
+[[site]]
+va = 0x4EE63E
+stock = "8b37 c1ee02"
+kind = "gate"
+class = "c"
+what = "ring-out event at count 8: only on the tick the count reached 8, not while it stands there"
+alt = "{jmp:0x4ee6b1}"
+
+# ---- Stage script (0x4EF4F0, every tick).
+[[site]]
+va = 0x4EF1FC
+stock = "291d6ca99c00"
+kind = "gate"
+class = "c"
+what = "0x9CA96C 360-tick period of the officers' counters (0x7DAD38 + k*0x6C +1 at 0); the jne reads the flags"
+alt = "cmp dword ptr [0x9ca96c], 0"
+
+[[site]]
+va = 0x4EF550
+stock = "668105b8919c00ffff"
+kind = "gate"
+class = "c"
+what = "script countdown 0x9C91B8 -1 a tick (the condition at 0x4EAEAF waits while it is nonzero)"
+
+# 0x4F8A30 only counts the 24 script timers (0x9C9440 + 8k: on, count) up by one a call; it runs once a tick.
+[[site]]
+va = 0x4F8A30
+stock = "b844949c00 ba04000000"
+kind = "gate"
+class = "c"
+what = "the 24 script timers 0x9C9444 + 8k count up once a period (scripts compare them in seconds)"
+alt = "ret"
+
+# ---- Characters coming into view (0x505D00 from the camera 0x507890, every tick).
+[[site]]
+va = 0x505B1B
+stock = "80852a09000001"
+kind = "gate"
+class = "c"
+what = "chr+0x1827 ticks out of view (0x46A9D0 reads < 5 as seen just now), in 0x5056E0"
+
+[[site]]
+va = 0x50633D
+stock = "80862718000001"
+kind = "gate"
+class = "c"
+what = "chr+0x1827 ticks out of view, for characters past the drawn cap"
+
+[[site]]
+va = 0x506291
+stock = "83c201 eb02"
+kind = "gate"
+class = "c"
+what = "drawn-character cap 0x140A2D8 rises by one a tick toward 0x9D006C"
+code = "add edx, 1; {jmp:0x506298}"
+alt = "{jmp:0x506298}"
+
+[[site]]
+va = 0x506439
+stock = "8b542414 3b5508"
+kind = "gate"
+class = "d"
+what = "at most 2 characters (0xFF while 0x79831C runs) turn visible (0x46A9D0) a period, not a tick"
+alt = "mov edx, dword ptr [esp+0x14]; {jmp:0x50645d}"
+
+[[site]]
+va = 0x507972
+stock = "832d1c83790001"
+kind = "gate"
+class = "c"
+what = "0x79831C countdown while every character in view may turn visible at once"
+
+# ---- Sound in the battle tick (0x511970 from 0x5135C0). The two music streams (0xC0E598 +0x4C and +0x5C) fade in
+# by 0x26 a tick to 0x2CDC and the stream they replace fades out by 0x26: each block runs once a period.
+[[site]]
+va = 0x510A1B
+stock = "8b4e54 81f9dc2c0000"
+kind = "gate"
+class = "a"
+what = "stream 1 fade-in (+0x54 += 0x26, starting the stream at 0)"
+alt = "mov ecx, dword ptr [esi+0x54]; {jmp:0x510a6d}"
+
+[[site]]
+va = 0x510A6D
+stock = "8b4658 85c0"
+kind = "gate"
+class = "a"
+what = "stream 1 fade-out of the replaced stream (+0x58 -= 0x26, stopped at 0)"
+alt = "mov eax, dword ptr [esi+0x58]; ret"
+
+[[site]]
+va = 0x5117E0
+stock = "8b4e64 81f9dc2c0000"
+kind = "gate"
+class = "a"
+what = "stream 2 (music) fade-in (+0x64 += 0x26, starting the stream at 0)"
+alt = "mov ecx, dword ptr [esi+0x64]; {jmp:0x511832}"
+
+[[site]]
+va = 0x511832
+stock = "8b4668 85c0"
+kind = "gate"
+class = "a"
+what = "stream 2 fade-out of the replaced stream (+0x68 -= 0x26, stopped at 0)"
+alt = "mov eax, dword ptr [esi+0x68]; ret"
+
+[[site]]
+va = 0x5116F6
+stock = "83fa3c 0f94c0"
+kind = "gate"
+class = "d"
+what = "ambient emitters (0xC07F60) roll 1 in 360, 600 or 1200 a tick to play: a roll a period"
+alt = "{jmp:0x51171f}"
+
+# 0x5130A0 (tail of the sound update 0x5127B0) moves this tick's played-sound sets (0xC0E598..) to the previous
+# ones and clears them: a sound is not repeated within the current or the previous period.
+[[site]]
+va = 0x5130A0
+stock = "a198e5c000"
+kind = "gate"
+class = "c"
+what = "played-sound sets rotate once a period: the repeat window stays two stock ticks"
+alt = "ret"
+
+# 0x511CF0 (in the sound update 0x5127B0) starts each of the 100 sound slots (0xC0CC48, stride 0x3C) and takes a
+# stock tick's length off its lifetime in seconds (+8, a float) every tick; the slot's sound stops at 0.
+[[site]]
+va = 0x5120AF
+stock = "dc2518ed6f00"
+kind = "operand"
+operand = 2
+type = "f64"
+transform = "scale"
+class = "a"
+what = "sound slot lifetime (0xC0CC50 + 0x3C each) loses a stock tick's length (1/60 s)"
+
+# 0x5112D0 (head of the sound update) counts four delayed sounds (0xC0E3A4, stride 0x20) down by one a tick and
+# starts each at 0 (0x510840).
+[[site]]
+va = 0x5112D0
+stock = "56 57 bea4e3c000"
+kind = "gate"
+class = "c"
+what = "delayed sound countdowns step once a period"
+alt = "ret"
+
+# ---- The fader 0x5E0E80, once a tick: in the frame end (0x5DFAC0) and in each catch-up tick of 0x4B0480. Its
+# sound manager step (0x5D6DB0 -> 0x5D6BE0) runs the voice fades and the delayed sounds.
+[[site]]
+va = 0x5E0E98
+stock = "6683c201 663bd1"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "music volume fade 0x140A61A step of 0x140A618 (0x5E1520)"
+alt = "cmp dx, cx"
+
+[[site]]
+va = 0x5E0F06
+stock = "66810508a64001ffff"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "music fade-out 0x140A608 of 0x140A61C, which stops the stream at 0; the je reads the flags"
+alt = "cmp word ptr [0x140a608], 0"
+
+[[site]]
+va = 0x5E0F7E
+stock = "66050100 0fb7c8"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "the 16 channel volume fades 0x140A626 + 8i (0x5E1FE0)"
+alt = "movzx ecx, ax"
+
+[[site]]
+va = 0x5E101C
+stock = "6683c101 663bca"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "volume fade 0x140A612 of 0x140A610 (0x5E10B0, 0x5E1210)"
+alt = "cmp cx, dx"
+
+[[site]]
+va = 0x5D63F1
+stock = "57 e899a20900 8006ff"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "voice fade-out ([0xE003DC] slot +0x6, volume x remaining / total), the voice stops at 0; the jne reads it"
+code = "push edi; {call:0x670690}; add byte ptr [esi], 0xff"
+alt = "push edi; {call:0x670690}; cmp byte ptr [esi], 0"
+
+[[site]]
+va = 0x5D6A46
+stock = "83c0ff 8906"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "delayed sounds ([0xE003DC] + 0xA0C + 0x40i) count down to their start; the jne reads the flags"
+alt = "test eax, eax"

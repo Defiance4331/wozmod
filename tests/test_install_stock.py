@@ -147,11 +147,11 @@ STOP = ("OROCHI_Z.exe: another mod changed the game's code {}. wozmod works only
 
 @pytest.mark.parametrize("names, expected", [
     ([], None),
-    (["120 FPS"], STOP.format("where wozmod patches 120 FPS")),
-    (["field of view", "120 FPS"], STOP.format("where wozmod patches field of view and 120 FPS")),
+    (["frame rate"], STOP.format("where wozmod patches frame rate")),
+    (["field of view", "frame rate"], STOP.format("where wozmod patches field of view and frame rate")),
     (["core"], STOP.format("that wozmod hooks into")),
-    (["core", "120 FPS", "display sizes"], STOP.format(
-        "where wozmod patches English text, Game Settings rows, controllers, 120 FPS, sharp menu art and display sizes")),
+    (["core", "frame rate", "display sizes"], STOP.format(
+        "where wozmod patches English text, Game Settings rows, controllers, frame rate, sharp menu art and display sizes")),
     (["served entries", "English voices"], STOP.format(
         "where wozmod patches English menu art and captions and English voices")),
 ], ids=["none", "one", "two", "core alone", "core with others", "served entries"])
@@ -159,7 +159,7 @@ def test_exe_code_another_mod_changed_stops_the_install_naming_what_players_know
                                                                                   expected):
     # Bugs: changed exe code wozmod patches lets the install through, so the DLL turns all of wozmod off in game; a
     # second feature is dropped from the line; the line says "core" or "served entries", which mean nothing to a
-    # player, or names 120 FPS twice beside core; the guard report is handed the wrong files.
+    # player, or names frame rate twice beside core; the guard report is handed the wrong files.
     record = stock_game(tmp_path / "stock")
     stock_game(tmp_path / "game")
     (tmp_path / "d3d9.dll").write_bytes(b"the dll")
@@ -179,9 +179,9 @@ def test_exe_code_another_mod_changed_stops_an_update_that_rebuilds_no_step(tmp_
     record = stock_game(tmp_path / "stock")
     stock_game(tmp_path / "game")
     (tmp_path / "d3d9.dll").write_bytes(b"the dll")
-    monkeypatch.setattr(guard_report, "refused_features", lambda exe, dll: ["120 FPS"])
+    monkeypatch.setattr(guard_report, "refused_features", lambda exe, dll: ["frame rate"])
     verdict = check_game(tmp_path / "game", record, tmp_path / "d3d9.dll")
-    assert verdict.problem(rebuilt=()) == STOP.format("where wozmod patches 120 FPS")
+    assert verdict.problem(rebuilt=()) == STOP.format("where wozmod patches frame rate")
 
 
 @pytest.fixture(scope="module")
@@ -194,8 +194,8 @@ def stock_and_dll(tmp_path_factory):
 
 
 def test_another_mods_edit_of_the_code_wozmod_patches_stops_the_install(tmp_path, stock_and_dll):
-    # Bug: with the DLL the release ships, another mod's edit of the 120 FPS frame limiter (0x5CA36D) lets the install
-    # through (the DLL then turns all of wozmod off in game), or names other features than 120 FPS.
+    # Bug: with the DLL the release ships, another mod's edit of the frame rate limiter (0x5CA36D) lets the install
+    # through (the DLL then turns all of wozmod off in game), or names other features than frame rate.
     game, dll = stock_and_dll
     copy = tmp_path / "game"
     copy.mkdir()
@@ -203,7 +203,7 @@ def test_another_mods_edit_of_the_code_wozmod_patches_stops_the_install(tmp_path
         (copy / name).parent.mkdir(parents=True, exist_ok=True)
         (copy / name).symlink_to(game / name)
     exe = bytearray((game / "OROCHI_Z.exe").read_bytes())
-    exe[pe.file_offset(pe.layout(bytes(exe)), 0x5CA36D)] ^= 0xFF  # push 60 in the frame limiter, a 120 FPS guard
+    exe[pe.file_offset(pe.layout(bytes(exe)), 0x5CA36D)] ^= 0xFF  # push 60 in the frame limiter, a frame rate guard
     (copy / "OROCHI_Z.exe").unlink()
     (copy / "OROCHI_Z.exe").write_bytes(exe)
     fps = next(f.name for f in guards.FEATURES if f.key == "fps")

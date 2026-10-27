@@ -165,11 +165,12 @@ def test_size_renders_and_outputs_unscaled(tmp_path, monkeypatch):
 
 
 def test_screen_refreshes_at_the_frame_rate_the_game_setting_asks_for(tmp_path, monkeypatch):
-    """Bug: the compositor stays at 60 Hz under a display.fps=120 setting, so a 120 FPS check silently runs at 60."""
+    """Bug: the compositor stays at 60 Hz under a display.fps=120 or 240 setting, so a high frame rate check silently
+    runs at 60."""
     _slot_runtime(tmp_path, monkeypatch)
     monkeypatch.delenv("MUSOU_HARNESS_HZ", raising=False)
     rates = {}
-    for name, ini in (("hz120", "[display]\nfps=120\n"), ("hz60", "")):
+    for name, ini in (("hz120", "[display]\nfps=120\n"), ("hz240", "[display]\nfps=240\n"), ("hz60", "")):
         root = tmp_path / "work/runtime-tests" / name
         game = _staged(root / "game")
         if ini:
@@ -182,7 +183,7 @@ def test_screen_refreshes_at_the_frame_rate_the_game_setting_asks_for(tmp_path, 
         assert harness.main(["run", "--root", str(root), "--game", str(game), "--authorize-launch",
                              "--target", harness.TARGET]) == 0
         rates[name] = calls[0][calls[0].index("-r") + 1]
-    assert rates == {"hz120": "120", "hz60": "60"}
+    assert rates == {"hz120": "120", "hz240": "240", "hz60": "60"}
 
 
 def test_bare_run_name_addresses_the_run_under_work_runtime_tests(tmp_path, monkeypatch):

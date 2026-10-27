@@ -1,0 +1,511 @@
+# True frame rate catalogue (format: see character.toml): the HUD, the menus drawn over a battle, and the counts the
+# game steps once per drawn frame.
+#
+# Almost everything here runs once per drawn frame: in the battle draw (0x4B0E20 -> 0x573CF0, the HUD; character and
+# scene drawing) or the frame end (0x4010B0: message windows, popups, fades). The battle scene draws and ends its
+# frames in every one of its states, also those that run no battle tick (the menus over a battle, the results), and
+# the modal message boxes (0x5ABA50, 0x56C340) present frames of their own. So these counts step on frame60, not
+# tick60; only the minimap's update (at the end) runs in the battle tick.
+
+# ---- The popup window 0xC2AF30 (frame end via 0x550FC0, and the modal loops): opening (state 1) counts 0xC2AF34
+# from 8 down to 0, closing (state 3) from 0 up to 8; once open, 0xC2AF54 (choices) or 0xC2AF60 (message) count
+# frames for the cursor blink (& 0x3F in 0x54E4A0) and the input delay (> 1). Input itself is read every frame.
+
+[[site]]
+va = 0x54E2D7
+stock = "66810534afc200ffff"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "popup window opening count 0xC2AF34 (8 to 0, then open); the jne after it reads the flags"
+alt = "cmp word ptr [0xc2af34], 0"
+
+[[site]]
+va = 0x54E306
+stock = "6603c6 663d0800"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "popup window closing count (0 to 8 in ax, then closed); the jb after the store reads the compare"
+alt = "cmp ax, 8"
+
+[[site]]
+va = 0x54E33F
+stock = "66013554afc200"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "popup window choice count 0xC2AF54: cursor blink and input delay"
+
+[[site]]
+va = 0x54E456
+stock = "66013560afc200"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "popup window message count 0xC2AF60: input delay"
+
+# The yes/no dialog 0xC2B078 (frame end via 0x551960) is the popup's twin, with the same counts.
+
+[[site]]
+va = 0x5514D7
+stock = "6681057cb0c200ffff"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "yes/no dialog opening count 0xC2B07C (8 to 0); the jne after it reads the flags"
+alt = "cmp word ptr [0xc2b07c], 0"
+
+[[site]]
+va = 0x551506
+stock = "6603c6 663d0800"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "yes/no dialog closing count (0 to 8 in ax); the jb after the store reads the compare"
+alt = "cmp ax, 8"
+
+[[site]]
+va = 0x55153F
+stock = "6601359cb0c200"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "yes/no dialog choice count 0xC2B09C: cursor blink (% 64) and input delay"
+
+[[site]]
+va = 0x551652
+stock = "660135a8b0c200"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "yes/no dialog message count 0xC2B0A8: input delay"
+
+# ---- The HUD message windows (0xC2CD60, 0xC2CF68 + 0x128 i; frame end 0x550FC0). Each frame a window counts down
+# its delay (+0x125) or its phase (+0x1F: open and close animations, display time) and takes its next state when the
+# phase count is 0. On the other frames nothing moves and no state is taken (the phase reads as running), so the
+# whole state machine steps 60 times a second, with the 900-count voice timeout of window 1 (0x551118) inside it.
+
+[[site]]
+va = 0x55100B
+stock = "2c01 888625010000"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "message window delay +0x125 before it opens; the jne after it reads the flags (the count is nonzero here)"
+alt = "test al, al"
+
+[[site]]
+va = 0x551032
+stock = "284e1f 8a4e1f"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = """message window phase count +0x1F (open/close 8 or 5, display 0x78..0x101); the je after it takes the next
+state: on the other frames it is not taken (esi, the window, is not 0)"""
+alt = "mov cl, byte ptr [esi+0x1f]; test esi, esi"
+
+[[site]]
+va = 0x54F320
+stock = "80bd2501000002"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = """message window open cue: its draw (0x54F2F0, after 0x550FC0 in the same frame end) plays sound 0x19 and voice
+0x28B while the delay is 2; on the other frames the compare fails (ebp, the window, is not 0)"""
+alt = "test ebp, ebp"
+
+# ---- Panels and fades on the frame end (0x4010B0).
+
+[[site]]
+va = 0x55DEC4
+stock = "83c101 83f803"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "HUD panel 0xC2F208 slide in/out count 0xC2F210 (8 frames); the state compare after it is kept"
+alt = "cmp eax, 3"
+
+[[site]]
+va = 0x54982E
+stock = "0fb64701 0fb60f"
+kind = "gate"
+when = "frame60"
+class = "a"
+what = "screen fade layer 0xC27620 + 4 i fading out: alpha -= rate (+3) once a frame; on the other frames by 0"
+alt = "xor eax, eax; movzx ecx, byte ptr [edi]"
+
+[[site]]
+va = 0x549846
+stock = "0fb64f01 0fb617"
+kind = "gate"
+when = "frame60"
+class = "a"
+what = "screen fade layer fading in: alpha += rate (to 255) once a frame; on the other frames by 0"
+alt = "xor ecx, ecx; movzx edx, byte ptr [edi]"
+
+# ---- The HUD (battle draw 0x573CF0, once a draw).
+# Banner popups 0xC549F8 + 6 player (three each, 40 frames: fade in 8, hold, fade out 8) count down in 0x573AC0.
+# 0x573650 draws them after that, in the same frame, and plays the shown banner's cue (a voice via 0x499670,
+# 0x499690 or 0x4996B0, and sound 0x241) while its count is 0x27: a check that must pass only on the frame the count
+# moved to it.
+
+[[site]]
+va = 0x573AE9
+stock = "83c1ff 668948fe"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "banner popup count 0xC549F8 + 6 player"
+
+[[site]]
+va = 0x573AF8
+stock = "83c1ff 668908"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "banner popup count 0xC549FA + 6 player"
+
+[[site]]
+va = 0x573B07
+stock = "83c1ff 66894802"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "banner popup count 0xC549FC + 6 player"
+
+[[site]]
+va = 0x573706
+stock = "0fb704753846c500"
+kind = "patch"
+class = "c"
+what = """banner cue: the banner's count, read for the zero test and the cue compare (0x573730), reads 0x28 at its cue
+0x27 on a frame that did not step the counts, so the cue fires once (the drawing reloads the count)"""
+code = """mov eax, dword ptr [{frame60}]; test eax, eax; movzx eax, word ptr [esi*2+0xc54638];
+jne 1f; cmp eax, 0x27; jne 1f; inc eax; 1:"""
+
+[[site]]
+va = 0x574B04
+stock = "83c2ff 668911"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "KO count flash +0x1D4F2 (5 frames after the count changes)"
+
+[[site]]
+va = 0x574B3C
+stock = "83c0ff 66894104"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "KO milestone (every 50) popup +0x1D4F6, 24 frames"
+
+[[site]]
+va = 0x574FF8
+stock = "668140feffff 66894802"
+kind = "gate"
+when = "frame60"
+class = "a"
+what = """target officer display: its timer +0x24920 (180 frames) and the shown health +0x24924, which drains 1 a frame
+toward the real health (ecx = max(shown - 1, real)); on the other frames neither moves"""
+
+[[site]]
+va = 0x5783EA
+stock = "83c420 8000ff"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "text popup over a character's head +0x1C91C + i (106 frames; its rise and fade-in read it), once per viewport"
+alt = "add esp, 0x20"
+
+# Player gauges (0x5792C0, + 0x1E player): each step twice, in the normal layout and the one for [0x801AA8] & 0x100.
+
+[[site]]
+va = 0x5793B1
+stock = "83c0ff 66894102"
+kind = "gate"
+when = "frame60"
+class = "a"
+what = "health-loss trail +0x22894 shrinks 1 a frame (layout 0x100)"
+
+[[site]]
+va = 0x5793FC
+stock = "6683410801"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "frames the musou gauge has been full +0x2289A, its blink phase (% 12) (layout 0x100)"
+
+[[site]]
+va = 0x57944B
+stock = "8a411a 84c0"
+kind = "gate"
+when = "frame60"
+class = "a"
+what = """character switch slide +0x228AC steps 1 a frame toward 0 (layout 0x100); on the other frames it reads as 0, so
+the jle and jge after it skip the step"""
+alt = "mov al, byte ptr [ecx+0x1a]; cmp al, al"
+
+[[site]]
+va = 0x5797F6
+stock = "83c0ff 66894102"
+kind = "gate"
+when = "frame60"
+class = "a"
+what = "health-loss trail +0x22894 shrinks 1 a frame"
+
+[[site]]
+va = 0x57985E
+stock = "6683410801"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "frames the musou gauge has been full +0x2289A, its blink phase (% 12)"
+
+[[site]]
+va = 0x5798F0
+stock = "8a411a 84c0"
+kind = "gate"
+when = "frame60"
+class = "a"
+what = "character switch slide +0x228AC steps 1 a frame toward 0; on the other frames it reads as 0 (no step)"
+alt = "mov al, byte ptr [ecx+0x1a]; cmp al, al"
+
+# The overlay image of 0x58EB20 shows after 30 frames of 0xC5D478.
+
+[[site]]
+va = 0x58EB6B
+stock = "830578d4c50001"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "overlay frame count 0xC5D478 (modes 3 and 4)"
+
+[[site]]
+va = 0x58EBE0
+stock = "830578d4c50001"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "overlay frame count 0xC5D478 (the image shows from 30)"
+
+# ---- Drawing.
+
+[[site]]
+va = 0x5B562A
+stock = "8986e46a0000"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "scene manager +0x6AE4: 60-frame crossfade between two lighting and fog sets (blend n / 60), once a draw"
+
+[[site]]
+va = 0x463459
+stock = "0401 88866c180000"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "character outline flash ramp chr+0x186C 0..8, once per character draw"
+
+[[site]]
+va = 0x46346D
+stock = "0401 3c10 88866d180000"
+kind = "gate"
+when = "frame60"
+class = "c"
+what = "character outline flash fade chr+0x186D 1..16, then both reset; the jb after it reads the compare"
+alt = "cmp al, 0x10"
+
+# ---- The count of presented frames 0xE0102C (+1 a present at 0x5D96EF) keeps stepping once a frame: eleven readers
+# of its getter 0x5D8EC0 do a per-object step at most once a frame (+0x84 < count, 0x41DFD0 ... 0x4A5260). The
+# readers that time an animation by it get instead the 60 Hz periods the presents span: floor(60 k / N) (eax, as the
+# getter returns it; ecx and edx kept, as the getter keeps them).
+# Twelve sprite animations step their frame (frame + 1) % count when the count is even (30 steps a second). They now
+# step when the presents completed a period, (60 k) mod N < 60, and the period count is even. Below, ZF set = step,
+# then eax = the count again.
+
+[[site]]
+va = 0x5337B0
+stock = "e80b570a00 a801"
+kind = "patch"
+class = "c"
+what = "sprite animation frame +0x1E58 steps every other frame (30 a second)"
+code = """push edx; mov eax, dword ptr [0xe0102c]; mov edx, 60; mul edx; div dword ptr [{rate}];
+cmp edx, 60; jb 1f; or al, 1; 1: test al, 1; pop edx; mov eax, dword ptr [0xe0102c]"""
+
+[[site]]
+va = 0x5428A0
+stock = "e81b660900 a801"
+kind = "patch"
+class = "c"
+what = "sprite animation frame +0x33C4 steps every other frame (30 a second)"
+code = """push edx; mov eax, dword ptr [0xe0102c]; mov edx, 60; mul edx; div dword ptr [{rate}];
+cmp edx, 60; jb 1f; or al, 1; 1: test al, 1; pop edx; mov eax, dword ptr [0xe0102c]"""
+
+[[site]]
+va = 0x54692F
+stock = "e88c250900 a801"
+kind = "patch"
+class = "c"
+what = "sprite animation frame +0x48 steps every other frame (30 a second)"
+code = """push edx; mov eax, dword ptr [0xe0102c]; mov edx, 60; mul edx; div dword ptr [{rate}];
+cmp edx, 60; jb 1f; or al, 1; 1: test al, 1; pop edx; mov eax, dword ptr [0xe0102c]"""
+
+[[site]]
+va = 0x552520
+stock = "e89b690800 a801"
+kind = "patch"
+class = "c"
+what = "sprite animation frame +0x2B6C steps every other frame (30 a second)"
+code = """push edx; mov eax, dword ptr [0xe0102c]; mov edx, 60; mul edx; div dword ptr [{rate}];
+cmp edx, 60; jb 1f; or al, 1; 1: test al, 1; pop edx; mov eax, dword ptr [0xe0102c]"""
+
+[[site]]
+va = 0x56EF00
+stock = "e8bb9f0600 a801"
+kind = "patch"
+class = "c"
+what = "sprite animation frame +0x1F24 steps every other frame (30 a second)"
+code = """push edx; mov eax, dword ptr [0xe0102c]; mov edx, 60; mul edx; div dword ptr [{rate}];
+cmp edx, 60; jb 1f; or al, 1; 1: test al, 1; pop edx; mov eax, dword ptr [0xe0102c]"""
+
+[[site]]
+va = 0x58587D
+stock = "e83e360500 a801"
+kind = "patch"
+class = "c"
+what = "sprite animation frame +0x554 steps every other frame (30 a second)"
+code = """push edx; mov eax, dword ptr [0xe0102c]; mov edx, 60; mul edx; div dword ptr [{rate}];
+cmp edx, 60; jb 1f; or al, 1; 1: test al, 1; pop edx; mov eax, dword ptr [0xe0102c]"""
+
+[[site]]
+va = 0x5878C1
+stock = "e8fa150500 a801"
+kind = "patch"
+class = "c"
+what = "sprite animation frame +0x40 steps every other frame (30 a second)"
+code = """push edx; mov eax, dword ptr [0xe0102c]; mov edx, 60; mul edx; div dword ptr [{rate}];
+cmp edx, 60; jb 1f; or al, 1; 1: test al, 1; pop edx; mov eax, dword ptr [0xe0102c]"""
+
+[[site]]
+va = 0x59D971
+stock = "e84ab50300 a801"
+kind = "patch"
+class = "c"
+what = "sprite animation frame +0x40 steps every other frame (30 a second)"
+code = """push edx; mov eax, dword ptr [0xe0102c]; mov edx, 60; mul edx; div dword ptr [{rate}];
+cmp edx, 60; jb 1f; or al, 1; 1: test al, 1; pop edx; mov eax, dword ptr [0xe0102c]"""
+
+[[site]]
+va = 0x5A015B
+stock = "e8608d0300 a801"
+kind = "patch"
+class = "c"
+what = "sprite animation frame 0xC5D600 steps every other frame (30 a second)"
+code = """push edx; mov eax, dword ptr [0xe0102c]; mov edx, 60; mul edx; div dword ptr [{rate}];
+cmp edx, 60; jb 1f; or al, 1; 1: test al, 1; pop edx; mov eax, dword ptr [0xe0102c]"""
+
+[[site]]
+va = 0x5A0338
+stock = "e8838b0300 a801"
+kind = "patch"
+class = "c"
+what = "sprite animation frame 0xC5D574 steps every other frame (30 a second)"
+code = """push edx; mov eax, dword ptr [0xe0102c]; mov edx, 60; mul edx; div dword ptr [{rate}];
+cmp edx, 60; jb 1f; or al, 1; 1: test al, 1; pop edx; mov eax, dword ptr [0xe0102c]"""
+
+[[site]]
+va = 0x5A0561
+stock = "e85a890300 a801"
+kind = "patch"
+class = "c"
+what = "sprite animation frame 0xC5D600 steps every other frame (30 a second)"
+code = """push edx; mov eax, dword ptr [0xe0102c]; mov edx, 60; mul edx; div dword ptr [{rate}];
+cmp edx, 60; jb 1f; or al, 1; 1: test al, 1; pop edx; mov eax, dword ptr [0xe0102c]"""
+
+[[site]]
+va = 0x5A5F20
+stock = "e89b2f0300 a801"
+kind = "patch"
+class = "c"
+what = "sprite animation frame +0x40 steps every other frame (30 a second)"
+code = """push edx; mov eax, dword ptr [0xe0102c]; mov edx, 60; mul edx; div dword ptr [{rate}];
+cmp edx, 60; jb 1f; or al, 1; 1: test al, 1; pop edx; mov eax, dword ptr [0xe0102c]"""
+
+# Minimap pulses (0x4354A0, 0x435980): a 180-frame phase (count + marker index) % 180, and a 90-frame phase with a
+# 3-way cycle (count / 90) % 3.
+
+[[site]]
+va = 0x4357A3
+stock = "e818371a00"
+kind = "patch"
+class = "c"
+what = "minimap marker pulse phase: (frames + index) % 180"
+code = "push edx; mov eax, dword ptr [0xe0102c]; mov edx, 60; mul edx; div dword ptr [{rate}]; pop edx"
+
+[[site]]
+va = 0x435A0D
+stock = "e8ae341a00"
+kind = "patch"
+class = "c"
+what = "minimap blink group: (frames / 90) % 3"
+code = "push edx; mov eax, dword ptr [0xe0102c]; mov edx, 60; mul edx; div dword ptr [{rate}]; pop edx"
+
+[[site]]
+va = 0x435A58
+stock = "e863341a00"
+kind = "patch"
+class = "c"
+what = "minimap blink fade: frames % 90"
+code = "push edx; mov eax, dword ptr [0xe0102c]; mov edx, 60; mul edx; div dword ptr [{rate}]; pop edx"
+
+# ---- The minimap's update runs in the battle tick (0x4AF960 -> 0x568030 -> 0x567B80): its counts are per tick.
+# A ping (0xC2F678 + 0x308 player + 0x1C i) lives 240 ticks and restarts one of its three rings (60 ticks each) when
+# (240 - life) % 24 == 0, checked before the life steps in the same call.
+
+[[site]]
+va = 0x565C41
+stock = "b918000000 f7f9 3bd5"
+kind = "gate"
+class = "c"
+what = "ping ring schedule (240 - life) % 24 == 0: passes only on the ticks the life moves; alt makes the remainder 1"
+alt = "mov ecx, 0x18; mov edx, 1; cmp edx, ebp"
+
+[[site]]
+va = 0x565CBC
+stock = "8b74243c 8307ff"
+kind = "gate"
+class = "c"
+what = "minimap ping life, 240 ticks"
+alt = "mov esi, dword ptr [esp+0x3c]"
+
+# A ring's count steps at 0x565DE6, an instruction between two branch targets: its two ways in carry it instead and
+# leave at 0x565DE9, after it.
+
+[[site]]
+va = 0x565DD3
+stock = "8946f0 8956f4 eb0b"
+kind = "gate"
+class = "c"
+what = "minimap ping ring count [ebx] (60 ticks, alpha 1 - n / 60), on the way from a drawn ring"
+code = "mov dword ptr [esi-0x10], eax; mov dword ptr [esi-0xc], edx; add dword ptr [ebx], -1; {jmp:0x565de9}"
+alt = "mov dword ptr [esi-0x10], eax; mov dword ptr [esi-0xc], edx; {jmp:0x565de9}"
+
+[[site]]
+va = 0x565DDB
+stock = "892e 896e04 896e10 896e14"
+kind = "gate"
+class = "c"
+what = "minimap ping ring count [ebx], on the way from a hidden ring"
+code = """mov dword ptr [esi], ebp; mov dword ptr [esi+4], ebp; mov dword ptr [esi+0x10], ebp;
+mov dword ptr [esi+0x14], ebp; add dword ptr [ebx], -1; {jmp:0x565de9}"""
+alt = """mov dword ptr [esi], ebp; mov dword ptr [esi+4], ebp; mov dword ptr [esi+0x10], ebp;
+mov dword ptr [esi+0x14], ebp; {jmp:0x565de9}"""
+
+[[site]]
+va = 0x567C64
+stock = "2c01 8886e8f8c200"
+kind = "gate"
+class = "c"
+what = "enlarged minimap revert timer 0xC2F8E8 + 0x308 player (240 ticks); the jne after it reads the flags"
+alt = "test al, al"
