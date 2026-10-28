@@ -66,6 +66,9 @@ read -r FFMPEG_URL FFMPEG_SHA256 < <(python3 -c \
   "import json; p = json.load(open('$ROOT/packaging/ffmpeg.json'))['windows']; print(p['url'], p['sha256'])")
 fetch "$FFMPEG_URL" "$FFMPEG_SHA256" "$ROOT/build/packaging/cache/${FFMPEG_URL##*/}"
 
-# 5. The zip: the same packaging/build.py as on Linux, now with Windows as sys.platform
+# 5. The zip: the same packaging/build.py as on Linux, now with Windows as sys.platform. Its step keys name the
+# compiler that cross-built the codecs in step 3, which cannot run under Wine, so it is passed in.
 cd "$ROOT"
+WOZMOD_RUSTC_VERSION=$(cd "$ROOT/native" && rustc -V)
+export WOZMOD_RUSTC_VERSION
 wine "$PY" packaging/build.py --assets "$(winpath "$ASSETS")"

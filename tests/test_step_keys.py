@@ -211,6 +211,20 @@ def test_a_release_built_with_another_rust_compiler_keeps_no_step(tmp_path, monk
     assert {step for step in STEPS if other[step] != first[step]} == STEPS
 
 
+
+def test_a_cross_build_names_the_compiler_it_declares_without_running_one(tmp_path, monkeypatch):
+    """Bug: the Windows zip, packaged under Wine where the compiler that cross-built its codecs cannot run, fails to
+    package, or keys its steps by some other compiler than the one it declares."""
+    root = _repo(tmp_path)
+    monkeypatch.setenv("RUSTC", str(tmp_path / "no-such-rustc"))
+
+    def shipped(version: str) -> dict[str, str]:
+        monkeypatch.setenv("WOZMOD_RUSTC_VERSION", version)
+        return {step: part["mod"] for step, part in step_keys.shipped_document(root, "windows")["steps"].items()}
+
+    first, other = shipped("rustc 1.99.0 (b940084d7 2026-09-28)"), shipped("rustc 1.100.0 (0a1b2c3d4 2026-11-09)")
+    assert {step for step in STEPS if other[step] != first[step]} == STEPS
+
 # Slow: the three steps on the real inputs (WOZMOD_STEP_KEYS=1).
 
 REAL = pytest.mark.skipif(

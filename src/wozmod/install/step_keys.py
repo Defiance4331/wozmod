@@ -284,7 +284,10 @@ def live_toolchain() -> dict:
 
 def rust_compiler(native: Path) -> str:
     """`rustc -V` of the compiler that builds native/: cargo's (RUSTC, else rustc on PATH, which rustup resolves
-    from native/'s toolchain file when there is one)."""
+    from native/'s toolchain file when there is one). A cross build packaged where that compiler cannot run (the
+    Windows zip, packaged under Wine) declares its `rustc -V` in WOZMOD_RUSTC_VERSION instead."""
+    if declared := os.environ.get("WOZMOD_RUSTC_VERSION", "").strip():
+        return declared
     rustc = os.environ.get("RUSTC") or "rustc"
     try:
         run = process.run([rustc, "-V"], cwd=native, capture_output=True, text=True, encoding="utf-8",
