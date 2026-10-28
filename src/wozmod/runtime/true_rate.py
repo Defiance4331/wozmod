@@ -23,9 +23,11 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from wozmod import resources
 from wozmod.formats import pe
 
-CATALOGUE = Path(__file__).resolve().parents[3] / "data/true_rate"  # one TOML file per subsystem
+CATALOGUE = "data/true_rate"  # under resources.root(), one TOML file per subsystem; read at call time: a frozen
+# bundle's root is not the import's
 ASSEMBLER = "i686-w64-mingw32-as"
 KINDS = ("operand", "patch", "gate")
 CLASSES = ("a", "b", "c", "d", "e")
@@ -81,8 +83,8 @@ def _tables(path: Path) -> list[dict]:
     return [tomllib.loads(f.read_text(encoding="utf-8")) for f in files]
 
 
-def load_slots(path: Path = CATALOGUE) -> list[Slot]:
-    slots = [Slot(**entry) for raw in _tables(path) for entry in raw.get("slot", [])]
+def load_slots(path: Path | None = None) -> list[Slot]:
+    slots = [Slot(**entry) for raw in _tables(path or resources.root() / CATALOGUE) for entry in raw.get("slot", [])]
     if len({s.name for s in slots}) != len(slots):
         raise CatalogueError("two slots share a name")
     for s in slots:
@@ -91,9 +93,9 @@ def load_slots(path: Path = CATALOGUE) -> list[Slot]:
     return slots
 
 
-def load(path: Path = CATALOGUE) -> list[Site]:
+def load(path: Path | None = None) -> list[Site]:
     sites = []
-    for entry in (entry for raw in _tables(path) for entry in raw.get("site", [])):
+    for entry in (entry for raw in _tables(path or resources.root() / CATALOGUE) for entry in raw.get("site", [])):
         entry = dict(entry)
         stock = bytes.fromhex(entry.pop("stock").replace(" ", ""))
         klass = entry.pop("class")

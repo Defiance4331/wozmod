@@ -154,3 +154,13 @@ def test_the_version_flag_prints_the_released_version(flag, capsys):
     with pytest.raises(SystemExit) as exit:
         cli.main([flag])
     assert exit.value.code == 0 and capsys.readouterr().out.strip() == f"wozmod {_released_version()}"
+
+
+def test_the_bundle_carries_the_frame_rate_catalogue_the_game_check_reads():
+    # Bug: data/true_rate is left out of the release bundle (resources.PACKAGED), or read from somewhere other than
+    # the bundle, so the setup window's game check fails with "No such file or directory" in every release.
+    from wozmod.runtime import true_rate
+
+    repo_sites = true_rate.load(Path(__file__).resolve().parents[1] / "data/true_rate")
+    assert repo_sites and true_rate.load() == repo_sites
+    assert true_rate.load_slots() == true_rate.load_slots(Path(__file__).resolve().parents[1] / "data/true_rate")

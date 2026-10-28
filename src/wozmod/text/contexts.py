@@ -24,6 +24,7 @@ from dataclasses import dataclass, field, replace
 from functools import cached_property
 from pathlib import Path
 
+from wozmod import resources
 from wozmod.donors import DonorsFolder
 from wozmod.formats.audio import (
     MOZ_EVENT_LINES, PSP_CLIP_BASE, WO1_EVENT_VOICES, WO1_NARRATION_VOICES, WO1_RECORD_BASE, WO2_CLIP_BASE, WO2_EVENT_VOICES,
@@ -905,7 +906,7 @@ def build_text_stage(stock: Path, donors: Path, out: Path) -> Path:
     from wozmod.voices.events import build_event_schedules, event_line_indices, event_voice_bases
     stock, donors, out = Path(stock), Path(donors), Path(out)
     text_step(stock, donors, out)
-    world = World(stock, donors, out, Path(__file__).resolve().parents[3] / "data/text")
+    world = World(stock, donors, out, resources.root() / "data/text")
     stock_events = world.linkdata2.read([o for ordinals, _, _ in EVENTS for o in ordinals])
     bases = event_voice_bases()
     wanted = {bases[o] + i for o, data in stock_events.items() for i in event_line_indices(data)}
