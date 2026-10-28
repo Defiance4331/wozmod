@@ -40,6 +40,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 addopts = "-ra -n 6 --dist loadgroup"  # 6 workers: 4 to 16 all take 16-20 s, set by its slowest test; the rest is left for a game run
 testpaths = ["tests"]
+tmp_path_retention_policy = "failed"  # a passing test's files go at the end of the run: the slow ones leave GB
 pythonpath = ["tools"]
 
 [tool.ruff]

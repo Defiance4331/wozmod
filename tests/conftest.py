@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import checkout
@@ -26,6 +27,13 @@ CONFIG = checkout.config()
 REQUIRE_INPUTS = os.environ.get("WOZMOD_REQUIRE_INPUTS") == "1"
 INPUTS = checkout.inputs()
 os.environ.update(INPUTS)
+# Test files go to this checkout's work/, on disk: the slow tests build game copies, voice banks and art of several GB
+# each, six at a time, and /tmp is often a tmpfs that holds them in RAM. pytest and the programs the tests start
+# take their temporary folder from TMPDIR.
+TEST_TMP = Path(__file__).resolve().parents[1] / "work" / "test-tmp"
+TEST_TMP.mkdir(parents=True, exist_ok=True)
+os.environ["TMPDIR"] = str(TEST_TMP)  # over an inherited TMPDIR too, which is often under /tmp as well
+tempfile.tempdir = None  # read TMPDIR again
 
 
 def pytest_configure(config) -> None:

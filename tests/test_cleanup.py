@@ -163,7 +163,7 @@ def test_a_removed_worktree_can_be_rebuilt_from_its_archive(repo, tmp_path):
     (tree / "work/build").mkdir()  # ignored and rebuildable: not archived
     (tree / "work/build/big").write_bytes(b"0" * 1000)
     wanted = {p.relative_to(tree).as_posix(): p.read_bytes() for p in tree.rglob("*")
-              if p.is_file() and ".git" not in p.parts and "work" not in p.parts}
+              if p.is_file() and ".git" not in p.relative_to(tree).parts and "work" not in p.relative_to(tree).parts}
     archives = tmp_path / "archives"
     assert _clean(repo, "--only", "worktrees", "--keep-days", "0", "--archive", str(archives)) == 0
     assert not tree.exists() and str(tree) not in _git("worktree", "list", cwd=repo)
@@ -173,7 +173,7 @@ def test_a_removed_worktree_can_be_rebuilt_from_its_archive(repo, tmp_path):
     with tarfile.open(saved / "untracked.tar.gz") as tar:
         tar.extractall(rebuilt, filter="data")
     got = {p.relative_to(rebuilt).as_posix(): p.read_bytes() for p in rebuilt.rglob("*")
-           if p.is_file() and ".git" not in p.parts}
+           if p.is_file() and ".git" not in p.relative_to(rebuilt).parts}
     assert got == wanted
     assert (saved / "handbacks/h.md").read_text() == "handback\n"
 
