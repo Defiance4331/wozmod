@@ -35,7 +35,8 @@ options.
 - **Xbox and PlayStation controller support** (DualShock 4 and DualSense) with
   the Warriors Orochi 2 controls and button prompts for your controller. A new
   controller is set up at once, with the camera on the right stick, even when
-  you connect it after the game starts.
+  you connect it after the game starts, and a controller that disconnects and
+  comes back keeps your button settings.
 - **Closing the game window quits the game** at once.
 
 ## What you need
@@ -201,7 +202,9 @@ change.
   game, and it shows the game an Xbox controller. Turn Steam Input off for the
   game to see PlayStation buttons, or leave it on if you prefer its settings.
 - **You want to report a bug.** Open an issue on GitHub and attach
-  `wozmod/runtime.log`. If the game crashed or froze, also attach
+  `wozmod/runtime.log`. For a controller problem, it records each controller
+  that connects or disconnects, and each switch between keyboard and
+  controller. If the game crashed or froze, also attach
   `wozmod/runtime.crash.log`. wozmod keeps the log of the last run that crashed
   in that file, so you can start the game again before you report.
 

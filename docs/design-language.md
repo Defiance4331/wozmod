@@ -122,11 +122,12 @@ The card obeys the panel rules like any other panel: on its pages the list and t
 Panels slide in from their stock off-screen start. A page that is laid out again (Panels on a page, step 3) keeps
 those starts and changes only the slide travel.
 
-## 6. Where the build breaks these rules today
+## 6. Rule breaks fixed by the 2026-10-27 relayout
 
-From the 2026-10-27 survey of the English build against stock Japanese and the X360 code:
+The 2026-10-27 survey of the English build against stock Japanese and the X360 code found these breaks. The relayout
+that followed it (commit b64efcb) applied the After column; `data/checks/layout.toml` checks the result in the game.
 
-| Rule | Screen | Today | After |
+| Rule | Screen | Before | After |
 |---|---|---|---|
 | Safe area | Upgrade Skills, officer page | weapon list 831..1337 (57 past the edge) | page laid out again, inside 64..1216 |
 | Safe area | Upgrade Skills, weapon page | Source Weapon card 636..1286 | inside the safe area |
