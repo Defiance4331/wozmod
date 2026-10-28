@@ -10,26 +10,18 @@ from .latin_font import (
 from . import camp_plate
 from .text_boxes import box
 
+from .design import (  # noqa: F401 (the tokens are read from here too)
+    ATTRIBUTE_CELL, ATTRIBUTE_LABEL_X, ATTRIBUTE_STEP, LEVEL_DIGIT, LEVEL_ONES_X, LEVEL_TENS_X, SAFE_LEFT, SAFE_RIGHT,
+    SPACING_UNIT, TEXT_INSET, TRAILING_GAP, WIDEST_ATTRIBUTE_LABEL,
+)
+
 CAVE = 0x5F5100
 PAD_PROMPTS = 0x1413FEC
+CELL_PLATE = 0x1413FE8  # u8: the plate 0x591810 draws a filled attribute cell on; 0 for the grey 4079.98
 
-# Tokens of docs/design-language.md.
-SAFE_LEFT, SAFE_RIGHT = 64, 1216  # the safe area's x range on the 1280 layout
-SPACING_UNIT = 7
-TRAILING_GAP = 2 * SPACING_UNIT  # a name lane's end to the next element in its row
-TEXT_INSET = 10  # a plate's left edge to the name drawn on it
-
-# The weapon card (0x595310, at its origin; docs/design-language.md, Cards), from the tokens and measured art:
-# [padding][thumbnail][gap][text column: name, Base Attack, three skill tags][padding] over a grid of four
-# attribute cells. A cell is [unit][label art][unit][two level digits][unit] for the widest label (4079.89, whose
-# art is ATTRIBUTE_QUAD_MINIMUM's widest in wozmod.art.vector) and a two-digit level.
-WIDEST_ATTRIBUTE_LABEL = 92  # 4079.89's quad
-LEVEL_DIGIT = 18  # the level's digit sprite 4079.78, as 0x591810 draws it
-ATTRIBUTE_LABEL_X = SPACING_UNIT  # in the cell
-ATTRIBUTE_CELL = ATTRIBUTE_LABEL_X + WIDEST_ATTRIBUTE_LABEL + SPACING_UNIT + 2 * LEVEL_DIGIT + SPACING_UNIT
-ATTRIBUTE_STEP = ATTRIBUTE_CELL + SPACING_UNIT
-LEVEL_ONES_X = ATTRIBUTE_CELL - SPACING_UNIT - LEVEL_DIGIT  # right-aligned: the ones digit ends a unit in
-LEVEL_TENS_X = LEVEL_ONES_X - LEVEL_DIGIT
+# The weapon card (0x595310, at its origin; docs/design-language.md, Cards), from the tokens (wozmod.runtime.design)
+# and measured art: [padding][thumbnail][gap][text column: name, Base Attack, three skill tags][padding] over a grid
+# of four attribute cells.
 CARD_PADDING = TRAILING_GAP
 CARD_CONTENT = 3 * ATTRIBUTE_STEP + ATTRIBUTE_CELL
 CARD_WIDTH = CARD_PADDING + CARD_CONTENT + CARD_PADDING
@@ -1034,10 +1026,26 @@ CAPTION_LINES = [
     (0x56A1E2, bytes.fromhex("890a"), bytes.fromhex("9090")),
 ]
 
-# The attribute cell (0x591810, widened above) is 150 wide, not 98, wherever it is drawn: each grid of them steps
-# 156 and draws its empty slots (0x5916B0) 150 wide too, on the weapon card (0x595310; its step is widened above)
-# and in the upgrade skill effects (0x526B70).
+# The attribute cell (0x591810, widened above) is ATTRIBUTE_CELL wide, not 98, wherever it is drawn: each grid of
+# them steps ATTRIBUTE_STEP and draws its empty slots (0x5916B0) as wide, on the weapon card (0x595310; its step is
+# widened above) and in the upgrade skill effects (0x526B70).
+#
+# Fusion's overlay (0x52E940) drew a slot given an effect with a second copy of the cell, 0x52C900(ecx level,
+# edx attribute, x, y): the same label and digits on the green plate 4079.100 (remap 0x3D at 0x718B60), its digits
+# a pixel higher and larger. It now hands the cell to 0x591810 (attribute, level, x, y, layer 0) with CELL_PLATE
+# set to that plate, so one painter, widened once, draws every filled cell. The confirm step's new-effect wash
+# (0x52C3E0, a 9-slice) takes the cell's width like the select step's (0x52EC7A, above).
+FUSION_CELL_PLATE = 100
+FUSION_CELL = assembled(0x52C900, b"\xc6\x05" + p32(CELL_PLATE) + bytes([FUSION_CELL_PLATE]),
+                        bytes.fromhex("6a00 ff74240c ff74240c 51 52"),  # layer 0, y, x, level, attribute
+                        0x591810, bytes.fromhex("83c414") + b"\xc6\x05" + p32(CELL_PLATE) + b"\x00\xc3")
 ATTRIBUTE_GRIDS = [
+    (0x52C900, bytes.fromhex("81ec80000000 a1e4057c00 33c4 8944247c 53 55 8bac2490000000 56 33f6 b81c000000 57"),
+     FUSION_CELL),
+    *detour(0x5919DB, bytes.fromhex("6a62 e85eafffff"), CAVE + 0xBE0, 0x5919E2,  # the plate: CELL_PLATE, else 98
+            b"\x0f\xb6\x05" + p32(CELL_PLATE) + bytes.fromhex("85c0 7502 b062 50"), call=0x58C940),
+    *detour(0x52EB5B, bytes.fromhex("6a1c 6a62 6a00 52 55"), CAVE + 0xC00, 0x52EB63,
+            bytes.fromhex("6a1c 68") + p32(ATTRIBUTE_CELL) + bytes.fromhex("6a00 52 55")),
     *detour(0x59556B, bytes.fromhex("6a1c 6a62 53 52 51"), CAVE + 0x1C0, 0x595572,
             bytes.fromhex("6a1c 68") + p32(ATTRIBUTE_CELL) + bytes.fromhex("53 52 51")),
     *detour(0x526C51, bytes.fromhex("6bc969 99 83e203"), CAVE + 0x1E0, 0x526C58,

@@ -8,11 +8,13 @@ import re
 import struct
 from pathlib import Path
 
+import capstone
+import disasm
 import pytest
 from PIL import Image
 
 from wozmod.formats import pe
-from wozmod.runtime import layout, runtime_edits, text_boxes
+from wozmod.runtime import design, layout, runtime_edits, text_boxes
 
 
 @pytest.fixture(scope="module")
@@ -225,10 +227,62 @@ def test_attribute_grids_step_past_the_filled_cell_and_draw_empty_slots_as_wide(
         step, slot = immediate(edited_run(code, step_at, 1)[0]), immediate(edited_run(code, slot_at, 2)[1])
         if step < cell or slot != cell:
             wrong.append(f"{grid}: cell {cell}, column step {step}, empty slot {slot}")
-    plate = [e["draw"][0]["splice"]["width"] for e in json.loads(Path("data/art/menu_textures.json").read_text())[
-        "textures"] if e["entry"] == 4079 and e.get("item") == 98]  # the grey cell's art, drawn at the cell's width
-    if plate != [cell]:
-        wrong.append(f"the cell art 4079.98 is {plate} wide, not the {cell} px cell")
+    assert not wrong
+
+
+FETCH_PLATE, FETCH_REMAPPED, REMAP = 0x58C940, 0x58E180, 0x718B60  # a texture by item, or by index into REMAP
+CARD_CELL, FUSION_CELL, WASH = 0x591810, 0x52C900, 0x52C3E0  # the painters that fetch a cell's plate
+
+
+def test_every_filled_attribute_cell_is_painted_once_at_the_cell_width(game, code) -> None:
+    """Bugs: a painter that draws a filled cell on its own keeps the stock 98 px plate and the stock label and digit
+    places (fusion's assigned slot was drawn by 0x52C900, a second copy of 0x591810: a short bar and its own level
+    digit over the English label); a caller of the new-effect wash still passes 98 (fusion's confirm step); the
+    green plate is drawn wide from 98 px of art; fusion's slot is drawn on the grey plate, not its own green one."""
+    stock = (game / "OROCHI_Z.exe").read_bytes()
+    where = pe.layout(stock)
+    remap = lambda index: struct.unpack_from("<i", stock, pe.file_offset(where, REMAP + 4 * index))[0]  # noqa: E731
+    plates, calls = {}, {}  # every fetch of a cell plate (4079.98-100) in the stock code, and every call
+    for va, raw in disasm.code_sections(stock, where):
+        for m in re.finditer(rb"\x6a(.)\xe8(.{4})", raw, re.S):
+            target = va + m.end() + struct.unpack("<i", m.group(2))[0]
+            item = {FETCH_PLATE: m.group(1)[0], FETCH_REMAPPED: remap(m.group(1)[0])}.get(target)
+            if item in (98, 99, 100):
+                plates[va + m.start()] = item
+        for m in re.finditer(rb"\xe8(.{4})", raw, re.S):
+            calls.setdefault(va + m.end() + struct.unpack("<i", m.group(1))[0], []).append(va + m.start())
+    # each in its painter (0x591810, 0x52C900, 0x52C3E0); a fetch outside them is a painter this test does not hold
+    assert sorted(plates) == [0x52C4C5, 0x52CAB9, 0x5919DB], {hex(k): v for k, v in plates.items()}
+    green = plates[0x52CAB9]  # the plate stock fusion draws an assigned slot on
+    cell, wrong = immediate(edited_run(code, 0x591844, 4)[3]), []
+
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    run = []
+    for i in md.disasm(code(FUSION_CELL, 64, True), FUSION_CELL):
+        run.append((i.mnemonic, i.op_str))
+        if i.mnemonic == "ret":
+            break
+    plate = f"byte ptr [{runtime_edits.CELL_PLATE:#x}]"
+    sets = [op.removeprefix(plate + ", ") for m, op in run if m == "mov" and op.startswith(plate)]
+    called = run.index(("call", f"{CARD_CELL:#x}")) if ("call", f"{CARD_CELL:#x}") in run else -1
+    if called < 0 or sets != [hex(green), "0"] or run[-1] != ("ret", ""):
+        wrong.append(f"fusion's cell (0x52C900) is not 0x591810 on 4079.{green}: {run}")
+    fetch = [(i.mnemonic, i.op_str) for i in md.disasm(code(0x5919DB, 5, True), 0x5919DB)]
+    cave = int(fetch[0][1], 16) if fetch[0][0] == "jmp" else 0x5919DB
+    fetch = [(i.mnemonic, i.op_str) for i in md.disasm(code(cave, 24, True), cave)][:6]
+    if fetch[0] != ("movzx", f"eax, byte ptr [{runtime_edits.CELL_PLATE:#x}]") or fetch[3] != ("mov", "al, 0x62"):
+        wrong.append(f"0x591810 does not fetch CELL_PLATE, else 98: {fetch}")
+    for call in calls[WASH]:  # the 9-slice wash: its width pushed after its height, 0x1C, a few bytes before
+        height = call - 13
+        assert code(height, 4) == bytes.fromhex("6a1c6a62"), hex(call)
+        if (width := immediate(edited_run(code, height, 2)[1])) != cell:
+            wrong.append(f"the wash called at {call:#x} is {width} wide, not the {cell} px cell")
+    widened = {e["item"]: d["splice"]["width"] for e in json.loads(Path("data/art/menu_textures.json").read_text())[
+        "textures"] if e["entry"] == 4079 for d in e.get("draw", []) if "splice" in d}
+    for item in (plates[0x5919DB], green):  # the plates drawn as one stretched quad (the wash is a 9-slice)
+        width = widened.get(item)
+        if (getattr(design, width) if isinstance(width, str) else width) != cell:
+            wrong.append(f"the cell plate 4079.{item} is widened to {width}, not the {cell} px cell")
     assert not wrong
 
 

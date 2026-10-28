@@ -20,7 +20,7 @@ from wozmod import resources
 from wozmod.progress import report as report_progress
 from . import lettering, words
 from wozmod.runtime.latin_font import CELL, LATIN_GLYPH
-from wozmod.runtime import camp_plate, text_boxes
+from wozmod.runtime import camp_plate, design, text_boxes
 from wozmod.runtime.prompts import PROMPT_ENTRY, PROMPT_FAMILIES, STICK_ITEMS
 from .prompt_glyphs import prompt_art, stick_art
 from wozmod.donors import WO1_X360, WO2_X360, extract_donor, verify_file
@@ -435,8 +435,10 @@ def payload(target, edit: dict, donors: dict, package) -> bytes:
                 ImageDraw.Draw(disk).ellipse((cx - r, cy - r, cx + r, cy + r), 255)
                 image = refilled(image, disk)
                 continue
-            if "splice" in spec:  
-                image = spliced(stock, **spec["splice"])
+            if "splice" in spec:  # a width may name a size in wozmod.runtime.design, which the runtime draws at
+                splice = spec["splice"]
+                width = splice["width"]
+                image = spliced(stock, **splice | {"width": getattr(design, width) if isinstance(width, str) else width})
                 continue
             top = 0
             mark = (lambda glyph, spec=spec: recoloured(glyph, spec["mark"])) if "mark" in spec else None

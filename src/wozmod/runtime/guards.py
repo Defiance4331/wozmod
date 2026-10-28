@@ -95,7 +95,7 @@ FEATURES = (
             calls=_c("GAME_DRAW", "GAME_MEASURE", "NAME_GLYPHS", "GAME_QUAD", "GAME_FONT", "CAST_SLOT",
                      "NARRATION_VOICE_START", "STILL_VOICE_START", "TAG_TEXTURE", "TEXTURE_HANDLE")
             + (0x54BBB0,)  # the caption line draw, through draw_fit_at
-            + (0x5901C0, 0x593C40),  # called from CODE_EDITS caves
+            + (0x5901C0, 0x593C40, 0x591810, 0x58C940),  # called from CODE_EDITS caves and fusion's cell (0x52C900)
             returns=TEXT_RETURNS),
     Feature("voices", "English voices", requires=("served",), hooks=(36, 37, 38, 39, 40, 41, 71, 109, 110, 118),
             edits=("VOICE_EDITS",), calls=_c("VOICE_PLAY", "READER_IDLE"),

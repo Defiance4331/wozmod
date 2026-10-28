@@ -1699,6 +1699,11 @@ ROUTE_SCREENS = {
     "customize-upgrade-officers": {"box_caller": "0x527957"},
     "customize-upgrade-weapons": {"box_caller": "0x527b76"},
     "customize-fusion-weapons": {"texture": "4060.6"},  # the weapon list of the fusion; several weapons only after `unlock`
+    # the fusion's later steps: the second weapon to fuse (strip 4060.4), the effect list with PROCEED (strip 4060.7) and the
+    # confirm dialog over the card (the card's BASE WEAPON label drawn by 0x52ef9e only while it is up)
+    "customize-fusion-fuse": {"texture": "4060.4"},
+    "customize-fusion-effects": {"texture": "4060.7"},
+    "customize-fusion-confirm": {"texture": "4060.37", "quad_caller": "0x52ef9e"},
     "dream-select": {"texture": "4094.5"},
     "gallery": {"texture": "4079.169", "without": "4064.7|4064.9|4064.17|4079.105|4079.17"},  # sub-pages draw one of these
     "gallery-original-background": {"texture": "4064.7"},
@@ -2051,6 +2056,15 @@ ROUTE_EDGES = [
     ("customize-weapon-attributes", "customize-weapon-pick", ["Escape"]),
     ("customize-fusion-officers", "customize-fusion-weapons", [(UNLOCK_STEP, None), (["Return"], ROUTE_SCREENS["customize-fusion-weapons"])]),
     ("customize-fusion-weapons", "customize-fusion-officers", ["Escape"]),
+    # run fusion-cell-2 (2026-10-28): after `unlock` the first weapon is the base, Great Spear the weapon to fuse, Add Attack
+    # (300, within the 647 growth points) the effect; Escape on the effects goes back to the base weapon, not the second step
+    ("customize-fusion-weapons", "customize-fusion-fuse", ["Return"]),
+    ("customize-fusion-fuse", "customize-fusion-weapons", ["Escape"]),
+    ("customize-fusion-fuse", "customize-fusion-effects", ["Down", "Return"]),
+    ("customize-fusion-effects", "customize-fusion-weapons", ["Escape"]),
+    ("customize-fusion-effects", "customize-fusion-confirm", [(["Return"], {"seconds": 1.0}),
+                                                              (["Down", "Down", "Return"], ROUTE_SCREENS["customize-fusion-confirm"])]),
+    ("customize-fusion-confirm", "customize-fusion-effects", ["Escape"]),
     ("customize-upgrade-skills", "camp-treasure", ["Tab"]),
     ("camp-treasure", "customize-upgrade-skills", ["Escape"]),
     # 1107-D, 1107-D2, 1107-D3: the pre-battle pages and the pause pages
