@@ -27,7 +27,7 @@ options.
 - **English story movies** from the Xbox 360 games, where they have English
   voices or text.
 - **A language switch.** Choose English or Japanese for text and for voices.
-- **High frame rates** in battle and in-engine events: 120, 144, 165 or 240
+- **High frame rates** in battles and cutscenes: 120, 144, 165 or 240
   FPS, or your monitor's refresh rate.
 - **A wider field of view**, up to 150%.
 - **More screen sizes**, up to the size of your monitor, and a borderless
@@ -158,7 +158,7 @@ Open **Options**, then **Game Settings**. wozmod adds these rows:
 | TEXT LANGUAGE | English or Japanese. The change applies the next time you start the game. |
 | VOICE LANGUAGE | English or Japanese. The change applies from the next line. |
 | FIELD OF VIEW | 100% (original) to 150%. |
-| FRAME RATE | 60, 120, 144, 165 or 240 FPS, or MONITOR (your monitor's refresh rate), in battle and in-engine events. |
+| FRAME RATE | 60, 120, 144, 165 or 240 FPS, or MONITOR (your monitor's refresh rate), in battles and cutscenes. Movies keep their own frame rate. |
 | VSYNC | ON waits for each refresh of the monitor, so the frame rate stays at most its refresh rate. OFF does not wait. |
 
 The stock FRAME SKIP row is gone: frame skip is always on, so a slow frame never slows the game down.
