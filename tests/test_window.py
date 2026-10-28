@@ -17,6 +17,7 @@ import pytest
 
 import wozmod.install as installer
 from wozmod import __main__ as cli, remembered, window
+from wozmod.version import __version__
 from wozmod.install import InstallError
 
 
@@ -300,9 +301,9 @@ def test_uninstall_confirms_first_and_asks_whether_to_keep_the_settings(shown, m
 
 @pytest.mark.parametrize("record, label, asks", [
     (None, "Install", False),
-    ({"version": "0.0.1"}, "Update from 0.0.1 to 0.1.0", False),
-    ({}, "Update from an earlier version to 0.1.0", False),
-    ({"version": "0.1.0"}, "Reinstall", True),
+    ({"version": "0.0.1"}, f"Update from 0.0.1 to {__version__}", False),
+    ({}, f"Update from an earlier version to {__version__}", False),
+    ({"version": __version__}, "Reinstall", True),
     ({"version": "9.0.0"}, "Install", True),
 ])
 def test_the_main_button_names_what_will_happen_and_reinstall_or_going_back_asks(

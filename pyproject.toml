@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wozmod"
-version = "0.1.0"
+version = "0.2.0"
 description = "Fan mod for the Japanese PC release of Musou Orochi Z: English text and gameplay patches"
 readme = "README.md"
 license = "GPL-3.0-or-later"
