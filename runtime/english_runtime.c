@@ -3213,14 +3213,37 @@ static u32 menu_word(u32 player, int repeat, u32 caller)
 }
 
 
+/* The input log in runtime.log: why the prompts and the confirm button follow the device they do, for a player's
+ * controller report. Each change of the last device used is logged with its cause, and each pad's resting state at
+ * its first read. Capped, so a key or an axis that flaps cannot fill the log. */
+#define INPUT_NOTES 400
+static u32 input_notes;
+static u32 pad_busy;  /* why the pad read last counts as in use: 0x100 | button, 0x200 | axis, 0x300 the hat; 0 idle */
+
+static void input_note(const char *s, u32 value)
+{
+    if (input_notes < INPUT_NOTES)
+        note(s, value);
+    else if (input_notes == INPUT_NOTES)
+        note("input: log full, nothing more is logged", INPUT_NOTES);
+    input_notes++;
+}
+
 static void keys_read(void)
 {
     static u8 held[256];
-    u32 i, pressed = 0;
+    u32 i, pressed = 0, first = 0;
     for (i = 0; i < 256; i++) {
         u8 now = KEYS_HELD[i] & 0x80;
+        if (now & ~held[i] && !pressed)
+            first = i;
         pressed |= now & ~held[i];
         held[i] = now;
+    }
+    if (pressed && pad_last) {
+        input_note("input: keyboard now, by key (DIK code)", 0x100 | first);
+        if (pad_busy)
+            input_note("input: the pad still counts as in use, by", pad_busy);
     }
     if (pressed)
         pad_last = 0;
@@ -3436,6 +3459,7 @@ static void pad_adopt(u32 player, u32 acting, int active)
 static void pad_read(const u8 *pad)
 {
     static int was_active;
+    static const u8 *first_read[8];
     /* JOY_STATE ints that are sticks (and the Xbox's trigger axis, which rests at 0): a PlayStation pad's triggers,
      * lRx and lRy, rest at -255 */
     static const u8 sticks[2][5] = {{0, 1, 2, 3, 4}, {0, 1, 2, 5, 5}};
@@ -3446,6 +3470,15 @@ static void pad_read(const u8 *pad)
     for (index = 0; pad_present(index) && PADS[0][2 * index + 1] != pad; index++)
         ;
     family = index < 8 && pad_present(index) ? pad_family[index] : PAD_OTHER;
+    /* Each pad's state at its first read, as read: an axis off centre at rest keeps the pad in use, so a key press
+     * hands the prompts to the keyboard for good; a pad of no known family never takes them. */
+    if (index < 8 && first_read[index] != pad) {
+        first_read[index] = pad;
+        input_note("input: first read of pad (index << 8 | family)", 0x10000 | index << 8 | family);
+        for (i = 0; i < 8; i++)
+            input_note("input: axis (axis << 16 | value)", 0x1000000 | i << 16 | ((u32)s[i] & 0xFFFF));
+        input_note("input: hat", 0x1000000 | (pov & 0xFFFF));
+    }
     if (family == PAD_OTHER)
         return;
     if (family == PAD_XBOX)
@@ -3461,12 +3494,19 @@ static void pad_read(const u8 *pad)
         s[0] = dx[dir] * 255, s[1] = dy[dir] * 255;
     }
     for (i = 0; i < *(const u32 *)(pad + 0x168) && i < 128; i++)
-        active |= ((const volatile u8 *)(s + 12))[i] & 0x80;
+        if (((const volatile u8 *)(s + 12))[i] & 0x80 && !active)
+            active = 0x100 | i;
+    if (!active && (pov & 0xFFFF) != 0xFFFF)  /* the hat, which moved the left stick above */
+        active = 0x300;
     for (i = 0; i < 5; i++)
-        active |= s[sticks[family - 1][i]] > 128 || s[sticks[family - 1][i]] < -128;
+        if ((s[sticks[family - 1][i]] > 128 || s[sticks[family - 1][i]] < -128) && !active)
+            active = 0x200 | sticks[family - 1][i];
+    if (active && !was_active && !pad_last)
+        input_note("input: pad now (index << 16 | family << 12 | cause)", index << 16 | family << 12 | active);
     if (active && !was_active)
         pad_last = 1, pad_last_family = family;
-    was_active = active;
+    was_active = active != 0;
+    pad_busy = active;
     pad_adopt(0, index, active);
     pad_adopt(1, index, active);
 }
