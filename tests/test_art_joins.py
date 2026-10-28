@@ -32,16 +32,6 @@ def program(disc: str) -> bytes:
     return path.read_bytes()
 
 
-def test_the_2p_strip_takes_the_wo2_item_its_slot_draws_in_both_programs() -> None:
-    # Bug: the 2P strip of the pad prompts (slot 44) takes a neighbouring ENS 13 item, so the 2P banner shows other
-    # art. Both programs load the 4079 icons through one 158-entry slot table (MOZ 0x718B60, WO2 X360 0x82047CB8):
-    # equal tables make ENS 13 item 44 the X360 art for slot 44.
-    exe = stock("OROCHI_Z.exe").read_bytes()
-    moz = struct.unpack_from("<158I", exe, pe.file_offset(pe.layout(exe), 0x718B60))
-    x360 = struct.unpack_from(">158I", program("wo2-x360"), 0x82047CB8 - X360_BASE)
-    assert moz == x360
-
-
 # Entries MOZ loads through the same handle table as a WO2 X360 entry (MOZ table, WO2 ENS, WO2 table, length): the
 # 4079 icons (accessors MOZ 0x58C960 / WO2 0x822D1DE0) and the 4081 results sheet (MOZ 0x58F390 / WO2 0x822D3A60).
 SHARED_TABLES = {4079: (0x718B60, 13, 0x82047CB8, 158), 4081: (0x719310, 15, 0x820481F8, 38)}

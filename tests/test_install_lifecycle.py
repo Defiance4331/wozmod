@@ -189,29 +189,22 @@ def test_a_record_from_the_first_release_is_still_uninstalled(game):
     assert _tree(game) == stock_tree
 
 
-def test_uninstall_that_removes_the_settings_leaves_the_stock_folder(game, tmp_path, monkeypatch):
-    # Bug: settings.ini and the runtime logs (written by the game, so not in install.json) stay behind, with
-    # an otherwise empty wozmod/ folder, so the folder is no longer stock.
+@pytest.mark.parametrize("keep_settings", [False, True], ids=["remove-settings", "keep-settings"])
+def test_uninstall_leaves_the_stock_folder_and_only_the_files_the_game_wrote_when_kept(game, tmp_path, monkeypatch,
+                                                                                         keep_settings):
+    # Bugs: removing the settings leaves settings.ini and the runtime logs (written by the game, so not in
+    # install.json) behind, with an otherwise empty wozmod/ folder, so the folder is no longer stock; or "keep my
+    # settings" still deletes them (a later install starts from the defaults), or keeps more than the game wrote.
     monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None, rebuilt=None: [])
     before = _tree(game)
     install(game, _inputs(tmp_path), log=lambda _: None)
-    (game / "wozmod/settings.ini").write_bytes(b"player settings")
-    (game / "wozmod/runtime.log").write_bytes(b"log")
-    (game / "wozmod/runtime.crash.log").write_bytes(b"log")
+    written = {"wozmod/settings.ini": b"player settings", "wozmod/runtime.log": b"log", "wozmod/runtime.crash.log": b"log"}
+    for name, data in written.items():
+        (game / name).write_bytes(data)
 
-    uninstall(game, log=lambda _: None, keep_settings=False)
+    uninstall(game, log=lambda _: None, keep_settings=keep_settings)
 
-    assert _tree(game) == before
-
-
-def test_uninstall_can_keep_the_settings(game, tmp_path, monkeypatch):
-    # Bug: "keep my settings" still deletes them, so a later install starts from the defaults.
-    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None, rebuilt=None: [])
-    install(game, _inputs(tmp_path), log=lambda _: None)
-    (game / "wozmod/settings.ini").write_bytes(b"player settings")
-    uninstall(game, log=lambda _: None, keep_settings=True)
-    assert (game / "wozmod/settings.ini").read_bytes() == b"player settings"
-    assert not (game / "d3d9.dll").exists()
+    assert _tree(game) == (before | {"wozmod": None} | written if keep_settings else before)
 
 
 def test_the_version_in_the_code_is_the_version_of_the_release():

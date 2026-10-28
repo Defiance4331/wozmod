@@ -54,22 +54,18 @@ def _clean(repo: Path, *args: str) -> int:
     return cleanup.main(["--repo", str(repo), "--delete", *args])
 
 
-def test_runs_older_than_keep_days_go_and_newer_ones_stay(repo):
-    # Bug: an off-by-one in the cut-off (N - 1 or N + 1 days) deletes a 6.9-day run or keeps a 7.1-day one.
+@pytest.mark.parametrize("ages, keep_runs, kept", [
+    ({"a": 6.9, "b": 7.1, "c": 30}, "0", ["a"]),
+    ({"old": 40, "older": 50, "newest": 20, "second": 30}, "2", ["newest", "second"]),
+], ids=["day-cut", "keep-newest"])
+def test_runs_go_past_keep_days_except_the_newest_keep_runs(repo, ages, keep_runs, kept):
+    # Bugs: an off-by-one in the 7-day cut-off (N - 1 or N + 1 days) deletes a 6.9-day run or keeps a 7.1-day one; or
+    # the newest-K cut sorts the wrong way (keeps the oldest K) or keeps one too few or too many.
     runs = repo / "work/runtime-tests"
-    for name, days in (("a", 6.9), ("b", 7.1), ("c", 30)):
+    for name, days in ages.items():
         _folder(runs / name, days)
-    assert _clean(repo, "--only", "runs", "--keep-days", "7", "--keep-runs", "0") == 0
-    assert sorted(p.name for p in runs.iterdir()) == ["a"]
-
-
-def test_the_newest_runs_stay_however_old(repo):
-    # Bug: the newest-K cut sorts the wrong way (keeps the oldest K) or keeps one too few or too many.
-    runs = repo / "work/runtime-tests"
-    for name, days in (("old", 40), ("older", 50), ("newest", 20), ("second", 30)):
-        _folder(runs / name, days)
-    assert _clean(repo, "--only", "runs", "--keep-days", "7", "--keep-runs", "2") == 0
-    assert sorted(p.name for p in runs.iterdir()) == ["newest", "second"]
+    assert _clean(repo, "--only", "runs", "--keep-days", "7", "--keep-runs", keep_runs) == 0
+    assert sorted(p.name for p in runs.iterdir()) == kept
 
 
 def test_a_run_a_process_uses_is_kept(repo, monkeypatch):

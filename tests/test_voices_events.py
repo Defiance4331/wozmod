@@ -252,14 +252,22 @@ def test_the_last_line_of_an_event_ends_on_its_last_frame_when_its_clip_runs_pas
     assert done.moved[(1, 438)] == (2730, 2750)
 
 
-def test_the_audible_end_is_where_the_voice_stops_not_where_the_clip_does():
-    """Bug: the clip's length used for its end (an Xbox 360 WO2 clip has about 0.8 s of silent tail), a frame
-    off, or the quiet breath kept as voice (the floor applied to the wrong level)."""
-    rate = 16_000
+def test_the_audible_end_is_the_last_frame_within_30_db_of_the_clips_own_peak():
+    """Bugs: the clip's length used for its end (an Xbox 360 WO2 clip has about 0.8 s of silent tail), a frame off,
+    the quiet breath kept as voice or a -32 dB tail dropped (the floor applied to the wrong level), or an absolute
+    floor, so a quiet clip reads as silent. Oracle: hand-built 16 kHz clips; every failing clip is reported."""
+    rate, frame = 16_000, 160
     voice = [int(12_000 * math.sin(i / 7)) for i in range(int(1.234 * rate))]
     breath = [int(120 * math.sin(i / 3)) for i in range(int(0.4 * rate))]  # -40 dB below the voice
-    pcm = array("h", voice + breath + [0] * int(0.8 * rate)).tobytes()
-    assert audible_end(pcm) == pytest.approx(1.24, abs=0.005)
+    loud, quiet = struct.pack("<h", 20000), struct.pack("<h", 20000 // 40)  # quiet is -32 dB of the peak
+    clips = {
+        "voice, breath, silent tail": (array("h", voice + breath + [0] * int(0.8 * rate)).tobytes(), 1.24),
+        "-32 dB tail": (loud * frame * 50 + quiet * frame * 30 + bytes(2 * frame * 20), 0.5),
+        "quiet clip": (struct.pack("<h", 300) * frame * 10 + bytes(2 * frame * 5), 0.1),
+    }
+    wrong = {name: end for name, (pcm, expected) in clips.items()
+             if (end := audible_end(pcm, rate)) != pytest.approx(expected, abs=0.005)}
+    assert wrong == {}
 
 
 # ---------------------------------------------------------------------------------------------------------------

@@ -3746,7 +3746,6 @@ static void camera_follow(const struct frame *f)
    number or "monitor". VSYNC: each present waits for the monitor's refresh, [display] vsync on or off. */
 static const u32 fps_rates[] = {60, 120, 144, 165, 240, 0};
 #define FPS_CHOICES (sizeof fps_rates / sizeof *fps_rates)
-#define FPS_MONITOR (FPS_CHOICES - 1)
 #define FPS_MAX 360
 static u32 fps_choice, vsync = 1, monitor_hz = 60;
 /* Presents so far: work/true-rate/measure.py reads the u32 at +28. */

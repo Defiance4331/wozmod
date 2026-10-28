@@ -629,7 +629,6 @@ def english_voice_bank(clips: dict[int, bytes]) -> bytes:
 
 
 SE_BANKS = 122
-SE_ENTRY_BYTES = 40
 
 
 # Every game plays a unit's attack shouts from the bank its unit type (the officer id, unit byte +5) gives. MOZ:

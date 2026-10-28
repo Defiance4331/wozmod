@@ -26,36 +26,25 @@ def test_source_tree_root_holds_the_files_the_install_reads():
         assert (resources.root() / name).is_file(), name
 
 
-def test_bundle_root_is_the_folder_pyinstaller_unpacks(tmp_path, monkeypatch):
-    # Bug: a packaged program still looks beside the source file and finds no data/.
-    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
-    assert resources.root() == tmp_path
-
-
-@POSIX
-def test_bundled_ffmpeg_wins_over_the_one_on_path(tmp_path, monkeypatch):
-    # Bug: shutil.which("ffmpeg") or a bare "ffmpeg" in the command finds the player's own ffmpeg first.
-    fake_ffmpeg(tmp_path / "bundle/ffmpeg/bin/ffmpeg", "bundled")
-    fake_ffmpeg(tmp_path / "path/ffmpeg", "path")
-    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path / "bundle"), raising=False)
+@pytest.mark.parametrize("bundled, on_path, found, output", [
+    pytest.param(True, True, "bundle/ffmpeg/bin/ffmpeg", b"bundled\n", marks=POSIX, id="bundled-over-path"),
+    pytest.param(False, True, "path/ffmpeg", b"path\n", marks=POSIX, id="path-without-bundle"),
+    pytest.param(False, False, None, None, id="neither"),
+])
+def test_ffmpeg_is_the_bundled_one_else_the_one_on_path_else_none(tmp_path, monkeypatch, bundled, on_path, found,
+                                                                  output):
+    # Bugs: shutil.which("ffmpeg") or a bare "ffmpeg" in the command finds the player's own ffmpeg before the bundled
+    # one; developers (no bundle) lose their PATH ffmpeg; or a fallback name instead of None, so check_inputs never
+    # says that ffmpeg is missing. The fakes write their own name, so the output says which one ran.
+    if bundled:
+        fake_ffmpeg(tmp_path / "bundle/ffmpeg/bin/ffmpeg", "bundled")
+        monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path / "bundle"), raising=False)
+    if on_path:
+        fake_ffmpeg(tmp_path / "path/ffmpeg", "path")
     monkeypatch.setenv("PATH", str(tmp_path / "path"))
-    assert resources.ffmpeg() == str(tmp_path / "bundle/ffmpeg/bin/ffmpeg")
-    assert _ffmpeg_each([([], b"clip", [])]) == [b"bundled\n"]
-
-
-@POSIX
-def test_ffmpeg_on_path_is_used_when_nothing_is_bundled(tmp_path, monkeypatch):
-    # Bug: developers (no bundle) lose their PATH ffmpeg.
-    fake_ffmpeg(tmp_path / "path/ffmpeg", "path")
-    monkeypatch.setenv("PATH", str(tmp_path / "path"))
-    assert resources.ffmpeg() == str(tmp_path / "path/ffmpeg")
-    assert _ffmpeg_each([([], b"clip", [])]) == [b"path\n"]
-
-
-def test_no_ffmpeg_anywhere_is_reported_as_none(tmp_path, monkeypatch):
-    # Bug: a fallback name instead of None, so check_inputs never says that ffmpeg is missing.
-    monkeypatch.setenv("PATH", str(tmp_path))
-    assert resources.ffmpeg() is None
+    assert resources.ffmpeg() == (found and str(tmp_path / found))
+    if output:
+        assert _ffmpeg_each([([], b"clip", [])]) == [output]
 
 
 def test_lzp2_cache_key_needs_no_source_file(monkeypatch):

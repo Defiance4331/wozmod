@@ -210,13 +210,17 @@ def compiled(tmp_path_factory: pytest.TempPathFactory):
 
 
 @compiles
-def test_release_runtime_has_no_render_distance_row_key_or_patch(compiled) -> None:
-    """Bug: the release build still shows the unreleased RENDER DISTANCE row, reads or writes its settings.ini
-    key, or patches the view getter. The development build is compiled as the control that the probes see them."""
-    probes = [b"RENDER DISTANCE", "distance".encode("utf-16-le"), struct.pack("<I", 0x475B6C)]  # crowd getter + 0xC
-    release, development = compiled(RELEASE), compiled(("ENRT_RENDER_DISTANCE",))
-    assert [probe in release for probe in probes] == [False] * 3
-    assert [probe in development for probe in probes] == [True] * 3
+@pytest.mark.parametrize("probes, shipped, control", [
+    ([b"RENDER DISTANCE", "distance".encode("utf-16-le"), struct.pack("<I", 0x475B6C)], [RELEASE],  # crowd getter + 0xC
+     ("ENRT_RENDER_DISTANCE",)),
+    ([b"MOVING CAMERA FIX", "moving_fix".encode("utf-16-le")], [RELEASE, TEST], ("ENRT_MOVING_FIX",)),
+], ids=["render-distance", "moving-camera-fix"])
+def test_shipped_builds_have_no_compiled_out_settings_row_or_key(compiled, probes, shipped, control) -> None:
+    """Bug: a shipped build (release, and test for the moving camera fix) still draws a settings row compiled out
+    of release 1 (RENDER DISTANCE, MOVING CAMERA FIX), reads or writes its settings.ini key, or (render distance)
+    patches the view getter. The build that defines the row is the control that the probes see them."""
+    seen = [[probe in compiled(defines) for probe in probes] for defines in (*shipped, control)]
+    assert seen == [[False] * len(probes)] * len(shipped) + [[True] * len(probes)]
 
 
 def test_shipped_builds_never_install_the_moving_camera_fix_hook() -> None:
@@ -225,15 +229,6 @@ def test_shipped_builds_never_install_the_moving_camera_fix_hook() -> None:
     shipped = [("ENRT_LOG",), ("ENRT_TEST",), ("ENRT_LOG", "ENRT_TEST"), ()]
     assert [any(va == 0x427F61 for va, *_ in runtime.hook_sites(d)) for d in shipped] == [False] * 4
     assert any(va == 0x427F61 for va, *_ in runtime.hook_sites(("ENRT_MOVING_FIX",)))
-
-
-@compiles
-def test_release_runtime_has_no_moving_camera_fix_row_or_key(compiled) -> None:
-    """Bug: the release or test build still draws the MOVING CAMERA FIX row or reads its settings.ini key
-    in release 1. The ENRT_MOVING_FIX build is the control that the probes see them."""
-    probes = [b"MOVING CAMERA FIX", "moving_fix".encode("utf-16-le")]
-    dlls = [compiled(defines) for defines in (RELEASE, TEST, ("ENRT_MOVING_FIX",))]
-    assert [[probe in dll for probe in probes] for dll in dlls] == [[False, False], [False, False], [True, True]]
 
 
 @compiles

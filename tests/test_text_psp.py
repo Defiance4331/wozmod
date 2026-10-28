@@ -36,11 +36,3 @@ def test_the_psp_pool_reads_the_staged_program_without_its_tail(tmp_path, monkey
     with pytest.raises(IndexError):
         resolver.resolve(["wo2-psp", "prx", 2])
 
-
-def test_stock_pool_keeps_file_order_duplicates_and_the_400_byte_boundary():
-    key = "\u3042\u3044"
-    data = b"Leading\0Second\0A\0" + key.encode("cp932") + b"\0\x81\0Second\0"
-    data += b"X" * 400 + b"\0" + b"Y" * 401 + b"\0Unterminated"
-    keys = {"Leading", "Second", "A", key, "X" * 400, "Y" * 401, "Unterminated"}
-
-    assert psp_exe.exe_strings(data, keys) == ["Second", "A", key, "Second", "X" * 400]

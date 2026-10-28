@@ -510,27 +510,6 @@ def test_cli_rejects_invalid_selection_before_opening_inputs(monkeypatch, capsys
     assert list(tmp_path.iterdir()) == []
 
 
-def test_art_build_refuses_a_wrong_donor_archive_before_writing_anything(tmp_path, monkeypatch):
-    """Bug: the art build reports a wrong donor archive as a usage error (SystemExit) instead of an error the installer
-    can name, or the player path stops checking one of the two archives against its pins."""
-    from wozmod.donors import Donor, DonorFile
-
-    contents = {"linkdata_ens.idx": b"index", "linkdata_ens.lnk": b"archive"}
-    for name in ("WO1_X360", "WO2_X360"):
-        monkeypatch.setattr(build, name, Donor(name, "xdvdfs", tuple(
-            DonorFile(member, member, len(data), hashlib.sha256(data).hexdigest()) for member, data in contents.items())))
-    stems = [tmp_path / "wo1-x360/linkdata_ens", tmp_path / "wo2-x360/linkdata_ens"]
-    output = tmp_path / "output"
-    for wrong in stems:
-        for stem in stems:
-            stem.parent.mkdir(exist_ok=True)
-            for member, data in contents.items():
-                (stem.parent / member).write_bytes(b"x" * len(data) if stem == wrong and member.endswith("lnk") else data)
-        with pytest.raises(build.ArtError, match="Wrong donor member hash: linkdata_ens.lnk"):
-            build.build_art(tmp_path / "game", *stems, None, output, hires=True)
-    assert not output.exists()
-
-
 @pytest.mark.parametrize("path", [[], ["--hires", "--hires-only"]], ids=["full", "hires-only"])
 def test_the_command_line_refuses_a_wrong_donor_archive_on_each_path(tmp_path, monkeypatch, capsys, path):
     """Bug: the command line leaves the donor check to build_art, so a --hires-only run, which never calls it, letters

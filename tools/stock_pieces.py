@@ -169,7 +169,6 @@ class Recorder:
         self.step: str | None = None
         self.reads: dict[str, dict[str, list]] = {}  # step -> kind -> [(start, end, form)]
         self.violations: list[str] = []
-        self.whole_exe: set[str] = set()
         self._local = threading.local()
         self._lock = threading.Lock()
         self._active = False

@@ -98,17 +98,6 @@ def test_each_movie_slot_reads_the_schedule_entry_the_loader_reads() -> None:
     assert {slot: contexts.movie_slot_entry(slot) for slot in expected} == expected
 
 
-def test_audible_end_is_the_last_frame_above_minus_30_db_of_the_peak() -> None:
-    # Bugs: the end measured to the clip's last sample (its silent tail counted as speech), or to the last frame
-    # above an absolute level, so a quiet clip reads as silent. Oracle: hand-built 16 kHz clips.
-    rate, frame = 16000, 160
-    loud, quiet = struct.pack("<h", 20000), struct.pack("<h", 20000 // 40)  # quiet is -32 dB of the peak
-    clip = (loud * frame * 50 + quiet * frame * 30 + bytes(2 * frame * 20))
-    assert contexts.audible_end(clip, rate) == pytest.approx(0.5)
-    soft = struct.pack("<h", 300) * frame * 10 + bytes(2 * frame * 5)
-    assert contexts.audible_end(soft, rate) == pytest.approx(0.1)
-
-
 def _c_function(source: str, name: str) -> str:
     """The text of a top-level C function or declaration whose line starts with name's pattern, to its closing }."""
     start = re.search(rf"^{name}", source, re.M).start()

@@ -23,51 +23,53 @@ def test_a_page_line_breaks_once_it_measures_the_wrap_width_glyph_by_glyph():
     assert at(137, 24, "[01aaaa aaaa]") == "[01aaaa aaaa]"
 
 
-def test_the_camp_bar_grows_upward_by_the_lines_it_holds_and_keeps_the_stock_margins():
-    # Bugs: the bar grows by the wrong number of lines, or downward (its bottom edge slides under the prompt bar), or
-    # the text keeps its stock y and sits too low in the grown bar. Oracle: the stock bar's edge lines at y 468 and
-    # 615 and its stock text at y 508 (two lines, cell 28, pitch 42), read from the stock art and the captures;
-    # three lines at cell 24 and pitch 36 take 24 + 2 * 36 = 96 rows, 26 more than the stock 147 leaves them.
-    camp = text_boxes.box("camp")
-    stock = replace(camp, lines=2, cell=(28, 28), pitch=42)
-    assert (stock.edges, stock.y, stock.edits()) == ((468, 615), 508, [])
-    assert (camp.edges, camp.y, camp.stretch) == ((442, 615), 482, (190, 190, 26))
-    assert {va: int.from_bytes(ours[1:], "little") for va, _, ours in camp.edits()} == {
-        0x59C709: 288, 0x59C717: 288, 0x59C723: 386, 0x59C433: 372, 0x59C4A2: 386}
-    assert camp.room(3) == stock.room(2) == (40, 37)
-
-
-def test_the_briefing_band_widens_grows_through_its_scaled_draw_and_the_narration_panel_by_stretching():
-    # Bugs: the band's growth ignores that its draw scales 177 rows into 178 (one row too many or too few), its stage
-    # name plate stays behind when the band moves up, its strips keep the stock lane while the text takes the wide
-    # one (text past the band's ends), its lines sit at the top of a band sized for its most, or the narration's
-    # lines centre on the stock panel's middle instead of the stretched one's. Oracle: the stock edge rows (band 17
-    # and 157 drawn at y 454, panel 51 and 212 at y 381), the stock margins (band 486 - 471.1 above and 611.9 - 590
-    # below; panel 26 and 23) and the stock strips (fade 192, lane 248 and 784 wide, fade 1032), by hand.
-    band, panel = text_boxes.box("briefing"), text_boxes.box("narration")
-    assert band.growth == 52  # (140 + 52) * 230 / 229 = 192.8 >= 36.8 + 24 + 4 * 33 = 192.8; 51 gives 191.8
-    assert {va: int.from_bytes(ours[-4:], "little") for va, _, ours in band.edits()} == {
-        0x54896B: 229, 0x548976: 230, 0x548980: 402, 0x548A0E: 360,
-        0x5488EC: 104, 0x5488FC: 160, 0x548904: 960, 0x548914: 1120}
-    assert [round(v, 1) for v in band.room(5)] == [14.9, 21.9]
-    assert band.room(3)[0] - band.room(3)[1] == band.room(5)[0] - band.room(5)[1]
-    assert panel.drawn == 295  # 161 * 295 / 262 = 181.3 >= 26 + 23 + 24 + 3 * 36 = 181; 294 gives 180.7
-    assert [round(v, 1) for v in (*panel.edges, *panel.room(4))] == [438.4, 619.7, 26.6, 22.7]
-    assert panel.room(2)[0] - panel.room(2)[1] == panel.room(4)[0] - panel.room(4)[1]
-
-
-def test_the_z_talk_bar_grows_through_its_gradient_and_the_z_narration_clears_the_prompt_bar():
-    # Bugs: the Z bar grows by the wrong lines or leaves its name plate and name behind at the stock y, or the Z
-    # narration keeps the stock y 507, where a fifth line lands on the prompt bar (y 638 to 668). Oracle: the stock
-    # bar's edge lines at 503 and 626 and stock text at 531 (pitch 35, two lines): margins 28 and 626 - 594 = 32, so
-    # three lines at cell 24 and pitch 30 need 28 + 24 + 60 + 32 = 144, 21 more than 123; the plate at y 440 and the
-    # name at 454 (0x59A2DE, 0x59A3D5) move up with it. The WO1 narration's four lines end at 465 + 24 + 3 * 36 = 597;
-    # five Z lines at pitch 33 take 24 + 4 * 33 = 156, so they start at 441.
+def test_each_page_box_grows_by_its_own_rows_and_keeps_the_stock_margins():
+    # Bug: a page box grows by the wrong rows (or downward, under the prompt bar), its text keeps its stock y, or a
+    # draw immediate stays the stock one. One row per box, (what the box gives, what it should); every failing box is
+    # reported. The oracles are by hand from the stock art and the captures, as each row's comment gives them.
+    camp, band, panel = text_boxes.box("camp"), text_boxes.box("briefing"), text_boxes.box("narration")
     bar, narration = text_boxes.box("z-talk"), text_boxes.box("z-narration")
-    assert (bar.edges, bar.y, bar.stretch, bar.room(3)) == ((482, 626), 510, (22, 96, 21), (28, 32))
-    assert {va: int.from_bytes(ours[1:], "little") for va, _, ours in bar.edits()} == {
-        0x59A70D: 482, 0x59A2DE: 419, 0x59A3D5: 433}
-    assert (narration.y, narration.y + narration.block(5)) == (441, 597)
+    stock_camp = replace(camp, lines=2, cell=(28, 28), pitch=42)
+
+    def immediates(box, part):
+        return {va: int.from_bytes(ours[part], "little") for va, _, ours in box.edits()}
+
+    def centred(box, fewer, most):
+        return box.room(fewer)[0] - box.room(fewer)[1] == box.room(most)[0] - box.room(most)[1]
+
+    rows = {
+        # The stock camp bar's edge lines at y 468 and 615 and its stock text at y 508 (two lines, cell 28, pitch 42).
+        "stock camp": ((stock_camp.edges, stock_camp.y, stock_camp.edits(), stock_camp.room(2)),
+                       ((468, 615), 508, [], (40, 37))),
+        # Three lines at cell 24 and pitch 36 take 24 + 2 * 36 = 96 rows, 26 more than the stock 147 leaves them,
+        # with the stock margins.
+        "camp": ((camp.edges, camp.y, camp.stretch, camp.room(3), immediates(camp, slice(1, None))),
+                 ((442, 615), 482, (190, 190, 26), (40, 37),
+                  {0x59C709: 288, 0x59C717: 288, 0x59C723: 386, 0x59C433: 372, 0x59C4A2: 386})),
+        # The band's draw scales 177 rows into 178: (140 + 52) * 230 / 229 = 192.8 >= 36.8 + 24 + 4 * 33 = 192.8,
+        # and 51 gives 191.8. Stock edge rows 17 and 157 drawn at y 454, stock margins 486 - 471.1 above and
+        # 611.9 - 590 below, stock strips (fade 192, lane 248 and 784 wide, fade 1032); the name plate moves with it
+        # and its lines centre in a band sized for its most.
+        "briefing": ((band.growth, immediates(band, slice(-4, None)), [round(v, 1) for v in band.room(5)],
+                      centred(band, 3, 5)),
+                     (52, {0x54896B: 229, 0x548976: 230, 0x548980: 402, 0x548A0E: 360,
+                           0x5488EC: 104, 0x5488FC: 160, 0x548904: 960, 0x548914: 1120}, [14.9, 21.9], True)),
+        # The panel stretches: 161 * 295 / 262 = 181.3 >= 26 + 23 + 24 + 3 * 36 = 181, and 294 gives 180.7. Stock
+        # edge rows 51 and 212 at y 381, stock margins 26 and 23; its lines centre on the stretched panel's middle.
+        "narration": ((panel.drawn, [round(v, 1) for v in (*panel.edges, *panel.room(4))], centred(panel, 2, 4)),
+                      (295, [438.4, 619.7, 26.6, 22.7], True)),
+        # The stock Z bar's edge lines at 503 and 626 and stock text at 531 (pitch 35, two lines): margins 28 and
+        # 626 - 594 = 32, so three lines at cell 24 and pitch 30 need 28 + 24 + 60 + 32 = 144, 21 more than 123; the
+        # plate at y 440 and the name at 454 (0x59A2DE, 0x59A3D5) move up with it.
+        "z-talk": ((bar.edges, bar.y, bar.stretch, bar.room(3), immediates(bar, slice(1, None))),
+                   ((482, 626), 510, (22, 96, 21), (28, 32), {0x59A70D: 482, 0x59A2DE: 419, 0x59A3D5: 433})),
+        # At the stock y 507 a fifth line lands on the prompt bar (y 638 to 668). The WO1 narration's four lines end
+        # at 465 + 24 + 3 * 36 = 597; five Z lines at pitch 33 take 24 + 4 * 33 = 156, so they start at 441.
+        "z-narration": ((narration.y, narration.y + narration.block(5)), (441, 597)),
+    }
+    wrong = {name: got for name, (got, expected) in rows.items() if got != expected}
+    assert wrong == {}
+
 
 def page_texts(stock: Path, table: bytes) -> dict[str, list[tuple[str, str]]]:
     """(id, the English the player reads) of every line each box shows, read as the runtime looks them up."""

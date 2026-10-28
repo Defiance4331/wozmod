@@ -120,6 +120,18 @@ def test_stock_catalog_does_not_drop_archive_keys_or_quote_voice_suffixes(synthe
     assert missing == []
 
 
+def test_stock_catalog_takes_program_strings_up_to_400_bytes(synthetic_stock) -> None:
+    # Bug: the program-string scan's limit (psp_exe.EXE_STRING, 400 bytes) shrinks or is off by one, so a row keyed
+    # by a long program string cannot build; or it grows past 400 and also takes the longer runs between NULs.
+    stock, _ = synthetic_stock
+    exe = bytearray((stock / "OROCHI_Z.exe").read_bytes())
+    longest, over = b"X" * 400, b"Y" * 401
+    exe[0x3000:0x3000 + 804] = b"\0" + longest + b"\0" + over + b"\0"  # an empty stretch of the synthetic .text
+    (stock / "OROCHI_Z.exe").write_bytes(exe)
+    catalog = stock_strings(stock)
+    assert [hashlib.sha256(value).hexdigest() in catalog for value in (longest, over)] == [True, False]
+
+
 def test_cp932_objective_aliases_do_not_drop_or_reorder_ibm_keys() -> None:
     row = {"ja": "1" + chr(0x7E8A) + "%s [10]", "en": "1Authored %s [10]"}
     index = table_index([row])

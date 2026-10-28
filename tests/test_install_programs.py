@@ -87,24 +87,6 @@ def test_only_the_pinned_encrypted_file_from_the_image_is_given_to_the_program(t
     assert found == DECRYPTED if expected is None else found == expected
 
 
-def test_wrong_output_gets_the_plain_message_and_the_install_stops_before_building(tmp_path, monkeypatch):
-    # Bug: a program with the wrong output is accepted, the build starts and fails minutes later, or the
-    # message does not say which program failed.
-    game = tmp_path / "game"
-    game.mkdir()
-    image = _xbox_image(tmp_path, b"default.xex", ENCRYPTED)
-    tool = fake(tmp_path / "tool", "xex2ool", produces=b"X" * len(DECRYPTED))
-    # the build runs while the checks finish: it must not go on past them
-    monkeypatch.setattr(installer, "_build", lambda *args, **kwargs: (args[-1](), pytest.fail("the build must not go on past the checks"))[1])
-    monkeypatch.setattr(installer.resources, "ffmpeg", lambda: "ffmpeg")
-    inputs = {"wo1": tmp_path, "wo1-x360": image, "wo2-x360": image, "wo2-psp": tmp_path, "x360-tool": tool, "psp-tool": tmp_path,
-              "lettering": tmp_path, "dll": tmp_path}
-    monkeypatch.setattr(installer, "check_input", lambda name, path: None if name != "wo2-psp" else "Not the PSP disc.")
-    with pytest.raises(InstallError) as caught:
-        installer.install(game, inputs, log=lambda _: None)
-    assert "Xbox 360 decryption program: This program did not produce the file wozmod needs." in str(caught.value)
-
-
 @pytest.mark.parametrize("extra, accepted", [(65_536, True), (65_537, False)])
 def test_the_tail_limit_after_the_program_is_exactly_64_kib(extra, accepted):
     # Bug: the limit is off by one, or any file of the right length passes without the prefix hash.

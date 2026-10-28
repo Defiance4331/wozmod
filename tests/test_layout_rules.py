@@ -77,14 +77,6 @@ def test_an_element_on_screen_stays_on_screen():
     assert [v["rect"][2] for v in broken(stock, frame([text(1100, 50, 240)]), "on_screen")] == [1340]
 
 
-def test_a_repeated_cursor_placed_differently_from_the_rest_is_reported():
-    # Catches one gallery thumbnail whose highlight sits off it while the others line up.
-    frames = [frame(textures=[quad("4064.5", 100 + 120 * n, 100, 92, 92)], boxes=[box(96 + 120 * n, 96, 100, 100)])
-              for n in range(4)]
-    frames[2]["boxes"] = [box(96 + 240 + 20, 96, 100, 100)]
-    assert [v["frame"] for v in lr.siblings(frames, "box@", "4064.5@")] == [2]
-
-
 def test_a_label_in_a_plate_sized_to_it_keeps_its_place_in_the_plate():
     # Catches anchoring a child to the screen: the in-battle label plate moves as it grows with its label, and the
     # label moves with it; the label drifting inside the plate is wrong.

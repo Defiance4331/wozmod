@@ -1,13 +1,8 @@
-import os
 from dataclasses import replace
-from pathlib import Path
 import struct
-
-import pytest
 
 from wozmod.formats.scripts import Line, Table
 from wozmod.text.script_alignment import (
-    NARRATION,
     QUOTE_INSERT,
     WO1_QUOTE_INSERT,
     Script,
@@ -66,17 +61,17 @@ def _telop(*cues):
     )
 
 
-def test_script_pairing_keeps_the_exact_union_threshold_and_skips_voiceless_rows():
-    stock = {7: _voices(range(1, 10)), 8: _script(), 9: _voices([99])}
-    accepted = _voices(range(1, 11))
-    assert pair_scripts(stock, [accepted]) == {7: accepted}
-
-
-def test_script_pairing_chooses_the_best_union_ratio_instead_of_raw_shared_count():
-    stock = _voices(range(1, 11))
-    too_many_extra = _voices(range(1, 21))
-    exact_subset = _voices(range(1, 10))
-    assert pair_scripts({3: stock}, [too_many_extra, exact_subset]) == {3: exact_subset}
+def test_script_pairing_takes_the_best_voice_union_ratio_at_or_above_the_threshold():
+    # Bug: pairing by raw shared count (a donor with many extra voices wins), a threshold off its exact 0.9, a donor
+    # under it accepted, or a voiceless stock row paired. Each case names the stock rows, the donors and the pairs.
+    exact, subset = _voices(range(1, 11)), _voices(range(1, 10))
+    cases = {
+        "exact threshold, voiceless and unrelated rows": (
+            {7: _voices(range(1, 10)), 8: _script(), 9: _voices([99])}, [exact], {7: exact}),
+        "best ratio over shared count": ({3: _voices(range(1, 11))}, [_voices(range(1, 21)), subset], {3: subset}),
+    }
+    wrong = [name for name, (stock, donors, expected) in cases.items() if pair_scripts(stock, donors) != expected]
+    assert wrong == []
 
 
 def _notice(record, form=0):
@@ -208,23 +203,6 @@ def test_camp_talk_lines_pair_by_scene_and_line_not_by_their_place_in_the_mesc()
     stock = _container(b"\x03", b"\x01", mesc(b"S0", b"S1", b"Added", b"T0"))
     donor = _container(b"\x02", b"\x01", mesc(b"Fixture S0", b"Fixture S1", b"Fixture T0"))
     assert narration_pairs(4105, stock, donor) == [(b"S0", "Fixture S0"), (b"S1", "Fixture S1"), (b"T0", "Fixture T0")]
-
-
-@pytest.mark.skipif(not (os.environ.get("WOZMOD_DONORS") and os.environ.get("WOZMOD_GAME")),
-                    reason="set WOZMOD_DONORS and WOZMOD_GAME")
-def test_each_narration_donor_entry_has_the_stock_pages_block_for_block():
-    # Catches a narration entry off by one (WO1 X360 still pages are ENS 6, which 0x8226F09C loads; ENS 7 has no
-    # pages), which pairs no page at all.
-    from wozmod.formats.linkdata import archive
-    from wozmod.formats.scripts import mesc_blocks
-
-    donors, game = Path(os.environ["WOZMOD_DONORS"]), Path(os.environ["WOZMOD_GAME"])
-    stock = archive(game / "LINKDATA1").read(n for n, _, _ in NARRATION)
-    wo1 = archive(donors / "wo1-x360/linkdata_ens").read(e for _, s, e in NARRATION if s == "wo1-x360")
-    wo2 = x360_members(donors / "wo2-x360/linkdata_ens", [e for _, s, e in NARRATION if s == "wo2-x360"])
-    unequal = [n for n, s, e in NARRATION if [len(b) for b in mesc_blocks(stock[n])]
-               != [len(b) for b in mesc_blocks((wo1 if s == "wo1-x360" else wo2)[e])]]
-    assert unequal == []
 
 
 def test_event_pairing_joins_line_ids_across_every_donor_event_file_with_both_word_orders():

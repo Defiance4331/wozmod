@@ -77,15 +77,6 @@ def test_dword_tree_pointers_do_not_drop_nested_files(tmp_path: Path) -> None:
         assert actual == expected
 
 
-def test_tree_cycle_is_rejected_instead_of_silently_dropping_an_entry(tmp_path: Path) -> None:
-    path = _image(
-        tmp_path,
-        {0: _record(b"first", 0, 0, left=8), 32: _record(b"second", 0, 0, left=8)},
-    )
-    with Xdvdfs(path) as disc, pytest.raises(DiscError):
-        disc.files()
-
-
 def test_file_extent_past_image_is_rejected_before_a_short_read(tmp_path: Path) -> None:
     path = _image(tmp_path, {0: _record(b"item", 35, 4)}, payloads={35: b"abc"})
     with Xdvdfs(path) as disc, pytest.raises(DiscError):
@@ -123,9 +114,15 @@ def test_empty_file_is_not_dropped_with_empty_directories(tmp_path: Path) -> Non
             assert source.read() == b""
 
 
-def test_directory_extent_cycle_is_rejected_before_repeating_paths(tmp_path: Path) -> None:
-    path = _image(tmp_path, {0: _record(b"again", 33, 2048, directory=True)})
-    with Xdvdfs(path) as disc, pytest.raises(DiscError):
+@pytest.mark.parametrize("records, message", [
+    ({0: _record(b"first", 0, 0, left=8), 32: _record(b"second", 0, 0, left=8)}, "Cycle in XDVDFS directory tree"),
+    ({0: _record(b"again", 33, 2048, directory=True)}, "Repeated XDVDFS directory extent"),
+], ids=["tree-pointer", "directory-extent"])
+def test_a_cycle_is_rejected_instead_of_walked_again_or_dropped(tmp_path: Path, records, message) -> None:
+    # Bug: a tree pointer back to a visited record, or a directory whose extent is one already listed, is walked
+    # again (repeating paths) or silently dropped instead of raising DiscError. The two hit different sets in _index.
+    path = _image(tmp_path, records)
+    with Xdvdfs(path) as disc, pytest.raises(DiscError, match=message):
         disc.files()
 
 

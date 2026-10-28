@@ -39,29 +39,25 @@ def test_x360_damaged_run_cannot_return_a_partial_reference_bank(damage):
         references.x360_members(data)
 
 
-def test_default_catalog_cannot_pair_a_row_to_the_equal_archive_ordinal():
-    source = references.reference("4060.14", 9)["original"]
-    assert (source["ens"], source["crop"]) == ([1, 14, 0], [0, 378, 512, 420])
+def test_each_catalog_row_gets_its_own_official_reference_or_none():
+    # Bug: a catalog row is paired to the equal archive ordinal (4060.14 row 9) or another ENS member or crop, an
+    # unpaired row acquires an unrelated official reference, or a card row (4095) falls back to ordinary banner
+    # coordinates. Each row is ((texture, row), its official ([ens], [crop]) or None); every failing row is reported.
+    cards = {64: 105, 86: 118, 87: 119, 88: 120, 89: 121, 90: 122}
+    expected = {("4060.14", 9): ([1, 14, 0], [0, 378, 512, 420])}
+    expected |= {(texture, row): None for texture, row in
+                 [("4080.31", 0), ("4080.32", 0), ("4080.33", 0), ("4069.23", 0), ("4069.25", 35)]}
+    expected |= {(f"4095.{item}", 0): ([27, cards[item], 0], [0, 0, 196, 266]) if item in cards else None
+                 for item in [64, *range(79, 96)]}
 
+    def official(texture, row):
+        source = references.reference(texture, row)["original"]
+        if source == {"kind": "no-official-counterpart", "donor": None}:
+            return None
+        return (source["ens"], source["crop"]) if source["kind"] == "official" else source
 
-def test_unpaired_rows_cannot_acquire_an_unrelated_native_reference():
-    rows = [("4080.31", 0), ("4080.32", 0), ("4080.33", 0),
-            ("4069.23", 0), ("4069.25", 35)]
-    sources = [references.reference(texture, row)["original"] for texture, row in rows]
-    assert all(source == {"kind": "no-official-counterpart", "donor": None}
-               for source in sources)
-
-
-def test_card_references_cannot_fall_back_to_ordinary_banner_coordinates():
-    paired = {64: 105, 86: 118, 87: 119, 88: 120, 89: 121, 90: 122}
-    rows = {item: references.reference(f"4095.{item}", 0)["original"]
-            for item in [64, *range(79, 96)]}
-    actual = {item: (source["ens"], source["crop"])
-              for item, source in rows.items() if source["kind"] == "official"}
-    assert actual == {item: ([27, source, 0], [0, 0, 196, 266])
-                      for item, source in paired.items()}
-    assert all(source == {"kind": "no-official-counterpart", "donor": None}
-               for item, source in rows.items() if item not in paired)
+    wrong = {key: got for key, want in expected.items() if (got := official(*key)) != want}
+    assert wrong == {}
 
 
 def test_catalog_row_lookup_cannot_treat_explicit_keys_as_ordinals(tmp_path, monkeypatch):

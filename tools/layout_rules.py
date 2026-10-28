@@ -15,15 +15,12 @@ text length, and `check` applies them to our frame:
 - place: an element that changes size keeps its left edge, centre or right edge (in its box, if it has one)
 - on_screen: an element on screen stays on screen
 
-`siblings` compares repeats of one element against each other across frames (a cursor box over each item of a
-list) and reports the ones placed differently from the rest.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import statistics
 import sys
 from pathlib import Path
 
@@ -156,22 +153,6 @@ def check(frame: dict, relations: list[dict], img=None, allow: set[tuple[str, st
                 if (gap := b[2] - r[2]) > rel["gap"] + HUG_SLACK:
                     bad.append({**rel, "gap_ours": gap, "gap_stock": rel["gap"]})
     return bad
-
-
-def siblings(frames: list[dict], box: str, el: str) -> list[dict]:
-    """Across frames, the offset of element id prefix `el` inside the box id prefix `box` (a cursor over each
-    item in turn); frames whose offset differs from the median by more than TOL."""
-    seen = []
-    for n, frame in enumerate(frames):
-        els = elements(frame)
-        for kb, b in ((k, r) for k, r in els.items() if k.startswith(box)):
-            for ke, e in ((k, r) for k, r in els.items() if k.startswith(el) and _touch(r, b)):
-                seen.append((n, ke, e[0] - b[0], e[1] - b[1], e[2] - b[2], e[3] - b[3]))
-    if len(seen) < 3:
-        return []
-    med = [statistics.median(s[i] for s in seen) for i in range(2, 6)]
-    return [{"frame": n, "el": ke, "offsets": offs, "median": med} for n, ke, *offs in seen
-            if any(abs(o - m) > TOL for o, m in zip(offs, med, strict=True))]
 
 
 def main(argv: list[str] | None = None) -> int:

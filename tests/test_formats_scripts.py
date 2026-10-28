@@ -77,24 +77,17 @@ def test_parse_script_rejects_table_offsets_that_do_not_bound_string_records():
         parse_script(script(_table(b"00N\0"), b"\0" * 3))
 
 
-def test_parse_script_rejects_a_non_numeric_route_prefix():
+@pytest.mark.parametrize("notices, spoken", [
+    (b"x1N\0", b"00D\0"),
+    (b"00\x81\0", b"00D\0"),
+    (b"00N\0", b"11D\0"),
+    (b"00N\0", b"00D"),
+], ids=["non-numeric-route", "invalid-cp932", "notice-route-in-spoken", "unterminated-spoken"])
+def test_parse_script_rejects_a_record_that_is_not_a_terminated_numeric_route_cp932_string(notices, spoken):
+    # Bug: a notice or spoken record with a non-numeric route, invalid CP932, a notice route in the spoken table, or no
+    # terminator is accepted.
     with pytest.raises(ScriptError):
-        parse_script(script(_table(b"x1N\0"), _table(b"00D\0")))
-
-
-def test_parse_script_rejects_an_invalid_cp932_record():
-    with pytest.raises(ScriptError):
-        parse_script(script(_table(b"00\x81\0"), _table(b"00D\0")))
-
-
-def test_parse_script_rejects_a_notice_route_in_a_spoken_record():
-    with pytest.raises(ScriptError):
-        parse_script(script(_table(b"00N\0"), _table(b"11D\0")))
-
-
-def test_parse_script_rejects_an_unterminated_spoken_record():
-    with pytest.raises(ScriptError):
-        parse_script(script(_table(b"00N\0"), _table(b"00D")))
+        parse_script(script(_table(notices), _table(spoken)))
 
 
 def test_mesc_blocks_skips_an_embedded_marker_before_reading_the_next_block():
@@ -151,18 +144,17 @@ def test_event_captions_read_each_caption_record_by_sub_scene_with_its_text_offs
         assert event_captions(data, order) == [(0, 0, texts[0], b"A"), (0, 1, texts[2], b"B"), (1, 0, texts[4], b"C")]
 
 
-def test_event_texts_reads_direct_captions_and_indexed_subtitles():
-    direct = b"\x82\xa0\x82\xa2"
-    indexed = b"\x82\xa4\n\x82\xa6"
-    data = b"\xff" * 4 + direct + b"\0" + b"\xff" * 4 + struct.pack("<HH", 5, 32) + indexed + b"\0"
-    assert event_texts(data) == [direct, indexed]
-
-
-def test_event_texts_drops_binary_markers_without_printable_full_width_text():
-    pair = b"\x82\xa0\x82\xa2"
-    candidates = [b"\x82\xa0", b"\x81", pair + b"\xa1", pair + b"\xf0\x40", pair + b"\x01"]
-    data = b"".join(b"\xff" * 4 + text + b"\0" for text in candidates)
-    assert event_texts(data) == []
+def test_event_texts_keeps_direct_and_indexed_texts_and_drops_binary_markers():
+    # Bug: event_texts keeps a marker hit from a binary table (one kana, a lone lead byte, a half-width kana, a
+    # private-use or control character), or drops a direct caption or an indexed subtitle. Every failing case is
+    # reported.
+    direct, indexed = b"\x82\xa0\x82\xa2", b"\x82\xa4\n\x82\xa6"
+    cases = {"direct and indexed": (
+        b"\xff" * 4 + direct + b"\0" + b"\xff" * 4 + struct.pack("<HH", 5, 32) + indexed + b"\0", [direct, indexed])}
+    for text in (b"\x82\xa0", b"\x81", direct + b"\xa1", direct + b"\xf0\x40", direct + b"\x01"):
+        cases[f"marker {text!r}"] = (b"\xff" * 4 + text + b"\0", [])
+    wrong = [name for name, (data, expected) in cases.items() if event_texts(data) != expected]
+    assert wrong == []
 
 
 def test_donor_text_rejects_unmapped_high_bytes_and_preserves_mapped_letters():

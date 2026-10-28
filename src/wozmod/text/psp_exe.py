@@ -15,15 +15,3 @@ def eboot_strings(data: bytes) -> list[str | None]:
     None slot."""
     return [donor_text(m.group()) for m in PSP_STRING.finditer(data)]
 
-
-def exe_strings(exe: bytes, keys: set[str]) -> list[str]:
-    """Stock program strings matching table keys, in file order."""
-    found = []
-    for match in EXE_STRING.finditer(exe):
-        try:
-            text = match.group().decode("cp932")
-        except UnicodeDecodeError:
-            continue
-        if text in keys:
-            found.append(text)
-    return found
