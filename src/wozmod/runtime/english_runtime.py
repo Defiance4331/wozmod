@@ -85,7 +85,11 @@ ALWAYS_HOOKS = [
     (0x428FB4, "8d442438 d9ee", 46, None),      # 40-degree battle camera FOV stored (mid-function)
     (0x5E4F64, "8b8660010000", 47, None),       # joystick state read (mid-function)
     (0x5E38E0, "81ec40020000", 70, 0),          # input map load (cdecl): Xbox names before its auto-setting
+    (0x5E3C82, "8b8c244c020000", 120, None),    # input map load, after its fclose: put a cleared map back on the file's joy
     (0x5E3891, "b801000000", 113, None),        # pad auto-setting's success exit: PlayStation buttons (mid-function)
+    (0x5E4300, "6aff 686bbd6b00 64a100000000", 121, None),  # a player's input map array is built again: forget the parked actions
+    (0x5E2290, "81ec14010000", 122, None),     # input map writer, player 0: a parked player is written on the pad they had
+    (0x5AC845, "83c408 833da840c80000", 123, None),  # after the save job's two input map writes: the park goes back
     (0x56FDC0, "e82b5a0700", 106, 0),           # Controller page, Key Config chosen: the pad auto-setting offer; always replaced
     (0x58E2BC, "5f5eb801000000", 48, None),     # 4079 prompt handles made (tail)
     (0x5ADC60, "8b442404 69c0f0000000", 49, 0),  # menu word, pressed (cdecl): A/B for a pad

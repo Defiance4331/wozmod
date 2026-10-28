@@ -1554,3 +1554,61 @@ def test_virtual_playstation_pads_declare_the_report_they_send_and_the_axes_wind
         axes = [u for _, _, usages in inputs for u in usages if 0x30 <= u <= 0x35]
         got[model] = (1 + sum(size * count for size, count, _ in inputs) // 8, axes[:4])
     assert got == {model: (64, [0x30, 0x31, 0x32, 0x35]) for model in harness.HID_PADS}
+
+
+def test_switch_and_8bitdo_are_different_xinput_identities():
+    """Bug: the two identities share a vendor and product, so a dongle that comes back as the other device is still
+    the same DirectInput device and the game never sees it leave."""
+    assert harness.XINPUT_PADS["switch"][:2] != harness.XINPUT_PADS["8bitdo"][:2]
+    assert harness.XINPUT_PADS["switch"][:2] == (0x057E, 0x2009)
+    assert harness.XINPUT_PADS["8bitdo"][:2] == (0x2DC8, 0x3106)
+
+
+def test_spare_is_a_second_xinput_identity_and_not_a_playstation_pad():
+    """Bugs: --spare without --pad launches a pad the game was not given, or a PlayStation spare is treated as an
+    XInput identity swap and never appears as its own HID device."""
+    assert harness.pad_plan(SimpleNamespace(pad="switch", spare="8bitdo")) == ["switch", "8bitdo"]
+    assert harness.pad_plan(SimpleNamespace(pad="x360", spare=None)) == ["x360"]
+    assert harness.pad_plan(SimpleNamespace(pad=None, spare=None)) == []
+    with pytest.raises(ValueError, match="needs --pad"):
+        harness.pad_plan(SimpleNamespace(pad=None, spare="8bitdo"))
+    with pytest.raises(ValueError, match="XInput"):
+        harness.pad_plan(SimpleNamespace(pad="ds4", spare="8bitdo"))
+
+
+def test_reenumerate_unlinks_one_identity_and_links_the_other(tmp_path):
+    """Bugs: a pad that comes back as another vendor and product stays the old device, so the game keeps reading the
+    one that left; or both identities are linked and the game sees two pads at once."""
+    (tmp_path / "evidence").mkdir()
+    (tmp_path / "control").mkdir()
+    first, second = tmp_path / "event-a", tmp_path / "event-b"
+    hide_a, hide_b = tmp_path / "hide-a", tmp_path / "hide-b"
+    hide_a.write_bytes(b"a")
+    hide_b.write_bytes(b"b")
+    harness.write_json(tmp_path / "evidence/session.json", {
+        "pad": str(first), "pad_hidden": str(hide_a), "pad_active": 0,
+        "pads": [
+            {"model": "switch", "node": str(first), "hidden": str(hide_a)},
+            {"model": "8bitdo", "node": str(second), "hidden": str(hide_b)},
+        ],
+    })
+    first.symlink_to(hide_a)
+    got = harness.reenumerate_pad(tmp_path)
+    assert got == {"pad": "8bitdo", "index": 1}
+    assert not first.exists()
+    assert second.is_symlink() and second.readlink() == hide_b
+    session = json.loads((tmp_path / "evidence/session.json").read_text())
+    assert session["pad"] == str(second) and session["pad_active"] == 1
+    assert json.loads((tmp_path / "control/pad-active.json").read_text()) == {"index": 1}
+    harness.plug_pad(tmp_path, False)
+    assert not second.exists()
+    harness.plug_pad(tmp_path, True)
+    assert second.is_symlink() and second.readlink() == hide_b
+    back = harness.reenumerate_pad(tmp_path)
+    assert back == {"pad": "switch", "index": 0}
+    assert first.is_symlink() and not second.exists()
+    one = tmp_path / "one"
+    (one / "evidence").mkdir(parents=True)
+    harness.write_json(one / "evidence/session.json", {"pads": [{"model": "switch", "node": str(first), "hidden": str(hide_a)}]})
+    with pytest.raises(ValueError, match="second pad"):
+        harness.reenumerate_pad(one)

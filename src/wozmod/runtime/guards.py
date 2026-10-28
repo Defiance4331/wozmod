@@ -104,7 +104,7 @@ FEATURES = (
     Feature("rows", "Game Settings rows", requires=("core",), hooks=(27, 28, 29), edits=("settings rows",),
             calls=_c("GAME_SOUND") + (0x475B20, 0x475B30) + SHEET_TEXT),  # the switches' getter and setter
     Feature("fov", "field of view", hooks=(45, 46)),
-    Feature("pads", "controllers", requires=("core",), hooks=(47, 70, 113, 106, 49, 50, 51, 52, 65),
+    Feature("pads", "controllers", requires=("core",), hooks=(47, 70, 113, 106, 120, 121, 122, 123, 49, 50, 51, 52, 65),
             edits=("PAD_CAMERA", "SAVED_PAD", "STANDARD_CAMERA"),
             calls=_c("PAD_AUTO", "PACKAGE_ITEM", "TEXTURE_HANDLE", "GAME_NEW", "GAME_DELETE", "DINPUT_CREATE", "PAD_ADD",
                      "PAD_INIT", "PAD_NUMBER", "GAME_QUAD")

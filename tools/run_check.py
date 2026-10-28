@@ -44,16 +44,19 @@ RETRIES = 2  # fresh runs after one that ended before the game started
 
 
 def launch(root: Path, pad: str | None = None, size: str | None = None, video: bool = False,
-           idle: float | None = None, unplugged: bool = False, route_keys: bool = False) -> subprocess.Popen:
+           idle: float | None = None, unplugged: bool = False, route_keys: bool = False,
+           spare: str | None = None) -> subprocess.Popen:
     """The supervisor, in a game slot, in its own process group so it can be ended whole; ``pad``: a virtual pad of
     that model (harness PAD_MODELS), which routes press unless ``route_keys``, plugged in after the start when
-    ``unplugged`` (game_harness.py plug on); ``size``: render at WxH instead of 1080p upscaled; ``video``: output 1080p
-    without FSR, so the video command keeps the game at full speed."""
+    ``unplugged`` (game_harness.py plug on); ``spare``: a second XInput identity, linked by reenumerate; ``size``:
+    render at WxH instead of 1080p upscaled; ``video``: output 1080p without FSR, so the video command keeps the game
+    at full speed."""
     # low CPU and disk priority, so the user's own work stays responsive
     command = ["nice", "-n", "10", "ionice", "-c2", "-n7",
                sys.executable, str(Path(harness.__file__).resolve()), "run", "--root", str(root), "--slot",
                "--target", harness.TARGET, "--game", str(root / "game"), "--authorize-launch", "--timeout", "1800",
                *(["--pad", pad, "--route-input", "keys" if route_keys else "pad"] if pad else []),
+               *(["--spare", spare] if pad and spare else []),
                *(["--unplugged"] if pad and unplugged else []), *(["--size", size] if size else []),
                *(["--video"] if video else []), *(["--idle", str(idle)] if idle else [])]
     with (root / "run.log").open("w") as log:
@@ -174,7 +177,8 @@ def staged_run(args: argparse.Namespace, dll: Path | None, to: str | None, spec:
         t, proc = time.monotonic(), start(root, getattr(args, "pad", None), size=size,
                                          video=getattr(args, "video", False), idle=IDLE if to else None,
                                          unplugged=getattr(args, "unplugged", False),
-                                         route_keys=getattr(args, "route_keys", False))
+                                         route_keys=getattr(args, "route_keys", False),
+                                         spare=getattr(args, "spare", None))
         try:
             up = wait_up(root, proc)
             phases["boot"] += time.monotonic() - t
@@ -237,6 +241,8 @@ def main(argv: list[str] | None = None) -> int:
                              "press, so captures show the pad's prompts")
     parser.add_argument("--unplugged", action="store_true",
                         help="with --pad: the pad is plugged in after the start (game_harness.py plug on)")
+    parser.add_argument("--spare", choices=[model for model in harness.PAD_MODELS if model in harness.XINPUT_PADS],
+                        help="with --pad: a second XInput identity; game_harness.py reenumerate links it instead")
     parser.add_argument("--route-keys", action="store_true",
                         help="with --pad: routes press the keyboard, for a pad the game may not bind")
     parser.add_argument("--only", metavar="SCREEN,...", help="run only these screens of the spec")

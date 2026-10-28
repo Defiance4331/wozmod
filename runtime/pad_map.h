@@ -13,7 +13,9 @@
    clearing a binding on Button Settings (F12) also clears joy once no binding is left on the pad. So a map with no
    binding on joy is that loss, and each cleared binding goes back to joy. The stock defaults leave only Camera Up,
    Down, Left and Right (actions 17 to 20) unbound, as device 10 with isAxis, direction and index all 0; those stay
-   unbound. Returns the number of bindings put back. */
+   unbound. Only the load (hook 120) calls this, with the joy the file stored: that is how it knows the map came from
+   a file. A map the game built itself is never read by field value (see pad_owner.h). Returns the number of
+   bindings put back. */
 static inline unsigned int pad_map_relink(unsigned char *map, unsigned int joy)
 {
     unsigned int i, relinked = 0;

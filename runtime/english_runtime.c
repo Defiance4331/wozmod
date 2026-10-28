@@ -25,6 +25,7 @@
 #include "se_cutoff.h"
 #include "pad_buttons.h"
 #include "pad_map.h"
+#include "pad_owner.h"
 #include "prompt_hires.h"
 #include "device_hooks.h"
 #include "crash_log.h"
@@ -2404,6 +2405,10 @@ static void distance_input(u32 repeat)
 
 /* Bit per player map the input map load (hook 70) has read and the camera check below has not seen. */
 static u32 maps_loaded;
+/* Per player, the actions a pad's removal took off it and the pad they were on (pad_owner.h). Hook 121 forgets them
+ * when the map is rebuilt. Hooks 122 and 123 keep them out of the saved file. */
+static struct pad_park pads_parked[2];
+static struct pad_undo pads_undo;
 
 /* Before wozmod, the Xbox defaults left Camera Up/Down/Left/Right unbound, and saved Key Configs kept that. A saved
  * pad map that is exactly those defaults gets today's from the game's own auto-setting; any other map is the
@@ -3389,9 +3394,48 @@ static void buttons_sync(const u8 *pad)
 /* Hook 47 for an Xbox or PlayStation pad, after its state read: the D-pad (a POV hat the stock poll never reads)
  * becomes the left stick, an Xbox pad's right stick X (lRx) goes to the lRz slot the stock poll reads for 5 axes,
  * and the first input since the keyboard's shows that pad family's prompts. */
+/* The pad this poll read is the one a player with no live pad takes, unless it is the other player's. The actions a
+ * removal parked go onto it. A player with nothing parked and nothing on it gets the game's defaults (a map the game
+ * built itself, or one the player cleared), then those bindings are moved onto this pad when the defaults landed on
+ * another one.
+ * Both identities of a dongle that re-enumerates are the same family, so the button numbers the defaults wrote are
+ * the ones this pad reads. A swap between an Xbox pad and a PlayStation pad would keep the family's numbers the
+ * defaults picked. */
+static void pad_adopt(u32 player, u32 acting, int active)
+{
+    u32 joy;
+    u8 *map;
+    struct pad_claim c;
+    if (!active)
+        return;
+    map = PLAYER_MAP(player);
+    if (!map)
+        return;
+    joy = PLAYER_JOY[player];
+    c = pad_claim(map, joy, PLAYER_JOY[player ^ 1], acting, joy < 8 && pad_present(joy), &pads_parked[player]);
+    if (c.defaults) {
+        if (!PAD_AUTO(player))
+            return;
+        if (PLAYER_JOY[player] != acting && PLAYER_JOY[player] < 8)
+            pad_bindings_move(map, PLAYER_JOY[player], acting);
+        PLAYER_JOY[player] = acting;
+        note("pad: player auto-set", player + 1);
+        return;
+    }
+    if (c.joy == joy)
+        return;
+    PLAYER_JOY[player] = c.joy;
+    if (c.restored)
+        note("pad: saved bindings put back on the pad for player", player + 1);
+    else if (c.moved)
+        note("pad: bindings moved for player", player + 1);
+    else
+        note("pad: player bound", player + 1);
+}
+
 static void pad_read(const u8 *pad)
 {
-    static int bound, was_active;
+    static int was_active;
     /* JOY_STATE ints that are sticks (and the Xbox's trigger axis, which rests at 0): a PlayStation pad's triggers,
      * lRx and lRy, rest at -255 */
     static const u8 sticks[2][5] = {{0, 1, 2, 3, 4}, {0, 1, 2, 5, 5}};
@@ -3406,17 +3450,9 @@ static void pad_read(const u8 *pad)
         return;
     if (family == PAD_XBOX)
         xbox_named((u8 *)pad);  /* a pad plugged in after the start */
-    if (!bound) {
-        bound = 1;
-        if (PLAYER_JOY[0] == 10)
-            note(PAD_AUTO(0) ? "pad: player 1 auto-set" : "pad: player 1 auto-set failed", 0);
-    }
     for (i = 0; i < 2; i++)
-        if ((maps_loaded >> i & 1) && PLAYER_JOY[i] < 8) {
-            if (pad_map_relink(PLAYER_MAP(i), PLAYER_JOY[i]))
-                note("pad: saved bindings put back on the pad for player", i + 1);
+        if ((maps_loaded >> i & 1) && PLAYER_JOY[i] < 8 && PLAYER_MAP(i))
             camera_default(i);
-        }
     maps_loaded = 0;
     if (family == PAD_XBOX)
         s[5] = s[3];
@@ -3431,6 +3467,8 @@ static void pad_read(const u8 *pad)
     if (active && !was_active)
         pad_last = 1, pad_last_family = family;
     was_active = active;
+    pad_adopt(0, index, active);
+    pad_adopt(1, index, active);
 }
 
 /* Hook 113, the pad auto-setting's (0x5E2D30) success exit, map object in esi and pad index in ebx: a PlayStation pad
@@ -3490,23 +3528,95 @@ struct pad_scan {
     u32 count, guid[8][4];
 };
 
-static BOOL __stdcall pad_found(const u8 *instance, void *ref)
+static int guid_listed(const struct pad_scan *scan, const u32 *guid)
 {
-    struct pad_scan *scan = ref;
-    const u32 *guid = (const u32 *)(instance + 4);
     u32 i;
     for (i = 0; i < scan->count; i++)
         if (scan->guid[i][0] == guid[0] && scan->guid[i][1] == guid[1] && scan->guid[i][2] == guid[2]
             && scan->guid[i][3] == guid[3])
             return 1;
+    return 0;
+}
+
+static BOOL __stdcall pad_record(const u8 *instance, void *ref)
+{
+    struct pad_scan *scan = ref;
+    const u32 *guid = (const u32 *)(instance + 4);
+    if (scan->count < 8 && !guid_listed(scan, guid))
+        CopyMemory(scan->guid[scan->count], guid, 16), scan->count++;
+    return 1;
+}
+
+static BOOL __stdcall pad_found(const u8 *instance, void *ref)
+{
+    struct pad_scan *scan = ref;
+    if (guid_listed(scan, (const u32 *)(instance + 4)))
+        return 1;
     return PAD_ADD(instance, 0);
+}
+
+/* 0x5E5740 treats every in-range slot as a live pad, and the poll (0x5E4C90) calls Poll and GetDeviceState on the
+ * device pointer with no null check. A hole, or a slot whose device was released, is still read. Take the slot out
+ * of the vector. Release drops the DirectInput device. Bindings that named this index are parked at device 10, with
+ * the button, axis and direction kept (and the parked actions recorded), and a later index moves down so a player
+ * who is still connected follows their pad. That shift is not how a disconnected player finds a new pad: their joy
+ * becomes 10, and the next pad they use is chosen in pad_adopt.
+ *
+ * The 0x1B8 wrapper, and the arrays PAD_INIT (0x5E7940) allocates for it, are not freed, on purpose. A free exists:
+ * 0x69D130 is operator new over _malloc, and its pair is 0x69D112, the _free that 0x5E4300 calls on the old map
+ * array (at 0x5E432C). But the Key Config capture in 0x570940 holds the wrapper across the message pump, where this
+ * rescan runs: 0x571745 calls 0x5E5740 and keeps the result in [esp+0x30], then for each button calls 0x5E7D80
+ * (reads wrapper+0x14C) and 0x5707E0, which can show a message through 0x56F4C0 and 0x56F170, down to the pump
+ * 0x5C9FD0; the loop then reads [esp+0x30] again at 0x571766. A freed wrapper there is a use after free. No other
+ * reader of the vector (0x140D440) holds a pad across a call that reaches the pump. The cost of keeping it is one
+ * wrapper and its arrays (a few KB) per unplug. */
+static void pad_drop(u32 index)
+{
+    void **begin = PADS[0];
+    u32 count = (u32)(PADS[1] - begin) / 2;
+    void *device = begin[2 * index];
+    u32 i, p;
+    if (device) {
+        COM(device, 0x20, 1)(device);  /* Unacquire */
+        COM(device, 8, 1)(device);     /* Release */
+    }
+    for (p = 0; p < 2; p++) {
+        u32 joy = PLAYER_JOY[p];
+        u8 *map = PLAYER_MAP(p);
+        if (map)
+            pad_index_removed(map, &joy, index, &pads_parked[p]);
+        else if (joy == index)
+            joy = 10;
+        else if (joy > index && joy < 8)
+            joy--;
+        if (joy != PLAYER_JOY[p])
+            note(joy == 10 ? "pad: player unbound" : "pad: player index moved", (p + 1) << 16 | joy);
+        PLAYER_JOY[p] = joy;
+    }
+    for (i = index; i + 1 < count; i++) {
+        begin[2 * i] = begin[2 * i + 2];
+        begin[2 * i + 1] = begin[2 * i + 3];
+        if (i < 7) {
+            pad_family[i] = pad_family[i + 1];
+            pad_dualsense[i] = pad_dualsense[i + 1];
+        }
+    }
+    if (count - 1 < 8)
+        pad_family[count - 1] = 0, pad_dualsense[count - 1] = 0;
+    /* PADS is the vector's begin and end (the object is at 0x140D43C). The begin pointer is const through that
+       view; the end, one dword later, is what a removal shortens. */
+    *(void **volatile *)0x140D444 = begin + 2 * (count - 1);
+    for (i = index; i + 1 < count && i < 7; i++)
+        if (begin[2 * i + 1])
+            PAD_NUMBER(begin[2 * i + 1], i);
+    note("pad: removed device", index);
 }
 
 static void pads_rescan(void)
 {
     static HANDLE watcher;
     static u32 seen;
-    struct pad_scan scan = {0};
+    struct pad_scan live = {0}, known = {0};
     u32 info[0x244 / 4], caps[0x2C / 4], buffer[5] = {0x14, 0x10, 0, 0, 10};
     u32 i, j, count;
     void *device, *pad;
@@ -3517,17 +3627,27 @@ static void pads_rescan(void)
     if (attached == seen)
         return;
     seen = attached;
+    COM(DINPUT, 0x10, 5)(DINPUT, 4, (u32)pad_record, (u32)&live, 1);
+    count = PADS[0] ? (u32)(PADS[1] - PADS[0]) / 2 : 0;
+    for (i = count; i-- > 0;) {
+        device = PADS[0][2 * i];
+        info[0] = sizeof info;
+        if (!device || COM(device, 0x3C, 2)(device, (u32)info) < 0 || !guid_listed(&live, info + 1))
+            pad_drop(i);
+    }
     count = PADS[0] ? (u32)(PADS[1] - PADS[0]) / 2 : 0;
     if (count >= 8)
         return;
-    for (i = 0; i < count; i++) {
+    for (i = 0; i < count && known.count < 8; i++) {
         device = PADS[0][2 * i];
         info[0] = sizeof info;
-        if (COM(device, 0x3C, 2)(device, (u32)info) >= 0)
-            for (j = 0, scan.count++; j < 4; j++)
-                scan.guid[scan.count - 1][j] = info[1 + j];
+        if (device && COM(device, 0x3C, 2)(device, (u32)info) >= 0) {
+            for (j = 0; j < 4; j++)
+                known.guid[known.count][j] = info[1 + j];
+            known.count++;
+        }
     }
-    COM(DINPUT, 0x10, 5)(DINPUT, 4, (u32)pad_found, (u32)&scan, 1);
+    COM(DINPUT, 0x10, 5)(DINPUT, 4, (u32)pad_found, (u32)&known, 1);
     for (i = count; PADS[0] && i < (u32)(PADS[1] - PADS[0]) / 2; i++) {
         device = PADS[0][2 * i], pad = PADS[0][2 * i + 1];
         COM(device, 0x2C, 2)(device, 0x75C12C);
@@ -4890,6 +5010,42 @@ static int always(u32 id, struct frame *f, u32 *replace)
         pads_named();
         maps_loaded |= 1u << f->arg[0];
         return 1;
+    case 121: {  /* a player's map array is built again (the load, a default map, the Controller page's defaults): the
+                    actions a removal parked belonged to the array it replaces. ecx is the map object. */
+        u32 player = f->ecx - 0x140C48C;
+        if (player <= 16 && !(player & 15))
+            pads_parked[player >> 4].mask = 0, pads_parked[player >> 4].pad = 0;
+        return 1;
+    }
+    case 122:  /* the input map writer (0x5E2290), first call of the save job (player 0): the file gets the parked
+                  players on the pad they had, not device 10 and joy 10. The player is the cdecl argument. */
+        if (f->arg[0] == 0) {
+            u8 *maps[2] = {PLAYER_MAP(0), PLAYER_MAP(1)};
+            u32 joy[2] = {PLAYER_JOY[0], PLAYER_JOY[1]};
+            pad_file_begin(maps, joy, pads_parked, &pads_undo);
+            PLAYER_JOY[0] = joy[0], PLAYER_JOY[1] = joy[1];
+        }
+        return 1;
+    case 123: {  /* after the save job's two writer calls (0x5AC845): the park goes back in memory */
+        u8 *maps[2] = {PLAYER_MAP(0), PLAYER_MAP(1)};
+        u32 joy[2] = {PLAYER_JOY[0], PLAYER_JOY[1]};
+        pad_file_end(maps, joy, &pads_undo);
+        PLAYER_JOY[0] = joy[0], PLAYER_JOY[1] = joy[1];
+        return 1;
+    }
+    case 120: {  /* the load's epilogue, after fclose: joy is still the file's, so a cleared map is put back before
+                    the Controller page (0x570A34) can see no binding on it and store 10. The bytes are a stack read,
+                    not the call: a call in a hook's prologue is not relocated. */
+        u32 player = f->ebx - 0x140C48C;
+        u8 *map;
+        if (player > 16 || player & 15)
+            return 1;
+        player >>= 4;
+        map = PLAYER_MAP(player);
+        if (map && PLAYER_JOY[player] < 8 && pad_map_relink(map, PLAYER_JOY[player]))
+            note("pad: saved bindings put back on the pad for player", player + 1);
+        return 1;
+    }
     case 107: {  /* the window procedure: every close request and the window's end, so a quit names its source (a close
                     quits at once since the edit at 0x5CBE88). Flags: 1 Alt down, 2 F4 down, 4 foreground, 8 minimized. */
         u32 message = f->arg[1];

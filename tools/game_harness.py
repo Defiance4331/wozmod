@@ -70,6 +70,7 @@ PAD_BUTTONS = {"A": 0x130, "B": 0x131, "X": 0x133, "Y": 0x134, "LB": 0x136, "RB"
                "BACK": 0x13A, "START": 0x13B, "GUIDE": 0x13C, "LS": 0x13D, "RS": 0x13E}
 STICK = 32767
 PAD_HIDDEN = "/dev/harness-pad"  # the pad node while unplugged: no input scan looks here
+PAD_HIDDEN_SLOTS = ("/dev/harness-pad-a", "/dev/harness-pad-b")  # two identities, one of them linked at a time
 PAD_PRESSES = {"LT": (2, 255), "RT": (5, 255), "UP": (0x11, -1), "DOWN": (0x11, 1), "LEFT": (0x10, -1),
                "RIGHT": (0x10, 1), "L-UP": (1, -STICK), "L-DOWN": (1, STICK), "L-LEFT": (0, -STICK),
                "L-RIGHT": (0, STICK), "R-UP": (4, -STICK), "R-DOWN": (4, STICK), "R-LEFT": (3, -STICK),
@@ -81,6 +82,7 @@ PAD_AXES = {0: (-32768, STICK), 1: (-32768, STICK), 3: (-32768, STICK), 4: (-327
 XINPUT_PADS = {"x360": (0x045E, 0x028E, b"Microsoft X-Box 360 pad"),
                "xone": (0x045E, 0x02EA, b"Microsoft X-Box One S pad"),
                "8bitdo": (0x2DC8, 0x3106, b"8BitDo Ultimate Wireless / Pro 2 Wired Controller"),
+               "switch": (0x057E, 0x2009, b"Nintendo Switch Pro Controller"),
                "steam": (0x28DE, 0x11FF, b"Microsoft X-Box 360 pad 0")}
 # PlayStation pads on USB, made through uhid so the kernel's hid-playstation binds them and makes the hidraw node
 # Proton reads, which gives the game the pad's own HID shape as Windows does: (vendor, product, name, report
@@ -853,6 +855,58 @@ def capture_png(root: Path, name: object) -> Path:
     return destination
 
 
+def pad_plan(args: argparse.Namespace) -> list[str]:
+    """The XInput or PlayStation model on --pad, and with --spare a second XInput identity bound but not linked."""
+    spare = getattr(args, "spare", None)
+    if spare and not getattr(args, "pad", None):
+        raise ValueError("--spare needs --pad")
+    if spare and (args.pad in HID_PADS or spare in HID_PADS):
+        raise ValueError("--spare swaps two XInput identities; a PlayStation pad stays on --pad")
+    models = [args.pad] if getattr(args, "pad", None) else []
+    if spare:
+        models.append(spare)
+    return models
+
+
+def plug_pad(root: Path, on: bool) -> dict:
+    """Link or unlink the active pad's event node. The node is the host path; it points at the hidden bind."""
+    session = json.loads((root / "evidence/session.json").read_text())
+    node = session.get("pad")
+    if not node:
+        raise ValueError("this run has no pad; start it with run --pad")
+    if on:
+        Path(node).symlink_to(session.get("pad_hidden") or PAD_HIDDEN)
+    else:
+        Path(node).unlink()
+    return {"plugged": on}
+
+
+def reenumerate_pad(root: Path) -> dict:
+    """Unlink the identity that is in and link the other one. From the game that is a disconnect and a new device,
+    with a different vendor and product, which is what a dongle does when its first identity gives way to the second."""
+    path = root / "evidence/session.json"
+    session = json.loads(path.read_text())
+    pads = session.get("pads") or []
+    if len(pads) < 2:
+        raise ValueError("this run has no second pad; start it with run --spare")
+    active = session.get("pad_active", 0)
+    current = Path(pads[active]["node"])
+    if current.is_symlink():
+        current.unlink()
+    active = (active + 1) % len(pads)
+    nxt = pads[active]
+    link = Path(nxt["node"])
+    if link.is_symlink():
+        link.unlink()
+    link.symlink_to(nxt["hidden"])
+    session["pad_active"] = active
+    session["pad"] = nxt["node"]
+    session["pad_hidden"] = nxt["hidden"]
+    write_json(path, session)
+    write_json(root / "control/pad-active.json", {"index": active})
+    return {"pad": nxt["model"], "index": active}
+
+
 def perform(root: Path, request: dict) -> dict:
     action = request["action"]
     if action == "scripts":
@@ -946,14 +1000,9 @@ def perform(root: Path, request: dict) -> dict:
         # before is journaled in actions.jsonl: poke it back to undo
         return {"address": f"{address:#x}", "before": before.hex(), "after": data.hex()}
     if action == "plug":  # inside the sandbox: the pad's event node appears or goes, as a real hotplug
-        node = json.loads((root / "evidence/session.json").read_text())["pad"]
-        if not node:
-            raise ValueError("this run has no pad; start it with run --pad")
-        if request["on"]:
-            Path(node).symlink_to(PAD_HIDDEN)
-        else:
-            Path(node).unlink()
-        return {"plugged": request["on"]}
+        return plug_pad(root, bool(request["on"]))
+    if action == "reenumerate":  # unlink the identity that is in, and link the other one that was bound at launch
+        return reenumerate_pad(root)
     if action == "find":
         return {"addresses": [f"{a:#x}" for a in find_bytes(game_pid(), hex_bytes(request["hex"], MAX_PATTERN))]}
     if action == "click":
@@ -1299,11 +1348,25 @@ def launch_in_slot(root: Path, args: argparse.Namespace, game: Path, launcher: P
                 "timeout_seconds": args.timeout, "render_size": render_size,
                 "output_size": output_size, "fsr": fsr, "target_fps": target_fps(game),
                 "idle_seconds": getattr(args, "idle", None)}
-    pad = (HidPad if args.pad in HID_PADS else VirtualPad)(args.pad) if args.pad else None
-    identity["pad"] = pad.node if pad else None
-    identity["route_input"] = getattr(args, "route_input", "keys")
-    if identity["route_input"] == "pad" and not pad:
+    models = pad_plan(args)
+    if getattr(args, "route_input", "keys") == "pad" and not models:
         raise ValueError("--route-input pad needs --pad")
+    hidden = [PAD_HIDDEN] if len(models) == 1 else list(PAD_HIDDEN_SLOTS[:len(models)])
+    pads: list = []
+    try:
+        for model in models:
+            pads.append((HidPad if model in HID_PADS else VirtualPad)(model))
+    except BaseException:
+        for made in pads:
+            made.close()
+        raise
+    described = [{"model": model, "node": device.node, "hidden": hide}
+                 for model, device, hide in zip(models, pads, hidden, strict=True)]
+    identity["pad"] = described[0]["node"] if described else None
+    identity["pad_hidden"] = described[0]["hidden"] if described else None
+    identity["pad_active"] = 0
+    identity["pads"] = described
+    identity["route_input"] = getattr(args, "route_input", "keys")
     write_json(root / "evidence/session.json", identity)
     runtime = f"/run/user/{os.getuid()}"
     command = [
@@ -1327,10 +1390,12 @@ def launch_in_slot(root: Path, args: argparse.Namespace, game: Path, launcher: P
     ):
         if Path(device).exists():
             command += ["--dev-bind", device, device]
-    if pad:  # only the virtual pad: host input devices stay outside; plug links or unlinks its node
-        command += ["--dev-bind", pad.node, PAD_HIDDEN, "--dir", "/dev/input"]
+    if pads:  # only these virtual pads: host input devices stay outside; plug links or unlinks the active node
+        command += ["--dir", "/dev/input"]
+        for device, hide in zip(pads, hidden, strict=True):
+            command += ["--dev-bind", device.node, hide]
         if not args.unplugged:
-            command += ["--symlink", PAD_HIDDEN, pad.node]
+            command += ["--symlink", hidden[0], pads[0].node]
     for variable in (
         "DISPLAY", "WAYLAND_DISPLAY", "GAMESCOPE_WAYLAND_DISPLAY", "XAUTHORITY",
         "DBUS_SESSION_BUS_ADDRESS", "PULSE_SERVER", "PIPEWIRE_REMOTE",
@@ -1377,14 +1442,24 @@ def launch_in_slot(root: Path, args: argparse.Namespace, game: Path, launcher: P
                 preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_CORE, (0, 0)),
             )
             try:
+                active = 0
                 while process.poll() is None and not served.exists():
+                    which = root / "control/pad-active.json"
+                    if which.is_file():
+                        try:
+                            chosen = int(json.loads(which.read_text())["index"])
+                            if 0 <= chosen < len(pads):
+                                active = chosen
+                        except (OSError, ValueError, KeyError, TypeError):
+                            pass
+                        which.unlink(missing_ok=True)
                     request = root / "control/pad.json"
-                    if pad and request.exists():
+                    if pads and request.exists():
                         taken = json.loads(request.read_text())
                         done = {"id": taken.get("id")}
                         try:
-                            pad.tap(pad_names(taken["names"]), float(taken["hold"]), float(taken["gap"]),
-                                    float(taken.get("stir", 0)))
+                            pads[active].tap(pad_names(taken["names"]), float(taken["hold"]), float(taken["gap"]),
+                                             float(taken.get("stir", 0)))
                         except (OSError, ValueError, KeyError) as exc:
                             done["error"] = str(exc)
                         write_json(root / "control/pad-done.json", done)
@@ -1409,8 +1484,8 @@ def launch_in_slot(root: Path, args: argparse.Namespace, game: Path, launcher: P
     finally:
         signal.signal(signal.SIGTERM, previous_handler)
         (root / "control/ready.json").unlink(missing_ok=True)
-        if pad:
-            pad.close()
+        for device in pads:
+            device.close()
 
 
 class NotReady(ValueError):
@@ -2664,7 +2739,7 @@ def tour_diff(one: Path, two: Path) -> list[dict]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="action", required=True)
-    for action in ("run", "status", "key", "click", "pad", "plug", "capture", "record", "video", "peek", "poke",
+    for action in ("run", "status", "key", "click", "pad", "plug", "reenumerate", "capture", "record", "video", "peek", "poke",
                    "find", "screen", "wait", "say", "notice", "win", "lose", "scripts", "script", "scene", "spawn", "mount", "switch",
                    "teleport", "keep", "unlock",
                    "reload", "review", "tour", "route", "check", "stop", "_audio", "_serve"):
@@ -2680,6 +2755,8 @@ def main(argv: list[str] | None = None) -> int:
                                  help="give the game a virtual pad (default x360): an XInput pad, Steam Input's virtual pad (steam), "
                                       "or a PlayStation pad on USB (ds4, dualsense); driven by the pad command")
             command.add_argument("--unplugged", action="store_true", help="the pad starts unplugged; see plug")
+            command.add_argument("--spare", choices=[model for model in PAD_MODELS if model in XINPUT_PADS],
+                                 help="a second XInput pad, bound but not linked; reenumerate unlinks the first and links this one")
             command.add_argument("--video", action="store_true",
                                  help="output 1080p without FSR, so the video command keeps the game at full speed")
             command.add_argument("--size", type=render_size_arg, metavar="WxH",
