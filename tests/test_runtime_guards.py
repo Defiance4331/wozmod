@@ -31,10 +31,12 @@ UNGUARDED = {
     0x520000: RANGE,  # menu_word: a caller in the menus' code, 0x520000 to 0x5B0000
     layout.DEFINES["NARRATION_CODE"]: RANGE, layout.DEFINES["NARRATION_CODE_END"]: RANGE,  # a glyph count's caller
     layout.DEFINES["STILL_CODE"]: RANGE, layout.DEFINES["STILL_CODE_END"]: RANGE,
+    0x6A46B6: "the C runtime's failed buffer check, which the crash test op calls to end the run (test build)",
 }
-FORWARDED = "a window import slot: the DLL keeps what it held and calls through it, so another mod's hook there works"
+FORWARDED = "an import slot: the DLL keeps what it held and calls through it, so another mod's hook there works"
 # Stock bytes the runtime rewrites that no guard covers, each with its reason.
-UNGUARDED_WRITES = {0x6CC248: FORWARDED, 0x6CC25C: FORWARDED, 0x6CC278: FORWARDED, 0x6CC28C: FORWARDED}
+UNGUARDED_WRITES = {0x6CC1B8: FORWARDED, 0x6CC248: FORWARDED, 0x6CC25C: FORWARDED, 0x6CC278: FORWARDED,
+                    0x6CC28C: FORWARDED}
 
 
 def _spans() -> list[tuple[str, int, int]]:

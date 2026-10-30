@@ -666,6 +666,10 @@ def mount(memory: int, block: int, slot: int) -> dict:
     return {"mounted": slot, "horse": hex(horse)}
 
 
+# How test op 14 ends the run, for the crash log's check (runtime/crash_log.h).
+CRASHES = {"fault": 1, "cxx": 2, "gs": 3}
+
+
 def test_command(memory: int, block: int, op: int, arg: int = 0, data: bytes = b"", busy: float = 0) -> None:
     """Run one mailbox op on the game thread, at the game's next frame, retrying result 4 for busy seconds."""
     if len(data) >= TEST_INPUT:
@@ -913,7 +917,7 @@ def perform(root: Path, request: dict) -> dict:
         with open(f"/proc/{game_pid()}/mem", "rb", buffering=0) as memory:
             return stage_scripts(memory.fileno())
     if action in ("screen", "wait", "say", "notice", "win", "lose", "script", "scene", "unlock", "review", "spawn",
-                  "mount", "switch", "teleport", "keep"):
+                  "mount", "switch", "teleport", "keep", "crash"):
         with open(f"/proc/{game_pid()}/mem", "r+b", buffering=0) as memory:
             block = test_block(memory.fileno())
             if action == "screen":
@@ -940,6 +944,12 @@ def perform(root: Path, request: dict) -> dict:
                                 request.get("relative", False))
             if action == "keep":
                 return keep(memory.fileno(), block, request["keep"])
+            if action == "crash":
+                # test op 14, sent without waiting: the game ends instead of answering
+                command = struct.unpack("<I", os.pread(memory.fileno(), 4, block + 28))[0]
+                os.pwrite(memory.fileno(), struct.pack("<3I", 14, CRASHES[request["how"]], 0), block + 36)
+                os.pwrite(memory.fileno(), struct.pack("<I", (command + 1) & 0xFFFFFFFF), block + 28)
+                return {"crash": request["how"]}
             if action == "unlock":
                 test_command(memory.fileno(), block, 5)
                 return {"officers": "level 99, four weapons each"}
@@ -2766,7 +2776,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="action", required=True)
     for action in ("run", "status", "key", "click", "pad", "plug", "reenumerate", "capture", "record", "video", "peek", "poke",
                    "find", "screen", "wait", "say", "notice", "win", "lose", "scripts", "script", "scene", "spawn", "mount", "switch",
-                   "teleport", "keep", "unlock",
+                   "teleport", "keep", "unlock", "crash",
                    "reload", "review", "tour", "route", "check", "stop", "_audio", "_serve"):
         command = commands.add_parser(action)
         command.add_argument("--root", required=True, type=Path,
@@ -2846,6 +2856,10 @@ def main(argv: list[str] | None = None) -> int:
         if action == "keep":
             command.add_argument("keep", nargs="*", choices=list(KEEPS), metavar="WHAT",
                                  help=f"any of {', '.join(KEEPS)}, held until the battle ends; none stops keeping")
+        if action == "crash":
+            command.add_argument("how", choices=list(CRASHES),
+                                 help="fault: a read through NULL in the game's code; cxx: an uncaught C++ exception; "
+                                      "gs: the C runtime's failed buffer check")
         if action == "mount":
             command.add_argument("--slot", type=int, choices=[0, 1], default=0, help="the player (0, or 1 in 2P)")
         if action == "spawn":
@@ -2957,6 +2971,8 @@ def main(argv: list[str] | None = None) -> int:
             request.update(count=args.count, inner=args.inner)
         if args.action == "mount":
             request["slot"] = args.slot
+        if args.action == "crash":
+            request["how"] = args.how
         if args.action == "switch":
             request["member"] = args.member
             timeout += SWITCH_SECONDS

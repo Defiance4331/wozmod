@@ -825,6 +825,20 @@ static void test_frame(void)
         test_clock = CLOCK;
         b->result = 0;
         break;
+    case 14:
+        /* End the run as a crash would (the crash log's in-game check): 1 a read through NULL in the game's own code
+           (its heap allocator with no heap, at 0x5D351A), 2 a C++ exception nothing catches (as an uncaught bad_alloc:
+           the C runtime's filter calls terminate, then abort), 3 the C runtime's failed buffer check. No result. */
+        if (b->arg == 1)
+            ((u8 *(__attribute__((thiscall)) *)(u32, u32, u32))0x5D3500)(0, 16, 16);  /* HEAP_ALLOC: 0 bytes returns early */
+        if (b->arg == 2) {
+            ULONG_PTR cxx[3] = {0x19930520, 0, 0};
+            RaiseException(0xE06D7363, EXCEPTION_NONCONTINUABLE, 3, cxx);
+        }
+        if (b->arg == 3)
+            ((void (*)(void))0x6A46B6)();
+        b->result = 5;
+        break;
     default:
         b->result = 2;
     }
@@ -5956,6 +5970,14 @@ static int patch(void)
         count++;
     }
     display_install(hook_stubs + 48 * HOOK_COUNT);
+    /* The game's SetUnhandledExceptionFilter import slot (crash_set_filter): the DLL keeps what it held and calls through
+       it. Its NULL callers return to 0x69CC1F (invalid parameter), 0x6A478A (failed buffer check) and 0x6A6989 (abort). */
+    crash_set_real = *(LPTOP_LEVEL_EXCEPTION_FILTER (WINAPI **)(LPTOP_LEVEL_EXCEPTION_FILTER))0x6CC1B8;
+    {
+        u32 filter = (u32)crash_set_filter;
+        if (!write_at(0x6CC1B8, (const u8 *)&filter, 4))
+            return note("failed: could not write", 0x6CC1B8), 0;
+    }
     if (english && !write_at(WIDTH_POINTER, (const u8 *)&widths, 4))
         return note("failed: could not write", WIDTH_POINTER), 0;
     FlushInstructionCache(GetCurrentProcess(), 0, 0);
@@ -5977,6 +5999,7 @@ static void install(HINSTANCE self)
     lstrcpyW(root + n, L"wozmod\\");
     keep_crash_log(path(name, L"runtime.log"), path(crash, L"runtime.crash.log"));
     runtime_log = CreateFileW(name, GENERIC_WRITE, FILE_SHARE_READ, 0, CREATE_ALWAYS, 0, 0);
+    crash_watch(note, name, crash);
     GetSystemTime(&now);  /* UTC: one clock for every player's log */
     wsprintfA(started, "started %04u-%02u-%02u %02u:%02u:%02u UTC", now.wYear, now.wMonth, now.wDay, now.wHour,
               now.wMinute, now.wSecond);
