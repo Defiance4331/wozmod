@@ -135,6 +135,7 @@ FEATURES = (
                    0x5DD620)),  # the render-state call the 0x582F24 detour moves into its cave
     Feature("rings", "ground rings", shown="battle ground drawing",
             hooks=tuple(range(53, 65))),  # ring_upload.h: the six ring Locks, then the six Unlocks
+    Feature("batches", "effect batches", shown="effect drawing", hooks=(23,)),  # their Lock discards (0x6392A0)
     # Builds with a define only; keep them last, so the features above keep their numbers in every build.
     Feature("distance", "render distance", spans=((layout.DEFINES["VIEW_GETTER"], 37),  # the two getters it rewrites
                                                   (layout.DEFINES["CROWD_GETTER"], 31)),

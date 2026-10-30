@@ -147,6 +147,9 @@ ALWAYS_HOOKS = [
     (0x5B77E5, "50 ffd2 8b461c", 62, None),
     (0x5B7831, "50 ffd2 8b461c", 63, None),
     (0x5B787D, "50 ffd2 8b461c", 64, None),
+    # An effect batch's Lock (0x6392A0) keeps the buffer's old contents (flags 0), so it waits for the GPU's last draw
+    # from it; the batch rewrites the buffer from 0 and draws only what it wrote, so the hook makes it DISCARD.
+    (0x63963F, "8b422c ffd0", 23, None),        # effect batch Lock, its flags pushed (mid-function)
 ]
 # ENRT_MOVING_FIX builds only: out of release 1, kept for later.
 MOVING_FIX_HOOKS = [

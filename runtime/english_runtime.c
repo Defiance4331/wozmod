@@ -4152,13 +4152,15 @@ static void hook_slot(void *object, u32 slot, void *fn)
 #endif
 
 #ifdef ENRT_TEST
-/* work/rebar/rings.py: off 1 gives the rings their own Lock again (the stock path), to time both in one battle. A
-   pass is the time from its first ring Lock to its last Unlock's return; frames are Present to Present. */
+/* work/rebar/rings.py: off bit 1 gives the rings their own Lock again (the stock path), and bit 2 the effect batches
+   their own flags (0), to time both sides in one battle. A pass is the time from its first ring Lock to its last
+   Unlock's return; frames are Present to Present, and frame_max the longest (the host zeroes it). */
 static struct {
     char magic[16];
     volatile u32 off, passes, frames, full;
     long long freq, pass_ticks, frame_ticks, opened_at, presented_at;
     u32 open;
+    volatile u32 frame_max;
 } ring_stats = {"ENRT-RING-STATS"};
 
 static long long ring_now(void)
@@ -4174,8 +4176,11 @@ static void ring_stat_present(void)
     LARGE_INTEGER hz;
     if (!ring_stats.freq)
         QueryPerformanceFrequency(&hz), ring_stats.freq = hz.QuadPart;
-    if (ring_stats.presented_at)
+    if (ring_stats.presented_at) {
         ring_stats.frame_ticks += now - ring_stats.presented_at, ring_stats.frames++;
+        if ((u32)(now - ring_stats.presented_at) > ring_stats.frame_max)
+            ring_stats.frame_max = (u32)(now - ring_stats.presented_at);
+    }
     ring_stats.presented_at = now;
 }
 #endif
@@ -5046,7 +5051,7 @@ static int always(u32 id, struct frame *f, u32 *replace)
 #ifdef ENRT_TEST
         if (!ring_stats.open++)
             ring_stats.opened_at = ring_now();
-        if (ring_stats.off)
+        if (ring_stats.off & 1)
             return 1;
 #endif
         f->edx = (u32)ring_lock;
@@ -5058,6 +5063,13 @@ static int always(u32 id, struct frame *f, u32 *replace)
     case 63:
     case 64:  /* its Unlock, the same */
         f->edx = (u32)ring_unlock;
+        return 1;
+    case 23:  /* an effect batch's Lock (0x6392A0), its arguments pushed: buffer, offset, size, out, flags */
+#ifdef ENRT_TEST
+        if (ring_stats.off & 2)
+            return 1;
+#endif
+        f->arg[3] = RU_DISCARD;  /* each batch writes its buffer from 0 and draws only what it wrote */
         return 1;
     case 27:
         if (display_mode != MODE_FROM_SAVE)  /* settings.ini's display mode over the save's */
