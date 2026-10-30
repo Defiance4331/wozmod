@@ -1211,8 +1211,11 @@ DRAW_STATE = 0x58E370
 V101_FIXES = [
     *detour(0x536868, bytes.fromhex("0fb65630 8b442428"), CAVE + 0xAA0, 0x536870,
             assembled(CAVE + 0xAA0, bytes.fromhex("6a00"), DRAW_STATE, bytes.fromhex("83c404 0fb65630 8b442428"))),
-    *detour(0x582F2D, bytes.fromhex("83c43c 8b442410"), CAVE + 0xAC0, 0x582F34,
-            assembled(CAVE + 0xAC0, bytes.fromhex("83c43c 6a00"), DRAW_STATE, bytes.fromhex("83c404 8b442410"))),
+    # In 0x582E10, after the officer-0x5B overlay's last state call, as 1.01 places it: three of the loop's branches
+    # land on 0x582F30 just after, so the jump must end before it (an officer joining after a battle crashed there).
+    *detour(0x582F24, bytes.fromhex("6a00 6a02 e8f3a60500 83c43c"), CAVE + 0xAC0, 0x582F30,
+            assembled(CAVE + 0xAC0, bytes.fromhex("6a00 6a02"), 0x5DD620, bytes.fromhex("83c43c 6a00"), DRAW_STATE,
+                      bytes.fromhex("83c404"))),
     imm8(0x5278ED, "8d6f", 0x2E, 0x34),
     immediate(0x5278F8, "bf", 0xAB, 0xAD),
     imm8(0x527AF8, "83c3", 5, 7),

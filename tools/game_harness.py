@@ -1823,6 +1823,9 @@ ROUTE_SCREENS = {
     "story-stage-talk": {"caller": "0x59a785"},
     "story-victory-talk": {"any": [{"caller": "0x59c7bd"}, {"caller": "0x59a785"}]},
     "ability-acquisition": {"texture": "4080.28"},  # the officer's next ability and its conditions
+    # NEW CHARACTER, the first page after a chapter's camp talk when an officer joins: the pages after it draw 4074.0
+    # too, the results with its 4079.52 and "a new scenario" with the scenario plates 4079.151
+    "story-new-character": {"texture": "4074.0", "without": "4079.151|4079.52"},
     # VS: character select (three picks a side, the player picks COM's too), its confirmation, the battle (stage 68,
     # TAG TEAM) and its menu (RETRY / CHANGE CHARACTER / MAIN MENU), which Escape opens mid-match (run vs-a)
     "vs-character-select": {"texture": "4099.1"},
@@ -1872,6 +1875,11 @@ FREE_STORIES = 10  # more than the select offers, so a full turn of Down comes b
 # On the story list the chapter cursor reads 23, inside a story 0-22 (it moves the frame Return lands; run free15):
 # the help bar is no sign (two-row stories show the Up/Down icon too), nor are army names (Story Z previews them)
 STORY_LIST_CURSOR = 23
+# The story camp's menu (FUN_00533ba0 draws its rows): its state at [0xC268D8] keeps player 1's cursor at +0x18 and the
+# item count at +0x1EB4 (a short); NEXT is the last item. A new game opens the camp on TUTORIAL, a cleared one on the top
+# item, so the step reads where the cursor is (run 2026-10-30_1220-rc-ng1: 6 of 9 on save new-game).
+CAMP_STATE, CAMP_CURSOR, CAMP_ITEMS = 0xC268D8, 0x18, 0x1EB4
+CAMP_NEXT_STEP = {"pick": "camp next"}  # filled by route: the camp cursor moves to NEXT
 
 
 # The weapon discard list (FUN_00584510, state 2 or 6 at +0x7C) opens when a battle's drop goes to an officer who holds 8
@@ -2154,7 +2162,8 @@ ROUTE_EDGES = [
     # any story chapter, picked on its chapter screen (no way back: a run plays one story chapter)
     ("story-select", "story-stage-camp", [(STORY_STEP, None), (["Return"], ROUTE_SCREENS["story-stage-camp"])]),
     # NEXT, then the chapter's strip; keys sent while the chapter screen slides in are lost (run v-s76)
-    ("story-stage-camp", "story-stage-scenario", [(["Up", "Return"], slow("story-stage-scenario", ARRIVE_GAP)),
+    ("story-stage-camp", "story-stage-scenario", [(CAMP_NEXT_STEP, None),
+                                                  (["Return"], slow("story-stage-scenario", ARRIVE_GAP)),
                                                   (CHAPTER_STEP, None)]),
     # difficulty page, EASY, then any opening movie, narration or still page until the pre-battle screen
     ("story-stage-scenario", "story-pre-battle", [(["Return"], None), (["Left", "Left", "Left", "Return"], None),
@@ -2177,6 +2186,9 @@ ROUTE_EDGES = [
     ("story-stage-narration", "story-pre-battle", [(["Escape"], {**ROUTE_SCREENS["story-pre-battle"], "every": 3})]),
     ("story-stage-talk", "story-pre-battle", [(["Escape"], {**ROUTE_SCREENS["story-pre-battle"], "every": 3})]),
     ("story-battle", "story-victory-talk", [({"action": "win"}, None), (SKIP, {**ROUTE_SCREENS["story-victory-talk"], "every": 3})]),
+    # End on the talk, on a save where the chapter adds an officer: --save new-game, --stage 107 adds Ginchiyo Tachibana
+    # (run 2026-10-30_1220-rc-ng1). Its page draws the post-battle panel 0x582E10, where v0.2.0 crashed.
+    ("story-victory-talk", "story-new-character", ["Escape"]),
     # 2026-10-22_2103-route-ability: Ability Acquisition of the first officer (the save picks which ability shows:
     # work/saves/ability-next-N); TEAM INFO is the third item, so the way back moves the cursor up to the top
     ("story-pre-battle", "story-team-info", ["Down", "Down", "Return"]),
@@ -2388,6 +2400,16 @@ def pick_free_stage(root: Path, stage: int | None, label: str) -> None:
     raise ValueError(f"stage {stage} is in no Free Mode story")
 
 
+def pick_camp_next(root: Path, label: str, before: dict | None = None) -> None:
+    """Move the story camp's cursor to NEXT, its last item, from wherever it is, and check the game's own cursor."""
+    state = peek_u32(root, CAMP_STATE)
+    items = peek_u32(root, state + CAMP_ITEMS) & 0xFFFF
+    drive_step(root, wrapped(items - 1 - peek_u32(root, state + CAMP_CURSOR), items, "Down", "Up"), None, None, label,
+               quick=True, before=before)
+    if (cursor := peek_u32(root, state + CAMP_CURSOR)) != items - 1:
+        raise RuntimeError(f"the camp cursor is on item {cursor}, not NEXT ({items - 1})")
+
+
 def pick_dream(root: Path, stage: int, label: str, before: dict | None = None) -> None:
     """Move the Dream select cursor to the stage's scenario, from wherever it is, and check the game's own cursor."""
     drive_step(root, dream_keys(stage, dream_cursor(root)), None, None, label, quick=True, before=before)
@@ -2455,6 +2477,9 @@ def route(root: Path, target: str, stage: int | None = None, movie: int | None =
                     seen = drive_step(root, [], narration, None, f"{source} -> {destination}", quick=True, before=seen) \
                         if stage < 40 else drive_step(root, ["Escape"], {**narration, "every": 3}, None,
                                                       f"{source} -> {destination}", quick=True, before=seen)
+                    continue
+                if keys is CAMP_NEXT_STEP:
+                    pick_camp_next(root, f"{source} -> {destination}", seen)
                     continue
                 if keys is MOVIE_STEP:
                     pick_movie(root, DEFAULT_MOVIE if movie is None else movie, f"{source} -> {destination}", seen)

@@ -161,18 +161,18 @@ def _run(code: bytes, at: int):
     return ops, calls, (None, depth)
 
 
-@pytest.mark.parametrize("site", [0x536868, 0x582F2D], ids=hex)
+@pytest.mark.parametrize("site", [0x536868, 0x582F24], ids=hex)
 def test_each_draw_state_reset_runs_the_moved_code_at_its_stack_depth_and_returns_past_it(site) -> None:
     """Bug: the reset's argument left on the stack (or one too many taken off), so the moved [esp+n] reads and the
-    function's own cleanup are off by 4; a moved instruction dropped; the reset called with another argument; or the
-    return lands inside the overwritten span. 1.01 queues 0x58E4D0(0) (1.00's 0x58E370) at both places."""
+    function's own cleanup are off by 4; a moved instruction or call dropped; the reset called with another argument;
+    or the return lands inside the overwritten span. 1.01 queues 0x58E4D0(0) (1.00's 0x58E370) at both places."""
     edits = {va: (before, after) for va, before, after in runtime_edits.V101_FIXES}
     stock, jump = edits[site]
     cave = site + 5 + struct.unpack_from("<i", jump, 1)[0]
     ops, calls, back = _run(edits[cave][1], cave)
-    stock_ops, _, (_, stock_depth) = _run(stock, site)
+    stock_ops, stock_calls, (_, stock_depth) = _run(stock, site)
     reset = f"call {runtime_edits.DRAW_STATE:#x}"
-    assert calls == [(runtime_edits.DRAW_STATE, 0)]
+    assert calls == [*stock_calls, (runtime_edits.DRAW_STATE, 0)]
     assert [op for op in ops if op != reset] == stock_ops
     assert back == (site + len(stock), stock_depth)
 

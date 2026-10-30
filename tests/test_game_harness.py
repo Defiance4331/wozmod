@@ -630,7 +630,7 @@ def test_route_library_reaches_every_screen_and_back_to_the_menu():
                  "story-narration", "story-wei-pre-battle", "story-wei-battle", "story-victory-still",
                  "story-stage-camp", "story-stage-scenario", "story-pre-battle", "story-battle",
                  "story-team-info", "story-officer-page", "ability-acquisition",
-                 "story-stage-narration", "story-stage-talk", "story-victory-talk", "results-discard",
+                 "story-stage-narration", "story-stage-talk", "story-victory-talk", "story-new-character", "results-discard",
                  "free-camp", "free-stories", "free-chapter", "free-pre-battle", "free-battle"}
     for start in names:
         for target in names - {"boot"} | {"menu"}:

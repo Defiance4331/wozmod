@@ -104,6 +104,54 @@ def test_every_stock_routine_an_edit_calls_is_a_guard_of_its_feature() -> None:
     assert missing == []
 
 
+def _branches(code: bytes, start: int) -> list[tuple[int, int]]:
+    """(source, target) of every direct branch and call in code, decoded straight through from start."""
+    import capstone
+
+    x86, found, at = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32), [], 0
+    while at < len(code):
+        end = at
+        for address, size, mnemonic, operand in x86.disasm_lite(code[at:], start + at):
+            if (mnemonic == "call" or mnemonic.startswith("j")) and operand.startswith("0x"):
+                found.append((address, int(operand, 16)))
+            end = address + size - start
+        at = end if end > at else at + 1  # past a byte capstone cannot decode
+    return found
+
+
+def test_no_stock_branch_lands_inside_an_instruction_a_hook_or_edit_replaces() -> None:
+    """Bug: a hook's jump, or a detour's jump over code it moves, covers an instruction that other stock code branches
+    to, so the branch lands mid-instruction in the new bytes: the 1.01 draw-state detour once sat on 0x582F30, where
+    three branches of the post-battle panel 0x582E10 meet, and the game crashed when an officer joined after a
+    battle. A branch inside an edit may land only where the edit keeps an instruction of the same length; a branch
+    inside a hook's prologue never. A branch whose own instruction a hook or edit rewrites is left out."""
+    pytest.importorskip("capstone")
+    exe = Path(os.environ.get("WOZMOD_GAME") or "", "OROCHI_Z.exe")
+    if not exe.is_file():
+        pytest.skip("set WOZMOD_GAME to the stock game folder")
+    image = exe.read_bytes()
+    where = pe.layout(image)
+    branches = _branches(image[pe.file_offset(where, TEXT[0]):pe.file_offset(where, TEXT[1])], TEXT[0])
+    edits = [(name, va, before, after) for _, name, group in edit_lists(
+        camp_plate.STOCK_WIDTH, preview=True, render_distance=True, moving_fix=True) for va, before, after in group]
+    hooks = [(f"hook {hook_id}", va, prologue) for va, prologue, hook_id, _, _ in hook_sites(ALL_DEFINES)]
+    rewritten = {a for _, va, before, _ in edits for a in range(va, va + len(before))}
+    rewritten |= {a for _, va, prologue in hooks for a in range(va, va + len(prologue))}
+
+    def sizes(code: bytes, va: int) -> dict[int, int]:
+        import capstone
+        return {a: s for a, s, _, _ in capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32).disasm_lite(code, va)}
+
+    moved = {}  # each address inside a hook or edit where a branch may not land: (list name, its VA)
+    for name, va, before, after in edits:
+        stock, edited = sizes(before, va), sizes(after, va)
+        moved |= {a: (name, va) for a in range(va + 1, va + len(before)) if stock.get(a) != edited.get(a)}
+    moved |= {a: (name, va) for name, va, prologue in hooks for a in range(va + 1, va + len(prologue))}
+    landing = {(*moved[target], source, target) for source, target in branches
+               if target in moved and source not in rewritten}
+    assert sorted((name, hex(va), hex(source), hex(target)) for name, va, source, target in landing) == []
+
+
 def test_each_hook_and_edit_list_belongs_to_exactly_one_feature() -> None:
     """Bug: a hook or edit list in two features is installed by the later one only, so a refusal of the first
     leaves it written; one in none fails the build (guards.GuardError)."""
