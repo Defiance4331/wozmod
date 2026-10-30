@@ -32,6 +32,7 @@
 #include "crash_log.h"
 #include "event_line.h"
 #include "voice_slots.h"
+#include "ring_upload.h"
 
 typedef unsigned int u32;
 typedef unsigned short u16;
@@ -4146,6 +4147,39 @@ static void hook_slot(void *object, u32 slot, void *fn)
         note("refused: could not hook vtable slot", slot);
 }
 
+#ifdef ENRT_TEST
+#include "vb_probe.h"
+#endif
+
+#ifdef ENRT_TEST
+/* work/rebar/rings.py: off 1 gives the rings their own Lock again (the stock path), to time both in one battle. A
+   pass is the time from its first ring Lock to its last Unlock's return; frames are Present to Present. */
+static struct {
+    char magic[16];
+    volatile u32 off, passes, frames, full;
+    long long freq, pass_ticks, frame_ticks, opened_at, presented_at;
+    u32 open;
+} ring_stats = {"ENRT-RING-STATS"};
+
+static long long ring_now(void)
+{
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    return t.QuadPart;
+}
+
+static void ring_stat_present(void)
+{
+    long long now = ring_now();
+    LARGE_INTEGER hz;
+    if (!ring_stats.freq)
+        QueryPerformanceFrequency(&hz), ring_stats.freq = hz.QuadPart;
+    if (ring_stats.presented_at)
+        ring_stats.frame_ticks += now - ring_stats.presented_at, ring_stats.frames++;
+    ring_stats.presented_at = now;
+}
+#endif
+
 #ifdef ENRT_LOG
 static void state_note(const char *kind, u32 index, u32 value)
 {
@@ -4322,6 +4356,8 @@ static long __stdcall present(void *device, const void *from, const void *to, vo
     result = REAL(present_fn, device, SLOT_PRESENT)(device, from, to, window, dirty);
 #ifdef ENRT_TEST
     lat_present();
+    vbp_present();
+    ring_stat_present();
 #endif
     if (result == D3DERR_INVALIDCALL && to == &present_to && (view = (rect_refused = 1, present_window(DISPLAY_WINDOW)))) {
         note("display: Present refuses a destination rectangle; borderless presents into a child window", 0);
@@ -4466,6 +4502,10 @@ static long __stdcall create_device(void *d3d, u32 adapter, u32 type, void *wind
 #endif
     if (result >= 0)  /* every device: each may bring its own vtable */
         hook_slot(*device, SLOT_RESET, (void *)reset), hook_slot(*device, SLOT_PRESENT, (void *)present);
+#ifdef ENRT_TEST
+    if (result >= 0)
+        hook_slot(*device, 26, (void *)vbp_create_vb), hook_slot(*device, 27, (void *)vbp_create_ib);
+#endif
 #ifdef ENRT_BOOTLOG
     if (result >= 0) {  /* the hooks go into the first device's vtable only: does this device share it? */
         void **vtable = *(void ***)*device;
@@ -4958,6 +4998,35 @@ static void movie_path(WCHAR *movie)
     note(line, 0);
 }
 
+/* The ground rings (ring_upload.h): the engine's six ring Locks and six Unlocks call these instead of the buffer's. */
+static void *ring_resize(void *old, unsigned size)
+{
+    return old ? HeapReAlloc(GetProcessHeap(), 0, old, size) : HeapAlloc(GetProcessHeap(), 0, size);
+}
+static struct ring_upload rings = {ring_resize};
+
+
+static long __stdcall ring_lock(void *buffer, u32 offset, u32 size, void **out, u32 flags)
+{
+    static int noted;
+    long r = ru_lock(&rings, buffer, size, out, flags);  /* offset: 0 at every site (their push 0) */
+    (void)offset;
+    if (rings.full && !noted)
+        noted = 1, note("ground rings: a ring locked in place, with no room for its copy", rings.full);
+    return r;
+}
+
+static long __stdcall ring_unlock(void *buffer)
+{
+    long r = ru_unlock(&rings, buffer);
+#ifdef ENRT_TEST
+    ring_stats.full = rings.full;
+    if (ring_stats.open && !--ring_stats.open)
+        ring_stats.pass_ticks += ring_now() - ring_stats.opened_at, ring_stats.passes++;
+#endif
+    return r;
+}
+
 static int always(u32 id, struct frame *f, u32 *replace)
 {
     struct loose *e;
@@ -4968,6 +5037,28 @@ static int always(u32 id, struct frame *f, u32 *replace)
     if (id >= 75 && id <= 104)
         return display_hook(id, f, replace);
     switch (id) {
+    case 53:
+    case 54:
+    case 55:
+    case 56:
+    case 57:
+    case 58:  /* a ground ring's Lock, before its call edx */
+#ifdef ENRT_TEST
+        if (!ring_stats.open++)
+            ring_stats.opened_at = ring_now();
+        if (ring_stats.off)
+            return 1;
+#endif
+        f->edx = (u32)ring_lock;
+        return 1;
+    case 59:
+    case 60:
+    case 61:
+    case 62:
+    case 63:
+    case 64:  /* its Unlock, the same */
+        f->edx = (u32)ring_unlock;
+        return 1;
     case 27:
         if (display_mode != MODE_FROM_SAVE)  /* settings.ini's display mode over the save's */
             WINDOWED_BYTE = display_mode != 0;

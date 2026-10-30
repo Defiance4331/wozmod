@@ -134,6 +134,19 @@ ALWAYS_HOOKS = [
     (0x56CB7F, "53 53 83c60a", 79, None),       # Graphics resolution value, its font set (mid-function)
     (0x5CBFE4, "89442414 8d442428", 97, None),  # window made: SCREEN stored with the window's size (mid-function)
     (0x5CBD60, "6aff 68d8b86b00", 107, None),   # the window procedure (stdcall: window, message, wParam, lParam)
+    # The ground rings (ring_upload.h): each Lock and Unlock calls the runtime's in place of the buffer's (call edx).
+    (0x5B3F99, "6a00 51 ffd2", 53, None),       # ground ring Lock: 0x5B3E00 x3, 0x5B4100 x3 (mid-function)
+    (0x5B4003, "6a00 51 ffd2", 54, None),
+    (0x5B406D, "6a00 51 ffd2", 55, None),
+    (0x5B4219, "6a00 51 ffd2", 56, None),
+    (0x5B4283, "6a00 51 ffd2", 57, None),
+    (0x5B42ED, "6a00 51 ffd2", 58, None),
+    (0x5B7635, "50 ffd2 8b461c", 59, None),     # ground ring Unlock: 0x5B7600 x3, 0x5B77B0 x3 (mid-function)
+    (0x5B7681, "50 ffd2 8b461c", 60, None),
+    (0x5B76CD, "50 ffd2 8b461c", 61, None),
+    (0x5B77E5, "50 ffd2 8b461c", 62, None),
+    (0x5B7831, "50 ffd2 8b461c", 63, None),
+    (0x5B787D, "50 ffd2 8b461c", 64, None),
 ]
 # ENRT_MOVING_FIX builds only: out of release 1, kept for later.
 MOVING_FIX_HOOKS = [
