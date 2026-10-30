@@ -390,7 +390,7 @@ wheels = [
 
 [[package]]
 name = "wozmod"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "pillow" },
@@ -434,5 +434,5 @@ dev = [
 
 [[package]]
 name = "wozmod-native"
-version = "0.2.0"
+version = "0.2.1"
 source = { directory = "native" }
