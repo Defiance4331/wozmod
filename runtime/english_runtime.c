@@ -24,6 +24,7 @@
 #include "voice_play.h"
 #include "se_cutoff.h"
 #include "pad_buttons.h"
+#include "pad_kind.h"
 #include "pad_map.h"
 #include "pad_owner.h"
 #include "prompt_hires.h"
@@ -2411,7 +2412,6 @@ static void distance_input(u32 repeat)
 #define PLAYER_JOY ((volatile u32 *)0x7AA8B4)
 #define PLAYER_MAP(p) (*(u8 *const *)(0x140C48C + 16 * (p)))
 #define PAD_AUTO ((u32(*)(u32))0x5E2D30)
-#define XINPUT_SHAPE(pad) (*(const u32 *)((pad) + 0x160) == 5 && *(const u32 *)((pad) + 0x168) == 10)
 #define PADS ((void **const volatile *)0x140D440)
 #define CONTROLLER_PAGE (*(const u8 *const volatile *)0xC2FC90)
 
@@ -3358,15 +3358,13 @@ static int move_key(const struct frame *f)
 }
 
 
-/* Windows names every XInput pad this in DirectInput; Wine passes a third-party pad's own name (an
- * 8BitDo's, a Switch Pro's), for which the auto-setting picks layout 0, where Start reads as held and
- * the title screen runs on by itself. The name is the pad object's first 260 bytes. */
-static int xbox_named(u8 *pad)
+/* The auto-setting gives the Xbox layout only to the Xbox 360 pad's names; an XInput pad of
+ * another name (Windows: "Controller (Xbox One For Windows)"; Wine: a third-party pad's own, an 8BitDo's or a
+ * Switch Pro's) gets layout 0, where Y confirms, X cancels, and Start reads as held and the title screen runs on by
+ * itself. The name is the pad object's first 260 bytes. */
+static void xbox_named(u8 *pad)
 {
-    if (!XINPUT_SHAPE(pad))
-        return 0;
     lstrcpyA((char *)pad, "Controller (XBOX 360 For Windows)");
-    return 1;
 }
 
 /* With no saved Key Config, the input map load (0x5E38E0) auto-sets each player's pad by name before
@@ -3380,16 +3378,18 @@ static void pad_note(const u8 *pad)
     note(line, *(const u32 *)(pad + 0x160) << 8 | *(const u32 *)(pad + 0x168));
 }
 
-/* Each pad's family, before anything renames it: Xbox by the XInput shape (Windows names every XInput pad alike),
- * PlayStation by Sony's USB ids in DirectInput's product GUID (Data1: vendor | product << 16): DualShock 4 (two
- * revisions and the wireless adapter), DualSense and DualSense Edge. */
+/* Each pad's family: Xbox by its device path's XInput mark (pad_kind.h), PlayStation by Sony's USB ids in
+ * DirectInput's product GUID (Data1: vendor | product << 16): DualShock 4 (two revisions and the wireless adapter),
+ * DualSense and DualSense Edge. */
 static void pad_identify(u32 index)
 {
     static const unsigned short dualshock[3] = {0x05C4, 0x09CC, 0x0BA0}, dualsense[2] = {0x0CE6, 0x0DF2};
+    /* DIPROPGUIDANDPATH: the header (size, header size, object, how: DIPH_DEVICE), the class GUID, the path */
+    struct { u32 size, header, object, how, guid[4]; unsigned short path[MAX_PATH]; } where = {sizeof where, 16};
     u32 info[0x244 / 4], product, i;
     void *device = PADS[0][2 * index];
-    const u8 *pad = PADS[0][2 * index + 1];
-    pad_family[index] = XINPUT_SHAPE(pad) ? PAD_XBOX : PAD_OTHER;
+    pad_family[index] = COM(device, 0x14, 3)(device, 12, (u32)&where) >= 0  /* GetProperty(DIPROP_GUIDANDPATH) */
+                        && pad_path_xinput(where.path, MAX_PATH) ? PAD_XBOX : PAD_OTHER;
     info[0] = sizeof info;
     if (pad_family[index] == PAD_OTHER && COM(device, 0x3C, 2)(device, (u32)info) >= 0 && (info[5] & 0xFFFF) == 0x054C) {
         product = info[5] >> 16;
@@ -3415,7 +3415,8 @@ static void pads_named(void)
             pad_note(pad);
             pad_identify(i);
         }
-        xbox_named(pad);
+        if (pad_family[i] == PAD_XBOX)
+            xbox_named(pad);
     }
     logged = 1;
 }
@@ -3428,9 +3429,6 @@ static void buttons_sync(const u8 *pad)
                      *(const u32 *)(pad + 0x168));
 }
 
-/* Hook 47 for an Xbox or PlayStation pad, after its state read: the D-pad (a POV hat the stock poll never reads)
- * becomes the left stick, an Xbox pad's right stick X (lRx) goes to the lRz slot the stock poll reads for 5 axes,
- * and the first input since the keyboard's shows that pad family's prompts. */
 /* The pad this poll read is the one a player with no live pad takes, unless it is the other player's. The actions a
  * removal parked go onto it. A player with nothing parked and nothing on it gets the game's defaults (a map the game
  * built itself, or one the player cleared), then those bindings are moved onto this pad when the defaults landed on
@@ -3470,6 +3468,11 @@ static void pad_adopt(u32 player, u32 acting, int active)
         note("pad: player bound", player + 1);
 }
 
+/* Hook 47, after a pad's state read. For an Xbox or PlayStation pad, the D-pad (a POV hat the stock poll never reads)
+ * becomes the left stick, an Xbox pad's right stick X (lRx) goes to the lRz slot the stock poll reads for 5 axes, and
+ * the first input since the keyboard's shows that pad family's prompts. Any pad in use goes to a player who has lost
+ * theirs (pad_adopt); a pad of no known family counts as in use by its buttons and hat only, as its axes' rest is
+ * not known. */
 static void pad_read(const u8 *pad)
 {
     static int was_active;
@@ -3493,34 +3496,38 @@ static void pad_read(const u8 *pad)
             input_note("input: axis (axis << 16 | value)", 0x1000000 | i << 16 | ((u32)s[i] & 0xFFFF));
         input_note("input: hat", 0x1000000 | (pov & 0xFFFF));
     }
-    if (family == PAD_OTHER)
+    if (index >= 8 || !pad_present(index))
         return;
-    if (family == PAD_XBOX)
-        xbox_named((u8 *)pad);  /* a pad plugged in after the start */
-    for (i = 0; i < 2; i++)
-        if ((maps_loaded >> i & 1) && PLAYER_JOY[i] < 8 && PLAYER_MAP(i))
-            camera_default(i);
-    maps_loaded = 0;
-    if (family == PAD_XBOX)
-        s[5] = s[3];
-    if ((pov & 0xFFFF) != 0xFFFF) {
-        dir = (pov + 2250) / 4500 % 8;
-        s[0] = dx[dir] * 255, s[1] = dy[dir] * 255;
+    if (family != PAD_OTHER) {
+        if (family == PAD_XBOX)
+            xbox_named((u8 *)pad);  /* a pad plugged in after the start */
+        for (i = 0; i < 2; i++)
+            if ((maps_loaded >> i & 1) && PLAYER_JOY[i] < 8 && PLAYER_MAP(i))
+                camera_default(i);
+        maps_loaded = 0;
+        if (family == PAD_XBOX)
+            s[5] = s[3];
+        if ((pov & 0xFFFF) != 0xFFFF) {
+            dir = (pov + 2250) / 4500 % 8;
+            s[0] = dx[dir] * 255, s[1] = dy[dir] * 255;
+        }
     }
     for (i = 0; i < *(const u32 *)(pad + 0x168) && i < 128; i++)
         if (((const volatile u8 *)(s + 12))[i] & 0x80 && !active)
             active = 0x100 | i;
-    if (!active && (pov & 0xFFFF) != 0xFFFF)  /* the hat, which moved the left stick above */
+    if (!active && (pov & 0xFFFF) != 0xFFFF)  /* the hat (a known family's moved the left stick above) */
         active = 0x300;
-    for (i = 0; i < 5; i++)
-        if ((s[sticks[family - 1][i]] > 128 || s[sticks[family - 1][i]] < -128) && !active)
-            active = 0x200 | sticks[family - 1][i];
-    if (active && !was_active && !pad_last)
-        input_note("input: pad now (index << 16 | family << 12 | cause)", index << 16 | family << 12 | active);
-    if (active && !was_active)
-        pad_last = 1, pad_last_family = family;
-    was_active = active != 0;
-    pad_busy = active;
+    if (family != PAD_OTHER) {
+        for (i = 0; i < 5; i++)
+            if ((s[sticks[family - 1][i]] > 128 || s[sticks[family - 1][i]] < -128) && !active)
+                active = 0x200 | sticks[family - 1][i];
+        if (active && !was_active && !pad_last)
+            input_note("input: pad now (index << 16 | family << 12 | cause)", index << 16 | family << 12 | active);
+        if (active && !was_active)
+            pad_last = 1, pad_last_family = family;
+        was_active = active != 0;
+        pad_busy = active;
+    }
     pad_adopt(0, index, active);
     pad_adopt(1, index, active);
 }
