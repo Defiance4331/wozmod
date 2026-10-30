@@ -325,16 +325,42 @@ def test_another_mods_edit_names_only_the_feature_whose_code_it_changed(release)
 
 
 # A stand-in for the game: version 1.00's build stamp and image size (patched in below), and an image that reaches past
-# every address a guard names (zeros, so every guard differs). It loads the DLL as the game does, beside it.
-STAND_IN = r'''
+# every address a guard names (zeros, so every guard differs). It loads the DLL as the game does, beside it, then runs
+# the test's own code (0 for success).
+STAND_IN = r"""
 #include <windows.h>
 static volatile unsigned char image[0x400000];
 int main(void)
 {
+    HMODULE ours;
     image[0] = 1;
-    return !LoadLibraryW(L"d3d9.dll");
+    if (!(ours = LoadLibraryW(L"d3d9.dll")))
+        return 1;
+    %s
 }
-'''
+"""
+
+
+def run_stand_in(dll: bytes, folder: Path, test: str = "return 0;") -> Path:
+    """The game folder of a stand-in game that loaded dll under Wine and ran test, which must return 0."""
+    if not (shutil.which("i686-w64-mingw32-gcc") and shutil.which("wine")):
+        pytest.skip("i686-w64-mingw32-gcc or wine absent")
+    game = folder / "game"
+    (game / "wozmod").mkdir(parents=True, exist_ok=True)
+    (game / "d3d9.dll").write_bytes(dll)
+    (folder / "game.c").write_text(STAND_IN % test)
+    subprocess.run(["i686-w64-mingw32-gcc", "-O2", "-Wl,--disable-dynamicbase", "-Wl,--image-base,0x400000",
+                    str(folder / "game.c"), "-o", str(folder / "game.exe")], check=True)
+    image = bytearray((folder / "game.exe").read_bytes())
+    nt = struct.unpack_from("<I", image, 0x3C)[0]
+    assert struct.unpack_from("<I", image, nt + 24 + 56)[0] <= guards.V100[1]  # the loader refuses a smaller size
+    struct.pack_into("<I", image, nt + 8, guards.V100[0])
+    struct.pack_into("<I", image, nt + 24 + 56, guards.V100[1])
+    (game / "OROCHI_Z.exe").write_bytes(bytes(image))
+    env = {**os.environ, "WINEPREFIX": str(folder / "prefix"), "WINEDEBUG": "-all",
+           "WINEDLLOVERRIDES": "mscoree,mshtml=;d3d9=n,b"}  # ours beside the game, Wine's own in the system folder
+    subprocess.run(["wine", str(game / "OROCHI_Z.exe")], cwd=game, env=env, check=True, capture_output=True)
+    return game
 
 
 def test_a_run_wozmod_turns_off_logs_no_line_that_says_it_serves_anything(release, tmp_path) -> None:
@@ -342,26 +368,24 @@ def test_a_run_wozmod_turns_off_logs_no_line_that_says_it_serves_anything(releas
     checks have decided, so the log of a run that turned wozmod off reads as if wozmod were serving its files. The
     release DLL runs under Wine in a stand-in game whose code differs from stock, with an install that has one entry
     and none of the other files: besides its start, its refusals and its exit, the log holds the off line only."""
-    if not (shutil.which("i686-w64-mingw32-gcc") and shutil.which("wine")):
-        pytest.skip("i686-w64-mingw32-gcc or wine absent")
     _, dll = release
-    game = tmp_path / "game"
-    (game / "wozmod/entries").mkdir(parents=True)
-    (game / "wozmod/entries/12.bin").write_bytes(b"entry")
-    (game / "d3d9.dll").write_bytes(dll)
-    (tmp_path / "game.c").write_text(STAND_IN)
-    subprocess.run(["i686-w64-mingw32-gcc", "-O2", "-Wl,--disable-dynamicbase", "-Wl,--image-base,0x400000",
-                    str(tmp_path / "game.c"), "-o", str(tmp_path / "game.exe")], check=True)
-    image = bytearray((tmp_path / "game.exe").read_bytes())
-    nt = struct.unpack_from("<I", image, 0x3C)[0]
-    assert struct.unpack_from("<I", image, nt + 24 + 56)[0] <= guards.V100[1]  # the loader refuses a smaller size
-    struct.pack_into("<I", image, nt + 8, guards.V100[0])
-    struct.pack_into("<I", image, nt + 24 + 56, guards.V100[1])
-    (game / "OROCHI_Z.exe").write_bytes(bytes(image))
-    env = {**os.environ, "WINEPREFIX": str(tmp_path / "prefix"), "WINEDEBUG": "-all",
-           "WINEDLLOVERRIDES": "mscoree,mshtml=;d3d9=n"}
-    subprocess.run(["wine", str(game / "OROCHI_Z.exe")], cwd=game, env=env, check=True, capture_output=True)
-    lines = (game / "wozmod/runtime.log").read_text(encoding="ascii").splitlines()
+    (tmp_path / "game/wozmod/entries").mkdir(parents=True)
+    (tmp_path / "game/wozmod/entries/12.bin").write_bytes(b"entry")
+    lines = (run_stand_in(dll, tmp_path) / "wozmod/runtime.log").read_text(encoding="ascii").splitlines()
     assert any(line.startswith("refused: core, the code differs from stock at") for line in lines)
     assert [line for line in lines[1:] if not line.startswith(("refused: ", "process exit"))] == [
         "wozmod is off: it patched nothing, and the game runs as stock"]
+
+
+def test_windows_own_d3d9_is_loaded_by_its_system_path_once_the_dll_is(release, tmp_path) -> None:
+    """Bug: the DLL loads Windows' own d3d9.dll only at the game's first Direct3DCreate9, which the game calls after it
+    shows its window. A capture tool that hooks Direct3D when the window is activated (XSplit's game source) looks
+    d3d9 up by its system path, finds nothing, falls back to the name d3d9.dll and gets this DLL; it then reads the
+    real Present at its offset from this DLL's base, past the end of its image, and the game crashes at the logos.
+    The stand-in does XSplit's lookup right after loading the DLL, before any Direct3DCreate9."""
+    _, dll = release
+    run_stand_in(dll, tmp_path, r"""
+    WCHAR name[MAX_PATH];
+    HMODULE system = 0;
+    lstrcpyW(name + GetSystemDirectoryW(name, MAX_PATH - 10), L"\\d3d9.dll");
+    return !GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, name, &system) || system == ours;""")

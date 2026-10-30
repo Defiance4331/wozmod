@@ -6048,25 +6048,33 @@ static void install(HINSTANCE self)
 }
 
 
+static void *(WINAPI *system_create)(UINT);  /* Windows' own Direct3DCreate9 */
+
+/* Windows' own d3d9.dll, by its path in the system folder, loaded with the DLL: the stock game has it from its start, as
+   an import. A capture tool that hooks Direct3D when the game window is first activated looks it up by that path, and
+   the game's start-up (0x5AB250) shows its window (0x5CBFA0, SetWindowPos with SWP_SHOWWINDOW) before its first
+   Direct3DCreate9 (0x5CA860). XSplit's game source, finding nothing there, takes the module named d3d9.dll, this one,
+   and reads the real Present at its offset past the end of this DLL: the game crashed during the logos. */
+static void system_load(void)
+{
+    WCHAR name[MAX_PATH];
+    UINT n = GetSystemDirectoryW(name, MAX_PATH - 10);
+    HMODULE system;
+    if (n && n < MAX_PATH - 10) {
+        lstrcpyW(name + n, L"\\d3d9.dll");
+        if ((system = LoadLibraryW(name)))
+            system_create = (void *(WINAPI *)(UINT))GetProcAddress(system, "Direct3DCreate9");
+    }
+    if (!system_create)
+        note("refused: Windows' own d3d9.dll did not load", GetLastError());
+}
+
 __declspec(dllexport) void *WINAPI Direct3DCreate9(UINT version)
 {
-    static void *(WINAPI *real)(UINT);
-    if (!real) {
-        WCHAR name[MAX_PATH];
-        UINT n = GetSystemDirectoryW(name, MAX_PATH - 10);
-        HMODULE system;
-        if (!n || n >= MAX_PATH - 10)
-            return 0;
-        lstrcpyW(name + n, L"\\d3d9.dll");
-        if (!(system = LoadLibraryW(name)) || !(real = (void *(WINAPI *)(UINT))GetProcAddress(system, "Direct3DCreate9")))
-            return 0;
-    }
-    {
-        void *d3d = real(version);
-        if (d3d && wozmod_on)  /* wozmod off: the game's own Direct3D, untouched */
-            hook_slot(d3d, SLOT_CREATE_DEVICE, (void *)create_device);
-        return d3d;
-    }
+    void *d3d = system_create ? system_create(version) : 0;
+    if (d3d && wozmod_on)  /* wozmod off: the game's own Direct3D, untouched */
+        hook_slot(d3d, SLOT_CREATE_DEVICE, (void *)create_device);
+    return d3d;
 }
 
 __declspec(dllexport) int WINAPI D3DPERF_BeginEvent(DWORD colour, LPCWSTR name)
@@ -6085,6 +6093,7 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved)
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(self);
         install(self);
+        system_load();  /* after install: the log is open */
     }
     if (reason == DLL_PROCESS_DETACH)  /* 2: the process is ending; no line at all: it crashed or was ended from outside */
         note(EXIT_LINE, reserved ? 2 : 1);
