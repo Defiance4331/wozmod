@@ -15,6 +15,7 @@
 #include "crash_log.h"
 #include "event_line.h"
 #include "voice_slots.h"
+#include "weapon_slots.h"
 #include "ring_upload.h"
 
 typedef unsigned int u32;
@@ -5577,6 +5578,30 @@ static const u32 ftol_x[] = {0x5CD69D, 0x5CD802, 0x5CDA5E, 0x5CDC95, 0x5CDFC7, 0
 static const u32 ftol_y[] = {0x5CD6B0, 0x5CD6F3, 0x5CD815, 0x5CD857, 0x5CDA6D, 0x5CDCA8, 0x5CDD16, 0x5CDD84,
                              0x5CDDEA, 0x5CDFD6, 0x5CE202, 0x5CE38B, 0x5CE597, 0x5CE61E};
 
+/* The 32-bit immediates that name the weapon texture table (weapon_slots.h), each with its stock value: the table's
+   base and the scans' ends in the lookup (0x4B6940) and its two inline copies (0x4B6FB0, 0x4B7110), the reset loops
+   over each slot's +0x10 (0x4B68E0, 0x4B8E00 at start, 0x4B9D60 at teardown). */
+static const u32 weapon_slot_sites[][2] = {
+    {0x4B6911, 0x8C07B0}, {0x4B6938, 0x8C0A80},  /* reset */
+    {0x4B6943, 0x8C07A0}, {0x4B6952, 0x8C0A70}, {0x4B695B, 0x8C07A0}, {0x4B696F, 0x8C0A70}, {0x4B697E, 0x8C07A0},
+    {0x4B706D, 0x8C07A0}, {0x4B707C, 0x8C0A70}, {0x4B7085, 0x8C07A0}, {0x4B709F, 0x8C0A70}, {0x4B70EE, 0x8C07A0},
+    {0x4B7203, 0x8C07A0}, {0x4B7212, 0x8C0A70}, {0x4B721B, 0x8C07A0}, {0x4B722F, 0x8C0A70}, {0x4B727C, 0x8C07A0},
+    {0x4B91B5, 0x8C07B0}, {0x4B91DA, 0x8C0A80},  /* start */
+    {0x4B9EF4, 0x8C07B0}, {0x4B9F1F, 0x8C0A80},  /* teardown */
+};
+static u32 weapon_slots[WEAPON_SLOT_COUNT * WEAPON_SLOT_BYTES / 4];  /* zero, as the stock table is at load */
+
+static int weapon_slots_install(void)
+{
+    u32 i, moved;
+    for (i = 0; i < sizeof weapon_slot_sites / sizeof *weapon_slot_sites; i++) {
+        moved = weapon_slot_moved(weapon_slot_sites[i][1], (u32)weapon_slots);
+        if (!write_at(weapon_slot_sites[i][0], (const u8 *)&moved, 4))
+            return note("failed: could not write", weapon_slot_sites[i][0]), 0;
+    }
+    return 1;
+}
+
 static int display_install(u8 *thunks)
 {
     u8 last = DISPLAY_SIZES - 1, count = DISPLAY_SIZES;
@@ -5735,6 +5760,8 @@ static int patch(void)
         count++;
     }
     display_install(hook_stubs + 48 * HOOK_COUNT);
+    if (!weapon_slots_install())
+        return 0;
     /* The game's SetUnhandledExceptionFilter import slot (crash_set_filter): the DLL keeps what it held and calls through
        it. Its NULL callers return to 0x69CC1F (invalid parameter), 0x6A478A (failed buffer check) and 0x6A6989 (abort). */
     crash_set_real = *(LPTOP_LEVEL_EXCEPTION_FILTER (WINAPI **)(LPTOP_LEVEL_EXCEPTION_FILTER))0x6CC1B8;

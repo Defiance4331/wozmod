@@ -136,6 +136,8 @@ FEATURES = (
     Feature("rings", "ground rings", shown="battle ground drawing",
             hooks=tuple(range(53, 65))),  # ring_upload.h: the six ring Locks, then the six Unlocks
     Feature("batches", "effect batches", shown="effect drawing", hooks=(23,)),  # their Lock discards (0x6392A0)
+    Feature("weapon_slots", "weapon texture slots", shown="weapon loading in battle",
+            spans=tuple((va, 4) for va in _column("weapon_slot_sites", 0))),  # weapon_slots.h: the table's immediates
     # Builds with a define only; keep them last, so the features above keep their numbers in every build.
     Feature("moving", "moving camera fix", hooks=(72,), define="ENRT_MOVING_FIX"),
     Feature("test", "test harness", hooks=(73, 74, 112), define="ENRT_TEST",

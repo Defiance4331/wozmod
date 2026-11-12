@@ -100,11 +100,11 @@ def reflow_rules(source: str = SOURCE) -> dict[int, int]:
 def runtime_writes(source: str = SOURCE) -> list[tuple[str, int, bytes | None, int]]:
     """List the stock code the runtime checks or rewrites itself as the game starts, beside the build's edits: name,
     VA, the stock bytes the runtime expects there (None where it writes without looking) and length. Rows come from
-    the site arrays the display and edge HUD code loop over, and from every stock_at or write_at call at a fixed
-    address; a call at a loop variable writes one of those arrays' sites."""
+    the site arrays the display, the weapon texture table and edge HUD code loop over, and from every stock_at or
+    write_at call at a fixed address; a call at a loop variable writes one of those arrays' sites."""
     known = defines(source)
     code = _COMMENTS.sub("", source)
-    rows = [(name, va, struct.pack("<I", value), 4) for name in ("to_window", "to_scene")
+    rows = [(name, va, struct.pack("<I", value), 4) for name in ("to_window", "to_scene", "weapon_slot_sites")
             for va, value in c_array(name, source)]
     rows += [(name, va, b"\xe8" + struct.pack("<i", known["FTOL"] - va - 5), 5) for name in ("ftol_x", "ftol_y")
              for va in c_array(name, source)]
