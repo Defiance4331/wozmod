@@ -251,9 +251,11 @@ def _dispatched(function: str) -> set[int]:
 def test_every_hook_a_build_installs_has_a_case_in_the_dispatch_of_its_mode() -> None:
     """Bug: a hook the build installs has no case in the runtime's dispatch for its mode (a new hook whose case was
     never written, a case in the English-only switch for a hook that runs in both modes, or a display case outside
-    the ids always() hands to display_hook), so the game jumps into the hook and nothing happens."""
+    the ids always() hands to display_hook, or an always() case inside them, which display_hook gets first), so the
+    game jumps into the hook and nothing happens."""
     low, high = map(int, re.search(r"if \(id >= (\d+) && id <= (\d+)\)\s*return display_hook\(", layout.SOURCE).groups())
-    both = _dispatched("always") | {i for i in _dispatched("display_hook") if low <= i <= high}
+    both = {i for i in _dispatched("always") if not low <= i <= high} \
+        | {i for i in _dispatched("display_hook") if low <= i <= high}
     english = both | _dispatched("english_hook")
     installed = {(hook_id, english_only) for defines in (RELEASE, TEST, ("ENRT_MOVING_FIX",))
                  for _, _, hook_id, _, english_only in runtime.hook_sites(defines)}

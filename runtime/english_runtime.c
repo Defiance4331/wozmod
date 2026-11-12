@@ -5618,7 +5618,8 @@ static int display_install(u8 *thunks)
 static u8 *hook_stub(u8 *p, const struct site *s)
 {
     u32 i;
-    *p++ = 0x60, *p++ = 0x54, *p++ = 0x6a, *p++ = s->id;
+    *p++ = 0x60, *p++ = 0x54, *p++ = 0x68, put32(p, s->id), p += 4;  /* pushad; push esp; push id: imm32, since the
+                                                                       imm8 form sign-extends ids from 128 */
     *p++ = 0xe8, put32(p, (u32)enrt_hook - (u32)(p + 4)), p += 4;
     *p++ = 0x83, *p++ = 0xc4, *p++ = 0x08;
     if (s->flags & 2)
