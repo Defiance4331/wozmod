@@ -71,16 +71,6 @@ class G1tTexture:
     flags: int
     payload: bytes = field(repr=False)
 
-    @property
-    def pixel_format_name(self) -> str:
-        """Return the pixel format name."""
-
-        return {
-            PIXEL_FORMAT_BGRA8: "bgra8",
-            PIXEL_FORMAT_DXT1: "dxt1",
-            PIXEL_FORMAT_DXT5: "dxt5",
-        }[self.pixel_format]
-
     def decode_rgba(self) -> bytes:
         """Decode the top mip to RGBA8."""
 
@@ -110,36 +100,6 @@ class G1tTexture:
         if len(top) != top_bytes:
             raise AssertionError("texture encoder changed the top-level span")
         return top + self.payload[top_bytes:]
-
-    def palette_modes(self) -> dict[str, int]:
-        """Count DXT palette branches."""
-
-        modes = {
-            "dxt1-four-color": 0,
-            "dxt1-three-color-transparent": 0,
-            "dxt5-alpha-eight": 0,
-            "dxt5-alpha-six-plus-extremes": 0,
-        }
-        if self.pixel_format == PIXEL_FORMAT_DXT1:
-            top = _mip_payload_bytes(self.pixel_format, self.width, self.height)
-            for offset in range(0, top, 8):
-                color0, color1 = struct.unpack_from("<HH", self.payload, offset)
-                key = (
-                    "dxt1-four-color"
-                    if color0 > color1
-                    else "dxt1-three-color-transparent"
-                )
-                modes[key] += 1
-        elif self.pixel_format == PIXEL_FORMAT_DXT5:
-            top = _mip_payload_bytes(self.pixel_format, self.width, self.height)
-            for offset in range(0, top, 16):
-                key = (
-                    "dxt5-alpha-eight"
-                    if self.payload[offset] > self.payload[offset + 1]
-                    else "dxt5-alpha-six-plus-extremes"
-                )
-                modes[key] += 1
-        return {key: value for key, value in modes.items() if value}
 
 
 @dataclass(frozen=True)

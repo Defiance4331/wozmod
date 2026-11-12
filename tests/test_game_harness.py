@@ -536,17 +536,6 @@ def test_tour_checks_screens_and_diff(tmp_path):
     assert row["image_change"] == round(200 / 255, 4)
 
 
-def test_renderer_review_refuses_rectangles_that_wrap_the_game_uv_fields():
-    """A negative origin or oversized rectangle would wrap the game's unsigned quad UVs."""
-    import pytest
-    name, rect = harness.review_request("4080.7", [0, 0, 232, 32])
-    assert name == (4080 << 16 | 7) and rect == [0, 0, 232, 32]
-    assert harness.review_request("off", [0, 0, 512, 32]) == (0, [0, 0, 0, 0])
-    for rect in ([-1, 0, 232, 32], [0, 0, 0, 32], [3900, 0, 232, 32], [0, 0, 512, 201]):
-        with pytest.raises(ValueError, match="review rect"):
-            harness.review_request("4080.7", rect)
-
-
 @pytest.mark.parametrize("script, reason", [("exit 0\n", "quit"), ("exit 5\n", "crash")])
 def test_ended_run_tells_a_crash_from_a_quit(tmp_path, monkeypatch, script, reason):
     """Bug: a game crash and a quit both end the harness with 139, so a crash reads as a clean exit."""
@@ -950,7 +939,7 @@ def test_screen_names_the_routed_screen_it_shows_or_says_none_reaches_it(tmp_pat
 
 @pytest.mark.parametrize("result, reason", [(6, "already riding"), (7, "allows no horse"), (3, "not in a battle")])
 def test_mount_refusal_gives_the_ops_own_reason_and_the_shared_ones(tmp_path, result, reason):
-    """Bugs: an op's own refusal text is lost behind the shared one (result 6 read as a review-texture error), or a
+    """Bugs: an op's own refusal text is lost behind the shared one (result 7 read as the sub-scene cast error), or a
     shared result such as 3 crashes because the op has no text of its own for it."""
     block, memory = 0x100, tmp_path / "mem"
     memory.write_bytes(bytes(block + 48 + harness.TEST_INPUT))
@@ -1560,8 +1549,6 @@ def test_switch_and_8bitdo_are_different_xinput_identities():
     """Bug: the two identities share a vendor and product, so a dongle that comes back as the other device is still
     the same DirectInput device and the game never sees it leave."""
     assert harness.XINPUT_PADS["switch"][:2] != harness.XINPUT_PADS["8bitdo"][:2]
-    assert harness.XINPUT_PADS["switch"][:2] == (0x057E, 0x2009)
-    assert harness.XINPUT_PADS["8bitdo"][:2] == (0x2DC8, 0x3106)
 
 
 def test_spare_is_a_second_xinput_identity_and_not_a_playstation_pad():

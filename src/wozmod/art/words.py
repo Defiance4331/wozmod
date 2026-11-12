@@ -12,13 +12,13 @@ Two stored forms stand in for a word, each with the SHA-256 of the word it must 
 """
 from __future__ import annotations
 
-import hashlib
 import json
 from functools import cache
 from pathlib import Path
 
 from wozmod import resources
 from wozmod.donors import check_disc_names
+from wozmod.fonts.word_key import word_key
 from wozmod.text.resolver import DonorResolver
 
 MAPPING = resources.root() / "data/art/menu_textures.json"
@@ -31,10 +31,6 @@ def use(root: Path | None) -> None:
     """Resolve donor pointers from this donors folder (laid out as the installer's, as for the text table)."""
     global DONORS
     DONORS = DonorResolver(Path(root)) if root else None
-
-
-def sha256(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def load(path: Path):
@@ -60,7 +56,7 @@ def _read(path: Path):
 
 
 def _checked(text: str, expected: str, what: str) -> str:
-    if sha256(text) != expected:
+    if word_key(text) != expected:
         raise ValueError(f"{what} does not give the word it names (SHA-256 {expected[:12]}…)")
     return text
 

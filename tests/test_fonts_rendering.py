@@ -48,27 +48,18 @@ print(json.dumps(image.tolist()))
     ]
 
 
-def test_latin_cli_cannot_select_the_wrong_spacing_profile_or_drop_a_slot(tmp_path):
+def test_latin_cli_cannot_change_the_drawn_cells_or_drop_a_slot(tmp_path):
     result = system_python("""
 import hashlib,json,sys
 from pathlib import Path
 import subprocess
 from PIL import Image
-rows = []
-for mode in ('baseline','legacy'):
-    output = Path(mode + '.png')
-    run = subprocess.run([sys.executable,'-m','wozmod.fonts.raster',str(output),
-                          '--px','24','--spacing',mode,'--advances'],
-                         capture_output=True,text=True,check=True)
-    image = Image.open(output)
-    rows.append([mode,list(image.size),hashlib.sha256(image.tobytes()).hexdigest(),
-                 len(bytes.fromhex(run.stdout.strip()))])
-print(json.dumps(rows))
+subprocess.run([sys.executable,'-m','wozmod.fonts.raster','latin.png','--px','24'],
+               capture_output=True,text=True,check=True)
+image = Image.open('latin.png')
+print(json.dumps([list(image.size),hashlib.sha256(image.tobytes()).hexdigest()]))
 """, tmp_path)
-    assert result == [
-        ["baseline", [2376, 24], "3d79484405b2c77951e1a827924f02aad913bb9121256ccb761ace5b68a3193e", 99],
-        ["legacy", [2376, 24], "87858af86a1c382624913442dcddfb7c3ff1826739bb065cf6dd876b5986784b", 99],
-    ]
+    assert result == [[2376, 24], "87858af86a1c382624913442dcddfb7c3ff1826739bb065cf6dd876b5986784b"]
 
 
 def test_menu_batch_cli_cannot_drop_a_request_or_overwrite_its_neighbours(tmp_path):

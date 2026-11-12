@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from wozmod.art import render, words
+from wozmod.fonts.word_key import word_key
 
 
 def test_letter_map_rebuilds_each_label_and_refuses_a_shifted_box(tmp_path):
@@ -15,8 +16,8 @@ def test_letter_map_rebuilds_each_label_and_refuses_a_shifted_box(tmp_path):
     labels = ["Ab  c", None, "dA"]
     row = {"wo1-x360": [1, 2, 0],
            "letters": {"A": "0:0 2:1", "b": "0:1", "c": "0:2", "d": "2:0"},
-           "texts": [{"boxes": 3, "spaces": [1, 1], "sha256": words.sha256(labels[0])}, None,
-                     {"boxes": 2, "sha256": words.sha256(labels[2])}]}
+           "texts": [{"boxes": 3, "spaces": [1, 1], "sha256": word_key(labels[0])}, None,
+                     {"boxes": 2, "sha256": word_key(labels[2])}]}
     path = tmp_path / "art.json"
     path.write_text(json.dumps({"faces": {"f": {"rows": [row]}}}))
     assert words.load(path)["faces"]["f"]["rows"][0] == {"wo1-x360": [1, 2, 0], "texts": labels}
@@ -36,8 +37,8 @@ def test_pointer_deletes_then_cases_and_must_give_its_word(tmp_path, monkeypatch
     monkeypatch.setattr(words, "DONORS", Donors())
     path = tmp_path / "visuals.json"
     stored = {"a": {"ref": ["wo2-x360", "pe", 7], "edits": [[0, 1, ""]], "case": "upper",
-                    "sha256": words.sha256("ALDER GROVE")},
-              "b": [{"ref": ["wo2-x360", "pe", 8], "edits": [[0, 1, ""], [6, 7, ""]], "sha256": words.sha256("arbor")}]}
+                    "sha256": word_key("ALDER GROVE")},
+              "b": [{"ref": ["wo2-x360", "pe", 8], "edits": [[0, 1, ""], [6, 7, ""]], "sha256": word_key("arbor")}]}
     path.write_text(json.dumps(stored))
     assert words.load(path) == {"a": "ALDER GROVE", "b": ["arbor"]}
 

@@ -123,6 +123,29 @@ def timed_event(lines: list[tuple[float, float, int, bytes]], length: float, ord
     return u32(1) + u32(base) + bytes(base - 8) + bytes(out)
 
 
+def ogg_crc(page: bytes) -> int:
+    """The Ogg page CRC-32 (polynomial 0x04C11DB7, no reflection)."""
+    crc = 0
+    for value in page:
+        crc ^= value << 24
+        for _ in range(8):
+            crc = ((crc << 1) ^ (0x04C11DB7 if crc & 0x80000000 else 0)) & 0xFFFFFFFF
+    return crc
+
+
+def kovs(size: int, *, serial: int = 0x53594E54, samples: int = 0, rate: int = 48_000) -> bytes:
+    """A KOVS voice record of `size` bytes (90 to 346): one Ogg page holding the Vorbis identification packet and
+    zero filler."""
+    identification = b"\x01vorbis" + struct.pack("<I", 0) + b"\x01" + struct.pack("<Iiii", rate, 0, 0, 0) + b"\xb8\x01"
+    filler = size - 91
+    lacing = bytes((30, filler)) if filler >= 0 else bytes((30,))
+    page = bytearray(b"OggS\x00\x06" + struct.pack("<QII", samples, serial, 0) + bytes(4) + bytes((len(lacing),)) + lacing + identification + bytes(max(0, filler)))
+    struct.pack_into("<I", page, 22, ogg_crc(page))
+    for at in range(min(256, len(page))):
+        page[at] ^= at
+    return b"KOVS" + struct.pack("<Ii", len(page), 0) + bytes(20) + page
+
+
 def write_stock_archive(folder: Path, stem: str, entries: dict, count: int | None = None) -> None:
     """Write `stem`.BIN and .IDX: an entry is bytes, or a tuple of parts that share one record."""
     records, trailer, body = [], b"", b""

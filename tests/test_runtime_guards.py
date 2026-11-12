@@ -21,7 +21,7 @@ from wozmod.runtime.english_runtime import ALWAYS_HOOKS, HOOKS, MOVING_FIX_HOOKS
 from wozmod.runtime.guards import Feature, Guard
 
 REPO = Path(__file__).resolve().parents[1]
-ALL_DEFINES = ("ENRT_LOG", "ENRT_BOOTLOG", "ENRT_TAG_PREVIEW", "ENRT_TEST", "ENRT_RENDER_DISTANCE", "ENRT_MOVING_FIX")
+ALL_DEFINES = ("ENRT_LOG", "ENRT_BOOTLOG", "ENRT_TEST", "ENRT_MOVING_FIX")
 TEXT = (0x401000, 0x6CB000)  # version 1.00's .text, from its section table
 V101 = (0x4B5E99A7, 0x1194000)  # the 1.01 update's OROCHI_Z.exe: stamp 2010-01-26 07:28:39 UTC, SizeOfImage
 RANGE = "range bound: compares a return address with a whole code region, which no span can guard"
@@ -41,7 +41,7 @@ UNGUARDED_WRITES = {0x6CC1B8: FORWARDED, 0x6CC248: FORWARDED, 0x6CC25C: FORWARDE
 
 def _spans() -> list[tuple[str, int, int]]:
     """Every guard of every build variant: (feature, VA, size)."""
-    edits = edit_lists(camp_plate.STOCK_WIDTH, preview=True, render_distance=True, moving_fix=True)
+    edits = edit_lists(camp_plate.STOCK_WIDTH, moving_fix=True)
     return guards.guard_spans(edits, hook_sites(ALL_DEFINES), ALL_DEFINES)
 
 
@@ -93,7 +93,7 @@ def test_every_stock_routine_an_edit_calls_is_a_guard_of_its_feature() -> None:
     owner = {name: f for f in guards.FEATURES for name in f.edits}
     spans = _spans()
     missing = []
-    for _, name, edits in edit_lists(camp_plate.STOCK_WIDTH, preview=True, render_distance=True, moving_fix=True):
+    for _, name, edits in edit_lists(camp_plate.STOCK_WIDTH, moving_fix=True):
         own = [(va, va + len(before)) for va, before, _ in edits]
         for va, _, after in edits:
             for instruction in disassembler.disasm(after, va):
@@ -135,7 +135,7 @@ def test_no_stock_branch_lands_inside_an_instruction_a_hook_or_edit_replaces() -
     where = pe.layout(image)
     branches = _branches(image[pe.file_offset(where, TEXT[0]):pe.file_offset(where, TEXT[1])], TEXT[0])
     edits = [(name, va, before, after) for _, name, group in edit_lists(
-        camp_plate.STOCK_WIDTH, preview=True, render_distance=True, moving_fix=True) for va, before, after in group]
+        camp_plate.STOCK_WIDTH, moving_fix=True) for va, before, after in group]
     hooks = [(f"hook {hook_id}", va, prologue) for va, prologue, hook_id, _, _ in hook_sites(ALL_DEFINES)]
     rewritten = {a for _, va, before, _ in edits for a in range(va, va + len(before))}
     rewritten |= {a for _, va, prologue in hooks for a in range(va, va + len(prologue))}

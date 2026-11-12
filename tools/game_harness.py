@@ -698,7 +698,6 @@ def test_command(memory: int, block: int, op: int, arg: int = 0, data: bytes = b
             4: "a script or scene is playing, or the event queue is full; retry",
             5: "no such sub-scene in this stage's event scene, or the game refused it" if op == 8 else
                "no such queued script in this stage; run scripts",
-            6: "review texture or rectangle is unavailable; check the test-only review.bin",
             7: "an officer that sub-scene casts is not on the field (no model loaded); the stage would not start it now",
         }.get(result, f"result {result}")))
 
@@ -819,23 +818,6 @@ def wait_for(memory: int, block: int, text: str | None, texture: str | None, sec
         time.sleep(0.02 if on_match else 0.1)
 
 
-def review_request(texture: str, rect: list[int]) -> tuple[int, list[int]]:
-    """Validate a renderer review before it reaches the game mailbox."""
-    if texture == "off":
-        return 0, [0, 0, 0, 0]
-    if not isinstance(texture, str) or not re.fullmatch(r"\d+\.\d+", texture):
-        raise ValueError("review texture is key.member, or off")
-    entry, item = map(int, texture.split("."))
-    if not 0 < entry < 65536 or not 0 <= item < 65536:
-        raise ValueError("review entry and item must fit 16 bits")
-    if len(rect) != 4 or any(not isinstance(v, int) or v < 0 for v in rect):
-        raise ValueError("review rect is four nonnegative integers: X Y W H")
-    x, y, w, h = rect
-    if not 0 < w <= 1110 or not 0 < h <= 200 or x + w > 4095 or y + h > 4095:
-        raise ValueError("review rect must fit the UV cap, width 1110, and height 200")
-    return entry << 16 | item, rect
-
-
 def capture_name(root: Path, name: object) -> Path:
     """The PNG path for a new capture; refuses an unsafe stem or an existing file."""
     if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", name):
@@ -916,16 +898,12 @@ def perform(root: Path, request: dict) -> dict:
     if action == "scripts":
         with open(f"/proc/{game_pid()}/mem", "rb", buffering=0) as memory:
             return stage_scripts(memory.fileno())
-    if action in ("screen", "wait", "say", "notice", "win", "lose", "script", "scene", "unlock", "review", "spawn",
+    if action in ("screen", "wait", "say", "notice", "win", "lose", "script", "scene", "unlock", "spawn",
                   "mount", "switch", "teleport", "keep", "crash"):
         with open(f"/proc/{game_pid()}/mem", "r+b", buffering=0) as memory:
             block = test_block(memory.fileno())
             if action == "screen":
                 return screen(memory.fileno(), block)
-            if action == "review":
-                name, rect = review_request(request["texture"], request["rect"])
-                test_command(memory.fileno(), block, 7, name, struct.pack("<4I", *rect))
-                return {"review": request["texture"], "rect": rect, "reference": "top", "vector": "bottom"}
             if action in ("script", "scene"):
                 number = request["number"]
                 if not isinstance(number, int) or not 0 <= number <= 0xFF:
@@ -2777,7 +2755,7 @@ def main(argv: list[str] | None = None) -> int:
     for action in ("run", "status", "key", "click", "pad", "plug", "reenumerate", "capture", "record", "video", "peek", "poke",
                    "find", "screen", "wait", "say", "notice", "win", "lose", "scripts", "script", "scene", "spawn", "mount", "switch",
                    "teleport", "keep", "unlock", "crash",
-                   "reload", "review", "tour", "route", "check", "stop", "_audio", "_serve"):
+                   "reload", "tour", "route", "check", "stop", "_audio", "_serve"):
         command = commands.add_parser(action)
         command.add_argument("--root", required=True, type=Path,
                              help="the run directory, or a bare run name under work/runtime-tests")
@@ -2865,9 +2843,6 @@ def main(argv: list[str] | None = None) -> int:
         if action == "spawn":
             command.add_argument("count", type=int, help=f"enemy troops to put around the player (whole squads; at most {SPAWN_MAX})")
             command.add_argument("--inner", type=int, default=SPAWN_INNER, help="the nearest ring, in world units")
-        if action == "review":
-            command.add_argument("texture", help="key.member, or off; needs the test-only review.bin")
-            command.add_argument("--rect", type=int, nargs=4, default=[0, 0, 512, 32], metavar=("X", "Y", "W", "H"))
         if action == "reload":
             command.add_argument("table", type=Path, help="a table.bin from build_moz_english_runtime.py --table-only")
         if action == "route":
@@ -2942,9 +2917,6 @@ def main(argv: list[str] | None = None) -> int:
         if args.action == "pad":
             request.update(names=args.names, hold=args.hold, gap=args.gap, stir=args.stir)
             timeout += len(args.names) * (args.hold + args.gap)
-        if args.action == "review":
-            review_request(args.texture, args.rect)
-            request.update(texture=args.texture, rect=args.rect)
         if args.action == "capture":
             request["name"] = args.name
         if args.action == "plug":

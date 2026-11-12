@@ -13,7 +13,8 @@ import struct
 import pytest
 from PIL import Image
 
-from wozmod.art import build, faces, imaging, lettering, packing, vector, words
+from wozmod.art import build, faces, imaging, lettering, packing, vector
+from wozmod.fonts.word_key import word_key
 
 FILL, OUTLINE = (220, 180, 40, 255), (8, 4, 0, 255)
 
@@ -290,7 +291,7 @@ def test_officer_detail_does_not_clip_leading_glow(monkeypatch, letters):
     served.paste((255, 255, 255, 255), (3, 134, 60, 158))
     texts = [None, None, None, "Alder controls"]
     monkeypatch.setattr(vector, "PAUSE_BUTTON_ROWS", {
-        (4080, item, 3): (words.sha256("Alder controls"), 198.062306, 4.981308, 32, None, None)
+        (4080, item, 3): (word_key("Alder controls"), 198.062306, 4.981308, 32, None, None)
         for item in (44, 45)
     })
     for item in (44, 45):
@@ -650,7 +651,7 @@ def test_squish_condenses_an_overflowing_pause_row_to_its_official_width(monkeyp
     label = Image.new("RGBA", (48, 42))
     label.paste((200, 200, 200, 255), (4, 8, 44, 36))
     letters(lambda request: (label, {"ink": [4, 8, 44, 36], "baseline": 36}))
-    monkeypatch.setattr(vector, "PAUSE_BUTTON_ROWS", {(4080, 99, 0): (words.sha256("Menu"), 12.0, 7.0, 23, None, None)})
+    monkeypatch.setattr(vector, "PAUSE_BUTTON_ROWS", {(4080, 99, 0): (word_key("Menu"), 12.0, 7.0, 23, None, None)})
     served = Image.new("RGBA", (64, 32))
     served.paste((200, 200, 200, 255), (7, 9, 19, 23))
     edit = {"entry": 4080, "item": 99, "rows": [[{"text": "Menu"}]], "bands": [(0, 32)]}

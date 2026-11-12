@@ -22,6 +22,7 @@ from .hires import HIRES_SCALE, HiresRow, hires_bank, hires_blocks
 from wozmod.formats.textures import G1T_TEXTURE_HEADER, G1tFile, parse_g1t, parse_texture_package
 from wozmod.fonts.menu_plates import X360_PLATES, clean_substrate
 from wozmod.fonts.menu_references import reference
+from wozmod.fonts.word_key import word_key
 from .imaging import ink, restriped, rgba, tinted
 from .packing import packed_lzp2, worker_pool
 from .faces import BASELINE, gaps, ink_rows, source_image
@@ -667,7 +668,7 @@ def vector_art(edit: dict, served: Image.Image, texts: list, scale: int, window=
         pause = PAUSE_BUTTON_ROWS.get((edit["entry"], edit["item"], k))
         if pause:
             expected, target, left, baseline, centre, counterpart = pause
-            if words.sha256(text) != expected:
+            if word_key(text) != expected:
                 raise ValueError(f"pause row pairing changed: {edit['entry']}.{edit['item']} row {k}: {text!r}")
             label, metrics = lettering.pause(text, scale, target, counterpart)
             label, metrics = lettering.squeezed(label, metrics, (left, left + target, baseline), scale, squeeze)

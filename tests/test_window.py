@@ -225,13 +225,13 @@ def test_a_fresh_window_cannot_install_and_says_where_the_files_come_from(shown)
 
 
 
-def test_the_window_shows_the_released_version(shown):
-    # Bug: the version label is missing, or shows a version other than the release's.
-    import tomllib
+def test_the_window_shows_the_version(shown):
+    # Bug: the version label is missing, or shows another version than wozmod.version's (which test_install_lifecycle
+    # checks against the release).
+    from wozmod.version import __version__
     win, root = shown
-    version = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())["project"]["version"]
     labels = [w.cget("text") for w in win.frame.winfo_children() if w.winfo_class() == "TLabel"]
-    assert f"wozmod {version}" in labels
+    assert f"wozmod {__version__}" in labels
 
 def test_both_front_ends_show_the_notes_of_an_install(shown, tmp_path, monkeypatch, capsys):
     """Bug: a note the install gives (another mod also replaces something wozmod replaces) is dropped, as the

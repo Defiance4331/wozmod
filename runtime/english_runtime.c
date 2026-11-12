@@ -1,20 +1,3 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #include <windows.h>
 #include "shared.h"  /* the defines the installer's build steps also read */
 #include "text_fit.h"
@@ -37,7 +20,6 @@
 typedef unsigned int u32;
 typedef unsigned short u16;
 typedef unsigned char u8;
-
 
 
 struct site {
@@ -70,8 +52,6 @@ struct tr_slot {  /* a stock constant and its transform for the rate */
 static int wozmod_on;
 
 
-
-
 static const u32 *enrt_table;
 
 
@@ -80,9 +60,6 @@ static const u32 *enrt_table;
 #define NAME_PART(i) (*(const char *const *)(0x6F6368 + 8 * (i)))
 #define MESSAGE(i) (*(const u32 *)(0x6DE4F0 + 4 * (i)))
 #define FONT_CELL ((volatile u8 *)0xC2AE0C)
-#ifndef ENRT_CELL
-#define ENRT_CELL 24
-#endif
 
 #define PROMPT_DRAW 0x55DFD8
 #define PROMPT_TEXT ((const char *)0xC2F1B8)
@@ -162,7 +139,6 @@ static const u32 *enrt_table;
 #define BANNER_NAME_DRAW 0x550874
 #define BANNER_TEXT_CELL 22
 #define CAPTION_WIDTH 1200
-
 
 
 #define PAD_PROMPTS (*(volatile u8 *)0x1413FEC)
@@ -276,7 +252,6 @@ static void log_end(const char *line, const char *end)
 }
 
 
-
 static void log_line(u32 id, const struct frame *f, const u8 *s, u32 key)
 {
     char line[64 + 2 * 512 + 2], *p = line;
@@ -296,7 +271,6 @@ static void log_line(u32 id, const struct frame *f, const u8 *s, u32 key)
     }
     log_end(line, p);
 }
-
 
 
 static u32 texture(u32 handle);
@@ -348,8 +322,6 @@ static u32 texture(u32 handle)
 #endif
 
 #ifdef ENRT_TEST
-
-
 
 
 #define TEST_VERSION 2
@@ -617,8 +589,6 @@ static void test_quad(u32 hook, const struct frame *f, u32 at)
     current->quads++;
 }
 
-static u32 test_review_set(u32 name, const u32 *rect);
-
 /* Whether every officer a sub-scene casts has its model loaded. Its cast setup 0x4A5BB0 builds no actor for an
    officer whose model flag is 0 (unless 0x49EF50 names it special) and then reads that actor at 0x4A5E25; the
    stage's own events start such a sub-scene only once the officer is on the field. */
@@ -725,9 +695,6 @@ static void test_frame(void)
                 GIVE_WEAPON(i, tier, weapon);
             }
         }
-        break;
-    case 7:
-        b->result = test_review_set(b->arg, (const u32 *)b->input);
         break;
     case 8: {
         /* Play sub-scene arg of the current stage's event scene, as a category-39 command would (that path cannot
@@ -867,8 +834,6 @@ static u32 text(u32 s, u32 id, const struct frame *f)
 #endif
     return en;
 }
-
-
 
 
 /* The speak command (opcode 0x26, handler 0x4F17E0, hook 118, esi at its word 1) shows dialog line [esi+2] of the
@@ -1314,9 +1279,6 @@ static void draw(const char *s, u32 x, u32 y, u32 layer)
 }
 
 
-
-
-
 static const char *wrap(const char *s, u32 width, char *out, u32 size)
 {
     char *o = out, *line = out, *space = 0;
@@ -1384,7 +1346,6 @@ static int prefix(const char *s)
     u32 n = len(s);
     return n && s[n - 1] == ' ';
 }
-
 
 
 static char *compose(char *dst, u32 surname, u32 given)
@@ -1460,10 +1421,6 @@ static const char *reflow_wrap(u32 caller, const char *s, u32 box, char *out, u3
 }
 
 
-
-
-
-
 /* MOZ message box: widened in 24 px steps (centred) until the wrapped text fits its height, up to 1120. */
 static void fit_message(const char *s, u32 extra)
 {
@@ -1497,7 +1454,6 @@ static const char *flat(const char *s)
             *p = ' ';
     return flat_text;
 }
-
 
 
 /* Page cell (w, h in 24-cell units; 0 keeps the stock cell and pitch), pitch, origin, wrap at that cell, box, and
@@ -1544,7 +1500,6 @@ static u32 page(struct frame *f, const u32 *site)
 }
 
 
-
 static const char *history(const char *s)
 {
     static char out[512];
@@ -1567,8 +1522,6 @@ static const char *history(const char *s)
 }
 
 
-
-
 static u32 description(struct frame *f, u32 width, u8 pitch)
 {
     u8 stock = FONT_CELL[2];
@@ -1578,7 +1531,6 @@ static u32 description(struct frame *f, u32 width, u8 pitch)
     FONT_CELL[2] = stock;
     return 1;
 }
-
 
 
 /* A column of at most `lines` lines at cell (0: stock) and pitch, condensed into width past them. */
@@ -1677,8 +1629,6 @@ static void row_columns(struct frame *f)
 }
 
 
-
-
 #define PLAIN_BOX_CALL 0x594A0D
 #define BOXES 64
 static struct box { u32 site, turn; int x, y, w, h, grow; } boxes[2][BOXES];
@@ -1700,8 +1650,6 @@ static void box_drawn(u32 id, struct frame *f)
         if (last[i].site == b->site && last[i].turn == turn)
             f->arg[4] += last[i].grow;
 }
-
-
 
 
 static u32 fit_box(struct frame *f)
@@ -1730,7 +1678,6 @@ static u32 fit_box(struct frame *f)
 }
 
 
-
 #define KEY_GAP 14
 #define KEY_TEXT 56
 static const u32 key_first[][2] = {
@@ -1738,7 +1685,6 @@ static const u32 key_first[][2] = {
     {0x59360F, 0x59361F},
     {0x59365A, 0x593666},
 };
-
 
 
 #define DIALOG_PLATE_1 0x54F5B7
@@ -1832,7 +1778,6 @@ static void reload(void)
 }
 
 
-
 /* An archive entry the installer wrote, by folder: wozmod/entries/<key>.bin (menu art, the font), wozmod/captions
  * (the movie caption schedules), or wozmod/captions/voice, whose schedule takes the place of the other while the
  * voices are English (the English-voice movies' own caption times). */
@@ -1895,9 +1840,6 @@ static struct loose *served(u32 key)
 }
 
 
-
-
-
 #define VOICE_KEY 0x161C
 #define VOICE_SLOT 0x4EF84
 #define VOICE_TAG 0x80000000u
@@ -1957,10 +1899,6 @@ static u32 *voice_table, voice_ids;
 static struct voice_play kept_play = {VOICE_NONE, 0, {0}, VOICE_NONE};
 
 
-
-
-
-
 #define SE_KEY 0xFD9
 #define SE_BANK L"voice\\SE.bin"
 static HANDLE se_bank = INVALID_HANDLE_VALUE;
@@ -1984,7 +1922,6 @@ static unsigned int se_release(unsigned char *m, unsigned int i)
     return ((u32 (__thiscall *)(void *, u32))0x5D5DC0)(m, i);
 }
 static const struct se_stock se_routines = {se_playing, se_stop, se_release};
-
 
 
 static HANDLE open_bank(const WCHAR *file, u32 max, u32 words, u32 **table, u32 *count)
@@ -2084,7 +2021,6 @@ static u32 read_voice(struct frame *f, HANDLE bank)
 }
 
 
-
 static u32 read_loose(struct frame *f)
 {
     struct loose *e = served(f->arg[0]);
@@ -2143,20 +2079,14 @@ static u32 read_loose(struct frame *f)
 /* Game Settings keeps two stock rows, LIFE and EVENTS (FRAME SKIP is always on and has no row: runtime_edits.
    settings_rows). The added rows follow them (ebp - STOCK_ROWS counts from the first language row): FOV at
    STOCK_ROWS + rows, frame rate one after, vsync two after, then in dev builds only the moving camera fix
-   (ENRT_MOVING_FIX, out of release 1) and render distance. DEFAULT is the stock last row. */
+   (ENRT_MOVING_FIX, out of release 1). DEFAULT is the stock last row. */
 #define STOCK_ROWS 2
 #ifdef ENRT_MOVING_FIX
 #define MOVING_ROWS 1
 #else
 #define MOVING_ROWS 0
 #endif
-#define DISTANCE_AT (3 + MOVING_ROWS)  /* after the language rows, as FOV is at 0 */
-#ifdef ENRT_RENDER_DISTANCE
-#define LAST_ROW DISTANCE_AT
-#else
-#define LAST_ROW (2 + MOVING_ROWS)
-#endif
-
+#define LAST_ROW (2 + MOVING_ROWS)  /* after the language rows, as FOV is at 0 */
 
 
 #define PALETTE_INDEX(c) (((u32)&(c) - 0x712F38) / 4)
@@ -2288,7 +2218,6 @@ static void language_input(u32 row, u32 repeat)
 }
 
 
-
 #define FOV_MIN 100
 #define FOV_MAX 150
 #define FOV_STEP 5
@@ -2350,72 +2279,12 @@ static void fov_input(u32 repeat)
 }
 
 
-
-
-
-
-
-
-
-
-
-#ifdef ENRT_RENDER_DISTANCE
-#define VIEW_GETTER 0x475BA0
-#define CROWD_GETTER 0x475B60
-#define VIEW_SCALE 2.0f
-static const u8 view_load[3] = {0x0D, 0x19, 0x20};
-static const float view_stock[3] = {15000.0f, 12500.0f, 10000.0f};
-static float view[3];
-static u32 distance = 1, distance_ok;
-static const char *const distance_label[2] = {"RENDER DISTANCE", "\x95\x60\x89\xe6\x8b\x97\x97\xa3"};
-
-static void distance_apply(void)
-{
-    u8 full = distance ? 120 : 101, many = distance ? 90 : 76, normal = distance ? 60 : 51, step = normal - many;
-    u32 i;
-    for (i = 0; i < 3; i++)
-        view[i] = view_stock[i] * (distance ? VIEW_SCALE : 1.0f);
-    write_at(CROWD_GETTER + 0x0C, &full, 1);
-    write_at(CROWD_GETTER + 0x1A, &step, 1);
-    write_at(CROWD_GETTER + 0x1D, &many, 1);
-    FlushInstructionCache(GetCurrentProcess(), 0, 0);
-}
-
-
-static void distance_install(void)
-{
-    u32 i, va;
-    distance_apply();
-    for (i = 0; i < 3; i++)
-        if (va = (u32)&view[i], !write_at(VIEW_GETTER + view_load[i], (const u8 *)&va, 4)) {
-            note("failed: could not write", VIEW_GETTER + view_load[i]);
-            return;
-        }
-    distance_ok = 1;
-}
-
-static void distance_input(u32 repeat)
-{
-    WCHAR name[MAX_PATH];
-    if (!distance_ok || !(repeat & 0x0C))
-        return;
-    distance ^= 1;
-    distance_apply();
-    WritePrivateProfileStringW(L"display", L"distance", distance ? L"on" : L"off", path(name, L"settings.ini"));
-    GAME_SOUND(1, 0, 0x2CDC, 0x2CDC, 0x1000);
-}
-#endif
-
-
-
-
 #define JOY_STATE ((volatile int *)0x140D120)
 #define PLAYER_JOY ((volatile u32 *)0x7AA8B4)
 #define PLAYER_MAP(p) (*(u8 *const *)(0x140C48C + 16 * (p)))
 #define PAD_AUTO ((u32(*)(u32))0x5E2D30)
 #define PADS ((void **const volatile *)0x140D440)
 #define CONTROLLER_PAGE (*(const u8 *const volatile *)0xC2FC90)
-
 
 
 /* Bit per player map the input map load (hook 70) has read and the camera check below has not seen. */
@@ -2448,11 +2317,6 @@ static void camera_default(u32 player)
     CopyMemory(map, saved, sizeof saved);
     PLAYER_JOY[player] = joy;
 }
-
-
-
-
-
 
 
 #define PROMPT_TABLE (*(unsigned long long *const *)0xC54C38)
@@ -2501,11 +2365,6 @@ static void prompts_load(void)
     prompts_ready = 1;
     prompts_sharpen(1);
 }
-
-
-
-
-
 
 
 typedef long(__stdcall *com1)(void *);
@@ -2990,10 +2849,6 @@ static void glyphs_load(void)
 }
 
 
-
-
-
-
 static void camp_help_position(const struct hires *r, struct frame *f, u32 width)
 {
     static const u32 rows[][5] = {
@@ -3101,100 +2956,6 @@ static void hires_quad(u32 id, struct frame *f)
     }
 }
 
-#ifdef ENRT_TEST
-
-
-
-struct review_row { u32 entry, item, w, h, offset, size, base_offset, base_size; };
-static u8 *review_data;
-static u32 review_size, review_count, review_name, review_rect[4], review_frame;
-static unsigned long long review_ref[HIRES_MAX], review_base[HIRES_MAX], review_bg;
-static int review_drawing;
-
-static u32 test_review_set(u32 name, const u32 *rect)
-{
-    WCHAR path_name[MAX_PATH];
-    u32 i, j;
-    if (!name) {
-        review_name = 0;
-        return 0;
-    }
-    if (!review_data) {
-        review_data = load(path(path_name, L"review.bin"), &review_size);
-        if (!review_data || review_size < 4)
-            return 6;
-        review_count = *(const u32 *)review_data;
-        if (review_count > HIRES_MAX || 4 + review_count * sizeof(struct review_row) > review_size)
-            return 6;
-    }
-    for (i = 1; i < review_count; i++) {
-        const struct review_row *r = (const struct review_row *)(review_data + 4) + i;
-        if ((r->entry << 16 | r->item) != name)
-            continue;
-        for (j = 0; j < hires_rows; j++)
-            if (hires_row[j].entry == r->entry && hires_row[j].item == r->item)
-                break;
-        if (j == hires_rows || !rect[2] || !rect[3] || rect[0] + rect[2] > hires_row[j].w ||
-            rect[1] + rect[3] > hires_row[j].h || rect[2] > 1110 || rect[3] > 200 ||
-            r->offset > review_size || r->size > review_size - r->offset ||
-            r->base_offset > review_size || r->base_size > review_size - r->base_offset)
-            return 6;
-        if (!review_ref[i]) {
-            review_ref[i] = TEXTURE_HANDLE(review_data + r->offset, 0x1F00, 0x6000 + 2 * i);
-            review_base[i] = TEXTURE_HANDLE(review_data + r->base_offset, 0x1F00, 0x6001 + 2 * i);
-        }
-        if (!review_bg) {
-            const struct review_row *bg = (const struct review_row *)(review_data + 4);
-            if (bg->offset > review_size || bg->size > review_size - bg->offset)
-                return 6;
-            review_bg = TEXTURE_HANDLE(review_data + bg->offset, 0x1F00, 0x6000);
-        }
-        review_name = i;
-        words(review_rect, rect, sizeof review_rect);
-        return 0;
-    }
-    return 6;
-}
-
-static void review_quad(unsigned long long handle, u32 x, u32 y, u32 w, u32 h, u32 sx, u32 sy, u32 sw, u32 sh)
-{
-    GAME_QUAD((u32)handle, (u32)(handle >> 32), x,y,0,w,h,sx,sy,sw,sh,0x80,4);
-}
-
-static void test_review_draw(void)
-{
-    u32 i, sx = review_rect[0], sy = review_rect[1], w = review_rect[2], h = review_rect[3];
-    const struct review_row *r;
-    if (!review_name || review_drawing || review_frame == enrt_test.frame)
-        return;
-    review_frame = enrt_test.frame;
-    review_drawing = hires_native = 1;
-    r = (const struct review_row *)(review_data + 4) + review_name;
-    review_quad(review_bg, 120,148,1126, 2 * h + 96, 0,0,4,4);
-    if (sx < r->w && sy < r->h) {
-        u32 rw = w < r->w - sx ? w : r->w - sx, rh = h < r->h - sy ? h : r->h - sy;
-        review_quad(review_ref[review_name],128,160,rw,rh,sx,sy,rw,rh);
-    }
-    for (i = 0; i < hires_rows; i++) {
-        const struct hires *v = hires_row + i;
-        u32 scale = v->scale & HIRES_SCALE_MASK, vx = sx, vy = sy;
-        if (v->entry != r->entry || v->item != r->item)
-            continue;
-        if (v->scale & HIRES_OVERLAY)
-            review_quad(review_base[review_name],128,208+h,w,h,sx,sy,w,h);
-        if (v->per_col) {
-            u32 col_h = v->per_col * (v->band & 0xFFFF), col = sy / col_h;
-            vx += col * v->w, vy -= col * col_h;
-        }
-        review_quad(hires_sheet[v->sheet].handle,128,208+h,w,h,(v->origin & 0xFFFF)+vx*scale,(v->origin >> 16)+vy*scale,
-                    w*scale,h*scale);
-        break;
-    }
-    review_drawing = hires_native = 0;
-}
-#endif
-
-
 
 static int rebinding;
 
@@ -3215,9 +2976,6 @@ static void prompts_show(int set)
     write_at(WIDE_LAST_DRAW, &wide_last[set], 1);
     write_at(WIDE_LAST_MEASURE, &wide_last[set], 1);
 }
-
-
-
 
 
 #define MENU_WORD(p, repeat) (*(const volatile u32 *)(0xC87F70 + 0xF0 * (p) + 4 * (repeat)))
@@ -3265,9 +3023,6 @@ static void keys_read(void)
 }
 
 
-
-
-
 #define GAME_NEW ((char *(*)(u32))0x69BC72)
 /* The family of each pad (index as in the game's pad list), from pad_identify; DualSense pads name button 8 Create. */
 static u8 pad_family[8], pad_dualsense[8];
@@ -3311,10 +3066,6 @@ static int pad_label(const u8 *binding, char **out)
     *out = text;
     return 1;
 }
-
-
-
-
 
 
 #define MOVE_ACTION ((const u32 *)0x79EC68)
@@ -3548,12 +3299,6 @@ static void playstation_defaults(u8 *map)
 }
 
 
-
-
-
-
-
-
 #define DINPUT (*(void *const volatile *)0x140D3F8)
 #define DINPUT_CREATE ((long(__stdcall *)(HINSTANCE, u32, const void *, void **, void *))0x602710)
 #define IID_DINPUT8A ((const void *)0x75C2A4)
@@ -3730,17 +3475,6 @@ static void pads_rescan(void)
 }
 
 
-
-
-
-
-
-
-
-
-
-
-
 #define FPS_LIMITER 0x5CA36D
 #define SCENE (*(volatile u32 *)0x7C8518)
 #define CAMERA_POSE(camera) ((float *)((camera) + 0x1C0))
@@ -3810,7 +3544,7 @@ static const u32 fps_rates[] = {60, 120, 144, 165, 240, 0};
 #define FPS_CHOICES (sizeof fps_rates / sizeof *fps_rates)
 #define FPS_MAX 360
 static u32 fps_choice, vsync = 1, monitor_hz = 60;
-/* Presents so far: work/true-rate/measure.py reads the u32 at +28. */
+/* Presents so far: the true-rate host script measure.py (kept outside the repository) reads the u32 at +28. */
 static struct { char magic[16]; u32 unused[3], presents; } hfr_stats = {"ENRT-HFR-STATS"};
 static const char *const fps_label[2] = {"FRAME RATE", "\x83\x74\x83\x8c\x81\x5b\x83\x80\x83\x8c\x81\x5b\x83\x67"};
 static const char *const fps_monitor[2] = {"MONITOR", "\x83\x82\x83\x6a\x83\x5e\x81\x5b"};
@@ -3857,7 +3591,7 @@ static u32 fps_rate(void)
 #define TICK_RATE (*(volatile double *)0x7AB088)
 #define FRAME_STEP (*(volatile float *)0x7C8500)
 static struct tr_clock tr = {60, 0, 1, 0, 1.0f, 1.0, 0, {0}, 1, 1, 1.0f, 1.0f, 0, 1, 0, 60};
-/* The character step's entry (data/true_rate.toml, 0x412280): a far-away character updates every 6th tick. */
+/* The character step's entry (data/true_rate/character.toml, 0x412280): a far-away character updates every 6th tick. */
 static void __cdecl tr_character(float lod)
 {
     tr_window(&tr, lod > 1.5f ? 6 : 1);
@@ -3878,12 +3612,11 @@ static void (__cdecl *const tr_frame_at)(u32) = tr_frame_step;
 static union { double d; float f; } tr_slot[TR_SLOTS + 1];
 static u32 tr_sym[TR_SYM_SLOT + TR_SLOTS], tr_thunk[TR_SITES + 1], tr_wanted = 60, tr_sites_on = 1;
 #ifdef ENRT_TEST
-/* work/true-rate/measure.py: rate in battle (0 stock); sites 0 leaves the catalogue out (the clock, limiter and dt
-   only). */
+/* For measure.py, the true-rate host script kept outside the repository: rate in battle (0 stock); sites 0 leaves
+   the catalogue out (the clock, limiter and dt only). */
 static struct { char magic[16]; volatile u32 rate, sites, applied, ticks, periods, skip_lo, skip_hi, scenes, monitor; }
     true_rate = {"ENRT-TRUE-RATE", 0, 1};  /* rate 0: the FRAME RATE setting's */  /* scenes: a bit per scene id the rate applies in besides the battle (2) */  /* skip_lo..skip_hi: sites left stock, to find the one at fault */
 #include "true_rate_probe.h"
-#include "latency_probe.h"
 #endif
 
 /* Thunks for the catalogue, once, before anything is patched (the guards checked every site's stock bytes). */
@@ -4004,7 +3737,6 @@ static void tr_pump(void)
         true_rate.monitor = monitor_refresh();
 #endif
 }
-
 
 
 /* The game's display setup (thiscall on 0x7A4568): its Graphics screen calls it after a change (0x56CF5F), and it
@@ -4147,43 +3879,6 @@ static void hook_slot(void *object, u32 slot, void *fn)
         note("refused: could not hook vtable slot", slot);
 }
 
-#ifdef ENRT_TEST
-#include "vb_probe.h"
-#endif
-
-#ifdef ENRT_TEST
-/* work/rebar/rings.py: off bit 1 gives the rings their own Lock again (the stock path), and bit 2 the effect batches
-   their own flags (0), to time both sides in one battle. A pass is the time from its first ring Lock to its last
-   Unlock's return; frames are Present to Present, and frame_max the longest (the host zeroes it). */
-static struct {
-    char magic[16];
-    volatile u32 off, passes, frames, full;
-    long long freq, pass_ticks, frame_ticks, opened_at, presented_at;
-    u32 open;
-    volatile u32 frame_max;
-} ring_stats = {"ENRT-RING-STATS"};
-
-static long long ring_now(void)
-{
-    LARGE_INTEGER t;
-    QueryPerformanceCounter(&t);
-    return t.QuadPart;
-}
-
-static void ring_stat_present(void)
-{
-    long long now = ring_now();
-    LARGE_INTEGER hz;
-    if (!ring_stats.freq)
-        QueryPerformanceFrequency(&hz), ring_stats.freq = hz.QuadPart;
-    if (ring_stats.presented_at) {
-        ring_stats.frame_ticks += now - ring_stats.presented_at, ring_stats.frames++;
-        if ((u32)(now - ring_stats.presented_at) > ring_stats.frame_max)
-            ring_stats.frame_max = (u32)(now - ring_stats.presented_at);
-    }
-    ring_stats.presented_at = now;
-}
-#endif
 
 #ifdef ENRT_LOG
 static void state_note(const char *kind, u32 index, u32 value)
@@ -4359,11 +4054,6 @@ static long __stdcall present(void *device, const void *from, const void *to, vo
     if (display_mode == BORDERLESS && !to && !window)  /* the output scaled onto the desktop, its shape kept */
         to = view ? 0 : &present_to, window = view;
     result = REAL(present_fn, device, SLOT_PRESENT)(device, from, to, window, dirty);
-#ifdef ENRT_TEST
-    lat_present();
-    vbp_present();
-    ring_stat_present();
-#endif
     if (result == D3DERR_INVALIDCALL && to == &present_to && (view = (rect_refused = 1, present_window(DISPLAY_WINDOW)))) {
         note("display: Present refuses a destination rectangle; borderless presents into a child window", 0);
         result = REAL(present_fn, device, SLOT_PRESENT)(device, from, 0, view, dirty);  /* this frame again */
@@ -4507,10 +4197,6 @@ static long __stdcall create_device(void *d3d, u32 adapter, u32 type, void *wind
 #endif
     if (result >= 0)  /* every device: each may bring its own vtable */
         hook_slot(*device, SLOT_RESET, (void *)reset), hook_slot(*device, SLOT_PRESENT, (void *)present);
-#ifdef ENRT_TEST
-    if (result >= 0)
-        hook_slot(*device, 26, (void *)vbp_create_vb), hook_slot(*device, 27, (void *)vbp_create_ib);
-#endif
 #ifdef ENRT_BOOTLOG
     if (result >= 0) {  /* the hooks go into the first device's vtable only: does this device share it? */
         void **vtable = *(void ***)*device;
@@ -4543,14 +4229,6 @@ static u32 english_hook(u32 id, struct frame *f)
             width = total > 0x83 ? total - 0x83 : 0;
             align = 2;
         }
-#if ENRT_CELL != 24
-
-
-        static u8 scaled[2];
-        if (FONT_CELL[0] != scaled[0] || FONT_CELL[1] != scaled[1])
-            FONT_CELL[0] = scaled[0] = (u8)(FONT_CELL[0] * ENRT_CELL / 24),
-            FONT_CELL[1] = scaled[1] = (u8)(FONT_CELL[1] * ENRT_CELL / 24);
-#endif
         if (f->ret == WEAPON_READING_DRAW || f->ret == WEAPON_INFO_READING_DRAW)
             return 1;
         text_draws += id == 1;
@@ -4798,7 +4476,6 @@ static u32 english_hook(u32 id, struct frame *f)
     case 32: {
 
 
-
         char name[96];
         const union { u32 u; float f; } *at = (const void *)f->eax, *cell = (const void *)&f->arg[4];
         u32 *quad = (u32 *)f->ecx, i, colour = FONT_COLOUR, depth = TEXT_DEPTH;
@@ -5024,11 +4701,6 @@ static long __stdcall ring_lock(void *buffer, u32 offset, u32 size, void **out, 
 static long __stdcall ring_unlock(void *buffer)
 {
     long r = ru_unlock(&rings, buffer);
-#ifdef ENRT_TEST
-    ring_stats.full = rings.full;
-    if (ring_stats.open && !--ring_stats.open)
-        ring_stats.pass_ticks += ring_now() - ring_stats.opened_at, ring_stats.passes++;
-#endif
     return r;
 }
 
@@ -5048,12 +4720,6 @@ static int always(u32 id, struct frame *f, u32 *replace)
     case 56:
     case 57:
     case 58:  /* a ground ring's Lock, before its call edx */
-#ifdef ENRT_TEST
-        if (!ring_stats.open++)
-            ring_stats.opened_at = ring_now();
-        if (ring_stats.off & 1)
-            return 1;
-#endif
         f->edx = (u32)ring_lock;
         return 1;
     case 59:
@@ -5065,10 +4731,6 @@ static int always(u32 id, struct frame *f, u32 *replace)
         f->edx = (u32)ring_unlock;
         return 1;
     case 23:  /* an effect batch's Lock (0x6392A0), its arguments pushed: buffer, offset, size, out, flags */
-#ifdef ENRT_TEST
-        if (ring_stats.off & 2)
-            return 1;
-#endif
         f->arg[3] = RU_DISCARD;  /* each batch writes its buffer from 0 and draws only what it wrote */
         return 1;
     case 27:
@@ -5118,11 +4780,6 @@ static int always(u32 id, struct frame *f, u32 *replace)
             choice_row(moving_fix_label[!english], switch_value, moving_fix, f->edi, f->ebx,
                        SETTINGS_CURSOR == STOCK_ROWS + 3 + rows);
 #endif
-#ifdef ENRT_RENDER_DISTANCE
-        else if (f->ebp - STOCK_ROWS - DISTANCE_AT == rows)
-            choice_row(distance_label[!english], switch_value, distance, f->edi, f->ebx,
-                       SETTINGS_CURSOR == STOCK_ROWS + DISTANCE_AT + rows);
-#endif
         else
             return 1;
         if (f->ebp - STOCK_ROWS - LAST_ROW == rows && (int)f->edi >= 0 && text_saved != (u32)!english)
@@ -5140,10 +4797,6 @@ static int always(u32 id, struct frame *f, u32 *replace)
 #ifdef ENRT_MOVING_FIX
         else if (*(const u32 *)(f->ebp + 0x1C) - STOCK_ROWS - 3 == rows && !INPUT_BLOCKED)
             moving_fix_input(f->eax);
-#endif
-#ifdef ENRT_RENDER_DISTANCE
-        else if (*(const u32 *)(f->ebp + 0x1C) - STOCK_ROWS - DISTANCE_AT == rows && !INPUT_BLOCKED)
-            distance_input(f->eax);
 #endif
         else if (*(const u32 *)(f->ebp + 0x1C) < STOCK_ROWS && !INPUT_BLOCKED)
             switch_input(*(const u32 *)(f->ebp + 0x1C), &f->eax);
@@ -5213,9 +4866,6 @@ static int always(u32 id, struct frame *f, u32 *replace)
                     quits at once since the edit at 0x5CBE88). Flags: 1 Alt down, 2 F4 down, 4 foreground, 8 minimized. */
         u32 message = f->arg[1];
         HWND window = (HWND)f->arg[0];
-#ifdef ENRT_TEST
-        lat_key(message, f->arg[2], f->arg[3]);
-#endif
         if (message == WM_CLOSE || message == WM_DESTROY || message == WM_QUERYENDSESSION || message == WM_ENDSESSION
             || (message == WM_SYSCOMMAND && (f->arg[2] & 0xFFF0) == SC_CLOSE)) {
             note("window: message << 16 | 0x80 | flags", message << 16 | 0x80 | (GetAsyncKeyState(VK_MENU) < 0)
@@ -5337,16 +4987,6 @@ static int always(u32 id, struct frame *f, u32 *replace)
         return 1;
     case 21:
     case 22:
-#ifdef ENRT_TEST
-        test_review_draw();
-        if (review_name && !review_drawing) {
-
-
-
-
-            f->arg[2] = f->arg[3] = 5000;
-        }
-#endif
 #ifdef ENRT_LOG
         log_quad(id, f);
 #endif
@@ -5376,6 +5016,7 @@ static int always(u32 id, struct frame *f, u32 *replace)
         *replace = test_keep & KEEP_NO_DEFEAT && f->arg[3] == 8;
         if (*replace)
             f->eax = 0;  /* no slot: the caller un-starts the script and tries it again next tick */
+        return 1;
     case 114:  /* the battle's ticks (0x4B0480) */
         cover.phase = 1;
         return 1;
@@ -5960,7 +5601,6 @@ static int display_install(u8 *thunks)
 }
 
 
-
 static u8 *hook_stub(u8 *p, const struct site *s)
 {
     u32 i;
@@ -6136,18 +5776,10 @@ static void install(HINSTANCE self)
     GetPrivateProfileStringW(L"camera", L"moving_fix", L"on", value, 16, name);
     moving_fix = !!lstrcmpiW(value, L"off");
 #endif
-#ifdef ENRT_RENDER_DISTANCE
-    GetPrivateProfileStringW(L"display", L"distance", L"on", value, 16, name);
-    distance = !!lstrcmpiW(value, L"off");
-#endif
     display_load();
     rows = 2;  /* the voice banks are in place (startup_checks): the row group with the voice switch */
     table_time(&table_stamp);
-    if ((wozmod_on = patch())) {
-#ifdef ENRT_RENDER_DISTANCE
-        distance_install();
-#endif
-    }
+    wozmod_on = patch();
 }
 
 

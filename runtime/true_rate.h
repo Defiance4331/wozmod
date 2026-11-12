@@ -5,7 +5,7 @@
    Pure parts, testable on the host (tests/test_true_rate.py): the 60 Hz phase, the constant transforms and the
    thunk builder. The runtime owns the game memory writes.
 
-   The site catalogue (data/true_rate.toml, packed by wozmod.runtime.true_rate) has three kinds of entry:
+   The site catalogue (the folder data/true_rate/, packed by wozmod.runtime.true_rate) has three kinds of entry:
    - operand: an instruction's 4-byte absolute address of a stock constant is pointed at a slot holding the constant
      transformed for the rate (scaled by 60/N, raised to the power 60/N, ...);
    - patch: the instruction bytes run as replacement code in a thunk, whenever the rate is not 60;

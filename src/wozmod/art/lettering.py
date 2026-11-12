@@ -96,7 +96,7 @@ class FontProcess:
 
     def latin(self, path: Path) -> None:
         """Draw the 24-pixel Latin cells to path."""
-        self.run("wozmod.fonts.raster", str(path), "--px", "24", "--spacing", "legacy")
+        self.run("wozmod.fonts.raster", str(path), "--px", "24")
 
     def outlines(self, folder: Path) -> bytes:
         """The runtime's glyph outlines as JSON (wozmod.fonts.glyph_outlines), made with FontForge in folder."""

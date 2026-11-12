@@ -266,65 +266,6 @@ def _vorbis_decoded_samples(payload: bytes) -> tuple[int, int]:
     return total, last
 
 
-def build_synthetic_kovs_record(
-    logical_bytes: int,
-    *,
-    stream_serial: int = 0x53594E54,
-    sample_rate: int = 48_000,
-    sample_count: int = 0,
-) -> bytes:
-    """Build a synthetic KOVS record of an exact size."""
-
-    if logical_bytes < KOVS_HEADER_BYTES:
-        raise VoiceBankError("synthetic record size is too small")
-    stream_bytes = logical_bytes - KOVS_HEADER_BYTES
-    identification = (
-        b"\x01vorbis"
-        + struct.pack("<I", 0)
-        + b"\x01"
-        + struct.pack("<I", sample_rate)
-        + struct.pack("<iii", 0, 0, 0)
-        + b"\xb8\x01"
-    )
-    filler_bytes: int | None = None
-    filler_lacing: list[int] = []
-    for candidate in range(max(0, stream_bytes - 320), stream_bytes + 1):
-        if candidate == 0:
-            lacing: list[int] = []
-        else:
-            quotient, remainder = divmod(candidate, 255)
-            lacing = [255] * quotient + [remainder]
-        if len(lacing) + 1 > 255:
-            continue
-        if 27 + 1 + len(lacing) + len(identification) + candidate == stream_bytes:
-            filler_bytes = candidate
-            filler_lacing = lacing
-            break
-    if filler_bytes is None:
-        raise VoiceBankError(
-            "synthetic record size cannot be represented by one bounded Ogg page"
-        )
-
-    lacing = bytes([len(identification), *filler_lacing])
-    filler = bytes(filler_bytes)
-    page = bytearray(
-        OGG_CAPTURE_PATTERN
-        + b"\x00\x06"
-        + struct.pack("<QII", sample_count, stream_serial, 0)
-        + bytes(4)
-        + bytes((len(lacing),))
-        + lacing
-        + identification
-        + filler
-    )
-    page[22:26] = struct.pack("<I", _ogg_checksum(page))
-    if len(page) != stream_bytes:
-        raise AssertionError("synthetic Ogg sizing invariant failed")
-    payload = kovs_record(bytes(page))
-    parse_kovs_record(payload)
-    return payload
-
-
 MOZ_VOICE_IDS = 22_665
 SLOT_BYTES = 0x4EF84
 WO1_STAGES = range(0x48, 0x84)
@@ -411,12 +352,10 @@ def stage_voice(ordinal: int, suffix: int, flag: int) -> int:
     return index + (WO1_SUFFIX_BASE if flag else WO2_SUFFIX_BASE)
 
 
-def stage_line_voices(ordinal: int, script: Script, unspoken: int | None = None) -> dict[int, tuple[int, ...]]:
+def stage_line_voices(ordinal: int, script: Script) -> dict[int, tuple[int, ...]]:
     """The voice ids each suffixed line of a stock stage script plays (script.speaks): one per bank flag of the speak
-    commands that speak it, in flag order. A line no command speaks plays none, or with unspoken the id that flag
-    gives its suffix."""
-    return {i: tuple(stage_voice(ordinal, suffix, flag)
-                     for flag in sorted(script.speaks.get(i) or ({unspoken} - {None})))
+    commands that speak it, in flag order. A line no command speaks plays none."""
+    return {i: tuple(stage_voice(ordinal, suffix, flag) for flag in sorted(script.speaks.get(i, ())))
             for i, line in enumerate(script.dialog.records) if (suffix := _suffix(line.value))}
 
 

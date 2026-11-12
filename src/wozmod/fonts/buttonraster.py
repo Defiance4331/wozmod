@@ -1,8 +1,6 @@
 """Buttonraster rendering support."""
-import argparse
 import math
 from functools import lru_cache
-from pathlib import Path
 
 import numpy as np
 from PIL import Image
@@ -486,18 +484,3 @@ def render_x360_pause(text, scale=1.0, cap=V.DESIGN_CAP, *,
                  (pad, baseline + ymin * scale, pad + (xmax - xmin) * sx,
                   baseline + ymax * scale), ox,
                  (pen + max(0, gaps - 1) * track) * sx, F.max(0).tolist())
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("text")
-    parser.add_argument("output", type=Path)
-    parser.add_argument("--scale", type=float, default=1.0, help="device px per official 1x texel")
-    parser.add_argument("--cap", type=float, default=V.DESIGN_CAP, help="cap height in 1x px")
-    parser.add_argument("--style", choices=STYLES, default="501.3",
-                        help="the WO1 sheet whose glow colour and weight to take")
-    parser.add_argument("--track", type=float,
-                        help="letter as the art build does: this much more after each character, at the fitted phase")
-    args = parser.parse_args()
-    label = render(args.text, args.scale, args.cap, args.style, track=args.track)
-    label.emit(args.output)

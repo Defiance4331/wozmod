@@ -28,7 +28,7 @@ from wozmod import resources
 from wozmod.donors import DonorsFolder
 from wozmod.formats.audio import (
     MOZ_EVENT_LINES, PSP_CLIP_BASE, WO1_EVENT_VOICES, WO1_NARRATION_VOICES, WO1_RECORD_BASE, WO2_CLIP_BASE, WO2_EVENT_VOICES,
-    WO2_NARRATION_VOICES, donor_voice_choice, ps2_extents, quote_voice, stage_line_voices, wo2_voice_records,
+    WO2_NARRATION_VOICES, _suffix, donor_voice_choice, ps2_extents, quote_voice, stage_line_voices, wo2_voice_records,
 )
 from wozmod.formats.linkdata import LINKDATA2_FIRST, archive, decoded_member, ps2_members
 from wozmod.formats.scripts import (
@@ -38,8 +38,8 @@ from wozmod.runtime.text_table import decode_english, table_lookup
 from wozmod.text.narration_voices import VOICE_KEYED, camp_lines_drawn, line_voices
 from wozmod.text.script_alignment import NARRATION, X360_ENS, quote_slot_read
 from wozmod.text.stock import stage_line_form
+from wozmod.voices.events import _records
 
-MODES = ("english", "japanese")  # the voice language; the text is English throughout
 CUE_TICKS = 29.97  # a movie caption schedule counts 29.97 a second (MovieTelop counter 0x5E91F0)
 PAL_TICKS = 25  # a French or German schedule counts 25 a second
 EVENT_TICKS = 60  # an event scene's clock counts 60 a second (runner 0x49D9A0)
@@ -140,19 +140,12 @@ def narration_record(donor: str, voice_id: int) -> int | None:
     return None
 
 
-def _suffix(line: bytes) -> int | None:
-    match = re.search(rb"@([0-9]+)$", line)
-    return int(match.group(1)) if match else None
-
-
 # ---------------------------------------------------------------------------------------------------------------
 # Event scenes: the record chain the runner 0x49D9A0 executes, as stock (little-endian) and Xbox 360 (big-endian)
 # files share it. A sub-scene is a chain of records: u32 next | type | sub | n | n field types | data offset | n
 # field sizes | data. Type 0 sub 0 is a gate (a float tick the clock must reach), type 0 sub 1 the length, type 5
 # a text record (sub 0 place caption, sub 1 clear, sub 2 and 5 speak), type 8 sub 1 or 2 opens a conditional
 # block and type 8 sub 0 closes it.
-
-_FIELD = {0: "B", 1: "H", 2: "I", 3: "B", 4: "H", 5: "I", 6: "f", 7: "I", 8: "I"}
 
 
 @dataclass(frozen=True)
@@ -190,26 +183,6 @@ def event_file(data: bytes, order: str = "<") -> bool:
         return False
 
 
-def _records(data: bytes, base: int, order: str) -> list[tuple[int, int, tuple]]:
-    records, at, seen = [], base, set()
-    while True:
-        if at in seen or not 0 <= at <= len(data) - 8:
-            raise ValueError("event record chain leaves the file or loops")
-        seen.add(at)
-        following, kind, sub, n = struct.unpack_from(f"{order}I", data, at)[0], data[at + 4], data[at + 5], data[at + 6]
-        if kind == 0xFF:
-            return records + [(kind, sub, ())]
-        if kind > 0x20 or n > 16 or at + 8 + 2 * n > len(data):
-            raise ValueError("not an event record")
-        types, start, sizes = data[at + 7:at + 7 + n], data[at + 7 + n], data[at + 8 + n:at + 8 + 2 * n]
-        values, p = [], at + 7 + start
-        for kind_of, size in zip(types, sizes, strict=True):
-            values.append(struct.unpack_from(order + _FIELD.get(kind_of, "H"), data, p)[0])
-            p += size
-        records.append((kind, sub, tuple(values)))
-        at = base + following
-
-
 @dataclass(frozen=True)
 class EventScene:
     windows: list[EventWindow]
@@ -228,26 +201,21 @@ def event_scenes(data: bytes, order: str = "<") -> EventScene:
     count = struct.unpack_from(f"{order}I", data)[0]
     for sub, base in enumerate(struct.unpack_from(f"{order}{count}I", data, 4)):
         records = _records(data, base, order)
-        length = next((f[0] for kind, s, f in reversed(records) if kind == 0 and s == 1), 0.5)
+        length = next((r.fields[0] for r in reversed(records) if r.kind == 0 and r.sub == 1), 0.5)
         lengths.append(length)
-        depth, inside = 0, []
-        for kind, s, _ in records:
-            depth += kind == 8 and s in (1, 2)
-            inside.append(depth > 0)
-            depth -= kind == 8 and s == 0 and depth > 0
         ran, clock, ip, tick = [], -1.0, 0, 0
         while True:
             clock = 0.0 if clock < 0 else clock + 1.0
-            while records[ip][0] != 0xFF and not (records[ip][:2] == (0, 0) and records[ip][2][0] > clock):
+            while records[ip].kind != 0xFF and not (records[ip].kind == records[ip].sub == 0 and records[ip].fields[0] > clock):
                 ran.append((tick, ip))
                 ip += 1
             if not clock <= length:
                 break
             tick += 1
-        texts = [(t, i) for t, i in ran if records[i][0] == 5 and records[i][1] in (0, 1, 2, 5)]
+        texts = [(t, i) for t, i in ran if records[i].kind == 5 and records[i].sub in (0, 1, 2, 5)]
         ordinal = 0
         for k, (t, i) in enumerate(texts):
-            kind, s, fields = records[i]
+            s, fields = records[i].sub, records[i].fields
             if s == 0:
                 at = base + fields[0] + 4
                 captions.append(EventCaption(sub, ordinal, at, data[at:data.index(b"\0", at)]))
@@ -256,14 +224,15 @@ def event_scenes(data: bytes, order: str = "<") -> EventScene:
                 index = struct.unpack_from(f"{order}H", data, base + fields[1] + 4)[0]
                 text = data[base + fields[1] + 8:data.index(b"\0", base + fields[1] + 8)]
                 following = texts[k + 1] if k + 1 < len(texts) else None
-                end_by = "end" if following is None else {0: "caption", 1: "clear"}.get(records[following[1]][1], "speak")
+                end_by = "end" if following is None else {0: "caption", 1: "clear"}.get(records[following[1]].sub, "speak")
                 after = texts[k + 2] if k + 2 < len(texts) else None
-                if end_by == "clear" and after and after[0] == following[0] and records[after[1]][1] != 1:
+                if end_by == "clear" and after and after[0] == following[0] and records[after[1]].sub != 1:
                     end_by = "speak"  # cleared on the tick the next line starts: the next line ends it
                 if end_by == "clear" and following[0] >= length:
                     end_by = "end"  # cleared on the sub-scene's last frame: the scene end ends it
                 windows.append(EventWindow(sub, index, t, following[0] if following else tick, end_by,
-                                           inside[i] or (following is not None and inside[following[1]]), text))
+                                           records[i].depth > 0 or (following is not None and records[following[1]].depth > 0),
+                                           text))
     return EventScene(windows, captions, tuple(lengths))
 
 
@@ -426,7 +395,6 @@ def joined_cue_text(cues: list[tuple[int, int, bytes]], joined: list[int]) -> by
 class Window:
     start: int
     end: int
-    ticks: float  # per second
     end_by: str = ""
     in_block: bool = False
 
@@ -474,7 +442,7 @@ def cue_contexts(slot: str, mode: str, cues: list[tuple[int, int, bytes]], donor
         words = [w for k in joined[c] for w in (donor[1][k][2] or "").split()] if donor else []
         line = DonorLine(donor[0][0], (*donor[0], "captions", joined[c]), " ".join(words)) if words else None
         found.append(Context(f"{slot}.c{c}", "movie", mode, own[c], None, None, english, key, row,
-                             (line,) if line else (), Window(start, end, CUE_TICKS), movie))
+                             (line,) if line else (), Window(start, end), movie))
     return found
 
 
@@ -718,7 +686,7 @@ class World:
             texts = event_lines(data)
             scene = self.scene_donor(ordinal, stock)
             stock_windows = dict(zip(_window_ids(ordinal, stock.windows),
-                                     (Window(w.start, w.end, EVENT_TICKS, w.end_by, w.in_block) for w in stock.windows), strict=False))
+                                     (Window(w.start, w.end, w.end_by, w.in_block) for w in stock.windows), strict=False))
             donor_windows = self._donor_windows(ordinal, stock) if event_voice(ordinal, 0) is not None else {}
             psp_lines = self._psp_event_lines(ordinal, stock)
             ids = _window_ids(ordinal, windows)
@@ -731,7 +699,7 @@ class World:
                 shown, key, row = self._shown("event", raw, voice_id)
                 found.append(Context(ids[k], "event", mode, raw, voice_id, clip, shown, key, row,
                                      lines or psp_lines.get(w.index, ()),
-                                     Window(w.start, w.end, EVENT_TICKS, w.end_by, w.in_block),
+                                     Window(w.start, w.end, w.end_by, w.in_block),
                                      donor_window=donor_windows.get((w.sub, w.index)),
                                      stock_window=stock_windows.get(ids[k]),
                                      neighbours=tuple(ids[max(0, k - 2):k] + ids[k + 1:k + 3])))
@@ -781,7 +749,7 @@ class World:
             windows = [w for w in files[f].windows if w.sub == d]
             for w in windows:
                 if not w.in_block and sum(v.index == w.index for v in windows) == 1:
-                    found[(sub, w.index)] = Window(w.start, w.end, EVENT_TICKS, w.end_by, w.in_block)
+                    found[(sub, w.index)] = Window(w.start, w.end, w.end_by, w.in_block)
         return found
 
     def _psp_event_lines(self, ordinal: int, stock: EventScene) -> dict[int, tuple[DonorLine, ...]]:
@@ -869,12 +837,6 @@ def dialogue_banks(wo1_mapping, wo1_index, wo1_bank, wo2_mapping, wo2_index, wo2
             ("wo2-psp", psp[0], ps2_extents(psp[1]), psp[1])]
 
 
-def audible_end(pcm: bytes, rate: int) -> float:
-    """When a clip stops being heard: voices.events.audible_end, the retimer's own measure."""
-    from wozmod.voices.events import audible_end as measure
-    return measure(pcm, rate)
-
-
 def audible_ends(world: World, clips: set[Clip], jobs: int | None = None) -> dict[Clip, float]:
     """The audible end of each donor clip by voice id's clip: the retimer's measure of the converted clip when the
     text stage recorded it (build_text_stage), else measured on the donor clip decoded to 16 kHz mono."""
@@ -885,6 +847,7 @@ def audible_ends(world: World, clips: set[Clip], jobs: int | None = None) -> dic
         if set(by_clip) == set(clips):
             return by_clip
     from wozmod.formats.audio import _ffmpeg_each, _read_at
+    from wozmod.voices.events import audible_end  # the retimer's own measure
     wanted = sorted(clips)
     riffs = []
     for source in sorted({donor for donor, _ in wanted}):

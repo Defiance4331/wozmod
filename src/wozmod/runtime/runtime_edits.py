@@ -1136,15 +1136,15 @@ FONT_ROUTE = [
       for b in range(LATIN_FIRST, LATIN_FIRST + LATIN_COUNT) if b not in b"\\`{|}"],
 ]
 
-def settings_rows(rows: int, distance: bool = False, moving_fix: bool = False) -> list:
+def settings_rows(rows: int, moving_fix: bool = False) -> list:
     """The cursor list: LIFE and EVENTS, the language rows, FOV, frame rate, vsync and, in dev builds only, the moving
-    camera fix and render distance, then DEFAULT.
+    camera fix, then DEFAULT.
 
     FRAME SKIP has no row: frame skip is always on. Its getter (0x475B20), the only reader of its saved byte
     (0x801525), returns 0 (on) whatever the save holds, so the present (0x5CB168) always runs the clock's catch-up and
     a slow frame never slows the game. The stock row 2 toggle (0x56B91E) would flip the byte on the row now in its
     place: it is jumped over, so only LIFE and EVENTS have a stock toggle (both stepped by the runtime's hook)."""
-    count = 6 + rows + moving_fix + distance
+    count = 6 + rows + moving_fix
     return [
         (0x475B20, bytes.fromhex("0fb60525158000"), bytes.fromhex("33c0 9090909090")),
         (0x56B91C, bytes.fromhex("7535"), bytes.fromhex("eb35")),

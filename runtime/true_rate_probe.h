@@ -1,6 +1,7 @@
 #ifndef WOZMOD_TRUE_RATE_PROBE_H
 #define WOZMOD_TRUE_RATE_PROBE_H
-/* Test builds only (ENRT_TEST): which game functions run, for the true frame rate study (work/true-rate).
+/* Test builds only (ENRT_TEST): which game functions run, for the true frame rate study (its host script,
+   measure.py, is kept outside the repository).
 
    Coverage: the host drops wozmod/cover.bin (u32 count, then that many function entry VAs, ascending) into the
    run's game folder and sets cover.command to 1. At the next message pump every listed entry gets an int3; the first
@@ -90,10 +91,7 @@ static void cover_pump(void)
         }
     }
 }
-#endif
 
-#ifndef WOZMOD_TRUE_RATE_WATCH
-#define WOZMOD_TRUE_RATE_WATCH
 /* Write watch: which instructions write [watch.at, watch.at + watch.len), and how often. The host sets at, len and
    command 1; the page goes read-only, each write faults, its EIP is counted (watch.eip/count, 512 at most) and the
    write is let through by one single step with the page writable. command 2 restores the page. Slow: every write to
@@ -181,10 +179,7 @@ static void watch_pump(void)
             VirtualProtect((void *)watch_page, 4096, PAGE_READWRITE, &old);
     }
 }
-#endif
 
-#ifndef WOZMOD_TRUE_RATE_TRACE
-#define WOZMOD_TRUE_RATE_TRACE
 /* Call trace: up to 16 code addresses (the host writes va[] and count, then command 1); every time one runs, its time
    (performance counter), address, return address, the first four stack arguments and ecx go to a ring of 4096.
    The int3 is put back after a single step. command 2 removes them all. Game thread or any thread. */

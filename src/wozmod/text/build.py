@@ -201,12 +201,6 @@ def _load_data(path: Path) -> dict:
     return data
 
 
-def build_table(stock: Path, donors: DonorResolver, data: Path, output: Path) -> dict:
-    """Build table.bin from player inputs and version-1 hash/pointer data."""
-    rows, pairs, parts = resolved_text(stock, donors, data)
-    return {"rows": len(rows), **write_table(pairs, parts, output)}
-
-
 def write_table(pairs: dict[bytes, bytes], parts: tuple[list, list[int]], output: Path) -> dict:
     """Write table.bin from resolved_text's pairs and part slots."""
     names, overridden = parts

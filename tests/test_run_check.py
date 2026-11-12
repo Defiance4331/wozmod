@@ -267,8 +267,7 @@ def test_install_that_differs_from_its_installer_record_is_refused(tools, tmp_pa
     (install / "d3d9.dll").write_bytes(b"dll")
     (install / "wozmod/table.bin").write_bytes(b"table")
     record(install)
-    (install / "wozmod/review.bin").write_bytes(b"test-only")  # the one file a run may add to the record
-    assert set(tools.prepare_run.installed_files(install, tmp_path / "cache.json")) == {"d3d9.dll", "wozmod/table.bin", "wozmod/review.bin"}
+    assert set(tools.prepare_run.installed_files(install, tmp_path / "cache.json")) == {"d3d9.dll", "wozmod/table.bin"}
     if change == "leftover":
         (install / "wozmod/settings.ini").write_text("[display]\nfps=120\n")
     elif change == "edited":

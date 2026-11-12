@@ -109,9 +109,7 @@ def test_compiler_gets_every_header_and_the_requested_defines(tmp_path: Path, mo
 
 OPTIONS = {
     "release": ({}, ()),
-    "test": ({"log": True, "bootlog": True, "preview": True, "test": True, "cell": 48},
-             ("ENRT_LOG", "ENRT_BOOTLOG", "ENRT_TAG_PREVIEW", "ENRT_TEST", "ENRT_CELL=48")),
-    "render distance": ({"render_distance": True}, ("ENRT_RENDER_DISTANCE",)),
+    "test": ({"log": True, "bootlog": True, "test": True}, ("ENRT_LOG", "ENRT_BOOTLOG", "ENRT_TEST")),
     "moving fix": ({"moving_fix": True}, ("ENRT_MOVING_FIX",)),
 }
 
@@ -145,17 +143,17 @@ def edit_groups(header: str) -> dict[int, list[tuple[int, bytes, bytes]]]:
 
 @pytest.mark.parametrize("variant", OPTIONS)
 def test_build_puts_each_edit_list_in_its_text_mode_group(stock_builds, variant: str) -> None:
-    """Bugs: a release build keeps the cursor slot of a compiled-out row (RENDER DISTANCE, MOVING CAMERA FIX); an
-    install with the English voice banks keeps the stock sound pool, which they overflow; the Japanese text mode (no
-    English group) leaves the Xbox defaults without the camera, or version 1.01's menu fixes; the preview's unlock jumps reach another build; a
-    requested define or its hooks do not reach the compiler. The build also checks each edit and hook against the
+    """Bugs: a release build keeps the cursor slot of a compiled-out row (MOVING CAMERA FIX); an install with the
+    English voice banks keeps the stock sound pool, which they overflow; the Japanese text mode (no English group)
+    leaves the Xbox defaults without the camera, or version 1.01's menu fixes; an edit outside these lists reaches a
+    build; a requested define or its hooks do not reach the compiler. The build also checks each edit and hook against the
     stock bytes it replaces, so a shifted address fails the fixture."""
     options, expected_defines = OPTIONS[variant]
     header, defines = stock_builds[1][variant]
     assert defines == expected_defines
     assert [int(row.split(",")[0], 16) for row in re.findall(r"^    \{([^{}]+), \{", header, re.MULTILINE)] == [
         va for va, *_ in runtime.hook_sites(expected_defines)]
-    rows = options.get("render_distance", False), options.get("moving_fix", False)
+    rows = (options.get("moving_fix", False),)
     lists = {"FONT_ROUTE": (FONT_ROUTE, {0}), "CODE_EDITS": (CODE_EDITS, {0}),
              "one-row settings": (settings_rows(1, *rows), {1}), "two-row settings": (settings_rows(2, *rows), {2}),
              "PAD_CAMERA": (PAD_CAMERA, {1, 2}), "SAVED_PAD": (SAVED_PAD, {1, 2}),
@@ -169,10 +167,10 @@ def test_build_puts_each_edit_list_in_its_text_mode_group(stock_builds, variant:
     unlisted = {group: edits - set().union(*(edit_list for edit_list, _ in lists.values()))
                 for group, edits in groups.items()}
     assert {group: {(before, after) for _, before, after in edits} for group, edits in unlisted.items()} == {
-        0: {(b"\x74\x04", b"\x90\x90")} if options.get("preview") else set(), 1: set(), 2: set()}
+        0: set(), 1: set(), 2: set()}
 
 
-_EVERY_FEATURE = guards.features(("ENRT_RENDER_DISTANCE", "ENRT_MOVING_FIX", "ENRT_TEST"))
+_EVERY_FEATURE = guards.features(("ENRT_MOVING_FIX", "ENRT_TEST"))
 SYNTHETIC_HEADER = "\n".join([
     f"__declspec(dllexport) const u8 wozmod_guards[] = {{{','.join(map(str, guards.blob(_EVERY_FEATURE, [])))}}};",
     "static const u8 enrt_edits[] = {0xff};",
@@ -210,17 +208,13 @@ def compiled(tmp_path_factory: pytest.TempPathFactory):
 
 
 @compiles
-@pytest.mark.parametrize("probes, shipped, control", [
-    ([b"RENDER DISTANCE", "distance".encode("utf-16-le"), struct.pack("<I", 0x475B6C)], [RELEASE],  # crowd getter + 0xC
-     ("ENRT_RENDER_DISTANCE",)),
-    ([b"MOVING CAMERA FIX", "moving_fix".encode("utf-16-le")], [RELEASE, TEST], ("ENRT_MOVING_FIX",)),
-], ids=["render-distance", "moving-camera-fix"])
-def test_shipped_builds_have_no_compiled_out_settings_row_or_key(compiled, probes, shipped, control) -> None:
-    """Bug: a shipped build (release, and test for the moving camera fix) still draws a settings row compiled out
-    of release 1 (RENDER DISTANCE, MOVING CAMERA FIX), reads or writes its settings.ini key, or (render distance)
-    patches the view getter. The build that defines the row is the control that the probes see them."""
-    seen = [[probe in compiled(defines) for probe in probes] for defines in (*shipped, control)]
-    assert seen == [[False] * len(probes)] * len(shipped) + [[True] * len(probes)]
+def test_shipped_builds_have_no_compiled_out_settings_row_or_key(compiled) -> None:
+    """Bug: a shipped build (release, and test) still draws the MOVING CAMERA FIX settings row, compiled out of
+    release 1, or reads or writes its settings.ini key. The ENRT_MOVING_FIX build is the control that the probes see
+    them."""
+    probes = [b"MOVING CAMERA FIX", "moving_fix".encode("utf-16-le")]
+    seen = [[probe in compiled(defines) for probe in probes] for defines in (RELEASE, TEST, ("ENRT_MOVING_FIX",))]
+    assert seen == [[False, False], [False, False], [True, True]]
 
 
 def test_shipped_builds_never_install_the_moving_camera_fix_hook() -> None:
@@ -261,7 +255,7 @@ def test_every_hook_a_build_installs_has_a_case_in_the_dispatch_of_its_mode() ->
     low, high = map(int, re.search(r"if \(id >= (\d+) && id <= (\d+)\)\s*return display_hook\(", layout.SOURCE).groups())
     both = _dispatched("always") | {i for i in _dispatched("display_hook") if low <= i <= high}
     english = both | _dispatched("english_hook")
-    installed = {(hook_id, english_only) for defines in (RELEASE, TEST, ("ENRT_MOVING_FIX",), ("ENRT_RENDER_DISTANCE",))
+    installed = {(hook_id, english_only) for defines in (RELEASE, TEST, ("ENRT_MOVING_FIX",))
                  for _, _, hook_id, _, english_only in runtime.hook_sites(defines)}
     assert sorted(hook for hook, english_only in installed if hook not in (english if english_only else both)) == []
 

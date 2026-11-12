@@ -709,33 +709,26 @@ def _run_stages(pool, futures: dict, events, stop, progress: Progress) -> None:
 
 
 def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progress, jobs: int, checked,
-           cache=None, rebuilt=STEPS, movies=None) -> tuple[Path, dict[str, list[str]]]:
+           rebuilt=STEPS, movies=None) -> tuple[Path, dict[str, list[str]]]:
     """Build the steps in rebuilt and copy the movies named in movies (all when None) into staging/out, laid out as
     the game folder; return it, with the files each step wrote. Only the disc files those steps read are read.
 
     The input checks run while the discs are read; `checked()` waits for them and raises when an input is wrong,
     and `checked(wait=False)` raises only once they are done, so a wrong input stops the read at once.
-
-    `cache` is for developer tools only (tools/build_cache.py); the installer never passes one. Its
-    `fetch(step, sources, folder)` fills folder with what a build of that step from these sources wrote and returns
-    True, or returns False; `keep(step, sources, folder)` saves what a build wrote. Each step's folder is laid out
-    as the game folder, but for "movies", whose folder is wozmod/movie. Nothing is kept before the checks pass.
     """
     from wozmod.movies import movie_donors
 
     donors, out = staging / "donors", staging / "out"
     folders = DonorsFolder(donors)
-    sources = {"game": game, "donors": donors, **inputs}
     wanted = [m for donor in movie_donors().values() for m in donor.files
               if movies is None or f"wozmod/movie/{m.path}" in movies]
-    movies_kept = bool(wanted) and cache is not None and cache.fetch("movies", sources, donors / "movie")
     reads: dict[str, list[str]] = {}
     for step in rebuilt:
         for disc, files in step_keys.disc_reads(step).items():
             reads.setdefault(disc, []).extend(f for f in files if f not in reads[disc])
     plan = [(disc, DISCS[disc].donor, folders.folder(disc), files, f"reading the {DISCS[disc].title} disc")
             for disc, files in reads.items()]
-    if wanted and not movies_kept:
+    if wanted:
         plan += [(name, donor, donors / "movie", [m.path for m in donor.files if m in wanted],
                   "copying the English movies") for name, donor in movie_donors().items()
                  if any(m in wanted for m in donor.files)]
@@ -754,8 +747,6 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
         raise unread
     if step_keys.PROGRAMS & set(rebuilt):
         _place_programs(inputs, donors)
-    if cache is not None and wanted and not movies_kept:
-        cache.keep("movies", sources, donors / "movie")
     progress.finish("discs")
     progress.checkpoint()
 
@@ -766,7 +757,6 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
               "art": partial(_menu_art, game, donors, inputs["lettering"], staging / "art", jobs=jobs)}
     builds = {name: build for name, build in builds.items() if name in rebuilt}
     targets = {name: staging / "steps" / name for name in builds}
-    kept = [] if cache is None else [name for name in builds if cache.fetch(name, sources, targets[name])]
     context = get_context("spawn")
     events, stop = context.Queue(), context.Event()
     log_path = remembered.settings_path().with_name("install.log")  # one folder with the remembered paths
@@ -778,11 +768,11 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
         log_path = None  # no log is better than no install
     with ProcessPoolExecutor(3, mp_context=context, initializer=_worker_start,
                              initargs=(events, stop, log_path)) as pool:
-        futures = {pool.submit(build, targets[name]): name for name, build in builds.items() if name not in kept}
+        futures = {pool.submit(build, targets[name]): name for name, build in builds.items()}
         for key, text in (("text", "building the text table"), ("voices", "reading the voice banks"),
                           ("art", "preparing the menu art")):
             progress.begin(key, text)
-        for name in [*kept, *(s for s in STEPS if s not in builds)]:
+        for name in [s for s in STEPS if s not in builds]:
             progress.finish(name)
         try:
             _run_stages(pool, futures, events, stop, progress)
@@ -792,8 +782,6 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
     written: dict[str, list[str]] = {}
     for name, folder in targets.items():
         folder.mkdir(parents=True, exist_ok=True)
-        if cache is not None and name not in kept:
-            cache.keep(name, sources, folder)
         written[name] = []
         for built in sorted(p for p in folder.rglob("*") if p.is_file()):
             relative = built.relative_to(folder).as_posix()
@@ -813,7 +801,7 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
 
 
 def install(game: Path, inputs: dict[str, Path], force: bool = False, log=print,
-            progress: Progress | None = None, cache=None, note=None) -> dict[str, str]:
+            progress: Progress | None = None, note=None) -> dict[str, str]:
     """Build wozmod into game; return the installed files with their SHA-256.
 
     An install over an earlier one keeps each step (text, voices, art) and each movie whose key is the recorded one
@@ -821,8 +809,6 @@ def install(game: Path, inputs: dict[str, Path], force: bool = False, log=print,
 
     `note` gets each note for the player once the files are in place (another mod in the game folder that also
     replaces something wozmod replaces); without it they go to `log`.
-
-    `cache` reuses unchanged build steps on developer machines (see _build); players never have one.
 
     `progress` carries the listener that shows the steps and the cancel flag. A cancel leaves the game
     folder as it was, unless the files are already being placed: then the install finishes.
@@ -865,7 +851,7 @@ def install(game: Path, inputs: dict[str, Path], force: bool = False, log=print,
             raise
         written: list[str] = []
         try:
-            out, wrote = _build(game, inputs, staging, progress, jobs, checked, cache=cache, rebuilt=reuse.rebuilt,
+            out, wrote = _build(game, inputs, staging, progress, jobs, checked, rebuilt=reuse.rebuilt,
                                 movies=set(reuse.movies))
             checked()
             progress.checkpoint()  # the last place to cancel: below, the files are put in place

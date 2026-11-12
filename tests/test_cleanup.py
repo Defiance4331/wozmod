@@ -86,13 +86,13 @@ def test_protected_paths_are_never_deleted(repo):
     old = {name: _folder(work / name, 60) for name in (
         "runtime-tests/_template", "runtime-tests/named-inside", "runtime-tests/holds-input",
         "package/zips", "package/zips-r2", "package/zips-r3", "package/player", "package/player-r2",
-        "build-cache/text/older")}
-    _folder(work / "build-cache/text/newer", 1)
+        "lettering-cache/older")}
+    _folder(work / "lettering-cache/newer", 1)
     _folder(work / "runtime-tests/holds-input/donors", 60)
     (work / "harness.toml").write_text(
         f'[tests]\nWOZMOD_DONORS = "{work}/runtime-tests/holds-input/donors"\n'
         f'WOZMOD_GAME = "{work}/runtime-tests/named-inside"\n'
-        f'[more]\nlist = ["{work}/package/player", "{work}/build-cache/text"]\n')
+        f'[more]\nlist = ["{work}/package/player", "{work}/lettering-cache"]\n')
     (work / "winvm").mkdir()
     (work / "winvm/compose.yml").write_text(
         "services:\n  win11:\n    volumes:\n      - ../package/zips-r2/w.zip:/shared/in/w.zip:ro\n")
@@ -110,17 +110,13 @@ def test_older_package_rounds_go_by_round_number(repo):
     assert sorted(p.name for p in package.iterdir()) == ["player-r10", "player-win", "vm-r5"]
 
 
-def test_caches_keep_each_steps_newest_entry(repo):
-    # Bug: the newest is taken across all steps instead of per step, or the oldest is kept.
+def test_caches_keep_the_newest_renderer_folder(repo):
+    # Bug: the oldest renderer folder is kept, or the install test's game copy is left.
     work = repo / "work"
-    for path, days in (("build-cache/text/aa", 3), ("build-cache/text/bb", 1), ("build-cache/voices/cc", 5),
-                       ("build-cache/voices/.dd.999999999", 9), ("lettering-cache/k1", 2),
-                       ("lettering-cache/k2", 4), ("install-e2e", 1)):
+    for path, days in (("lettering-cache/k1", 2), ("lettering-cache/k2", 4), ("install-e2e", 1)):
         _folder(work / path, days)
-    assert _clean(repo, "--only", "build-cache,lettering-cache,install-e2e") == 0
-    left = sorted(p.relative_to(work).as_posix() for p in work.glob("*/*/*") if p.is_dir()) + \
-        sorted(p.relative_to(work).as_posix() for p in work.glob("lettering-cache/*"))
-    assert left == ["build-cache/text/bb", "build-cache/voices/cc", "lettering-cache/k1"]
+    assert _clean(repo, "--only", "lettering-cache,install-e2e") == 0
+    assert sorted(p.name for p in (work / "lettering-cache").iterdir()) == ["k1"]
     assert not (work / "install-e2e").exists()
 
 

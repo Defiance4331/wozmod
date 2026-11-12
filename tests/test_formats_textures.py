@@ -38,7 +38,7 @@ def test_bgra_decode_does_not_leave_red_and_blue_swapped() -> None:
     g1t = parse_g1t(source)
     assert g1t.textures[0].decode_rgba() == bytes((1, 2, 3, 4, 5, 6, 7, 8))
     assert g1t.encode() == source
-    assert g1t.textures[0].pixel_format_name == "bgra8"
+    assert g1t.textures[0].pixel_format == textures.PIXEL_FORMAT_BGRA8
 
 
 def test_bgra_replacement_does_not_write_rgba_as_bgra() -> None:
@@ -56,28 +56,24 @@ def test_unchanged_dxt_pixels_do_not_recompress_original_endpoints() -> None:
 def test_dxt1_palette_order_does_not_drop_transparency_or_interpolation() -> None:
     indices = sum((i % 4) << (2 * i) for i in range(16))
     cases = (
-        (0xFFFF, 0, [(255, 255, 255, 255), (0, 0, 0, 255), (170, 170, 170, 255), (85, 85, 85, 255)],
-         {"dxt1-four-color": 1}),
-        (0, 0xFFFF, [(0, 0, 0, 255), (255, 255, 255, 255), (127, 127, 127, 255), (0, 0, 0, 0)],
-         {"dxt1-three-color-transparent": 1}),
+        (0xFFFF, 0, [(255, 255, 255, 255), (0, 0, 0, 255), (170, 170, 170, 255), (85, 85, 85, 255)]),
+        (0, 0xFFFF, [(0, 0, 0, 255), (255, 255, 255, 255), (127, 127, 127, 255), (0, 0, 0, 0)]),
     )
-    for first, second, palette, modes in cases:
+    for first, second, palette in cases:
         texture = parse_g1t(_g1t((6, 2, 2, struct.pack("<HHI", first, second, indices)))).textures[0]
         assert texture.decode_rgba() == b"".join(map(bytes, palette)) * 4
-        assert texture.palette_modes() == modes
 
 
 def test_dxt5_alpha_order_does_not_select_the_wrong_interpolation_branch() -> None:
     indices = sum((i % 8) << (3 * i) for i in range(16))
     cases = (
-        (255, 0, [255, 0, 218, 182, 145, 109, 72, 36], {"dxt5-alpha-eight": 1}),
-        (0, 255, [0, 255, 51, 102, 153, 204, 0, 255], {"dxt5-alpha-six-plus-extremes": 1}),
+        (255, 0, [255, 0, 218, 182, 145, 109, 72, 36]),
+        (0, 255, [0, 255, 51, 102, 153, 204, 0, 255]),
     )
-    for first, second, alphas, modes in cases:
+    for first, second, alphas in cases:
         payload = bytes((first, second)) + indices.to_bytes(6, "little") + struct.pack("<HHI", 0xFFFF, 0, 0)
         texture = parse_g1t(_g1t((8, 2, 2, payload))).textures[0]
         assert texture.decode_rgba() == b"".join(bytes((255, 255, 255, alpha)) for alpha in alphas) * 2
-        assert texture.palette_modes() == modes
 
 
 def test_dxt_encode_does_not_quantize_red_to_the_wrong_rgb565_endpoint() -> None:
@@ -272,8 +268,8 @@ def test_a_texture_resized_into_bgra8_keeps_every_pixel_and_says_bgra8() -> None
     grown = g1t.with_texture_resized(0, 8, 8, rgba, textures.PIXEL_FORMAT_BGRA8)
 
     first, second = grown.textures
-    assert (first.pixel_format_name, first.width, first.height) == ("bgra8", 8, 8)
+    assert (first.pixel_format, first.width, first.height) == (textures.PIXEL_FORMAT_BGRA8, 8, 8)
     assert first.decode_rgba() == rgba
-    assert second.pixel_format_name == "dxt1" and second.payload == bytes(8)
+    assert second.pixel_format == textures.PIXEL_FORMAT_DXT1 and second.payload == bytes(8)
     with pytest.raises(TextureCodecError):
         g1t.with_texture_resized(0, 8, 8, rgba, 0x7F)

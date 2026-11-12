@@ -51,19 +51,6 @@ def test_each_builder_asks_the_bundle_for_the_request_the_recipe_names():
     assert missed == []
 
 
-def test_the_buttonraster_command_line_draws_the_tracked_button_players_see(tmp_path):
-    """Bug: the build letters buttons through a path the buttonraster command line cannot take (it once ran a patched
-    copy of render), so a button checked with the command line is not the image players get."""
-    font = _font_python()
-    image, metrics = font.produce({"kind": "button", "text": "ALDER", "scale": 2, "track": 0.5, "style": "493.9"})
-    out = tmp_path / "cli.png"
-    printed = json.loads(font.run("wozmod.fonts.buttonraster", "ALDER", str(out), "--scale", "2", "--style", "493.9",
-                                  "--track", "0.5"))
-    with Image.open(out) as cli:
-        assert (cli.convert("RGBA").tobytes(), cli.size, printed["baseline"]) == (
-            image.tobytes(), image.size, metrics["baseline"])
-
-
 @pytest.mark.slow_first
 def test_the_font_process_draws_the_release_lettering_layers(monkeypatch):
     """Bug: the font side draws a button or pause another way than the release did (the sub-pixel phase on the wrong

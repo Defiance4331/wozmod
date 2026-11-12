@@ -1,5 +1,5 @@
 """One key per install step (text, voices, art): the installer keeps a step's installed files when its key is the one
-the install record holds, and the developer build cache (tools/build_cache.py) reuses its entries by the same key.
+the install record holds.
 
 A key covers everything the step's output can depend on, in two parts:
 

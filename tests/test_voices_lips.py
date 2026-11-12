@@ -1,9 +1,10 @@
 import struct
 
-from wozmod.formats.audio import WO1_EVENT_VOICES, WO2_EVENT_VOICES, build_synthetic_kovs_record
+from wozmod.formats.audio import WO1_EVENT_VOICES, WO2_EVENT_VOICES
 from wozmod.voices.lips import (
     TAG, X360_TAG, donor_lips, english_lips, lip_bank, stock_lips, wo1_fits, x360_fits,
 )
+from synthetic import kovs
 
 
 REST = b"\x00\x37\x64\x00"
@@ -25,7 +26,7 @@ def _event(order, lines):
 
 
 def _clip(frames):
-    return build_synthetic_kovs_record(96, sample_count=frames * 1600)
+    return kovs(96, samples=frames * 1600)
 
 
 def test_each_english_clip_gets_the_block_its_donor_plays_with_it_or_one_stretched_to_it():

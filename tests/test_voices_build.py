@@ -1,9 +1,8 @@
 import hashlib
 import struct
 
-from wozmod.formats.audio import build_synthetic_kovs_record
 from wozmod.voices import build_voice_banks
-from synthetic import script, spans, strings, write_ens, write_ps2_archive, write_stock_archive
+from synthetic import kovs, script, spans, strings, write_ens, write_ps2_archive, write_stock_archive
 
 
 def _quotes(order):
@@ -20,7 +19,7 @@ def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_unde
     one, two, psp = donors / "wo1-x360", donors / "wo2-x360", donors / "wo2-psp/PSP_GAME/USRDIR"
     for folder in (stock, one, two, psp / "sound", stock / "data/Sound/Voice"):
         folder.mkdir(parents=True, exist_ok=True)
-    record = build_synthetic_kovs_record(96, sample_count=500)
+    record = kovs(96, samples=500)
     (stock / "data/Sound/Voice/Voice.bin").write_bytes(record)
     voiceidx = bytes(8) + struct.pack(">II", 0, 96) * 22665
     se_header = b"_HBW0000" + struct.pack("<IHHI", 20, 0x3200, 0, 0)
@@ -54,7 +53,7 @@ def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_unde
         (folder / "link_sebank.bdx").write_bytes(bytes(2 * banks))
     before = {p: hashlib.sha256(p.read_bytes()).digest() for p in tmp_path.rglob("*") if p.is_file()}
 
-    result = build_voice_banks(stock, donors, output)
+    build_voice_banks(stock, donors, output)
 
     assert {str(p.relative_to(output)): p.read_bytes() for p in output.rglob("*") if p.is_file()} == {
         "voice/Voice.bin": struct.pack("<I", 22665) + bytes(181324),
@@ -62,10 +61,4 @@ def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_unde
         "voice/SE.bin": struct.pack("<I", 122) + bytes(1964),
         "voice/Lips.bin": struct.pack("<I", 22665) + bytes(8 * 22665),
     }
-    assert (result.voice, result.se) == (output / "voice/Voice.bin", output / "voice/SE.bin")
-    assert (result.dialogue_tiers, result.attack_tiers, result.japanese_fallback, result.english_se_banks,
-            result.lip_tiers) == (
-        {"wo1-x360": 0, "wo2-x360": 0, "wo2-psp": 0}, {"wo1-x360": 0, "wo2-x360": 0, "wo2-psp": 0}, 22665, 0,
-        {"donor": 0, "stretched": 0},
-    )
     assert all(hashlib.sha256(p.read_bytes()).digest() == digest for p, digest in before.items())

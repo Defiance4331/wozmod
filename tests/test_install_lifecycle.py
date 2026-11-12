@@ -194,15 +194,21 @@ def test_uninstall_leaves_the_stock_folder_and_only_the_files_the_game_wrote_whe
                                                                                          keep_settings):
     # Bugs: removing the settings leaves settings.ini and the runtime logs (written by the game, so not in
     # install.json) behind, with an otherwise empty wozmod/ folder, so the folder is no longer stock; or "keep my
-    # settings" still deletes them (a later install starts from the defaults), or keeps more than the game wrote.
+    # settings" still deletes them (a later install starts from the defaults), or keeps more than the game wrote; or
+    # install.json lists other files than the install wrote, so uninstall leaves some or reports them changed.
     monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None, rebuilt=None: [])
     before = _tree(game)
-    install(game, _inputs(tmp_path), log=lambda _: None)
+    files = install(game, _inputs(tmp_path), log=lambda _: None)
+    assert json.loads((game / "wozmod/install.json").read_text())["files"] == {
+        "d3d9.dll": hashlib.sha256(b"dll").hexdigest(),
+        "wozmod/entries/4059.bin": hashlib.sha256(b"entry").hexdigest(),
+        "wozmod/table.bin": hashlib.sha256(b"table").hexdigest(),
+    } == files
     written = {"wozmod/settings.ini": b"player settings", "wozmod/runtime.log": b"log", "wozmod/runtime.crash.log": b"log"}
     for name, data in written.items():
         (game / name).write_bytes(data)
 
-    uninstall(game, log=lambda _: None, keep_settings=keep_settings)
+    assert uninstall(game, log=lambda _: None, keep_settings=keep_settings) == {}
 
     assert _tree(game) == (before | {"wozmod": None} | written if keep_settings else before)
 
@@ -236,21 +242,6 @@ def test_a_failure_while_placing_files_removes_what_this_run_wrote(game, tmp_pat
     with pytest.raises(OSError):
         install(game, _inputs(tmp_path), log=lambda _: None)
 
-    assert _tree(game) == before
-
-
-def test_install_then_uninstall_leaves_the_folder_as_it_was(game, tmp_path, monkeypatch):
-    # Bug: install.json, an empty wozmod/ or entries/ folder, or a stray build folder is left.
-    monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None, rebuilt=None: [])
-    before = _tree(game)
-    files = install(game, _inputs(tmp_path), log=lambda _: None)
-    assert json.loads((game / "wozmod/install.json").read_text())["files"] == {
-        "d3d9.dll": hashlib.sha256(b"dll").hexdigest(),
-        "wozmod/entries/4059.bin": hashlib.sha256(b"entry").hexdigest(),
-        "wozmod/table.bin": hashlib.sha256(b"table").hexdigest(),
-    } == files
-
-    assert uninstall(game, log=lambda _: None) == {}
     assert _tree(game) == before
 
 

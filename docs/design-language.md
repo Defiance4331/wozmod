@@ -144,10 +144,10 @@ that followed it (commit b64efcb) applied the After column; `data/checks/layout.
 
 ## 7. Checks
 
-Every rule above is enforced in the game by `data/checks/layout.toml` and offline by tests. Kinds that exist:
-`text_within_box`, `quad_within_box`, `box_within_safe_area` (every logged box on the screen inside x 64..1216,
-but the stock full-screen backdrops in `SAFE_AREA_FULL_WIDTH`), `text_centred_in_box`, `text_cell`, `text_inset` (a
-list's names start 10 inside their plates). Kinds to add with the rollout:
+Every rule above is enforced in the game by `data/checks/layout.toml` and offline by tests. The check kinds are the
+keys of `ASSERTIONS` in `tools/screen_checks.py`; for example `box_within_safe_area` keeps every logged box on the
+screen inside x 64..1216, but the stock full-screen backdrops in `SAFE_AREA_FULL_WIDTH`. Kinds to add with the
+rollout:
 
 - `panel_gap`: side-by-side frames on a page sit 28 apart.
 - A unit test that each name lane (weapon, skill, officer) holds the widest string of its set at cell 24, and that

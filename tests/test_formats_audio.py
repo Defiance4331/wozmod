@@ -12,7 +12,6 @@ from wozmod.formats.audio import (
     MOZ_VOICE_IDS,
     VoiceBankError,
     block_voice_map,
-    build_synthetic_kovs_record,
     english_voice_bank,
     english_voice_clips,
     kovs_record,
@@ -26,26 +25,7 @@ from wozmod.formats.audio import (
     wo2_se_entries,
     wo2_voice_records,
 )
-
-
-def _checksum(page: bytes) -> int:
-    crc = 0
-    for value in page:
-        crc ^= value << 24
-        for _ in range(8):
-            crc = ((crc << 1) ^ (0x04C11DB7 if crc & 0x80000000 else 0)) & 0xFFFFFFFF
-    return crc
-
-
-def _record(size: int, *, serial: int = 0x53594E54, samples: int = 0, rate: int = 48_000) -> bytes:
-    identification = b"\x01vorbis" + struct.pack("<I", 0) + b"\x01" + struct.pack("<Iiii", rate, 0, 0, 0) + b"\xb8\x01"
-    filler = size - 91
-    lacing = bytes((30, filler)) if filler >= 0 else bytes((30,))
-    page = bytearray(b"OggS\x00\x06" + struct.pack("<QII", samples, serial, 0) + bytes(4) + bytes((len(lacing),)) + lacing + identification + bytes(max(0, filler)))
-    struct.pack_into("<I", page, 22, _checksum(page))
-    for at in range(min(256, len(page))):
-        page[at] ^= at
-    return b"KOVS" + struct.pack("<Ii", len(page), 0) + bytes(20) + page
+from synthetic import kovs, ogg_crc
 
 
 def _se_header(entries: list[bytes]) -> bytes:
@@ -55,7 +35,7 @@ def _se_header(entries: list[bytes]) -> bytes:
 
 
 def test_kovs_rejects_corruption_after_the_identification_packet() -> None:
-    changed = bytearray(_record(101))
+    changed = bytearray(kovs(101))
     changed[-1] ^= 1
 
     with pytest.raises(VoiceBankError, match="checksum"):
@@ -65,7 +45,7 @@ def test_kovs_rejects_corruption_after_the_identification_packet() -> None:
 
 @pytest.mark.parametrize("damage", ["length", "reserved"])
 def test_kovs_rejects_a_wrong_stream_length_or_nonzero_reserved_header(damage: str) -> None:
-    changed = bytearray(_record(90))
+    changed = bytearray(kovs(90))
     if damage == "length":
         struct.pack_into("<I", changed, 4, 59)
     else:
@@ -84,15 +64,10 @@ def test_kovs_position_transform_stops_at_byte_256() -> None:
 
 
 def test_kovs_metadata_does_not_drop_signed_loop_start_or_use_a_fixed_sample_rate() -> None:
-    looped = bytearray(_record(101, serial=18, samples=4321, rate=22_050))
+    looped = bytearray(kovs(101, serial=18, samples=4321, rate=22_050))
     struct.pack_into("<i", looped, 8, -123)
     size, loop, metadata = parse_kovs_record(bytes(looped))
     assert (size, loop, dataclasses.astuple(metadata)) == (69, -123, (1, 18, 1, 22_050, 4321))
-
-
-def test_synthetic_record_does_not_add_a_zero_length_packet_at_minimum_size() -> None:
-    for size in (90, 101, 150):
-        assert build_synthetic_kovs_record(size, stream_serial=71, sample_rate=22_050, sample_count=901) == _record(size, serial=71, rate=22_050, samples=901)
 
 
 def test_wo2_voice_index_requires_contiguous_sector_starts() -> None:
@@ -108,7 +83,7 @@ def test_wo2_voice_index_requires_contiguous_sector_starts() -> None:
 def test_voice_bank_table_serves_sparse_ids_with_their_own_aligned_records() -> None:
     # Bugs: a record served under another id or misaligned; a voice slot past the stock ids (voices.maps.voice_slots)
     # left out of the count, so the runtime (english_voice: id < count) never plays it.
-    clips = {MOZ_VOICE_IDS - 1: _record(90, serial=1), 5: _record(101, serial=2), MOZ_VOICE_IDS + 1: _record(80, serial=3)}
+    clips = {MOZ_VOICE_IDS - 1: kovs(90, serial=1), 5: kovs(101, serial=2), MOZ_VOICE_IDS + 1: kovs(80, serial=3)}
     bank = english_voice_bank(clips)
     count = struct.unpack_from("<I", bank)[0]
     table = [struct.unpack_from("<II", bank, 4 + 8 * i) for i in range(count)]
@@ -208,7 +183,7 @@ def test_x360_placeholder_falls_back_without_blocking_a_usable_shared_clip(tmp_p
     wo2_index, wo2_bank = x360_bank("wo2.bdx", [wav(4800, 7)] * 3 + [wav(9600, 13)])
     wo1_index, wo1_bank = x360_bank("wo1.bdx", [wav(6000, 5), wav(7000, 11), wav(1234, 3)])
     stock = tmp_path / "stock.bin"
-    stock.write_bytes(_record(96, samples=1234))
+    stock.write_bytes(kovs(96, samples=1234))
     stock_index = bytes(8) + struct.pack(">II", 0, 96) * 14
 
     selected, sources = english_voice_clips({10: 0, 11: 1, 12: 2}, wo1_index, wo1_bank, {10: 3, 11: 0, 12: 2, 13: 1}, wo2_index, wo2_bank, stock_index, stock)
@@ -243,7 +218,7 @@ def test_psp_voice_fills_only_a_line_neither_xbox_360_disc_has_and_leaves_as_48_
         3: placeholder, 4: placeholder, 5: placeholder,
     })
     stock = tmp_path / "stock.bin"
-    stock.write_bytes(_record(96, samples=1234))
+    stock.write_bytes(kovs(96, samples=1234))
     stock_index = bytes(8) + struct.pack(">II", 0, 96) * 15
 
     clips, sources = english_voice_clips(
@@ -339,7 +314,7 @@ def test_voice_bank_refuses_a_clip_that_declares_less_than_it_holds(tmp_path: Pa
 
     struct.pack_into("<Q", ogg, last + 6, 12_000)  # the final page now declares half the clip
     ogg[last + 22:last + 26] = bytes(4)
-    struct.pack_into("<I", ogg, last + 22, _checksum(ogg[last:end]))
+    struct.pack_into("<I", ogg, last + 22, ogg_crc(ogg[last:end]))
     with pytest.raises(VoiceBankError, match="declares 12000 samples but holds"):
         english_voice_bank({1: kovs_record(bytes(ogg))})
 

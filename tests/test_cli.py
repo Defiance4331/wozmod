@@ -12,6 +12,7 @@ import pytest
 import wozmod.install as installer
 from wozmod import __main__ as cli
 from wozmod import remembered, resources
+from wozmod.version import __version__
 
 
 class Terminal(io.StringIO):
@@ -143,17 +144,13 @@ def test_a_missing_program_names_the_program_and_each_decrypted_file_that_stands
     assert "--x360-tool or --wo1-x360-file and --wo2-x360-file" in error and "--psp-tool or --wo2-psp-file" in error
 
 
-def _released_version() -> str:
-    import tomllib
-    return tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())["project"]["version"]
-
-
 @pytest.mark.parametrize("flag", ["--version", "-v"])
-def test_the_version_flag_prints_the_released_version(flag, capsys):
-    # Bug: the flag is missing, takes a subcommand first, or prints a version other than the release's.
+def test_the_version_flag_prints_the_version(flag, capsys):
+    # Bug: the flag is missing, takes a subcommand first, or prints another version than wozmod.version's (which
+    # test_install_lifecycle checks against the release).
     with pytest.raises(SystemExit) as exit:
         cli.main([flag])
-    assert exit.value.code == 0 and capsys.readouterr().out.strip() == f"wozmod {_released_version()}"
+    assert exit.value.code == 0 and capsys.readouterr().out.strip() == f"wozmod {__version__}"
 
 
 def test_the_bundle_carries_the_frame_rate_catalogue_the_game_check_reads():

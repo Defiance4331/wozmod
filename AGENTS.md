@@ -33,7 +33,7 @@ copies.
 | `src/wozmod/`, `native/` | build and install tooling (Python, with Rust for the slow parts) |
 | `data/` | our authored data: translations, layout rules, art recipes, donor pointers |
 | `tools/` | developer-only tools such as the game harness |
-| `packaging/` | release zips and the release files `lettering.zip` and `d3d9.dll` |
+| `packaging/` | release build scripts, the ffmpeg pin and the release workflow's helpers |
 | `work/` | ignored: stock and donor extracts, builds, disposable game copies |
 
 ## Inputs and the game

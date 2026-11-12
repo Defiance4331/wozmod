@@ -13,7 +13,6 @@ Kinds:
   worktrees        linked worktrees in .worktrees/ whose HEAD is in main and that are older than --keep-days; their
                    uncommitted changes, untracked files and work/handbacks/ are archived first (--archive)
   lettering-cache  work/lettering-cache/ renderer folders, except the newest
-  build-cache      work/build-cache/ entries, except each step's newest, and partial entries of ended installs
   install-e2e      work/install-e2e* copies the install test left behind
   packages         work/package/ rounds (NAME, NAME-r2, NAME-r3...), except each name's newest round
 
@@ -40,7 +39,7 @@ from pathlib import Path
 
 import checkout
 
-KINDS = ("runs", "worktrees", "lettering-cache", "build-cache", "install-e2e", "packages")
+KINDS = ("runs", "worktrees", "lettering-cache", "install-e2e", "packages")
 DAY = 86400
 CHUNK = 2000  # entries removed between two looks at the disk
 DISK = "nvme0n1"  # the drive work/ is on; btrfs reports no device per file, so it is named here
@@ -253,18 +252,7 @@ def newest_kept(kind: str, found: list[Path], why: str, now: float) -> list[Item
 
 
 def caches(repo: Path, now: float) -> list[Item]:
-    work = repo / "work"
-    items = newest_kept("lettering-cache", folders(work / "lettering-cache"),
-                        "layers an older renderer drew", now)
-    for step in folders(work / "build-cache"):
-        entries = [p for p in folders(step) if not p.name.startswith(".")]
-        items += newest_kept("build-cache", entries, f"an older {step.name} build", now)
-        for partial in (p for p in folders(step) if p.name.startswith(".")):  # .<key>.<pid>, written as it is kept
-            pid = partial.name.rsplit(".", 1)[-1]
-            if not (pid.isdigit() and Path(f"/proc/{pid}").exists()):
-                items.append(Item("build-cache", partial, "a partial entry of an install that ended",
-                                  now - changed(partial)))
-    return items
+    return newest_kept("lettering-cache", folders(repo / "work/lettering-cache"), "layers an older renderer drew", now)
 
 
 def install_e2e(repo: Path, now: float) -> list[Item]:
@@ -306,8 +294,8 @@ def plan(repo: Path, kinds: set[str], keep_days: float, keep_runs: int,
         items += runs(repo, keep_days, keep_runs, now)
     if "worktrees" in kinds:
         items += worktrees(repo, keep_days, now)
-    if kinds & {"lettering-cache", "build-cache"}:
-        items += [i for i in caches(repo, now) if i.kind in kinds]
+    if "lettering-cache" in kinds:
+        items += caches(repo, now)
     if "install-e2e" in kinds:
         items += install_e2e(repo, now)
     if "packages" in kinds:

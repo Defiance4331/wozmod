@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import struct
-from dataclasses import dataclass
 from pathlib import Path
 
 from wozmod.donors import WO1_X360, WO2_X360, DonorsFolder
 from wozmod.formats.audio import (
-    MOZ_VOICE_IDS, SE_BANKS, WO1_EVENT_VOICES, WO2_EVENT_VOICES, english_se_bank, english_voice_bank,
-    english_voice_clips,
+    WO1_EVENT_VOICES, WO2_EVENT_VOICES, english_se_bank, english_voice_bank, english_voice_clips,
 )
 from wozmod.formats.linkdata import archive, decoded_member, ps2_members
 from wozmod.formats.scripts import Script, parse_script
@@ -39,18 +36,7 @@ def psp_text_voice_map(moz: dict[int, Script], quotes: bytes, fns: Path) -> dict
                          paired_quote_tables(quotes, psp[PSP_QUOTES], insert=PSP_QUOTE_INSERT))
 
 
-@dataclass(frozen=True)
-class VoiceBuildResult:
-    voice: Path
-    se: Path
-    dialogue_tiers: dict[str, int]
-    attack_tiers: dict[str, int]
-    japanese_fallback: int
-    english_se_banks: int
-    lip_tiers: dict[str, int]
-
-
-def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | None = None) -> VoiceBuildResult:
+def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | None = None) -> None:
     """Write voice/Voice.bin, voice/Slots.bin, voice/Lips.bin and voice/SE.bin below the supplied mod folder; jobs
     caps the ffmpeg processes."""
     stock, donors, output_dir = Path(stock), Path(donors), Path(output_dir)
@@ -77,11 +63,9 @@ def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | N
         voiceidx, stock / "data/Sound/Voice/Voice.bin", jobs, psp=(three, psp / PSP_VOICES),
         stock_ids={s.slot: s.voices[0] for s in slots.values()},
     )
-    dialogue_tiers = {tier: sum(s == tier for s in sources.values()) for tier in ("wo1-x360", "wo2-x360", "wo2-psp")}
     destination = output_dir / "voice"
     destination.mkdir(parents=True, exist_ok=True)
-    voice_path = destination / "Voice.bin"
-    voice_path.write_bytes(english_voice_bank(clips))
+    (destination / "Voice.bin").write_bytes(english_voice_bank(clips))
     (destination / "Slots.bin").write_bytes(slot_table(slots))
     stock_events = linkdata2.read([o for ordinals, _, _ in EVENTS for o in ordinals])
     wo1_events = wo1_ens.read(donor_event_entries(WO1_X360.name))
@@ -89,7 +73,7 @@ def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | N
     # Under the English voice each event subtitle ends with its English line: retimed event files, served by voice.
     build_event_schedules(stock_events, clips, output_dir, jobs,
                           {WO1_X360.name: (wo1_events, ">"), WO2_X360.name: (wo2_events, wo2_donor.order)})
-    lips, lip_tiers = english_lips(clips, sources, stock_lips(
+    lips, _ = english_lips(clips, sources, stock_lips(
         [(WO2_EVENT_VOICES[0] if source == WO2_X360.name else WO1_EVENT_VOICES[0], stock_events[o])
          for ordinals, source, _ in EVENTS for o in ordinals]), {
         "wo1-x360": (one, donor_lips(wo1_events.values(), ">", *WO1_EVENT_VOICES[1:]), wo1_fits),
@@ -98,13 +82,9 @@ def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | N
     })
     (destination / "Lips.bin").write_bytes(lip_bank(lips))
     seidx, se = linkdata1.read([4056, 4057]).values()
-    bank, attack_tiers = english_se_bank(
+    bank, _ = english_se_bank(
         seidx, se, (wo1 / "link_sebank.hdx").read_bytes(), wo1 / "link_sebank.bdx",
         (wo2 / "link_sebank.hdx").read_bytes(), wo2 / "link_sebank.bdx",
         ps2_members(psp / PSP_SHOUTS, [PSP_ENGLISH_SHOUTS])[PSP_ENGLISH_SHOUTS], jobs,
     )
-    se_path = destination / "SE.bin"
-    se_path.write_bytes(bank)
-    english = sum(struct.unpack_from("<I", bank, 8 + 16 * b)[0] > 0 for b in range(SE_BANKS))
-    return VoiceBuildResult(voice_path, se_path, dialogue_tiers, attack_tiers,
-                            MOZ_VOICE_IDS - sum(i < MOZ_VOICE_IDS for i in clips), english, lip_tiers)
+    (destination / "SE.bin").write_bytes(bank)

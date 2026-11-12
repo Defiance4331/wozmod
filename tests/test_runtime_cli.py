@@ -28,10 +28,11 @@ def run_cli(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *flags: str) -> dic
     return seen
 
 
-def test_test_build_keeps_the_production_cell_unless_cell_is_given(
+def test_no_flags_is_the_release_build_and_flags_reach_the_build(
         monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """A default cell other than 24 would make every --test layout verdict 17% too wide."""
+    """Bugs: the packaging call (no flags, packaging/release_assets.py) gets a test or log build, or --test does not
+    reach the build, so a hand-built check DLL has no harness mailbox."""
     seen = run_cli(monkeypatch, tmp_path, "--test", "--log")
-    assert (seen["cell"], seen["test"], seen["log"], seen["preview"]) == (24, True, True, False)
-    assert seen["output"] == tmp_path / "o" / "d3d9.dll"
-    assert run_cli(monkeypatch, tmp_path, "--cell", "28")["cell"] == 28
+    assert (seen["test"], seen["log"], seen["output"]) == (True, True, tmp_path / "o" / "d3d9.dll")
+    release = run_cli(monkeypatch, tmp_path)
+    assert [release[flag] for flag in ("test", "log", "bootlog", "moving_fix")] == [False] * 4

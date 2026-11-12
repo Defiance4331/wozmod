@@ -80,12 +80,13 @@ def test_rows_that_insert_a_donor_string_read_as_they_did():
 def test_the_real_table_builds_from_the_shipped_rows(tmp_path):
     # Catches a row whose donor text the renderer cannot draw or whose stock string is gone, which only the
     # build from real files sees.
-    from wozmod.text.build import build_table
+    from wozmod.text.build import resolved_text, write_table
     from wozmod.text.resolver import DonorResolver
 
-    built = build_table(Path(os.environ["WOZMOD_GAME"]), DonorResolver(Path(os.environ["WOZMOD_DONORS"])), TABLE,
-                        tmp_path / "table.bin")
-    assert built["rows"] == len(json.loads(TABLE.read_text())["rows"])
+    rows, pairs, parts = resolved_text(Path(os.environ["WOZMOD_GAME"]), DonorResolver(Path(os.environ["WOZMOD_DONORS"])),
+                                       TABLE)
+    write_table(pairs, parts, tmp_path / "table.bin")
+    assert len(rows) == len(json.loads(TABLE.read_text())["rows"])
 
 
 # Western number minus Japanese number. The first Dynasty Warriors was a fighting game, so the Japanese

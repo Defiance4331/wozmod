@@ -148,7 +148,7 @@ def test_each_text_hook_looks_up_the_key_the_context_model_uses(tmp_path: Path) 
     folders = [name.replace("\\\\", "/").rstrip("/") for name in
                re.findall(r'L"([^"]*)"', re.search(r"loose_dirs\[\d+\] = \{([^}]*)\}", source).group(1))]
     assert folders == [f for f, _ in contexts.LOOSE_FOLDERS], "contexts.LOOSE_FOLDERS is not the runtime's loose_dirs"
-    cases = [(held, mode) for held in product((0, 1), repeat=len(folders)) for mode in contexts.MODES]
+    cases = [(held, mode) for held in product((0, 1), repeat=len(folders)) for mode in ("english", "japanese")]
     glue = "\n".join([
         "#include <windows.h>", "#include <stdio.h>", "#include <string.h>", '#include "text_fit.h"',
         '#include "voice_slots.h"',

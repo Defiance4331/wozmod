@@ -1,5 +1,5 @@
 """The true frame rate: the 60 Hz phase, the constant transforms and thunks (runtime/true_rate.h), and the site
-catalogue (data/true_rate.toml) against the stock executable."""
+catalogue (data/true_rate/) against the stock executable."""
 
 from __future__ import annotations
 
@@ -268,8 +268,8 @@ def test_catalogue_sites_stay_clear_of_the_runtimes_hooks_and_edits():
     from wozmod.runtime.runtime_edits import (CODE_EDITS, FONT_ROUTE, PAD_CAMERA, STANDARD_CAMERA, VOICE_EDITS,
                                               settings_rows)
     taken = [(va, va + len(prologue)) for va, prologue, *_ in runtime.hook_sites(("ENRT_TEST", "ENRT_MOVING_FIX"))]
-    for edits in (CODE_EDITS, FONT_ROUTE, PAD_CAMERA, STANDARD_CAMERA, VOICE_EDITS, settings_rows(1, True, True),
-                  settings_rows(2, True, True)):
+    for edits in (CODE_EDITS, FONT_ROUTE, PAD_CAMERA, STANDARD_CAMERA, VOICE_EDITS, settings_rows(1, True),
+                  settings_rows(2, True)):
         taken += [(va, va + len(before)) for va, before, _ in edits]
     for s in true_rate.load():
         for lo, hi in taken:

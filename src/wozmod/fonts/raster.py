@@ -1,13 +1,11 @@
 """Raster rendering support."""
 import argparse
-import math
 from pathlib import Path
 
 import cairo
 import numpy as np
-import fontforge
 
-from wozmod.runtime.latin_font import ADVANCES, LATIN_CHARS, LATIN_COUNT, LATIN_FIRST
+from wozmod.runtime.latin_font import LATIN_CHARS
 
 
 def outlines(font):
@@ -63,14 +61,6 @@ def mask(glyphs, lines, px, w, h, x0, base0, leading):
     return a / 255.
 
 
-def load(path):
-    f = fontforge.open(str(path))
-    try:
-        return outlines(f)
-    finally:
-        f.close()
-
-
 CHARS = list(LATIN_CHARS)
 
 
@@ -78,31 +68,23 @@ GAP = 3.5
 SPACE = 8
 
 
-PREFERRED_ADVANCES = ADVANCES[:LATIN_COUNT]
-
-
-def spacing(font, mode="baseline"):
-
-    if mode not in {"baseline", "legacy"}:
-        raise ValueError(f"unknown Latin spacing: {mode!r}")
-
+def spacing(font):
+    """Each Latin glyph's left bearing and advance: its ink centred in ink + GAP pixels."""
     out = {}
     for g in font.glyphs():
         if g.unicode < 0 or chr(g.unicode) not in CHARS or chr(g.unicode) == ' ':
             continue
         x0, _, x1, _ = (v / 50 for v in g.boundingBox())
-        ink, c = x1 - x0, g.unicode
-        advance = (min(max(PREFERRED_ADVANCES[c - LATIN_FIRST], math.ceil(ink + 2)), math.floor(ink + 5))
-                   if mode == "baseline" and c < LATIN_FIRST + LATIN_COUNT else round(ink + GAP))
+        advance = round(x1 - x0 + GAP)
         out[chr(g.unicode)] = ((advance - (x1 - x0)) / 2 - x0, advance)
     return out
 
 
-def cells(px, spacing_mode="baseline"):
+def cells(px):
 
     from . import wo1vec
     font = wo1vec.make()
-    glyphs, placed = outlines(font), spacing(font, spacing_mode)
+    glyphs, placed = outlines(font), spacing(font)
     ink = [mask(glyphs, [c], px, px, px, placed[c][0] * px / 24, wo1vec.BASE * px / 24, 0) if c in placed
            else np.zeros((px, px)) for c in CHARS]
     return np.hstack(ink), bytes(placed[c][1] if c in placed else SPACE if c == ' ' else 24 for c in CHARS)
@@ -113,12 +95,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('output', type=Path)
     parser.add_argument('--px', type=int, default=24, help='cell size in pixels; the game reads 24')
-    parser.add_argument('--spacing', choices=('baseline', 'legacy'), default='baseline',
-                        help='Latin advance rule')
-    parser.add_argument('--advances', action='store_true', help='also print the 99 advances as hex')
     args = parser.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    strip, advances = cells(args.px, args.spacing)
+    strip, _ = cells(args.px)
     Image.fromarray((strip * 255).round().astype(np.uint8), 'L').save(args.output)
-    if args.advances:
-        print(advances.hex())

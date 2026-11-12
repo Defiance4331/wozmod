@@ -10,7 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from wozmod.text.build import TableBuildError, _load_data, build_table, table_index, table_pairs, table_parts
+from wozmod.text.build import (
+    TableBuildError, _load_data, resolved_text, table_index, table_pairs, table_parts, write_table,
+)
 from synthetic import pe_image, script as synthetic_script
 from wozmod.text.stock import resolve_stock_ref, stock_key, stock_strings
 
@@ -234,11 +236,11 @@ def test_hashed_builder_does_not_drop_a_pointer_row_or_shift_name_overrides(synt
     data.mkdir()
     (data / "table.json").write_text(json.dumps({"version": 1, "rows": [pointer, authored, view], "parts": [{"table": "names", "index": 1, "source": "authored", "en": "Override"}]}))
     output = tmp_path / "built" / "table.bin"
-    result = build_table(stock, _SyntheticResolver(), data, output)
+    result = write_table(*resolved_text(stock, _SyntheticResolver(), data)[1:], output)
     pairs, names = _table_values(output.read_bytes())
     assert pairs == {_token("name"): b"Resolved pointer", _token("message"): b"Authored message", substring: b"Authored substring"}
     assert names[:890] == [b"Resolved pointer", b"Override", None, *([b"Resolved pointer"] * 887)]
-    assert result == {"rows": 3, "pairs": 3, "parts": 1273, "overrides": 1, "bytes": output.stat().st_size, "sha256": hashlib.sha256(output.read_bytes()).hexdigest()}
+    assert result == {"pairs": 3, "parts": 1273, "overrides": 1, "bytes": output.stat().st_size, "sha256": hashlib.sha256(output.read_bytes()).hexdigest()}
 
 
 def test_voiced_line_keeps_its_own_english_where_another_voice_shares_its_text(synthetic_stock, tmp_path: Path) -> None:
@@ -252,7 +254,7 @@ def test_voiced_line_keeps_its_own_english_where_another_voice_shares_its_text(s
     data = tmp_path / "table.json"
     data.write_text(json.dumps({"version": 1, "rows": rows, "parts": []}))
     output = tmp_path / "table.bin"
-    build_table(stock, _SyntheticResolver(), data, output)
+    write_table(*resolved_text(stock, _SyntheticResolver(), data)[1:], output)
     pairs, _ = _table_values(output.read_bytes())
     assert pairs == {text: b"Shared wording", voiced: b"This voice's wording"}
 
@@ -277,7 +279,7 @@ def test_bad_schema_cannot_drop_or_overwrite_a_row(fault: str, tmp_path: Path) -
     data.write_text(json.dumps(payload))
     output = tmp_path / "table.bin"
     with pytest.raises(TableBuildError):
-        build_table(tmp_path / "absent", _SyntheticResolver(), data, output)
+        write_table(*resolved_text(tmp_path / "absent", _SyntheticResolver(), data)[1:], output)
     assert not output.exists()
 
 
@@ -288,7 +290,7 @@ def test_missing_stock_hash_cannot_silently_drop_a_translation(synthetic_stock, 
     data.write_text(json.dumps({"version": 1, "rows": [{"key": key, "source": "authored", "en": "Authored"}], "parts": []}))
     output = tmp_path / "table.bin"
     with pytest.raises(TableBuildError, match=key):
-        build_table(stock, _SyntheticResolver(), data, output)
+        write_table(*resolved_text(stock, _SyntheticResolver(), data)[1:], output)
     assert not output.exists()
 
 

@@ -11,7 +11,6 @@ An entry every step reads unpacked also passes when its unpacked bytes match, so
 
 from __future__ import annotations
 
-import hashlib
 import json
 import struct
 from concurrent.futures import ThreadPoolExecutor
@@ -22,6 +21,7 @@ from pathlib import Path
 from wozmod import resources
 from wozmod.formats import pe
 from wozmod.formats.linkdata import LZP2_MAGIC, Archive, ArchiveError, align, decoded_member, parse_index, parse_lzp2
+from wozmod.install import step_keys
 
 PIECES = resources.root() / "data/stock_pieces.json"
 STEPS = ("text", "voices", "art")  # the installer's build steps (install._build), in the order messages name them
@@ -208,10 +208,6 @@ def recorded(path: Path = PIECES) -> Recorded:
     return parse(json.loads(Path(path).read_text(encoding="utf-8")))
 
 
-def _sha(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
 def _version(exe: Path, stamp: tuple[int, int]) -> str:
     try:
         with exe.open("rb") as file:
@@ -250,9 +246,9 @@ def _changed_entries(game: Path, name: str, index, pieces: list[Piece]) -> list[
                 stream.seek(offset)
                 parts.append(stream.read(size))
                 offset += align(size)
-            if _sha(b"".join(parts)) == piece.sha256:
+            if step_keys.digest(b"".join(parts)) == piece.sha256:
                 continue
-            if piece.decoded_sha256 and (decoded := _decoded(parts)) is not None and _sha(decoded) == piece.decoded_sha256:
+            if piece.decoded_sha256 and (decoded := _decoded(parts)) is not None and step_keys.digest(decoded) == piece.decoded_sha256:
                 continue
             changed.append(piece)
     return changed
@@ -273,14 +269,14 @@ def _changed_clips(game: Path, index, pieces: list[Piece]) -> list[Piece]:
                 continue
             offset, size = struct.unpack_from(">II", table, 8 + 8 * piece.at)
             stream.seek(offset)
-            if _sha(stream.read(size)) != piece.sha256:
+            if step_keys.digest(stream.read(size)) != piece.sha256:
                 changed.append(piece)
     return changed
 
 
 def _changed_spans(game: Path, pieces: list[Piece]) -> list[Piece]:
     exe = (game / EXE).read_bytes()
-    return [p for p in pieces if _sha(exe[p.at:p.at + p.length]) != p.sha256 or p.at + p.length > len(exe)]
+    return [p for p in pieces if step_keys.digest(exe[p.at:p.at + p.length]) != p.sha256 or p.at + p.length > len(exe)]
 
 
 def check_game(game: Path, record: Recorded | None = None, dll: Path | None = None) -> Verdict:

@@ -181,9 +181,3 @@ class DonorResolver:
             chunks.extend((text[end:start], replacement))
             end = stop
         return "".join((*chunks, text[end:]))
-
-
-def layout_sample(donors: DonorResolver) -> str:
-    """Resolve the two name parts used by runtime layout diagnostics."""
-    return " ".join(donors.resolve(["wo2-x360", "pe", at]) for at in (161192, 174664))
-

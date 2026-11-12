@@ -41,14 +41,12 @@ ART_FILES = re.compile(r"wozmod/(entries/[0-9]+\.bin|glyphs\.bin|hires\.bin|prom
 # the mod's own settings, as its Settings menu writes them to wozmod/settings.ini: section.key -> allowed values
 SETTINGS = {"language.text": ("english", "japanese"), "language.voice": ("english", "japanese"),
             "camera.fov": None, "camera.moving_fix": ("on", "off"), "display.fps": ("60", "120", "144", "165", "240", "monitor"), "display.vsync": ("on", "off"),
-            "display.distance": ("on", "off"),
             "display.mode": ("fullscreen", "windowed", "borderless"),
             # the runtime's display size list, read from its one source
             "display.size": tuple(f"{w}x{h}" for w, h in c_array(
                 "display_sizes", (REPO / "runtime/display_fit.h").read_text(encoding="utf-8")))}
 OVERLAID = ("prefix",)  # template parts a run sees through an overlay instead of a copy (the Steam runtime is its
 # game slot's own: game_harness.RUNTIMES)
-EXTRAS = {"wozmod/review.bin"}  # test-only files a run may hold beyond the record: the `review` reference
 
 
 def sha256(path: Path) -> str:
@@ -100,7 +98,7 @@ def stock_backup() -> Path:
 
 def installed_files(install: Path, cache_file: Path = HASH_CACHE) -> dict[str, str]:
     """The install's files and their SHA-256, each matching the installer's own record, so a run plays what a
-    player's install holds and nothing else (EXTRAS aside)."""
+    player's install holds and nothing else."""
     try:
         listed = installer.read_manifest(install)
     except installer.InstallError as exc:
@@ -110,8 +108,7 @@ def installed_files(install: Path, cache_file: Path = HASH_CACHE) -> dict[str, s
                    if p.is_file())
     found = dict(zip(names, cached_sha256s([install / f for f in names], cache_file), strict=True))
     found.pop(MANIFEST)
-    wrong = sorted(f for f in set(found) | set(listed)
-                   if f not in EXTRAS and found.get(f) != listed.get(f))
+    wrong = sorted(f for f in set(found) | set(listed) if found.get(f) != listed.get(f))
     if wrong:
         raise ValueError(f"{install} differs from its installer record at: {', '.join(wrong[:8])}")
     return found
@@ -298,7 +295,7 @@ def prepare(name: str, install: Path, dll: Path | None, save: str, cache_file: P
                  "key_configs": sorted(maps)}, "dll": str(dll),
         "install": str(install),
         "version": installer.installed_version(install),
-        "extras": sorted(EXTRAS & set(files)), "settings": list(settings),
+        "settings": list(settings),
         "replaced": {listed: str(source) for listed, source in replaced.items()},
         "stock": {"path": str(stock), "sha256": stock_sha256},
         "overlays": {part: str(template / part) for part in OVERLAID}})

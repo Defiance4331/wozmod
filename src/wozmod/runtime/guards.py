@@ -91,7 +91,7 @@ FEATURES = (
     Feature("text", "English text", requires=("core", "served"),
             hooks=(1, 2, 3, 4, 44, 5, 6, 7, 9, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18, 32, 19, 20, 26, 33, 34, 35, 42,
                    43, 108, 111, 66, 67, 68, 69),
-            edits=("FONT_ROUTE", "CODE_EDITS", "camp plate", "preview unlocks"),
+            edits=("FONT_ROUTE", "CODE_EDITS", "camp plate"),
             calls=_c("GAME_DRAW", "GAME_MEASURE", "NAME_GLYPHS", "GAME_QUAD", "GAME_FONT", "CAST_SLOT",
                      "NARRATION_VOICE_START", "STILL_VOICE_START", "TAG_TEXTURE", "TEXTURE_HANDLE")
             + (0x54BBB0,)  # the caption line draw, through draw_fit_at
@@ -137,9 +137,6 @@ FEATURES = (
             hooks=tuple(range(53, 65))),  # ring_upload.h: the six ring Locks, then the six Unlocks
     Feature("batches", "effect batches", shown="effect drawing", hooks=(23,)),  # their Lock discards (0x6392A0)
     # Builds with a define only; keep them last, so the features above keep their numbers in every build.
-    Feature("distance", "render distance", spans=((layout.DEFINES["VIEW_GETTER"], 37),  # the two getters it rewrites
-                                                  (layout.DEFINES["CROWD_GETTER"], 31)),
-            define="ENRT_RENDER_DISTANCE"),
     Feature("moving", "moving camera fix", hooks=(72,), define="ENRT_MOVING_FIX"),
     Feature("test", "test harness", hooks=(73, 74, 112), define="ENRT_TEST",
             calls=_c("WINDOW_SET_TEXT", "WINDOW_OPEN", "WINDOW_STYLE", "QUEUE_SCRIPT", "GAIN_EXP", "GIVE_WEAPON",

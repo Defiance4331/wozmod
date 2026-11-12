@@ -100,12 +100,19 @@ class Retimed:
 
 
 def _records(data: bytes, base: int, order: str = "<") -> list[Record]:
-    records, at, gate, depth = [], base, 0.0, 0
-    for _ in range(len(data)):
+    """A sub-scene's record chain from base; ValueError when the chain leaves data, loops or holds a record no event
+    file has (text.contexts.event_file tells event files from other archive entries by this)."""
+    records, at, gate, depth, seen = [], base, 0.0, 0, set()
+    while True:
+        if at in seen or not 0 <= at <= len(data) - 8:
+            raise ValueError("event record chain leaves the file or loops")
+        seen.add(at)
         following, kind, sub, n = *struct.unpack_from(order + "I", data, at), data[at + 4], data[at + 5], data[at + 6]
         if kind == 0xFF:
             records.append(Record(at, kind, sub, (), tick_of(gate), depth))
             return records
+        if kind > 0x20 or n > 16 or at + 8 + 2 * n > len(data):
+            raise ValueError("not an event record")
         types, start, sizes = data[at + 7:at + 7 + n], data[at + 7 + n], data[at + 8 + n:at + 8 + 2 * n]
         values, p = [], at + 7 + start
         for kind_of, size in zip(types, sizes, strict=True):
@@ -118,7 +125,6 @@ def _records(data: bytes, base: int, order: str = "<") -> list[Record]:
         records.append(Record(at, kind, sub, tuple(values), tick_of(gate), depth))
         depth -= kind == 8 and sub == 0 and depth > 0
         at = base + following
-    raise ValueError("event record chain does not end")
 
 
 def _line(data: bytes, base: int, speak: Record, order: str = "<") -> tuple[int, bytes]:
