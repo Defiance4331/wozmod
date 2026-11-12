@@ -164,13 +164,12 @@ what = "drawn-character cap 0x140A2D8 rises by one a tick toward 0x9D006C"
 code = "add edx, 1; {jmp:0x506298}"
 alt = "{jmp:0x506298}"
 
-[[site]]
-va = 0x506439
-stock = "8b542414 3b5508"
-kind = "gate"
-class = "d"
-what = "at most 2 characters (0xFF while 0x79831C runs) turn visible (0x46A9D0) a period, not a tick"
-alt = "mov edx, dword ptr [esp+0x14]; {jmp:0x50645d}"
+# The cap at 0x506439 (at most 2 characters, 0xFF while 0x79831C runs, get a model through 0x46A9D0) stays a cap a
+# tick, with no site. The ranking gives the players key 0, so they come first, and 2 covers both: a player whose
+# model a switch released (0x40E1C0 -> 0x4677D0 -> 0x467170, chr+0xEA4 = 0) gets one back in the switch's own tick,
+# before the frame is drawn. The True Musou view (0x50FC20 -> 0x50D9E0 -> 0x46ACB0) draws its character without
+# checking +0xEA4, and a Musou can start in the switch's tick: a cap that waits for a 60 Hz period leaves +0xEA4 at 0
+# for the frames drawn before that period ends, and the view's first one crashes (issue 12, 0x46AE2E).
 
 [[site]]
 va = 0x507972
