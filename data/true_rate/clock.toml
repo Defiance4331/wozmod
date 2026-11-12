@@ -31,13 +31,24 @@ code = "push dword ptr [{limit}]; mov ebp, edx; push eax"
 # the catch-up calls the input and sound step (0x5ADE90) and the fade ramp (0x5E0E80) in place of the skipped frame.
 # Those stand for a frame: they take one of the 60 Hz periods the pass's time holds beyond the first (the frame
 # end's), and the frame being drawn keeps its flag.
+# A tick that opens the Musou view (0x801AA8 bit 0x80000, start_musou 0x4045E0) or a cut-in (0x400000) ends the
+# pass's battle ticks: it is the pass's last tick (its frame end, 0x4B0588, as the last tick's), and the scene pass
+# (0x4AFE00 at 0x4B066F, after the ticks) turns the flag into the scene's state, which steps by the frame and drops
+# the ticks still owed when it ends (0x5E86F0). Stock runs the owed ticks as battle ticks first: the True Musou's
+# character takes normal steps of its close-up motion, so the close-up's first shout comes early. At 60 a pass owes a
+# second tick only after a frame 17 ms late; at N after one 1/N s late, so a stall at the press does it. The test
+# mirrors 0x4AFE00's: no scene while the battle ends (0x14000000) or on stage 0x45 with 0x2000000.
 [[site]]
 va = 0x4B0534
 stock = "e857d90f00 e842091300"
 kind = "patch"
-class = "c"
-what = "catch-up: a skipped frame's stand-in steps take a 60 Hz period of the pass's own"
-code = """push eax; push ecx; push edx; push 1; call dword ptr [{frame}]; add esp, 4; pop edx; pop ecx; pop eax;
+class = "e"
+what = """catch-up: a tick that opens the Musou view or a cut-in is the pass's last; a skipped frame's stand-in steps
+take a 60 Hz period of the pass's own"""
+code = """mov eax, dword ptr [0x801aa8]; test eax, 0x480000; jz 1f; test eax, 0x14000000; jnz 1f;
+test eax, 0x2000000; jz 2f; cmp dword ptr [0x801aa0], 0x45; je 1f;
+2: push 0x4b0588; ret;
+1: push eax; push ecx; push edx; push 1; call dword ptr [{frame}]; add esp, 4; pop edx; pop ecx; pop eax;
 {call:0x5ade90}; {call:0x5e0e80};
 push eax; push ecx; push edx; push 0; call dword ptr [{frame}]; add esp, 4; pop edx; pop ecx; pop eax"""
 
