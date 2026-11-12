@@ -102,6 +102,11 @@ Changes:
 - Keep test counts, file lists, to-dos, hashes and how the work was organised
   (agents, branches, phases, migrations) in the agent's hand-back.
 - Work on a branch merges into main as one squashed commit in this format.
+- A commit that fully fixes a GitHub issue ends with a line such as
+  `Reported in #17` or `Reported in #16 and #17`. Publishing the release that
+  holds it closes the issue with a link to the release. Never write `Fixes #17`:
+  GitHub would close the issue on push, before players can get the fix, and the
+  commit hook refuses it.
 
 ## Root causes
 

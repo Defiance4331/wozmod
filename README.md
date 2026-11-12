@@ -261,7 +261,9 @@ To build the release zip for your system, run
 GitHub release for the tag. Make that draft first: pushing a `v*` tag runs
 the release workflow in `.github/workflows/`, which takes the two files from
 the draft, builds the zips for Windows and Linux, and then takes the two
-files off the draft, so the release holds only the zips.
+files off the draft, so the release holds only the zips. Publishing the draft
+then closes each issue that a commit since the previous release names on a
+`Reported in #N` line, with a comment that links the release.
 
 ### Build the Windows zip on Linux
 

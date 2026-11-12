@@ -1,0 +1,28 @@
+# Closes the issues a release fixes once players can download it: when the draft release is published, each issue
+# named on a `Reported in #N` line of a commit since the previous tag is closed with a comment linking the release.
+# It runs on publish, not on the tag push, because the release is still a draft then and its link would not open.
+name: close fixed issues
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  close:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.event.release.tag_name }}
+      URL: ${{ github.event.release.html_url }}
+    steps:
+      # The full history and tags, to find the previous release's tag.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Close the issues this release fixes
+        run: python3 packaging/close_released_issues.py "$TAG" "$URL"

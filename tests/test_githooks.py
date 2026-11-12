@@ -31,12 +31,16 @@ CASES = [
     ("the private folder", _message(extra=" Notes in private/layout-decisions.md."), False),
     ("the vault", _message(extra=" Filed in the vault."), False),
     ("Japanese text", _message(extra=" Quote \u30a2."), False),
+    ("an issue reference", _message() + "Reported in #16 and #17\n", True),
+    ("a closing keyword", _message() + "Fixes #17\n", False),
+    ("a closing keyword in the why", _message(extra=" This resolved: #17."), False),
 ]
 
 
 def test_commit_msg_hook_accepts_the_changelog_format_and_refuses_the_rest(tmp_path: Path) -> None:
-    # Bug: a regex typo lets a file list, a test count, a private ADR number or quoted Japanese into a public
-    # commit message, or the hook starts refusing the format AGENTS.md documents.
+    # Bug: a regex typo lets a file list, a test count, a private ADR number, quoted Japanese or a 'Fixes #N' that
+    # closes the issue before the release into a public commit message, or the hook starts refusing the format
+    # AGENTS.md documents (including its 'Reported in #N' line).
     wrong = []
     for name, message, accepted in CASES:
         path = tmp_path / "COMMIT_EDITMSG"
