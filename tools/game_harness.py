@@ -1768,6 +1768,14 @@ ROUTE_SCREENS = {
     "customize-fusion-effects": {"texture": "4060.7"},
     "customize-fusion-confirm": {"texture": "4060.37", "quad_caller": "0x52ef9e"},
     "dream-select": {"texture": "4094.5"},
+    "dream-members": {"texture": "4094.15"},  # the MEMBERS panel over the scenario select: RECOMMENDED or SELECT MEMBERS
+    "dream-member-select": {"texture": "4061.18"},  # the character select Free Mode and Survival share
+    # Two players (issue 18): "2P JOINED" (4079.44, drawn by 0x590CC3) beside each screen's own fingerprint. F12 at the
+    # Dream select joins player 2 (0x548460) and opens a message box (caller 0x54e76f) that takes the next Return.
+    "dream-select-2p": {"texture": "4094.5", "with": "4079.44", "without_caller": "0x54e76f"},
+    "dream-member-select-2p": {"texture": "4061.18", "with": "4079.44"},  # 1P's select, then 2P's
+    "battle-camp-2p": {"texture": "4079.170", "with": "4079.44"},
+    "pre-battle-2p": {"texture": "4079.168", "with": "4079.44"},
     "gallery": {"texture": "4079.169", "without": "4064.7|4064.9|4064.17|4079.105|4079.17"},  # sub-pages draw one of these
     "gallery-original-background": {"texture": "4064.7"},
     "gallery-backgrounds": {"texture": "4064.17"},
@@ -1850,11 +1858,13 @@ GALLERY_STATE, MOVIE_PAGE, MOVIE_CELL, MOVIE_IDS = 0xC2E774, 0x1A90, 0x1A8C, 0x7
 MOVIE_PAGES = (15, 15, 6)
 DEFAULT_MOVIE = 102  # index 3, where the list's first route went
 OFFICER_STEP = {"pick": "officers"}  # filled by route: the team --officer names
+TEAMS_STEP = {"pick": "teams"}  # filled by route: player 1's three --officer names, then player 2's
 # Free Mode's character select (work/handbacks/route-cursors.md, read in run 2026-10-25_1426-free1): its state at
 # [0xC275C0] keeps 8 groups of up to 15 cells holding officer ids (0x60 locked, -1 empty), the cursor's group and each
 # group's remembered row, the hovered officer, and the three team slots each Return fills.
 FREE_STATE, FREE_HOVER, FREE_GROUP, FREE_ROWS, FREE_COUNTS, FREE_GRID = 0xC275C0, 0x3354, 0x35E4, 0x35E8, 0x35C0, 0x33E0
 FREE_NAME = "0x543382"  # the hovered officer's name
+FREE_PLAYER = 0x3608  # whose team the select fills with two players: 0 player 1, 1 player 2 (its title, 0x542AEC)
 FREE_STAGE_STEP = {"pick": "free stage"}  # filled by route: the story and chapter of --stage
 # Free Mode's stage select: Up and Down pick a story, Return opens its chapters; there the cursor index is at
 # [[0xC54AF0] + 0xB8] and the stage under it at [[0xC54AF0] + 0xFC + 4 * index] (0x58BF11 stores it on Return).
@@ -1981,6 +1991,31 @@ ROUTE_EDGES = [
     ("dream-select", "battle-camp", [(DREAM_STEP, None), *[([key], None) for key in ("Return", "Left", "Left", "Left",
                                                                                  "Return")],
                                      (["Return"], slow("battle-camp", 2.0))]),  # first scenario, EASY, team; the story camp's plates fade out for seconds after its fingerprint shows
+    # issue 18 (runs 2026-11-12_2207-i18-fp, 2026-11-12_2210-i18-route): the MEMBERS panel after the difficulty and the
+    # member select it opens. Shift_L (Random) fills a slot at random; the edge picks --officer as Free Mode's does,
+    # then Return confirms the three. Only a cleared stage offers the panel (inferred: stage 143 set uncleared skipped
+    # it, run 2026-11-12_2200-i18-uncleared); full-unlock has every stage cleared
+    ("dream-select", "dream-members", [(DREAM_STEP, None), *[([key], None) for key in ("Return", "Left", "Left", "Left")],
+                                       (["Return"], ROUTE_SCREENS["dream-members"])]),
+    ("dream-members", "battle-camp", [(["Return"], slow("battle-camp", 2.0))]),  # RECOMMENDED
+    ("dream-members", "dream-member-select", ["Right", "Return"]),  # SELECT MEMBERS
+    ("dream-member-select", "battle-camp", [(OFFICER_STEP, None), (["Return"], slow("battle-camp", 2.0))]),  # --officer
+    # issue 18 (run 2026-11-12_2352-i18-2p-route): two players. The camp and the pre-battle read each player's menu
+    # word (0x5ADC60) in turn and act on the first that has input, and the keyboard drives both (player 2's default
+    # keys are the arrows, 0x5E27C0), so the keys go to player 1 until player 1 has confirmed NEXT or FIGHT; the step
+    # goes on once both have (camp state [0xC268D8] +0x20, +0x24; 0x535140). Player 2's cursor starts on ABILITIES
+    # (camp) or WEAPON (pre-battle), and Up wraps it to the last row.
+    ("dream-select", "dream-select-2p", [(["F12"], {"caller": "0x54e76f"}), (["Return"], ROUTE_SCREENS["dream-select-2p"])]),
+    ("dream-select-2p", "dream-member-select-2p", [(DREAM_STEP, None),
+                                                   *[([key], None) for key in ("Return", "Left", "Left", "Left")],
+                                                   (["Return"], ROUTE_SCREENS["dream-members"]),
+                                                   (["Right", "Return"], ROUTE_SCREENS["dream-member-select-2p"])]),
+    ("dream-member-select-2p", "battle-camp-2p", [(TEAMS_STEP, None), ([], slow("battle-camp-2p", 2.0))]),  # --officer x6
+    ("battle-camp-2p", "pre-battle-2p", [*[([key], None) for key in ("Up", "Return", "Up")],  # both on NEXT
+                                         (["Return"], ROUTE_SCREENS["briefing"]),
+                                         (["Escape"], ROUTE_SCREENS["pre-battle-2p"])]),
+    ("pre-battle-2p", "battle", [*[([key], None) for key in ("Up", "Return", "Up", "Return")],  # both on FIGHT
+                                 (SKIP, {**slow("battle", 3.0), "every": 3})]),
     ("battle-camp", "briefing", ["Up", "Return"]),  # NEXT
     ("briefing", "pre-battle", ["Escape"]),
     # FIGHT; the battle's fingerprint shows at its first frame, and the first Escape in the next seconds is lost
@@ -2328,6 +2363,25 @@ def pick_officers(root: Path, names: list[str], label: str) -> None:
         drive_step(root, ["Return"], None, None, label, quick=True)
 
 
+def wait_select_player(root: Path, player: int, label: str, seconds: float = 10.0) -> None:
+    """Wait until the two-player character select fills ``player``'s team."""
+    deadline = time.monotonic() + seconds
+    while peek_u32(root, peek_u32(root, FREE_STATE) + FREE_PLAYER) != player:
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"{label}: the character select did not turn to player {player + 1}")
+        time.sleep(0.1)
+
+
+def pick_teams(root: Path, names: list[str], label: str) -> None:
+    """Fill both players' teams on the two-player member select: the first three names are player 1's, the rest
+    player 2's (each team topped up as pick_officers does). Player 2's select opens on player 1's third pick."""
+    if len(names) > 6:
+        raise ValueError("two teams have six officers")
+    pick_officers(root, names[:3], label)
+    wait_select_player(root, 1, label)
+    pick_officers(root, names[3:], label)
+
+
 def stage_under_cursor(root: Path) -> tuple[int, int]:
     state = peek_u32(root, STAGE_SELECT)
     index = peek_u32(root, state + STAGE_CURSOR)
@@ -2448,6 +2502,9 @@ def route(root: Path, target: str, stage: int | None = None, movie: int | None =
                     continue
                 if keys is OFFICER_STEP:
                     pick_officers(root, officers or [], f"{source} -> {destination}")
+                    continue
+                if keys is TEAMS_STEP:
+                    pick_teams(root, officers or [], f"{source} -> {destination}")
                     continue
                 if keys is UPGRADE_STEP:
                     stage_upgrade(root)
@@ -2854,7 +2911,8 @@ def main(argv: list[str] | None = None) -> int:
                                  f"(default {DEFAULT_MOVIE})")
             command.add_argument("--officer", action="append", default=[], metavar="NAME",
                                  help="free-camp onward: an officer for the Free Mode team, by name as the select shows "
-                                      "it or by id (repeat, up to 3; the rest are filled in)")
+                                      "it or by id (repeat, up to 3; the rest are filled in); battle-camp-2p onward: up to 6, "
+                                      "player 1's three, then player 2's")
         if action == "check":
             command.add_argument("spec", type=Path, help="a check file such as data/checks/menus.toml")
             command.add_argument("--only", type=lambda value: value.split(","), metavar="SCREEN,...",
