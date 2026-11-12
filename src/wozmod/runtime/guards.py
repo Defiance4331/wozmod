@@ -111,7 +111,7 @@ FEATURES = (
             + (0x5E4570,),  # the pad enumeration callback handed to EnumDevices
             spans=((layout.DEFINES["START_WIDTH"] - 1, 2), (layout.DEFINES["STICK_WIDTH"] - 1, 2),  # push 0x1E
                    (layout.DEFINES["WIDE_LAST_DRAW"] - 2, 3), (layout.DEFINES["WIDE_LAST_MEASURE"] - 2, 3))),  # cmp eax, 0x14
-    Feature("fps", "frame rate", requires=("core",), hooks=(114, 115, 116, 117),
+    Feature("fps", "frame rate", requires=("core",), hooks=(114, 115, 116, 117, 124, 125, 126, 127),
             calls=_c("DISPLAY_APPLY_AT"),  # a FRAME RATE or VSYNC change applies the display at once
             spans=((layout.DEFINES["FPS_LIMITER"], 2),)  # push 60
             + tuple((site.va, len(site.stock)) for site in true_rate.load())),  # the catalogue rewrites each

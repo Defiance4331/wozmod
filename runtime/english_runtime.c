@@ -4900,10 +4900,24 @@ static int always(u32 id, struct frame *f, u32 *replace)
     case 65:
         *replace = move_key(f);
         return 1;
-    case 115:  /* a battle tick (0x4AF960, or the tick after the battle's end 0x4AFB70): the 60 Hz phase */
+    /* A step of game time ticks the true-rate clock: a battle tick (0x4AF960, or the tick after the battle's end
+       0x4AFB70), an event scene's tick (0x499AC0, from 0x49CEB0), and the battle scene's own step by the frame float
+       in a state that runs no battle tick (0x4B0600, table 0x4B0858): the Musou view (state 2, 0x50FEB0), a cut-in
+       (state 4, 0x4FA790), the step back from an event scene (state 7, 0x4B2850). Stock runs one of these each
+       60 Hz frame, so what the game steps once a drawn frame (particle effects, frame_dt) or once a tick (the gates,
+       tick60) moves with them. */
+    case 115:
     case 116:
-    case 117:  /* an event scene's tick (0x499AC0, from 0x49CEB0) */
+    case 117:
+    case 124:
+    case 125:
+    case 126:
         if (tr.rate != 60)
+            tr_tick(&tr);
+        return 1;
+    case 127:  /* state 6 (the way into an event scene) after its step 0x4B2730: [esp+8] set runs the battle's ticks
+                  (hook 115), 0 makes the step alone the pass's tick */
+        if (tr.rate != 60 && !f->arg[1])
             tr_tick(&tr);
         return 1;
     case 30:

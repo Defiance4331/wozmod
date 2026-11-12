@@ -274,3 +274,105 @@ def test_catalogue_sites_stay_clear_of_the_runtimes_hooks_and_edits():
     for s in true_rate.load():
         for lo, hi in taken:
             assert s.va + len(s.stock) <= lo or hi <= s.va, f"site {s.va:#x} overlaps {lo:#x}"
+
+
+# The hooks whose routine is one step of game time, each a tick of the clock (runtime/english_runtime.c, case 115).
+# Hook 127 ticks for battle scene state 6 only on a pass whose battle runs no tick, so it is not one of them.
+CLOCK_STEPS = (115, 116, 117, 124, 125, 126)
+STATE_6_PASS = 127
+SCENE_PASS = (0x4B0600, 0x4B0855)  # the battle scene's pass: one state's step a call (switch at 0x4B061F)
+
+
+def _code_graph(image: bytes):
+    """reach(entry): every instruction address the code at entry can run through direct calls, jumps and switch tables
+    (the jump tables MSVC puts in .text after a function; calls through pointers are not followed). Blocks are decoded
+    once and shared between calls."""
+    import re
+    import capstone
+    from wozmod.formats import pe
+
+    x86, where, text, blocks = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32), pe.layout(image), \
+        range(0x401000, 0x6CB000), {}
+
+    def block(va: int) -> tuple[list[int], list[int]]:
+        """The instructions from va to the first ret or jmp, and every address they may go on to."""
+        if va not in blocks:
+            at, here, next_ = pe.file_offset(where, va), [], []
+            for address, size, mnemonic, operand in x86.disasm_lite(image[at:at + 0x80], va):
+                here.append(address)
+                if (mnemonic == "call" or mnemonic.startswith("j")) and operand.startswith("0x"):
+                    next_.append(int(operand, 16))
+                elif (table := re.fullmatch(r"dword ptr \[\w+\*4 \+ (0x[0-9a-f]+)\]", operand)) \
+                        and int(table[1], 16) in text:
+                    entries = pe.file_offset(where, int(table[1], 16))
+                    for k in range(256):
+                        target = struct.unpack_from("<I", image, entries + 4 * k)[0]
+                        if target not in text:
+                            break
+                        next_.append(target)
+                if mnemonic in ("ret", "jmp"):
+                    break
+            else:
+                if here:
+                    next_.append(address + size)  # the window ran out mid-block
+            blocks[va] = here, next_
+        return blocks[va]
+
+    def reach(entry: int) -> set[int]:
+        seen, todo, starts = set(), [entry], set()
+        while todo:
+            va = todo.pop()
+            if va in starts or va not in text:
+                continue
+            starts.add(va)
+            here, next_ = block(va)
+            seen.update(here)
+            todo += next_
+        return seen
+
+    return reach
+
+
+@pytest.fixture(scope="module")
+def stock_code():
+    """(reach, the image, the clock hooks' VAs by id) for the stock executable."""
+    pytest.importorskip("capstone")
+    from wozmod.runtime.english_runtime import hook_sites
+    exe = Path(os.environ.get("WOZMOD_GAME") or "", "OROCHI_Z.exe")
+    if not exe.is_file():
+        pytest.skip("set WOZMOD_GAME to the stock game folder")
+    image = exe.read_bytes()
+    hooks = {hook_id: va for va, _, hook_id, *_ in hook_sites(())}
+    return _code_graph(image), image, hooks
+
+
+def test_every_step_the_battle_scene_takes_by_the_frame_float_ticks_the_clock(stock_code):
+    """Bug: a battle scene state steps the game by the frame float (the dispatcher's argument, 60/N) and runs no
+    battle tick, and no hook ticks the clock for it, so everything that steps by the clock stands still there: at a
+    rate above 60 the Musou view and the cut-ins (states 2 and 4) lost their burning backdrop band (issue 12). Each
+    call the pass makes with the frame float must tick: the routine is a hooked step or reaches one, or the pass goes
+    on through state 6's hook, which ticks when the battle does not."""
+    import capstone
+    from wozmod.formats import pe
+    reach, image, hooks = stock_code
+    steps = {hooks[i] for i in CLOCK_STEPS}
+    at = pe.file_offset(pe.layout(image), SCENE_PASS[0])
+    code = list(capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32).disasm_lite(
+        image[at:at + SCENE_PASS[1] - SCENE_PASS[0]], SCENE_PASS[0]))
+    calls = [(code[k + 1][0] + code[k + 1][1], int(code[k + 1][3], 16)) for k in range(len(code) - 1)
+             if code[k][2:] == ("fstp", "dword ptr [esp]") and code[k + 1][2] == "call"]
+    assert len(calls) == 7  # the battle (states 0, 1 and 6), the states 2, 4, 6, 7 and 8
+    frozen = [hex(routine) for after, routine in calls
+              if not (steps & reach(routine) or hooks[STATE_6_PASS] in reach(after))]
+    assert frozen == []
+
+
+def test_no_step_that_ticks_the_clock_runs_inside_another(stock_code):
+    """Bug: a clock hook on a routine that a battle tick (or another hooked step) also runs, so a pass counts that
+    step twice: its effects advance by two ticks' frame time and its gates see two ticks, twice stock speed. Each
+    hooked step's code, followed through its calls, must not reach another hooked step."""
+    reach, _, hooks = stock_code
+    steps = [hooks[i] for i in CLOCK_STEPS]
+    runs = {va: reach(va) for va in steps}
+    assert [(hex(outer), hex(inner)) for outer in steps for inner in steps
+            if inner != outer and inner in runs[outer]] == []

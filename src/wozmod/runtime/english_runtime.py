@@ -101,6 +101,12 @@ ALWAYS_HOOKS = [
     (0x4AF960, "51 d9442408 56", 115, None),   # battle tick (cdecl: dt): the true frame rate's 60 Hz phase
     (0x4AFB70, "51 d9442408 53", 116, None),   # the battle's tick after its end (cdecl: dt): the same
     (0x499AC0, "a170a38900", 117, None),       # an event scene's tick (cdecl: dt): the same
+    # The battle scene's states that step by the frame float and run no battle tick (0x4B0600, table 0x4B0858): a
+    # tick of the same clock each.
+    (0x50FEB0, "a130d4bf00", 124, None),       # state 2, the Musou view's step (cdecl: dt)
+    (0x4FA790, "a160ad9c00", 125, None),       # state 4, a cut-in's step (cdecl: dt)
+    (0x4B2850, "d9057cad8900", 126, None),     # state 7, the step back from an event scene (cdecl: dt)
+    (0x4B0740, "837c240800", 127, None),       # state 6 past its step 0x4B2730, [esp+8] 0: no battle tick (mid)
     (0x5DDAB0, "8b0d08a24001", 21, None),       # draw quad: hi-res sheets
                                                 #   back past the beams (ENRT_LOG/ENRT_TEST: every quad logged)
     (0x5DE620, "8b442408 8b4c2404", 22, None),  # draw quad, second builder, the same
