@@ -32,6 +32,21 @@ class = "e"
 what = "character step made (local at [esp+4]): times the tick's share, before it is stored at +0x1904/+0x1908"
 code = "fld dword ptr [esp+4]; fmul dword ptr [{step}]; mov eax, esi"
 
+# The True Musou close-up (0x50D020, from the Musou view's step 0x50FEB0, view mode 0) steps its character by
+# slow x dt x dt: the slow factor (0x50CF10) times the view's dt (+8, read at entry into [esp+0x20]'s product) and
+# again by dt ([esp+0x44], read before the call). At 60 dt is 1, so the square changes nothing; at N it takes 60/N
+# twice, and the character step's entry (above) takes only one share out. The close-up's motion (0xAD) then plays at
+# (60/N)^2 of its speed: at 165 it reaches frame 1.07 of about 3 before the view's timer (0x798520, counted down by
+# dt once) ends it, and its frame-1 voice mark (the first True Musou shout, 0x5124D0 entry 5) waits for the view's
+# end, 0.8 s late. The second dt is the time scale: dt / (60/N).
+[[site]]
+va = 0x50D379
+stock = "d9442420 d84c2444"
+kind = "patch"
+class = "e"
+what = "True Musou close-up: its character's dt is slow x dt x dt; the second dt counts as stock ticks"
+code = "fld dword ptr [esp+0x20]; fmul dword ptr [esp+0x44]; fdiv dword ptr [{step}]"
+
 # ---- Character counts: a character's update (0x412280 and 0x467A60) runs once a tick, or every 6th tick far away;
 # its window (once, n) says how many stock updates and 60 Hz periods the call covers.
 
