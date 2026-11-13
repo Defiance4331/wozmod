@@ -1288,6 +1288,8 @@ def test_check_orders_a_screen_that_needs_a_stage_through_the_scenario_select():
     assert legs("pause", 45, 45)[0] == ["briefing"] and legs("pause", 40, None)[0] == ["briefing"]  # the stage it has
     assert legs("menu@dream", None, 45)[3] == 45  # the route plays the stage the screen names
     assert legs("pause", 40, 45)[3] == 45
+    # a story chapter's battle fires its script itself, rather than through a Dream battle
+    assert harness.check_legs("menu@story", None, "story-battle", 35, 56)[0] == ["story-battle"]
     screens = [{"name": "a", "route": "briefing", "battle": 45}, {"name": "b", "route": "pre-battle"},
                {"name": "c", "route": "pre-battle", "battle": 45}]
     # a loads stage 45; c is next to it on that stage, b (stage 40) goes back to the scenario select, so it comes last

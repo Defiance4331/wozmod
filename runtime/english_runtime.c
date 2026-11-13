@@ -522,6 +522,7 @@ static u32 mount_player(u32 slot)
 #define LIFE(u) (*(volatile short *)((u) + 0x82))
 #define LIFE_MAX(u) (*(volatile short *)((u) + 0x80))
 static u32 test_keep, test_clock;
+static volatile u32 test_voice_delay;  /* ms each English voice read takes longer: a slow disk (op 15) */
 
 static void keep_battle(void)
 {
@@ -829,6 +830,12 @@ static void test_frame(void)
         if (b->arg == 3)
             ((void (*)(void))0x6A46B6)();
         b->result = 5;
+        break;
+    case 15:
+        /* Every English voice read from now on takes arg ms longer (0: none), as on a slow disk: the archive reader
+           then stays busy that much longer after each voice load. */
+        test_voice_delay = b->arg;
+        b->result = 0;
         break;
     default:
         b->result = 2;
@@ -1918,7 +1925,10 @@ static const char *event_line(const char *s, u32 ret)
 static HANDLE voice_bank = INVALID_HANDLE_VALUE;
 static u32 *voice_table, voice_ids;
 #define READER_IDLE ((u32 (*)(void))0x5D0D20)  /* reaps a finished archive read; true when the reader is free */
-static struct voice_play kept_play = {VOICE_NONE, 0, {0}, VOICE_NONE};
+#define READER_FREE ((u32 (*)(u32))0x5D9AE0)  /* with 0: starts a queued job, else reaps; true when the reader is free */
+#define VOICE_START_BODY 0x513731  /* the voice start (0x513720) past its free check, ecx's slot pushed */
+#define VOICE_END (VOICE_MODE ? 0x1FFu : 0x150u)  /* the voice mode's end marker: no line */
+static struct voice_play kept_play = {VOICE_NONE, 0, {0}, VOICE_NONE, 0, {{0}}, 0, 0};
 
 
 #define SE_KEY 0xFD9
@@ -2024,6 +2034,29 @@ static int reader_idle(void)
     return READER_IDLE() != 0;
 }
 
+/* The stock voice start (0x513720), which hook 135 replaces: its free check, then its body as the game enters it. */
+#define STR_(x) #x
+#define STR(x) STR_(x)
+__asm__(".text\nvoice_start_body:\n\tpushl %ecx\n\tpushl $" STR(VOICE_START_BODY) "\n\tret\n");
+extern u32 voice_start_body(u32 play, u32 next) __asm__("voice_start_body");
+static int stock_voice_start(u32 play, u32 next)
+{
+    return READER_FREE(0) && voice_start_body(play, next);
+}
+
+/* The runtime log line for a voice start that had to wait: what became of it, the frames it waited, and its two lines
+   as voice ids (- for none). */
+static void voice_start_note(const char *what, const struct voice_start *s, u32 frames)
+{
+    char line[160], ids[2][8];
+    u32 base = VOICE_MODE ? 0x8F4 : 0xAF3, i, lines[2] = {s->play, s->next};
+    for (i = 0; i < 2; i++)
+        wsprintfA(ids[i], lines[i] < VOICE_END ? "0x%04X" : "-", base + lines[i]);
+    wsprintfA(line, "%s %u frames, play %s, load %s", what, frames, ids[0], ids[1]);
+    note(line, 0);
+}
+static const struct voice_stock voice_stock = {reader_idle, stock_voice_start, voice_start_note};
+
 static u32 read_voice(struct frame *f, HANDLE bank)
 {
     OVERLAPPED at = {0};
@@ -2031,6 +2064,10 @@ static u32 read_voice(struct frame *f, HANDLE bank)
     u32 n = f->arg[4];
     DWORD got = 0;
     at.Offset = f->arg[2] & ~VOICE_TAG;
+#ifdef ENRT_TEST
+    if (test_voice_delay)
+        Sleep(test_voice_delay);
+#endif
     if (!dst)
         dst = HEAP_ALLOC(GAME_HEAP(), 16, n);
     f->eax = dst && ReadFile(bank, dst, n, &got, &at) && got == n ? (u32)dst : 0;
@@ -5014,13 +5051,20 @@ static int always(u32 id, struct frame *f, u32 *replace)
         voice_keep(&kept_play, (u8 *)f->ecx, f->arg[0], f->arg + 1);
         return 1;
     case 110:  /* the voice frame starts (thiscall): a waiting load waits for a free reader, a kept play is made */
-        if (voice_frame(&kept_play, (u8 *)f->ecx, reader_idle)) {
+        if (voice_frame(&kept_play, (u8 *)f->ecx, &voice_stock)) {
 #ifdef ENRT_LOG
             note("voice play made after its load, id:", kept_play.id);
 #endif
             VOICE_PLAY((const u8 *)f->ecx, kept_play.slot, kept_play.arg[0], kept_play.arg[1], kept_play.arg[2]);
             kept_play.slot = VOICE_NONE;
         }
+        return 1;
+    case 135:  /* the voice start (cdecl: line to play, line to load next): one that finds the reader busy waits */
+        voice_start(&kept_play, f->arg[0], f->arg[1], VOICE_END, &voice_stock);
+        f->eax = 1, *replace = 1;
+        return 1;
+    case 136:  /* the voice stop: what waits to play is dropped */
+        voice_stop(&kept_play, VOICE_END, &voice_stock);
         return 1;
     case 119: {  /* the sound-effect poll (ecx the manager): version 1.01's, with its falling-rock cutoff */
         u32 cut;

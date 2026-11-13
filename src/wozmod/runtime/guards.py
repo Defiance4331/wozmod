@@ -97,8 +97,9 @@ FEATURES = (
             + (0x54BBB0,)  # the caption line draw, through draw_fit_at
             + (0x5901C0, 0x593C40, 0x591810, 0x58C940),  # called from CODE_EDITS caves and fusion's cell (0x52C900)
             returns=TEXT_RETURNS),
-    Feature("voices", "English voices", requires=("served",), hooks=(36, 37, 38, 39, 40, 41, 71, 109, 110, 118),
-            edits=("VOICE_EDITS",), calls=_c("VOICE_PLAY", "READER_IDLE"),
+    Feature("voices", "English voices", requires=("served",), hooks=(36, 37, 38, 39, 40, 41, 71, 109, 110, 118,
+                                                                         135, 136),
+            edits=("VOICE_EDITS",), calls=_c("VOICE_PLAY", "READER_IDLE", "READER_FREE", "VOICE_START_BODY"),
             returns=(0x49E65F,  # the speak command's lip block (hook 71)
                      0x5D2AEA)),  # SE.bin's size asked (hook 31)
     Feature("rows", "Game Settings rows", requires=("core",), hooks=(27, 28, 29), edits=("settings rows",),

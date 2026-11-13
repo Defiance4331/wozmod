@@ -948,7 +948,7 @@ def perform(root: Path, request: dict) -> dict:
         with open(f"/proc/{game_pid()}/mem", "rb", buffering=0) as memory:
             return stage_scripts(memory.fileno())
     if action in ("screen", "wait", "say", "notice", "win", "lose", "script", "scene", "unlock", "spawn",
-                  "mount", "switch", "teleport", "keep", "crash"):
+                  "mount", "switch", "teleport", "keep", "crash", "slow-voice"):
         with open(f"/proc/{game_pid()}/mem", "r+b", buffering=0) as memory:
             block = test_block(memory.fileno())
             if action == "screen":
@@ -971,6 +971,10 @@ def perform(root: Path, request: dict) -> dict:
                                 request.get("relative", False))
             if action == "keep":
                 return keep(memory.fileno(), block, request["keep"])
+            if action == "slow-voice":
+                # test op 15: each English voice read takes this much longer, as on a slow disk
+                test_command(memory.fileno(), block, 15, request["ms"])
+                return {"slow-voice": request["ms"]}
             if action == "crash":
                 # test op 14, sent without waiting: the game ends instead of answering
                 command = struct.unpack("<I", os.pread(memory.fileno(), 4, block + 28))[0]
@@ -2699,7 +2703,7 @@ def check_legs(position: str, loaded: int | None, name: str, battle: int | None,
     Dream scenario select first. Raises ValueError when a leg has no route."""
     need = DREAM_STAGES[0] if battle is None else battle
     legs = ["dream-select"] if position in stage_chain() and loaded != need else []
-    legs += ["battle"] if script is not None and name != "battle" else []
+    legs += ["battle"] if script is not None and name not in PAUSE_SOURCES else []  # a battle the script can fire in
     legs.append(name)
     cost, unlocks = 0, False
     for leg in legs:
@@ -2779,7 +2783,7 @@ class CheckDriver:
         for leg in legs:
             if route(self.root, leg, stage):
                 raise RuntimeError(f"route to {leg} failed")
-            if script is not None and leg == "battle":  # the script fires in the battle, before the route goes on
+            if script is not None and leg in PAUSE_SOURCES:  # the script fires in the battle, before the route goes on
                 try:
                     self.fire(script)
                 except Refused as exc:
@@ -2955,7 +2959,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="action", required=True)
     for action in ("run", "status", "key", "click", "pad", "plug", "reenumerate", "capture", "record", "video", "peek", "poke",
                    "find", "screen", "wait", "say", "notice", "win", "lose", "scripts", "script", "scene", "spawn", "mount", "switch",
-                   "teleport", "keep", "unlock", "crash",
+                   "teleport", "keep", "unlock", "crash", "slow-voice",
                    "reload", "tour", "route", "check", "stop", "_audio", "_serve"):
         command = commands.add_parser(action)
         command.add_argument("--root", required=True, type=Path,
@@ -3034,6 +3038,9 @@ def main(argv: list[str] | None = None) -> int:
         if action == "keep":
             command.add_argument("keep", nargs="*", choices=list(KEEPS), metavar="WHAT",
                                  help=f"any of {', '.join(KEEPS)}, held until the battle ends; none stops keeping")
+        if action == "slow-voice":
+            command.add_argument("ms", type=int, help="milliseconds each English voice read takes longer, as on a "
+                                 "slow disk (0: none); the archive reader stays busy that much longer per voice load")
         if action == "crash":
             command.add_argument("how", choices=list(CRASHES),
                                  help="fault: a read through NULL in the game's code; cxx: an uncaught C++ exception; "
@@ -3153,6 +3160,8 @@ def main(argv: list[str] | None = None) -> int:
             request.update(x=args.x, z=args.z, facing=args.facing, relative=args.relative)
         if args.action == "keep":
             request["keep"] = args.keep
+        if args.action == "slow-voice":
+            request["ms"] = args.ms
         if args.action == "reload":
             request["table"] = str(args.table.resolve(strict=True))
             timeout += RELOAD_SECONDS

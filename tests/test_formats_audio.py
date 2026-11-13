@@ -266,6 +266,38 @@ def test_psp_atrac3plus_clip_declares_its_whole_length(tmp_path: Path) -> None:
     english_voice_bank(clips)
 
 
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
+def test_stereo_clip_with_the_same_signal_in_both_channels_keeps_its_level(tmp_path: Path) -> None:
+    # Bug: -ac 1 mixes each channel of a PSP dialogue clip (the same signal in both) at 0.707 into the encoder's float
+    # samples, so the mono clip runs 3 dB over its source and 445 of the PSP lines clip. Its level must be one channel's.
+    import math
+    import subprocess
+    from array import array
+
+    from synthetic import write_ps2_archive
+
+    from wozmod.formats.audio import donor_voice_clips
+    from wozmod.formats.linkdata import ps2_extents
+
+    def rms_db(command: list[str], data: bytes = b"") -> float:
+        pcm = array("f", subprocess.run(["ffmpeg", "-v", "error", *command, "-f", "f32le", "-ac", "1", "-"], input=data,
+                                        capture_output=True, check=True).stdout)
+        return 10 * math.log10(sum(s * s for s in pcm) / len(pcm))
+
+    tone = ["-f", "lavfi", "-i", "sine=frequency=440:duration=1:sample_rate=48000"]
+    riff = subprocess.run(["ffmpeg", "-v", "error", *tone, "-af", "pan=stereo|c0=c0|c1=c0", "-c:a", "pcm_s16le",
+                           "-f", "wav", "-"], capture_output=True, check=True).stdout
+    bank = write_ps2_archive(tmp_path / "voice_na.bns", {0: riff})
+    clips, _ = donor_voice_clips([("wo2-psp", {12: 0}, ps2_extents(bank), bank)])
+
+    ogg = bytearray(clips[12][32:])  # the Ogg stream inside the KOVS record, its first 256 bytes XORed by position
+    for position in range(min(256, len(ogg))):
+        ogg[position] ^= position
+    built = rms_db(["-i", "-"], bytes(ogg))
+    assert abs(built - rms_db(tone)) < 0.2, built
+    english_voice_bank(clips)  # and it is a mono clip the bank takes
+
+
 def _atrac_frames(riff: bytes) -> tuple[int, int, int]:
     """(channels, block align, frame count) of an ATRAC3plus RIFF."""
     fmt = riff.find(b"fmt ")

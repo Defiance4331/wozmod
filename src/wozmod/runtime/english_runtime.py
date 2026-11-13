@@ -100,6 +100,8 @@ ALWAYS_HOOKS = [
     (0x4A1710, "8b442404 f60010", 71, None),    # lip block handed to a slot (cdecl: state, slot, block)
     (0x5D7BF0, "8b542404 83fa01 56", 109, None),  # voice play (thiscall): kept while its clip waits to load
     (0x5D8590, "83ec44 53 55 56 57", 110, None),  # voice frame (thiscall): a kept play made after its load
+    (0x513720, "51 6a00 e8b8630c00", 135, 0),     # voice start (cdecl): waits for a busy reader; always replaced
+    (0x5D82A0, "8b0d0404e000", 136, None),       # voice stop: what waits to play is dropped
     (0x5D5990, "8b442404 83f87d", 38, 4),       # SE bank header offset (thiscall): English attack voices
     (0x5D59C0, "8b442404 83f87d", 39, 4),       # SE bank header size (thiscall)
     (0x5D59F0, "8b542404 83fa7d", 40, 4),       # SE bank data offset (thiscall)

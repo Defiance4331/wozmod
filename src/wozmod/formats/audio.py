@@ -467,6 +467,12 @@ def _fmt_body(riff: bytes) -> tuple[int, int] | None:
     return None
 
 
+def _channels(riff: bytes) -> int | None:
+    """The channel count a RIFF's fmt chunk declares, or None without one."""
+    found = _fmt_body(riff)
+    return struct.unpack_from("<H", riff, found[0] + 2)[0] if found and 4 <= found[1] and found[0] + 4 <= len(riff) else None
+
+
 def _psp_dialogue_riff(riff: bytes) -> bytes:
     """The rate ffmpeg should resample this PSP clip from.
 
@@ -505,9 +511,13 @@ def donor_voice_clips(banks: list[tuple[str, dict[int, int], list[tuple[int, int
         # ffmpeg's RIFF reader packs two ATRAC3plus frames per packet but stamps one frame's duration, so the PSP
         # timestamps repeat and advance at half speed: asetpts numbers them by the decoded samples instead, rounded
         # because it truncates the quotient and N/SR/TB can land a hair under the whole number (one sample short).
-        vorbis = ["-af", "asetpts=round(N/SR/TB)", "-ac", "1", "-ar", "48000", "-c:a", "libvorbis", "-threads", "1",
-                  "-q:a", str(quality), "-fflags", "+bitexact", "-flags:a", "+bitexact", "-f", "ogg"]
-        oggs = _ffmpeg_each([(["-threads", "1", "-f", "wav"], riffs[i], vorbis) for i in moz_ids], jobs,
+        # A stereo clip (PSP dialogue: the same signal in both channels) becomes mono as the mean of its channels.
+        # -ac 1 is not that: into the encoder's float samples it mixes each channel at 0.707, 3 dB over either one.
+        def vorbis(riff: bytes) -> list[str]:
+            mono = ",pan=mono|c0=0.5*c0+0.5*c1" if _channels(riff) == 2 else ""
+            return ["-af", "asetpts=round(N/SR/TB)" + mono, "-ar", "48000", "-c:a", "libvorbis", "-threads", "1",
+                    "-q:a", str(quality), "-fflags", "+bitexact", "-flags:a", "+bitexact", "-f", "ogg"]
+        oggs = _ffmpeg_each([(["-threads", "1", "-f", "wav"], riffs[i], vorbis(riffs[i])) for i in moz_ids], jobs,
                             "converting voice clips", span)
         return dict(zip(moz_ids, map(kovs_record, oggs), strict=True))
 
