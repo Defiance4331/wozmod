@@ -53,6 +53,16 @@ def pytest_collection_modifyitems(items) -> None:
     items.sort(key=lambda item: item.get_closest_marker("slow_first") is None)
 
 
+@pytest.fixture(autouse=True)
+def _temporary_folder_left_as_found():
+    """Bug: a test sets TMPDIR for its own folder, Python caches that folder as the temporary folder, pytest deletes
+    it once the test passes, and a later test on the same worker fails to make a temporary file. That later test
+    depends on which tests share its worker, so the failure looks random; this names the test that left it."""
+    yield
+    assert Path(tempfile.gettempdir()).resolve() == TEST_TMP.resolve(), (
+        f"this test left Python's temporary folder at {tempfile.gettempdir()}: set tempfile.tempdir with monkeypatch")
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     report = (yield).get_result()

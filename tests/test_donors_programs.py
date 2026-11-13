@@ -6,6 +6,7 @@ import hashlib
 import os
 import stat
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -84,7 +85,7 @@ def test_paths_with_spaces_and_shell_characters_are_run_as_given_with_no_shell(t
     tool = fake(folder / "de crypt & go", "xex2ool")
     work = tmp_path / "temp with spaces"
     work.mkdir()
-    monkeypatch.setenv("TMPDIR", str(work))
+    monkeypatch.setattr(tempfile, "tempdir", str(work))  # what run_tool reads; TMPDIR is read once, then cached
     monkeypatch.chdir(tmp_path)
     program, transcript = run_tool(tool, _identity(), ENCRYPTED)
     assert program == PAYLOAD, transcript
