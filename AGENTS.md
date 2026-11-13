@@ -47,9 +47,9 @@ copies.
   text such as keyboard and graphics settings. The layout reference (font
   size, boxes) is WO2 X360 only. Music stays stock, except the mix inside
   donor movies.
-- Launch the game only with the user's permission for the current task, in a
-  disposable copy under `work/`, through `tools/run_check.py` or
-  `tools/game_harness.py run --slot` (two games at most, across all worktrees).
+- Launch the game whenever a task needs it, in a disposable copy under `work/`,
+  through `tools/run_check.py` or `tools/game_harness.py run --slot` (two games
+  at most, across all worktrees).
   Touch a live installation only when the user names its path and the operation.
 - Test in the game against one install per checkout: `work/install/`, a
   reflink copy of the stock game that `wozmod install` wrote into. Reinstall
