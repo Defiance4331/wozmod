@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from itertools import pairwise
+import re
 import shutil
 import struct
 import subprocess
@@ -13,7 +14,7 @@ from wozmod.formats import pe
 
 from .guards import blob, guard_list
 from .latin_font import LATIN_GLYPH
-from .layout import C_SOURCE
+from .layout import C_SOURCE, SOURCE
 from .prompts import PROMPT_SLOTS, STICK_ITEMS
 from .text_boxes import c_header as text_box_header
 from .text_room import ROOMS, WIDE
@@ -61,6 +62,17 @@ HOOKS = [
     (0x5DCA30, "8b442408 8b4c2404", 68, None),  # two-corner glyph finalizer
     (0x5DCCF0, "8b442408 8b4c2404", 69, None),  # four-corner glyph finalizer
 ]
+# runtime/sound_headroom.h: a hook just before each call that sets a volume the player hears, and the struct frame
+# word that holds the volume at the hook (ret: the word at [esp], one already pushed). Ids are consecutive: the C
+# indexes by them.
+HEADROOM = [
+    (0x67A004, "50 8b423c 51", 140, "eax"),      # an effect buffer's SetVolume at 0x67A009 (0x679FD0)
+    (0x677EB1, "52 50 8b413c", 141, "edx"),      # a stream's SetVolume at 0x677EB6 (0x677E90): music, dialogue
+    (0x678F3D, "8b523c 51 50", 142, "ecx"),      # a stream's first SetVolume at 0x678F42 (0x678BA0)
+    (0x5E9D23, "50 ffd2 8d4c2440", 143, "ret"),  # a movie's put_Volume at 0x5E9D24, at its open (0x5E9A90)
+    (0x5E9F7C, "8b511c 56 50", 144, "esi"),      # a movie's put_Volume at 0x5E9F81, at its level (0x5E9E90)
+]
+FRAME_WORDS = re.search(r"struct frame \{\s*u32 ([^;]*);", SOURCE)[1].replace(" ", "").split(",")  # C, in order
 # Installed in both text modes.
 ALWAYS_HOOKS = [
     (0x5C9FD0, "83ec1c 53 55", 24, None),       # message pump: table reload, test mailbox
@@ -156,6 +168,7 @@ ALWAYS_HOOKS = [
     # An effect batch's Lock (0x6392A0) keeps the buffer's old contents (flags 0), so it waits for the GPU's last draw
     # from it; the batch rewrites the buffer from 0 and draws only what it wrote, so the hook makes it DISCARD.
     (0x63963F, "8b422c ffd0", 23, None),        # effect batch Lock, its flags pushed (mid-function)
+    *((va, prologue, hook_id, None) for va, prologue, hook_id, _ in HEADROOM),
 ]
 # ENRT_MOVING_FIX builds only: out of release 1, kept for later.
 MOVING_FIX_HOOKS = [
@@ -233,6 +246,8 @@ def data_header(exe: bytes, edits: list[tuple[int, str, list[tuple[int, bytes, b
     for group, _, group_edits in edits:
         grouped.setdefault(group, []).extend(group_edits)
     check_spans(exe, grouped, hooks)
+    ids = [hook_id for _, _, hook_id, _ in HEADROOM]
+    _require(ids == list(range(ids[0], ids[0] + len(ids))), "the headroom hook ids are not consecutive")
     chosen, guards = guard_list(exe, edits, hooks, defines, features)
     records = bytearray()
     for group, _, group_edits in edits:
@@ -255,6 +270,8 @@ def data_header(exe: bytes, edits: list[tuple[int, str, list[tuple[int, bytes, b
         f"#define WIDE_TEXT {WIDE}",
         f"static const u32 enrt_wide_writes[] = {{{', '.join(f'{r.call + 5:#x}' for r in ROOMS if r.room == WIDE)}}};",
         f"static const u32 enrt_wide_reads[] = {{{', '.join(f'{r.read + 5:#x}' for r in ROOMS if r.read)}}};",
+        f"#define HEADROOM_FIRST {HEADROOM[0][2]}",
+        f"static const u8 headroom_word[] = {{{', '.join(str(FRAME_WORDS.index(w)) for *_, w in HEADROOM)}}};",
         f"#define PROMPT_SLOTS {len(PROMPT_SLOTS)}",
         f"#define PROMPT_ITEMS {len(PROMPT_SLOTS) + len(STICK_ITEMS)}",
         f"#define PROMPT_SLOT_LIST {', '.join(map(str, PROMPT_SLOTS + STICK_ITEMS))}",

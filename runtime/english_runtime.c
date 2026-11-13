@@ -6,6 +6,7 @@
 #include "display_fit.h"
 #include "voice_play.h"
 #include "se_cutoff.h"
+#include "sound_headroom.h"
 #include "pad_buttons.h"
 #include "pad_kind.h"
 #include "pad_map.h"
@@ -4751,6 +4752,15 @@ static int always(u32 id, struct frame *f, u32 *replace)
     case 64:  /* its Unlock, the same */
         f->edx = (u32)ring_unlock;
         return 1;
+    case 140:
+    case 141:
+    case 142:
+    case 143:
+    case 144: {  /* a volume the player hears, just before the game sets it (sound_headroom.h) */
+        u32 *volume = (u32 *)f + headroom_word[id - HEADROOM_FIRST];
+        *volume = (u32)headroom_trim((long)*volume);
+        return 1;
+    }
     case 23:  /* an effect batch's Lock (0x6392A0), its arguments pushed: buffer, offset, size, out, flags */
         f->arg[3] = RU_DISCARD;  /* each batch writes its buffer from 0 and draws only what it wrote */
         return 1;

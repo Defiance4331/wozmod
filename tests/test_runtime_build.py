@@ -49,7 +49,8 @@ def test_colliding_keys_keep_both_rows_and_aligned_shared_name_pointers() -> Non
 
 def test_data_header_keeps_group_lengths_terminator_and_hook_return_flags() -> None:
     """Bugs: an edit record or hook row loses its text-mode group, so the runtime installs it in the wrong mode; the
-    guard list exported is not the build's."""
+    guard list exported is not the build's; a headroom hook trims a frame word other than the one holding its
+    volume."""
     image = pe_image(0x1200, (b".fixture", 0x1000, 0x9B000, 0x1000, 0x200), image_base=0x700000)
     edits = [(0, "CODE_EDITS", [(0x79B010, b"abc", b"xyz")]), (1, "settings rows", [(0x79B020, b"de", b"fg")]),
              (2, "settings rows", [(0x79B020, b"de", b"hi")])]
@@ -73,7 +74,10 @@ def test_data_header_keeps_group_lengths_terminator_and_hook_return_flags() -> N
         bytes(image), edits, hooks, (), features))
     assert bytes(layout.c_array("enrt_widths", header)) == b"\x05\x07"
     assert layout.defines(header) == {"WIDTH_POINTER": 0x79BAC0, "GLYPH_LATIN": LATIN_GLYPH, "WIDE_TEXT": 1024,
-                                      "PROMPT_SLOTS": len(PROMPT_SLOTS), "PROMPT_ITEMS": len(PROMPT_SLOTS) + len(STICK_ITEMS)}
+                                      "PROMPT_SLOTS": len(PROMPT_SLOTS), "PROMPT_ITEMS": len(PROMPT_SLOTS) + len(STICK_ITEMS),
+                                      "HEADROOM_FIRST": runtime.HEADROOM[0][2]}
+    assert [runtime.FRAME_WORDS[i] for i in layout.c_array("headroom_word", header)] == [
+        word for *_, word in runtime.HEADROOM]
     # The runtime matches the return address of each widened write and draw, as read in the stock code.
     wide = dict(re.findall(r"enrt_wide_(\w+)\[\] = \{([^}]*)\}", header))
     assert {name: sorted(int(v, 16) for v in values.split(",")) for name, values in wide.items()} == {
@@ -180,6 +184,7 @@ SYNTHETIC_HEADER = "\n".join([
     "static const u8 enrt_widths[1] = {24};",
     "#define WIDTH_POINTER 0x79bac0", f"#define GLYPH_LATIN {LATIN_GLYPH}",
     "#define WIDE_TEXT 1024", "static const u32 enrt_wide_writes[] = {0};", "static const u32 enrt_wide_reads[] = {0};",
+    "#define HEADROOM_FIRST 140", "static const u8 headroom_word[] = {7};",
     "#define PROMPT_SLOTS 1", "#define PROMPT_ITEMS 9", "#define PROMPT_SLOT_LIST 0, 1, 2, 3, 4, 5, 6, 7, 8",
     *text_boxes.c_header(), "",
 ]) + true_rate.header(None, [])
