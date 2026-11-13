@@ -245,6 +245,17 @@ class = "c"
 what = "burn damage every +0xF1C ticks of its duration"
 alt = "mov edx, 1; test edx, edx"
 
+# 0x443340 (from the character step's input 0x40FEE0, while the character stands in a burning area: 0xC25048[chr+0x13D]
+# or map cell flag 0x80000) counts its unit's +0xCC up by one a call and takes 1 life when it reaches 80, 16 or 8,
+# then zeroes it. Skipping the add leaves the count below its period, so the compare after it cannot fire.
+[[site]]
+va = 0x4433C6
+stock = "668387cc00000001"
+kind = "gate"
+when = "once"
+class = "c"
+what = "burning area count unit+0xCC (1 life at 80, 16 or 8, from the character step)"
+
 # Knockback slide (0x405460): pos += speed * step, then speed *= 0.5 unless the motion has flag 0x20. The decay is
 # per tick: 0.5^(60/N) keeps its rate, and the distance moved a tick takes decay_sum so the slide covers the stock
 # distance at every 60 Hz period (the stock slide is a discrete series; a plain finer step would end 15% short).
