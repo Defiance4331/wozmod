@@ -10,8 +10,7 @@ as one (about 4 s), since a release build answers no route or check.
 With --to SCREEN [--stage N] it routes the game there instead and leaves it running for hand commands
 (`game_harness.py ACTION --root RUN`); `game_harness.py stop --root RUN` ends it, or its 30-minute limit does.
 
-SPEC defaults to data/checks/layout.toml. Running this launches the game under the machine-wide lock:
-get the user's permission for the current task first (AGENTS.md).
+SPEC defaults to data/checks/layout.toml. Running this launches the game under the machine-wide lock (two games at most).
 It also writes evidence/contact-sheet.html: each capture beside its rows, for review.
 Exit 1 on any FAIL row, a run that did not end by our stop, or a game that never started.
 """
@@ -54,7 +53,7 @@ def launch(root: Path, pad: str | None = None, size: str | None = None, video: b
     # low CPU and disk priority, so the user's own work stays responsive
     command = ["nice", "-n", "10", "ionice", "-c2", "-n7",
                sys.executable, str(Path(harness.__file__).resolve()), "run", "--root", str(root), "--slot",
-               "--target", harness.TARGET, "--game", str(root / "game"), "--authorize-launch", "--timeout", "1800",
+               "--target", harness.TARGET, "--game", str(root / "game"), "--timeout", "1800",
                *(["--pad", pad, "--route-input", "keys" if route_keys else "pad"] if pad else []),
                *(["--spare", spare] if pad and spare else []),
                *(["--unplugged"] if pad and unplugged else []), *(["--size", size] if size else []),

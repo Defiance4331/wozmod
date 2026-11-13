@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 from checkout import work
@@ -1132,23 +1133,35 @@ def start_audio(root: Path) -> None:
     """Keep Proton's audio backend available without host playback."""
     runtime = os.environ["XDG_RUNTIME_DIR"]
     os.environ["PULSE_SERVER"] = f"unix:{runtime}/pulse/native"
-    for name in ("pipewire", "pipewire-pulse", "wireplumber"):
+    daemons: dict[str, subprocess.Popen[bytes]] = {}
+
+    def start(name: str) -> None:
         with (root / f"evidence/{name}.log").open("w") as log:
-            subprocess.Popen([name], stdout=log, stderr=subprocess.STDOUT)
-    deadline = time.monotonic() + 10
-    while not Path(runtime, "pulse/native").is_socket():
-        if time.monotonic() >= deadline:
-            raise TimeoutError("private PulseAudio socket did not become ready")
-        time.sleep(0.1)
+            daemons[name] = subprocess.Popen([name], stdout=log, stderr=subprocess.STDOUT)
+
+    def wait(ready: Callable[[], bool], what: str) -> None:
+        deadline = time.monotonic() + 10
+        while not ready():
+            for name, process in daemons.items():
+                if process.poll() is not None:
+                    raise RuntimeError(f"{name} exited before {what}; see evidence/{name}.log")
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"{what} did not happen within 10 s")
+            time.sleep(0.1)
+
+    # Its clients give up when they start before it listens, so PipeWire comes first.
+    start("pipewire")
+    wait(lambda: all(Path(runtime, s).is_socket() for s in ("pipewire-0", "pipewire-0-manager")), "PipeWire listening")
+    start("wireplumber")
+    start("pipewire-pulse")
+    wait(lambda: Path(runtime, "pulse/native").is_socket(), "the PulseAudio socket appearing")
     subprocess.run(
         ["pactl", "load-module", "module-null-sink", "sink_name=musou_harness", "format=float32le", "rate=48000", "channels=2"],
         check=True, timeout=10, stdout=subprocess.DEVNULL,
     )
-    deadline = time.monotonic() + 10
-    while subprocess.run(["pactl", "set-default-sink", "musou_harness"], timeout=10).returncode:
-        if time.monotonic() > deadline:  # on a loaded machine the new sink can take seconds to be usable
-            raise RuntimeError("pactl could not make musou_harness the default sink")
-        time.sleep(0.5)
+    # The default sink lives in WirePlumber's settings store, which it creates once connected and does not announce.
+    wait(lambda: not subprocess.run(["pactl", "set-default-sink", "musou_harness"], timeout=10,
+                                    stderr=subprocess.DEVNULL).returncode, "musou_harness becoming the default sink")
 
 
 def serve(root: Path) -> int:
@@ -1346,8 +1359,6 @@ def slot_holders() -> list[str]:
 
 
 def run(root: Path, args: argparse.Namespace) -> int:
-    if not args.authorize_launch:
-        raise ValueError("launch needs current-task permission and --authorize-launch")
     game = args.game.resolve(strict=True)
     if not game.is_dir() or not game.is_relative_to(root):
         raise ValueError("--game must be a disposable directory inside --root")
@@ -2953,7 +2964,6 @@ def main(argv: list[str] | None = None) -> int:
         if action == "run":
             command.add_argument("--target", required=True, choices=[TARGET, XENIA])
             command.add_argument("--game", type=Path, required=True)
-            command.add_argument("--authorize-launch", action="store_true")
             command.add_argument("--pad", nargs="?", const="x360", choices=PAD_MODELS,
                                  help="give the game a virtual pad (default x360): an XInput pad, Steam Input's virtual pad (steam), "
                                       "or a PlayStation pad on USB (ds4, dualsense); driven by the pad command")

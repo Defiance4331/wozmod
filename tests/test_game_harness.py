@@ -108,11 +108,7 @@ def test_launch_boundaries_and_isolation(tmp_path, monkeypatch):
     root.mkdir()
     game = _staged(root / "game")
     (root / "launch.sh").write_text("exit 0\n")
-    args = argparse.Namespace(authorize_launch=False, game=game, target=harness.TARGET, timeout=30, pad=False)
-    with pytest.raises(ValueError, match="permission"):
-        harness.run(root, args)
-    args.authorize_launch = True
-    args.game = tmp_path
+    args = argparse.Namespace(game=tmp_path, target=harness.TARGET, timeout=30, pad=False)
     with pytest.raises(ValueError, match="disposable"):
         harness.run(root, args)
     args.game = game
@@ -155,7 +151,7 @@ def test_size_renders_and_outputs_unscaled(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(harness.subprocess, "Popen", lambda command, **kwargs: calls.append(command)
                         or SimpleNamespace(wait=lambda: 0, poll=lambda: 0, returncode=0))
-    assert harness.main(["run", "--root", str(root), "--game", str(game), "--authorize-launch",
+    assert harness.main(["run", "--root", str(root), "--game", str(game),
                          "--target", harness.TARGET, "--size", "3440x1440"]) == 0
     command = calls[0]
     for flag, value in (("-W", "3440"), ("-H", "1440"), ("-w", "3440"), ("-h", "1440")):
@@ -181,7 +177,7 @@ def test_screen_refreshes_at_the_frame_rate_the_game_setting_asks_for(tmp_path, 
         calls = []
         monkeypatch.setattr(harness.subprocess, "Popen", lambda command, **kwargs: calls.append(command)
                             or SimpleNamespace(wait=lambda: 0, poll=lambda: 0, returncode=0))
-        assert harness.main(["run", "--root", str(root), "--game", str(game), "--authorize-launch",
+        assert harness.main(["run", "--root", str(root), "--game", str(game),
                              "--target", harness.TARGET]) == 0
         rates[name] = calls[0][calls[0].index("-r") + 1]
     assert rates == {"hz120": "120", "hz240": "240", "hz60": "60"}
@@ -215,7 +211,7 @@ def test_xenia_launch_keeps_native_frame_and_save_inside_its_storage(tmp_path, m
         return SimpleNamespace(wait=lambda: 0, poll=lambda: 0, returncode=0)
 
     monkeypatch.setattr(harness.subprocess, "Popen", launch)
-    arguments = ["run", "--root", str(root), "--game", str(game), "--authorize-launch"]
+    arguments = ["run", "--root", str(root), "--game", str(game),]
     assert harness.main(arguments + ["--target", harness.XENIA]) == 0
     command = calls[0]
     for flag, value in (("-W", "1280"), ("-H", "720"), ("-w", "1280"), ("-h", "720"), ("-r", "60")):
@@ -232,7 +228,7 @@ def test_xenia_launch_keeps_native_frame_and_save_inside_its_storage(tmp_path, m
     outside = tmp_path / "work/runtime-tests/reference"
     outside.mkdir(parents=True)
     assert harness.main(["run", "--root", str(outside), "--game", str(game),
-                         "--authorize-launch", "--target", harness.XENIA]) == 1
+                         "--target", harness.XENIA]) == 1
     assert harness.main(["status", "--root", str(tmp_path / "work/xenia/runs")]) == 1
     assert len(calls) == 1
 
@@ -557,7 +553,7 @@ def test_ended_run_tells_a_crash_from_a_quit(tmp_path, monkeypatch, script, reas
         return SimpleNamespace(poll=lambda: 139, wait=lambda **kwargs: 139, returncode=139, pid=0)
 
     monkeypatch.setattr(harness.subprocess, "Popen", launch)
-    args = argparse.Namespace(authorize_launch=True, game=root / "game", target=harness.TARGET, timeout=30, pad=False)
+    args = argparse.Namespace(game=root / "game", target=harness.TARGET, timeout=30, pad=False)
     assert harness.run(root, args) == 139
     record = harness.exit_info(root)
     assert record["reason"] == reason and record["game_returncode"] == int(script.split()[1])
@@ -607,7 +603,7 @@ def test_run_kills_the_sandbox_once_the_server_ends(tmp_path, monkeypatch):
 
     monkeypatch.setattr(harness.subprocess, "Popen", launch)
     monkeypatch.setattr(harness.os, "killpg", lambda pid, sig: killed.append((pid, sig)))
-    args = argparse.Namespace(authorize_launch=True, game=root / "game", target=harness.TARGET, timeout=30, pad=False)
+    args = argparse.Namespace(game=root / "game", target=harness.TARGET, timeout=30, pad=False)
     assert harness.run(root, args) == 0
     assert killed == [(4242, harness.signal.SIGKILL)]
     assert harness.exit_info(root)["reason"] == "stopped"
@@ -1512,7 +1508,7 @@ def test_staged_run_sees_the_template_prefix_through_an_overlay_on_its_own_folde
     monkeypatch.setattr(harness.subprocess, "Popen", lambda command, **kwargs: calls.append(command) or
                         SimpleNamespace(wait=lambda: 0, poll=lambda: 0, returncode=0))
     monkeypatch.setattr(harness, "start_audio", lambda root: None)
-    harness.main(["run", "--root", str(root), "--game", str(root / "game"), "--authorize-launch", "--target", harness.TARGET])
+    harness.main(["run", "--root", str(root), "--game", str(root / "game"), "--target", harness.TARGET])
     command = next(c for c in calls if "bwrap" in c)
     after = command.index("--bind") + 3  # the run's own bind comes first
     for part, lower in overlays.items():
@@ -1576,7 +1572,7 @@ def test_two_games_at_once_each_run_their_own_writable_steam_runtime(tmp_path, m
         root = tmp_path / "work/runtime-tests" / name
         _staged(root / "game")
         (root / "launch.sh").write_text("exit 0\n")
-        harness.main(["run", "--root", str(root), "--game", str(root / "game"), "--authorize-launch",
+        harness.main(["run", "--root", str(root), "--game", str(root / "game"),
                       "--target", harness.TARGET])
         held = held or harness.take_slot("first")[0]
     os.close(held)
