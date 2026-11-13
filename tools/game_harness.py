@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import ctypes
 import fcntl
 import hashlib
@@ -194,8 +195,48 @@ def x_input() -> tuple:
     return X_INPUT
 
 
+# A key reaches the game only through its message pump: Wine reads the X event when the game pumps (0x5C9FD0, which
+# the runtime counts in the mailbox frame count), and the keyboard poll 0x5E45E0 reads the DirectInput buffer once a
+# frame. The poll sets a key's repeat flag, which menus move on (the Dream select reads the repeat word, 0x548205), from
+# the held state the last poll left (0x5E4600-0x5E4691) before it reads the new events (GetDeviceData, 0x5E46EA). So a
+# press and release read by one poll set no repeat and move no cursor, and a release and the same key's next press read
+# together never let the repeat restart. A fixed 80 ms hold is that under load: one frame over 80 ms (run
+# 2026-11-13_1716-am-trim132a, the last of Left Left Down Down lost). So a key stays down, and then up, until the game
+# has pumped KEY_PUMPS times since: the pump that delivers the event, and one after it, past a poll.
+KEY_PUMPS = 2
+
+
+@contextlib.contextmanager
+def game_pumps():
+    """A reader of the game's message-pump count (the --test runtime's mailbox frame count), or None while no --test
+    runtime is up (the boot before the DLL loads, a release or --log build): keys then keep their wall-clock timing."""
+    try:
+        memory = open(f"/proc/{game_pid()}/mem", "rb", buffering=0)
+    except (OSError, ValueError):
+        yield None
+        return
+    with memory:
+        try:
+            block = test_block(memory.fileno())
+        except (OSError, ValueError):
+            yield None
+            return
+        yield lambda: struct.unpack("<I", os.pread(memory.fileno(), 4, block + FRAME_COUNT))[0]
+
+
+def wait_pumps(pumps, since: int, what: str) -> None:
+    """Wait until the game has pumped KEY_PUMPS times since the count ``since``."""
+    deadline = time.monotonic() + TEST_COMMAND_SECONDS
+    while (pumps() - since) & 0xFFFFFFFF < KEY_PUMPS:
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"the game ran no frame for {TEST_COMMAND_SECONDS} s with {what}; it reads keys once a frame")
+        time.sleep(0.005)
+
+
 def tap_keys(names: list[str], hold: float, gap: float, settle: float | None = None) -> None:
-    """Tap keys in order, gap seconds apart; wait ``settle`` seconds (default ``gap``) after the last release.
+    """Tap keys in order, gap seconds apart; wait ``settle`` seconds (default ``gap``) after the last release. Each key
+    stays down at least ``hold`` seconds and up at least the gap or settle, and both until the game has seen it
+    (KEY_PUMPS).
 
     The display stays open between calls (x_input), so a call after the first needs no priming second."""
     global X_INPUT
@@ -206,22 +247,29 @@ def tap_keys(names: list[str], hold: float, gap: float, settle: float | None = N
         if not key:
             raise ValueError(f"unknown X keysym: {name}")
         keys.append(key)
-    for n, key in enumerate(keys):
-        try:
-            if not xtst.XTestFakeKeyEvent(display, key, 1, 0):
-                x11.XCloseDisplay(display)
-                X_INPUT = None  # reopen and prime on the next call
-                raise RuntimeError("XTEST key press failed")
-            x11.XFlush(display)
-            pressed = time.clock_gettime(time.CLOCK_MONOTONIC_RAW)
-            if os.environ.get("MUSOU_HARNESS_ROOT"):  # the game's performance counter runs on this clock (Wine)
-                with open(Path(os.environ["MUSOU_HARNESS_ROOT"], "evidence/key-presses.tsv"), "a") as log:
-                    log.write(f"{pressed:.7f}\t{names[n]}\n")
-            time.sleep(hold)
-        finally:
-            xtst.XTestFakeKeyEvent(display, key, 0, 0)
-            x11.XFlush(display)
-        time.sleep(gap if n < len(keys) - 1 or settle is None else settle)
+    with game_pumps() as pumps:
+        for n, key in enumerate(keys):
+            try:
+                if not xtst.XTestFakeKeyEvent(display, key, 1, 0):
+                    x11.XCloseDisplay(display)
+                    X_INPUT = None  # reopen and prime on the next call
+                    raise RuntimeError("XTEST key press failed")
+                x11.XFlush(display)
+                down = pumps() if pumps else None
+                pressed = time.clock_gettime(time.CLOCK_MONOTONIC_RAW)
+                if os.environ.get("MUSOU_HARNESS_ROOT"):  # the game's performance counter runs on this clock (Wine)
+                    with open(Path(os.environ["MUSOU_HARNESS_ROOT"], "evidence/key-presses.tsv"), "a") as log:
+                        log.write(f"{pressed:.7f}\t{names[n]}\n")
+                time.sleep(hold)
+                if pumps:
+                    wait_pumps(pumps, down, f"{names[n]} down")
+            finally:
+                xtst.XTestFakeKeyEvent(display, key, 0, 0)
+                x11.XFlush(display)
+            up = pumps() if pumps else None
+            time.sleep(gap if n < len(keys) - 1 or settle is None else settle)
+            if pumps:
+                wait_pumps(pumps, up, f"{names[n]} released")
 
 
 def click_point(x: int, y: int) -> None:
@@ -692,7 +740,7 @@ def test_command(memory: int, block: int, op: int, arg: int = 0, data: bytes = b
             break
         time.sleep(0.2)
     if result:
-        raise RuntimeError(f"the game refused test op {op}: " + (OP_REFUSALS.get(op, {}).get(result) or {
+        raise Refused(result, f"the game refused test op {op}: " + (OP_REFUSALS.get(op, {}).get(result) or {
             1: "use window 1 or 2", 2: "unknown op, rebuild the runtime with this harness",
             3: "not in a battle, or the battle is already ending",
             4: "a script or scene is playing, or the event queue is full; retry",
@@ -1141,6 +1189,8 @@ def serve(root: Path) -> int:
                     RuntimeError, subprocess.SubprocessError,
                 ) as exc:
                     response["error"] = str(exc)
+                    if isinstance(exc, Refused):
+                        response["refused"] = exc.result
                 busy_until = time.monotonic() + (float(request.get("seconds", 0)) if request.get("action") in
                                                  ("record", "video") else 0)
                 if request.get("action") == "stop":  # how the game kept its frame rate, for every run's last word
@@ -1630,10 +1680,20 @@ NO_ROUTE = ("no route reaches this screen: if you drove here by hand, add its ro
             "(wozmod-game-harness skill, Routes)")
 
 
+class Refused(RuntimeError):
+    """The runtime refused a test op: ``result`` is its refusal number (english_runtime.c, the test ops' b->result)."""
+    BATTLE_ENDING, BUSY = 3, 4  # not in a battle or it is ending; a script or scene is playing (retry)
+
+    def __init__(self, result: int, text: str):
+        super().__init__(text)
+        self.result = result
+
+
 def ask(root: Path, request: dict, timeout: float = 30) -> dict:
     response = send(root, request, timeout)
     if not response["ok"]:
-        raise RuntimeError(f"{request['action']}: {response.get('error')}")
+        text = f"{request['action']}: {response.get('error')}"
+        raise Refused(response["refused"], text) if "refused" in response else RuntimeError(text)
     return response
 
 
@@ -2668,6 +2728,9 @@ def order_screens(screens: list[dict], position: str | None) -> list[dict]:
     return order + [sc for _, sc in left]
 
 
+SCRIPT_WAIT_FRAMES = 7200  # game frames a check waits for the stage's scripts to free the slot: over twice the longest seen
+
+
 class CheckDriver:
     """Reaches check screens only by route, so every screen in a spec is one the route table knows."""
 
@@ -2701,12 +2764,17 @@ class CheckDriver:
         self.unlocked |= "unlock" in used
         self.name = name
         self.used = sorted(used - {"unlock"} | ({"unlock"} if self.unlocked else set())
-                           | ({f"script {script}"} if script is not None else set()))
+                           | ({f"script {script}", "keep life no-defeat"} if script is not None else set()))
         for leg in legs:
             if route(self.root, leg, stage):
                 raise RuntimeError(f"route to {leg} failed")
             if script is not None and leg == "battle":  # the script fires in the battle, before the route goes on
-                self.fire(script)
+                try:
+                    self.fire(script)
+                except Refused as exc:
+                    if exc.result == Refused.BATTLE_ENDING:  # the game is on no screen the route knows
+                        write_json(local_path(self.root, "evidence/route.json"), {"at": None, "journal": 0})
+                    raise
         self.loaded = after
 
     def notice(self, text: str) -> None:
@@ -2729,15 +2797,20 @@ class CheckDriver:
             write_json(local_path(self.root, "evidence/route.json"),
                        {"at": at, "journal": len(journal.read_text().splitlines()) if journal.is_file() else 0})
 
-    def fire(self, script: int, seconds: float = 60) -> None:
-        """Send a battle script, retrying while the opening dialog still plays and the game refuses it."""
-        deadline = time.monotonic() + seconds
+    def fire(self, script: int) -> None:
+        """Send a battle script once the stage's own scripts let it run: the game runs one at a time, and a battle's
+        opening dialog holds that slot for up to about 2,700 frames on stage 40 (accepted 1,540 to 2,680 frames in, five
+        2026-11-13 full checks), with the player idle. The battle is held first (life, no defeat), or it can be lost by
+        then (run 2026-11-13_1723-check: lost by frame 2,076, at 60 fps). The wait counts game frames, which load does
+        not stretch."""
+        ask(self.root, {"action": "keep", "keep": ["life", "no-defeat"]})
+        start = self.screen()["frames_run"]
         while True:
             try:
                 ask(self.root, {"action": "script", "number": script})
                 return
-            except RuntimeError as exc:
-                if "retry" not in str(exc) or time.monotonic() >= deadline:
+            except Refused as exc:
+                if exc.result != Refused.BUSY or self.screen()["frames_run"] - start >= SCRIPT_WAIT_FRAMES:
                     raise
                 time.sleep(1)
 

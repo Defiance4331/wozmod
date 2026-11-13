@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import importlib.util
 from itertools import pairwise
@@ -448,8 +449,9 @@ def test_test_mailbox_screen_wait_and_say(tmp_path, monkeypatch):
         assert harness.perform(tmp_path, {"action": "say", "text": "Ōda"}) == {"window": 1}
         harness.perform(tmp_path, {"action": "notice", "text": "\u6575"})
         assert harness.perform(tmp_path, {"action": "win"}) == {"queued": "win"}
-        with pytest.raises(RuntimeError, match="not in a battle"):
+        with pytest.raises(harness.Refused, match="not in a battle") as refused:
             harness.perform(tmp_path, {"action": "lose"})
+        assert refused.value.result == harness.Refused.BATTLE_ENDING  # the number a check branches on, not the words
         assert harness.perform(tmp_path, {"action": "script", "number": 12}) == {"queued": 12}
         assert harness.perform(tmp_path, {"action": "scene", "number": 1}) == {"scene": 1}  # op 8, never a script
         with pytest.raises(RuntimeError, match="not on the field"):  # not "no such sub-scene"
@@ -849,39 +851,100 @@ def test_check_exits_one_and_reports_a_failed_row(tmp_path, monkeypatch):
         ("two-lines", "line_count", False)]
 
 
-def test_check_driver_fires_a_script_in_the_battle_before_routing_on(tmp_path, monkeypatch):
-    """Bug: the script is sent after the route to the screen, so a screen that fills from the script
-    (the battle history) is checked empty."""
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "tools"))
+def test_check_driver_holds_the_battle_and_fires_its_script_before_routing_on(tmp_path, monkeypatch):
+    """Bugs: the script is sent after the route to the screen, so a screen that fills from the script (the battle
+    history) is checked empty; the battle is not held while the script waits out the opening dialog, so the idle player
+    can lose it first (run 2026-11-13_1723-check)."""
     steps = []
     monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
     monkeypatch.setattr(harness, "route", lambda root, name, stage: steps.append(name) or 0)
-    monkeypatch.setattr(harness, "ask", lambda root, request: steps.append(request["action"] + str(request["number"])))
+
+    def ask(root, request):
+        if request["action"] == "screen":
+            return {"frames_run": 0}
+        steps.append(request["action"] + str(request.get("number", sorted(request.get("keep", [])))))
+        return {"ok": True}
+
+    monkeypatch.setattr(harness, "ask", ask)
     driver = harness.CheckDriver(tmp_path)
     driver.route("battle-history", script=10)
     driver.route("battle", script=7)
-    assert steps == ["battle", "script10", "battle-history", "battle", "script7"]
+    held = "keep['life', 'no-defeat']"
+    assert steps == ["battle", held, "script10", "battle-history", "battle", held, "script7"]
 
 
-def test_check_driver_retries_a_script_the_game_refuses_while_the_opening_dialog_plays(tmp_path, monkeypatch):
-    """Bug: the one refusal while the battle's opening dialog plays ends the screen's row as unreachable."""
+def test_check_driver_waits_out_the_opening_dialog_in_game_frames(tmp_path, monkeypatch):
+    """Bugs: a refusal while the opening dialog plays ends the screen's row as unreachable; the wait is counted in wall
+    seconds, so a loaded machine that runs the dialog's 2,700 frames in over a minute loses the screen; the wait never
+    gives up while the game keeps refusing."""
     monkeypatch.setattr(harness, "route", lambda root, name, stage: 0)
     monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
-    replies = iter([RuntimeError("script: the game refused test op 4: a script is playing; retry"),
-                    RuntimeError("script: the game refused test op 4: a script is playing; retry"), {"ok": True}])
+    clock = iter(range(0, 100000, 100))  # 100 s of wall time per call: a machine running the game at a crawl
+    monkeypatch.setattr(harness.time, "monotonic", lambda: next(clock))
 
-    def ask(root, request):
-        reply = next(replies)
-        if isinstance(reply, Exception):
-            raise reply
-        return reply
+    def game(accept_at):
+        frames = iter(range(0, 100000, 300))
+        state = {"now": 0, "sent": 0}
 
-    monkeypatch.setattr(harness, "ask", ask)
+        def ask(root, request):
+            if request["action"] == "screen":
+                state["now"] = next(frames)
+                return {"frames_run": state["now"]}
+            state["sent"] += request["action"] == "script"
+            assert state["sent"] < 100, "the wait never gives up"
+            if request["action"] == "script" and state["now"] < accept_at:
+                raise harness.Refused(harness.Refused.BUSY, "script: a script or scene is playing; retry")
+            return {"ok": True}
+        return ask
+
+    monkeypatch.setattr(harness, "ask", game(2700))
     harness.CheckDriver(tmp_path).route("battle-history", script=10)
-    assert next(replies, "all used") == "all used"
-    monkeypatch.setattr(harness, "ask", lambda root, request: (_ for _ in ()).throw(RuntimeError("script: not in a battle")))
-    with pytest.raises(RuntimeError, match="not in a battle"):
+    monkeypatch.setattr(harness, "ask", game(10 ** 6))
+    with pytest.raises(RuntimeError, match="retry"):
         harness.CheckDriver(tmp_path).route("battle-history", script=10)
+
+
+def test_ask_carries_the_runtimes_refusal_number_across_the_supervisor(tmp_path, monkeypatch):
+    """Bug: the supervisor's reply carries only the refusal's text, so a check cannot tell a battle that is ending from
+    a script that is busy without matching words that change with the message."""
+    replies = iter([{"ok": False, "error": "the game refused test op 4: ...", "refused": 3},
+                    {"ok": False, "error": "no game is running"}])
+    monkeypatch.setattr(harness, "send", lambda root, request, timeout: next(replies))
+    with pytest.raises(harness.Refused) as refused:
+        harness.ask(tmp_path, {"action": "script", "number": 10})
+    assert refused.value.result == harness.Refused.BATTLE_ENDING
+    with pytest.raises(RuntimeError) as other:
+        harness.ask(tmp_path, {"action": "script", "number": 10})
+    assert not isinstance(other.value, harness.Refused)
+
+
+def test_check_driver_forgets_the_battle_when_the_game_says_it_is_ending(tmp_path, monkeypatch):
+    """Bug: the route position stays on the battle the game reported ending, so the next screen's route sends Escape
+    into it and waits 90 s for a pause screen (run 2026-11-13_1723-check), where it should say the position is
+    unknown. A refusal that leaves the battle up keeps the position."""
+    monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
+
+    def route(root, name, stage):
+        harness.write_json(root / "evidence/route.json", {"at": name, "journal": 0})
+        return 0
+
+    def refuse(result):
+        def ask(root, request):
+            if request["action"] == "screen":
+                return {"frames_run": 0}
+            if request["action"] == "script":
+                raise harness.Refused(result, f"script: the game refused test op 4 (result {result})")
+            return {"ok": True}
+        return ask
+
+    monkeypatch.setattr(harness, "route", route)
+    for result, after in ((harness.Refused.BATTLE_ENDING, None), (5, "battle")):  # 5: no such queued script
+        root = tmp_path / str(after)
+        (root / "evidence").mkdir(parents=True)
+        monkeypatch.setattr(harness, "ask", refuse(result))
+        with pytest.raises(harness.Refused, match=f"result {result}"):
+            harness.CheckDriver(root).route("battle-history", script=10)
+        assert harness.route_position(root) == after
 
 
 def test_check_driver_reads_a_banner_once_its_plate_holds_still(tmp_path, monkeypatch):
@@ -1088,11 +1151,54 @@ def test_tap_keys_waits_the_settle_after_the_last_key_and_the_gap_only_between_k
     monkeypatch.setattr(harness, "X_INPUT", None)
     monkeypatch.setattr(harness.ctypes, "CDLL", lambda name: Lib())
     monkeypatch.setattr(harness.time, "sleep", sleeps.append)
+    monkeypatch.setattr(harness, "game_pumps", lambda: contextlib.nullcontext())  # no --test runtime: wall timing
     harness.tap_keys(["Down", "Return"], 0.08, 0.3, 0)
     assert sleeps == [1, 0.08, 0.3, 0.08, 0]  # the first call primes the display for a second
     sleeps.clear()
     harness.tap_keys(["Return"], 0.08, 1.0)  # hand use: the settle defaults to the gap; no priming again
     assert sleeps == [0.08, 1.0]
+
+
+def test_tap_keys_holds_each_key_down_and_up_until_the_game_has_pumped_past_it(monkeypatch):
+    """Bug: a key held a fixed 80 ms is pressed and released between two of the game's input polls when a frame takes
+    longer, so the game never sees it held and a menu that moves on the key-repeat word does not move (run
+    2026-11-13_1716-am-trim132a: the second Down of Left Left Down Down lost on the Dream select); or the next press
+    of the same key comes before the game has seen the release, or the call returns before the game has seen the last
+    key, so a cursor read after it is stale. A game that stops pumping still gets its key released."""
+    clock = {"now": 0.0}
+    events = []
+
+    class Lib:
+        def __getattr__(self, name):
+            def call(*args):
+                if name == "XTestFakeKeyEvent":
+                    events.append((args[2], pumps()))
+                return 1
+            return call
+
+    def pumps():
+        return int(clock["now"] / 0.5)  # a game at 2 frames a second
+
+    def sleep(seconds):
+        clock["now"] += max(seconds, 0.001)
+
+    monkeypatch.delenv("MUSOU_HARNESS_ROOT", raising=False)
+    monkeypatch.setenv("GAMESCOPE_WAYLAND_DISPLAY", "synthetic-test-only")
+    monkeypatch.setattr(harness, "X_INPUT", None)
+    monkeypatch.setattr(harness.ctypes, "CDLL", lambda name: Lib())
+    monkeypatch.setattr(harness.time, "sleep", sleep)
+    monkeypatch.setattr(harness.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(harness, "game_pumps", lambda: contextlib.nullcontext(pumps))
+    harness.tap_keys(["Down", "Down"], 0.08, 0.3, 0)
+    assert [down for down, _ in events] == [1, 0, 1, 0]
+    steps = [later - earlier for (_, earlier), (_, later) in pairwise(events)] + [pumps() - events[-1][1]]
+    assert all(step >= 2 for step in steps), steps
+
+    events.clear()
+    monkeypatch.setattr(harness, "game_pumps", lambda: contextlib.nullcontext(lambda: 7))  # the game stopped pumping
+    with pytest.raises(TimeoutError, match="no frame"):
+        harness.tap_keys(["Return"], 0.08, 0.3, 0)
+    assert [down for down, _ in events] == [1, 0]
 
 
 def test_server_passes_settle_to_the_keys_and_refuses_one_out_of_range(tmp_path, monkeypatch):
