@@ -6,6 +6,45 @@ All notable changes to wozmod are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-14
+
+The game's sound is quieter in this release, so that big fights stop crackling: turn your system or speaker volume up
+once after you update.
+
+### Changed
+
+- Every sound plays 13 dB quieter: effects, shouts, menu sounds, music, dialogue and movies. Large battles added up to
+  as much as 12 dB past what the sound output can carry and crackled; voices over loud scenes, such as Taigong Wang's
+  lines during the falling rocks at Odani Castle, are clean now. The balance between sounds stays the same.
+- The BGM, SE and Voice sliders lower their sound by the same 3 dB a step, from full at 15 to silent at 0. Before,
+  their top half barely changed anything and the bottom fell off a cliff. A slider you had lowered now sounds quieter
+  than before; at full volume nothing changes.
+- Enemy and object sounds keep playing past their maximum distance, as they did on Windows XP, and nearby enemy hits,
+  grunts and cries stand out of a big fight. ([#11](https://github.com/Defiance4331/wozmod/issues/11))
+
+### Fixed
+
+- Crashes:
+  - when two players start Orochi X's Dream battle with some teams
+    ([#18](https://github.com/Defiance4331/wozmod/issues/18));
+  - when switching characters during a Musou above 60 FPS;
+  - when a squad's path started outside the map's walkable area;
+  - at the opening logos while XSplit captured the game.
+- High frame rates:
+  - standing in a burning area drained health faster the higher the frame rate, four times as fast at 240 FPS
+    ([#20](https://github.com/Defiance4331/wozmod/issues/20));
+  - the True Musou close-up and the team cut-ins lost their burning backdrop above 60 FPS
+    ([#12](https://github.com/Defiance4331/wozmod/issues/12));
+  - the first True Musou shout came late, or early after a short stutter, and ran into the second.
+- Voices:
+  - a cutscene could play with no voice at all when a line started while the game was still reading from disk, as in
+    the Orochi story's He Fei scene with Gan Ning and Zhang Liao; if a line ever has to wait, `wozmod/runtime.log`
+    says so;
+  - about 860 English lines taken from Warriors Orochi 2 for PSP played 3 dB too loud and crackled; they now play at
+    their original level.
+- Speed: battles slowed down, sometimes to a few frames a second, on AMD graphics cards with Resizable BAR on, and
+  battle effects no longer wait on the graphics card each frame.
+
 ## [0.2.1] - 2026-10-30
 
 ### Added
@@ -83,7 +122,8 @@ All notable changes to wozmod are listed here, newest first. The format follows
 
 First release of wozmod.
 
-[Unreleased]: https://github.com/Defiance4331/wozmod/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/Defiance4331/wozmod/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Defiance4331/wozmod/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/Defiance4331/wozmod/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Defiance4331/wozmod/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Defiance4331/wozmod/releases/tag/v0.1.0
