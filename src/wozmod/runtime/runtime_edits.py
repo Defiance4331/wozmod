@@ -1170,6 +1170,16 @@ STOCK_SOUND_POOL = 0x6300000
 SOUND_POOL = 0xD000000
 VOICE_EDITS = [(va, b"\x68" + p32(STOCK_SOUND_POOL), b"\x68" + p32(SOUND_POOL)) for va in (0x5C9E43, 0x5CA4D8)]
 
+# Issue 11: every effect on an emitter other than player 1 or 2 (enemies, officers, objects, shout points) is a mono
+# 3D buffer that 0x67AC70 creates with DSBCAPS_CTRL3D | DSBCAPS_MUTE3DATMAXDISTANCE (0x10 | 0x20000) and LOCDEFER.
+# DirectSound applies the mute only to software buffers ("Applies only to software buffers", DSBCAPS reference), so
+# on XP's hardware 3D voices a source past its max distance held its level; on Vista and later every buffer is
+# software and a unit's hit, pain or death cry past 2250 units is silent. The buffers lose the flag. They also start
+# at full volume: the stock 0.52 (0x72D6A0, read only by the 3D effect start 0x5D5CCC) put a near enemy's hit, grunt
+# or cry about 9 dB under the player's own effects in a melee, on every Windows (work/handbacks/issue11-option-d.md).
+SOUND_3D = [(0x67ACF4, bytes.fromhex("814c241c 10000200"), bytes.fromhex("814c241c 10000000")),
+            (0x72D6A0, struct.pack("<f", 0.52), struct.pack("<f", 1.0))]
+
 # The Xbox defaults (the pad auto-setting's layout 3, block 0x5E378D) bind Camera Up, Down, Left and Right (actions
 # 17-20) to the right stick instead of none: axis 4 is lRy, axis 3 is lRx, which the runtime copies into the lRz
 # slot the stock poll reads. Direction 1 keeps an axis's negative half (up, left). Each action's block is 0x41

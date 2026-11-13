@@ -214,3 +214,21 @@ def test_the_icon_nudge_makes_both_upgrade_skills_panels_as_version_101_draws_th
         ours, theirs = _shape(bytes(nudged), start), _shape(bytes(code("1.01", start + 0x140, end + 0x140)), start + 0x140)
         differ[hex(start)] = [(a, b) for a, b in zip(ours, theirs, strict=True) if a != b]
     assert differ == {"0x527690": [], "0x5279c0": []}
+
+
+def test_3d_effects_start_at_full_volume_and_lose_only_the_mute_at_max_distance() -> None:
+    """Bugs: the issue 11 edit drops DSBCAPS_CTRL3D with the mute (every enemy-side effect then fails its 3D interface
+    and goes silent), or leaves DSBCAPS_MUTE3DATMAXDISTANCE set (a unit's hit past 2250 units stays silent on Vista
+    and later); the start gain is written as anything but the float 1.0 (an integer 1 reads as a denormal: silence).
+    Flag values from dsound.h: CTRL3D 0x10, MUTE3DATMAXDISTANCE 0x20000."""
+    capstone = pytest.importorskip("capstone")
+    disassembler = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    edits = dict((va, (stock, patched)) for va, stock, patched in runtime_edits.SOUND_3D)
+    assert sorted(edits) == [0x67ACF4, 0x72D6A0]
+    flags = []
+    for code in edits[0x67ACF4]:
+        [ins] = disassembler.disasm(code, 0x67ACF4)
+        assert (ins.mnemonic, ins.op_str.rsplit(", ", 1)[0]) == ("or", "dword ptr [esp + 0x1c]")
+        flags.append(int(ins.op_str.rsplit(", ", 1)[1], 16))
+    assert flags == [0x10 | 0x20000, 0x10]
+    assert [round(struct.unpack("<f", gain)[0], 6) for gain in edits[0x72D6A0]] == [0.52, 1.0]

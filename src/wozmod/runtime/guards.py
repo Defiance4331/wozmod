@@ -133,6 +133,7 @@ FEATURES = (
             calls=(0x670730, 0x5D5D80, 0x5D5DC0,  # se_cutoff.h's query, stop and free
                    0x58E370,  # runtime_edits.DRAW_STATE, from the V101_FIXES caves
                    0x5DD620)),  # the render-state call the 0x582F24 detour moves into its cave
+    Feature("sound3d", "3D sound voices", shown="enemy and object sounds", edits=("SOUND_3D",)),
     Feature("rings", "ground rings", shown="battle ground drawing",
             hooks=tuple(range(53, 65))),  # ring_upload.h: the six ring Locks, then the six Unlocks
     Feature("batches", "effect batches", shown="effect drawing", hooks=(23,)),  # their Lock discards (0x6392A0)
@@ -140,7 +141,7 @@ FEATURES = (
             spans=tuple((va, 4) for va in _column("weapon_slot_sites", 0))),  # weapon_slots.h: the table's immediates
     # Builds with a define only; keep them last, so the features above keep their numbers in every build.
     Feature("moving", "moving camera fix", hooks=(72,), define="ENRT_MOVING_FIX"),
-    Feature("test", "test harness", hooks=(73, 74, 112), define="ENRT_TEST",
+    Feature("test", "test harness", hooks=(73, 74, 112, 128, 129, 130, 131, 132, 134), define="ENRT_TEST",
             calls=_c("WINDOW_SET_TEXT", "WINDOW_OPEN", "WINDOW_STYLE", "QUEUE_SCRIPT", "GAIN_EXP", "GIVE_WEAPON",
                      "PLAY_SCENE", "SCENE_ARG", "SPAWN_SQUAD", "DESPAWN_SQUAD", "PLACE_UNIT", "CALL_HORSE", "MOUNT",
                      "CELL_FLAG")),

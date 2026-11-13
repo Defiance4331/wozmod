@@ -167,6 +167,13 @@ TEST_HOOKS = [
     (0x590350, "83ec20 53 55", 74, None),       # nine-slice outline (the gallery selection frame), the same
     (0x4EEE60, "53 8a5c2414 80fb07", 112, 0),   # stage-script queue (cdecl): keep's no-defeat refuses kind 8
     (0x4B0480, "51 dd05b0b07a00", 114, None),   # true rate: the battle's ticks begin
+    # runtime/sound_trace.h: every sound request and effect start to runtime.log
+    (0x510840, "53 55 8b6c240c", 128, None),    # sound request (eax id)
+    (0x512EB0, "8b4c2404 8b542414", 129, None),  # direct play by id
+    (0x5D5C40, "83ec10 db442424", 130, None),   # effect start, 2D
+    (0x5D5CC0, "83ec34 53 56", 131, None),      # effect start, 3D
+    (0x67A960, "83ec64 a1e4057c00", 132, None),  # DirectSound buffer creation (its flags)
+    (0x6770B0, "51 56 8bf1 57", 134, None),       # the Ksl voice pool's play step (fastcall: the pool)
 ]
 class RuntimeBuildError(ValueError):
     """The stock executable, an edit or a hook site is not what the build expects."""

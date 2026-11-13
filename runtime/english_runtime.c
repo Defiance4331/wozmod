@@ -3618,6 +3618,7 @@ static u32 tr_sym[TR_SYM_SLOT + TR_SLOTS], tr_thunk[TR_SITES + 1], tr_wanted = 6
 static struct { char magic[16]; volatile u32 rate, sites, applied, ticks, periods, skip_lo, skip_hi, scenes, monitor; }
     true_rate = {"ENRT-TRUE-RATE", 0, 1};  /* rate 0: the FRAME RATE setting's */  /* scenes: a bit per scene id the rate applies in besides the battle (2) */  /* skip_lo..skip_hi: sites left stock, to find the one at fault */
 #include "true_rate_probe.h"
+#include "sound_trace.h"
 #endif
 
 /* Thunks for the catalogue, once, before anything is patched (the guards checked every site's stock bytes). */
@@ -5034,6 +5035,14 @@ static int always(u32 id, struct frame *f, u32 *replace)
         return 1;
     case 114:  /* the battle's ticks (0x4B0480) */
         cover.phase = 1;
+        return 1;
+    case 128:
+    case 129:
+    case 130:
+    case 131:
+    case 132:
+    case 134:
+        snd_hook(id, f);  /* sound_trace.h */
         return 1;
 #endif
     }
