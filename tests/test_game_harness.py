@@ -623,20 +623,19 @@ def test_every_routed_screen_reaches_every_other():
                     harness.route_plan(start, target)
                 except ValueError:
                     stuck.append((start, target))
-    assert {start for start, _ in stuck} <= {"results-discard"}, stuck
+    assert not stuck, stuck
 
 
 def test_route_library_reaches_every_screen_and_back_to_the_menu():
     """Bug: a mistyped screen name in an edge leaves a screen unreachable or a planned path broken."""
     names = set(harness.ROUTE_SCREENS)
     assert {n for edge in harness.ROUTE_EDGES for n in edge[:2]} == names
-    dead_ends = {"results-discard"}  # the weapon-discard page stalls after a pick in every run, so no way out is verified
     for start in names:
         for target in names - {"boot"} | {"menu"}:
             try:
                 path = harness.route_plan(start, target)
             except ValueError:
-                assert start != "boot" and (target != "menu" or start in dead_ends), (start, target)
+                assert start != "boot" and target != "menu", (start, target)  # the title is out of reach
                 continue
             nodes = [start] + [edge[1] for edge in path]
             assert all(a[1] == b[0] for a, b in pairwise(path)) and (not path or path[0][0] == start)
@@ -648,11 +647,14 @@ def test_route_library_reaches_every_screen_and_back_to_the_menu():
                                                                           "options"]
 
 
-def test_discard_step_fills_the_played_officers_eight_weapon_slots_and_drops_a_ninth(monkeypatch):
+def test_discard_step_fills_the_played_officers_eight_weapon_slots_and_drops_one_per_officer(monkeypatch):
     """Bugs: a wrong officer stride or slot offset fills another officer's weapons, so the drop is simply stored and the
-    discard list never opens; a copy with no skill squares draws no pips, so the list's pips go unchecked."""
-    memory = {0x801ABC: "05000000", 0x7FB668 + 5 * 220: "aa" * 24}  # officer 5: its first weapon at 0x7FBAB4
-    copy = "aa" * 6 + "04" + "aa" * 17  # the same weapon with four skill squares (byte 6)
+    discard list never opens; a copy with no skill squares draws no pips; a drop for the played officer alone (what a
+    pickup never writes) leaves the next officer's weapon-acquired page empty, and it never accepts input."""
+    officers = [5, 6, 7]  # the three officers of team 0, 0x28 bytes apart from the played one
+    memory = {0x801ABC + 0x28 * i: f"{o:02x}000000" for i, o in enumerate(officers)}
+    for o in officers:
+        memory[0x7FB668 + o * 220] = f"{o:02x}" * 24  # its first weapon
     pokes = {}
 
     def fake_ask(root, request, timeout=30):
@@ -663,9 +665,12 @@ def test_discard_step_fills_the_played_officers_eight_weapon_slots_and_drops_a_n
 
     monkeypatch.setattr(harness, "ask", fake_ask)
     assert harness.stage_discard(Path("run")) == 5
-    assert sorted(pokes) == [0x7FBAB4 + 0x18 * slot for slot in range(1, 8)] + [0x801C3C]
-    assert all(pokes[0x7FBAB4 + 0x18 * slot] == copy for slot in range(1, 8))
-    assert pokes[0x801C3C] == copy + "0000"
+    copy = lambda o: f"{o:02x}" * 6 + "04" + f"{o:02x}" * 17  # the weapon with four skill squares (byte 6)
+    held = [0x7FB668 + 5 * 220 + 0x18 * slot for slot in range(1, 8)]
+    drops = [0x801C3C + 0x1A * i for i in range(3)]
+    assert sorted(pokes) == held + drops
+    assert all(pokes[address] == copy(5) for address in held)
+    assert [pokes[address] for address in drops] == [copy(o) + f"00{i:02x}" for i, o in enumerate(officers)]
 
 
 def test_route_resumes_where_it_left_and_stops_after_outside_input(tmp_path, monkeypatch):
@@ -1158,15 +1163,16 @@ def test_blind_route_step_and_the_tour_keep_their_settle(tmp_path, monkeypatch):
     assert "settle" not in requests[0]
 
 
-def test_check_visits_the_nearest_screen_next_and_a_dead_end_last():
-    """Bugs: screens visited in spec order send a route back to the main menu between neighbours; the discard page
-    (no way out) is visited before screens that still need the menu."""
+def test_check_visits_the_nearest_screen_next_and_a_dead_end_last(monkeypatch):
+    """Bugs: screens visited in spec order send a route back to the main menu between neighbours; a screen with no
+    way out (the discard page here, with its way out cut) is visited before screens that still need the menu."""
+    monkeypatch.setattr(harness, "ROUTE_EDGES", [e for e in harness.ROUTE_EDGES if e[:2] != ("results-discard", "save-prompt")])
     pick = lambda start, names: [sc["name"] for sc in harness.order_screens([{"name": n, "route": n} for n in names], start)]
     # from the options: game-settings and options-controller are one or three edges away, vs-course is 5 edges
     assert pick("options", ["vs-course", "game-settings", "options-controller"]) == [
         "game-settings", "options-controller", "vs-course"]
     assert pick("menu@story", ["results-discard", "vs-course", "game-settings"])[-1] == "results-discard"
-    # the discard page is as near as the pause menu here and first in spec order, yet it has no way out
+    # the discard page is as near as the pause menu here and first in spec order, yet it has no way out (cut above)
     assert pick("battle", ["results-discard", "pause"]) == ["pause", "results-discard"]
     assert pick(None, ["vs-course", "game-settings"]) == ["vs-course", "game-settings"]  # position unknown: spec order
     assert pick("options", ["vs-course", "no-such-screen", "game-settings"]) == ["game-settings", "vs-course", "no-such-screen"]

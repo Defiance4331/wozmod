@@ -1890,19 +1890,26 @@ CAMP_NEXT_STEP = {"pick": "camp next"}  # filled by route: the camp cursor moves
 DISCARD_STEP = {"pick": "discard"}  # filled by route: the played officer holds 8 weapons and a ninth drops
 PLAYED_OFFICER, WEAPON_TABLE, WEAPON_SIZE, OFFICER_SIZE, WEAPON_SLOTS, DROPS = 0x801ABC, 0x7FB668, 0x18, 0xDC, 8, 0x801C3C
 SKILL_SQUARES, SKILL_SQUARES_BYTE = 4, 6
+OFFICERS_PER_TEAM, SLOT_STRIDE, DROP_SIZE = 3, 0x28, 0x1A
 
 
 def stage_discard(root: Path) -> int:
-    """Copy the played officer's first weapon, with four skill squares, into its other seven slots and drop one more to it;
-    returns the officer."""
+    """Fill the played officer's eight weapon slots with copies of its first weapon, four skill squares each, and write the
+    drop records a weapon pickup writes (FUN_0047A820): one per officer of team 0, each a copy of that officer's own first
+    weapon; returns the played officer."""
     officer = peek_u32(root, PLAYED_OFFICER)
-    base = WEAPON_TABLE + officer * OFFICER_SIZE
-    record = bytearray(bytes.fromhex(ask(root, {"action": "peek", "address": base, "length": WEAPON_SIZE})["hex"]))
-    record[SKILL_SQUARES_BYTE] = SKILL_SQUARES
-    weapon = record.hex()
-    for slot in range(1, WEAPON_SLOTS):
-        ask(root, {"action": "poke", "address": base + slot * WEAPON_SIZE, "hex": weapon})
-    ask(root, {"action": "poke", "address": DROPS, "hex": weapon + "0000"})
+    drops = []
+    for slot in range(OFFICERS_PER_TEAM):
+        who = peek_u32(root, PLAYED_OFFICER + slot * SLOT_STRIDE)
+        base = WEAPON_TABLE + who * OFFICER_SIZE
+        record = bytearray(bytes.fromhex(ask(root, {"action": "peek", "address": base, "length": WEAPON_SIZE})["hex"]))
+        record[SKILL_SQUARES_BYTE] = SKILL_SQUARES
+        drops.append(record.hex())
+        if slot == 0:
+            for held in range(1, WEAPON_SLOTS):
+                ask(root, {"action": "poke", "address": base + held * WEAPON_SIZE, "hex": record.hex()})
+    for slot, weapon in enumerate(drops):
+        ask(root, {"action": "poke", "address": DROPS + slot * DROP_SIZE, "hex": weapon + f"00{slot:02x}"})
     return officer
 
 
@@ -2069,13 +2076,18 @@ ROUTE_EDGES = [
     # first and waits, and Escape skips it as a player can (run fid-win, stage 133)
     ("battle", "results", [({"action": "win"}, {"any": [ROUTE_SCREENS["results"], {"caller": "0x49dace"}]}),
                            (["Escape"], {**slow("results", 2.0), "every": 3})]),
-    # the drop is a stand-in for a ninth weapon in a battle (stage_discard); each Return waits for its screen to take
-    # input (the weapon-acquired page is caller 0x585242). Runs wlr-discard and wlr-en
+    # the drops are stand-ins for the records a weapon pickup writes, one per officer (stage_discard); each Return waits
+    # for its screen to take input (the weapon-acquired page is caller 0x585242). Runs wlr-discard and wlr-en
     ("battle", "results-discard", [(DISCARD_STEP, None),
                                    ({"action": "win"}, {"any": [ROUTE_SCREENS["results"], {"caller": "0x49dace"}]}),
                                    (["Escape"], {**slow("results", 2.0), "every": 3}),
                                    (["Return"], {"caller": "0x585242", "gap": 1.5}),
                                    (["Return"], ROUTE_SCREENS["results-discard"])]),
+    # after the pick the other two officers' weapon-acquired pages follow, one Return each, then the save prompt
+    # (run ds-3rec; a drop for the played officer alone leaves the next officer's page empty and it never accepts input)
+    ("results-discard", "save-prompt", [(["Return"], {"caller": "0x585242", "gap": 1.5}),
+                                        (["Return"], {"caller": "0x585242", "gap": 1.5}),
+                                        (["Return"], ROUTE_SCREENS["save-prompt"])]),
     ("results", "save-prompt", ["Return"]),
     ("save-prompt", "menu@dream", [(["Return"], None), (["Return"], ROUTE_SCREENS["menu@dream"])]),
     # 1107-B: VS and Survival menus, the options pages
