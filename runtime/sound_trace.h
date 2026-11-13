@@ -20,7 +20,8 @@
         max distance << 16. Six voices a line.
    rms  the same, once per buffer a v line first shows: record index, its group | bank << 8 | entry << 16 (+0x6C),
         the mean square of its samples over the whole buffer (float bits, full scale 1.0), its length in frames, and
-        its WAVEFORMATEX channels | bits << 16 (the clip's loudness, for levels computed from the trace)
+        its WAVEFORMATEX channels | bits << 16, and its sample peak (of 32768): the clip's loudness and peak, for levels
+        computed from the trace
    snd_trace.on = 0 stops the lines. */
 
 #define SND_SLOTS 0xC0CC48u     /* 100 sound slots of 0x3C bytes: emitter, id, lifetime, started; slot n at n - 1 */
@@ -38,7 +39,7 @@ static void snd_rms(struct frame *f, u8 *r, u32 index)
 {
     static void *seen[0x80];
     void *buf = *(void **)(r + 0xC), *p1 = 0, *p2 = 0;
-    u32 n1 = 0, n2 = 0, fmt[5] = {0}, written = 0, v[5], i, frames;
+    u32 n1 = 0, n2 = 0, fmt[5] = {0}, written = 0, v[6], i, frames, peak = 0;
     long hr;
     double sum = 0;
     union { float f; u32 u; } ms;
@@ -52,14 +53,18 @@ static void snd_rms(struct frame *f, u8 *r, u32 index)
         buf, 0, 0, &p1, &n1, &p2, &n2, 2);  /* DSBLOCK_ENTIREBUFFER */
     if (hr < 0)
         return;
-    for (i = 0; i < n1 / 2; i++)
-        sum += (double)((short *)p1)[i] * ((short *)p1)[i];
+    for (i = 0; i < n1 / 2; i++) {
+        int s = ((short *)p1)[i];
+        sum += (double)s * s;
+        if ((u32)(s < 0 ? -s : s) > peak)
+            peak = (u32)(s < 0 ? -s : s);
+    }
     ((long (__stdcall *)(void *, void *, u32, void *, u32))SND_COM(buf, 0x4C))(buf, p1, n1, p2, n2);
     frames = n1 / 2 / (fmt[0] >> 16 ? fmt[0] >> 16 : 1);
     ms.f = n1 ? (float)(sum / (n1 / 2) / (32768.0 * 32768.0)) : 0;
     v[0] = index, v[1] = r[0x6C] | r[0x6D] << 8 | r[0x6E] << 16, v[2] = ms.u, v[3] = frames;
-    v[4] = (fmt[0] >> 16) | (fmt[3] >> 16) << 16;
-    snd_line("rms", f, v, 5);
+    v[4] = (fmt[0] >> 16) | (fmt[3] >> 16) << 16, v[5] = peak;
+    snd_line("rms", f, v, 6);
 }
 
 /* The pool at its play step: the tick line, and every SND_EVERY ticks the v lines. */

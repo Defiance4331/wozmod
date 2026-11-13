@@ -1050,7 +1050,7 @@ def perform(root: Path, request: dict) -> dict:
         if destination.exists():
             raise ValueError(f"recording already exists: {destination}")
         subprocess.Popen(["timeout", str(seconds), "parecord", "--device=musou_harness.monitor",
-                          "--file-format=wav", str(destination)],
+                          "--format=float32le", "--rate=48000", "--channels=2", "--file-format=wav", str(destination)],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return {"path": str(destination), "seconds": seconds}
     elif action == "video":
@@ -1093,7 +1093,7 @@ def start_audio(root: Path) -> None:
             raise TimeoutError("private PulseAudio socket did not become ready")
         time.sleep(0.1)
     subprocess.run(
-        ["pactl", "load-module", "module-null-sink", "sink_name=musou_harness"],
+        ["pactl", "load-module", "module-null-sink", "sink_name=musou_harness", "format=float32le", "rate=48000", "channels=2"],
         check=True, timeout=10, stdout=subprocess.DEVNULL,
     )
     deadline = time.monotonic() + 10
