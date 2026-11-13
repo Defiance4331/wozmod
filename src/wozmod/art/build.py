@@ -51,7 +51,7 @@ from .vector import (
 )
 MAPPING = REPO / "data/art/menu_textures.json"
 PACKAGE_MAGIC = 0x33B59
-SHARED: dict = {}  
+_worker: dict = {}  # what each build worker reads: the archives, donors and edits build_art hands it
 
 def expanded(edit: dict):
     """Each (entry, recipe) a texture recipe stands for: its count steps the item and its WO1 X360 or WO2 X360 pointer alike."""
@@ -647,8 +647,8 @@ def read_members(stream, entry) -> list[bytes]:
 def archive(key: int) -> tuple[Path, object]:
 
     if key < LINKDATA2_FIRST:
-        return SHARED["base_bin"], SHARED["index"].entries[key]
-    return SHARED["ld2_bin"], SHARED["ld2_index"].entries[key - LINKDATA2_FIRST]
+        return _worker["base_bin"], _worker["index"].entries[key]
+    return _worker["ld2_bin"], _worker["ld2_index"].entries[key - LINKDATA2_FIRST]
 
 def edited_lone(data: bytes, edits: list[dict], donors: dict, preview: Path | None = None) -> bytes:
 
@@ -667,8 +667,8 @@ def edited_lone(data: bytes, edits: list[dict], donors: dict, preview: Path | No
 
 def rebuilt(ordinal: int) -> tuple[int, bytes, int]:
 
-    group = SHARED["edits"][ordinal]
-    preview = SHARED["preview"] and SHARED["preview"] / str(ordinal)
+    group = _worker["edits"][ordinal]
+    preview = _worker["preview"] and _worker["preview"] / str(ordinal)
     edit = edited_lone if any("g1t_at" in e for e in group) else edited_entry
     base_bin, entry = archive(ordinal)
     with base_bin.open("rb") as stream:
@@ -676,13 +676,13 @@ def rebuilt(ordinal: int) -> tuple[int, bytes, int]:
             members = read_members(stream, entry)
             data = b"".join(parse_lzp2(m).decoded for m in members)
             if ordinal == FONT_ENTRY:
-                data = latin_font(data, SHARED["donors"]["latin"])
+                data = latin_font(data, _worker["donors"]["latin"])
             else:
-                data = edit(data, group, SHARED["donors"], preview)
-            return ordinal, data if SHARED["write"] else b"", len(group)
+                data = edit(data, group, _worker["donors"], preview)
+            return ordinal, data if _worker["write"] else b"", len(group)
         data, packed = read_entry(stream, entry)
-    data = edit(data, group, SHARED["donors"], preview)
-    if not SHARED["write"]:  
+    data = edit(data, group, _worker["donors"], preview)
+    if not _worker["write"]:  
         return ordinal, b"", len(group)
     return ordinal, packed_lzp2(data) if packed else data, len(group)
 
@@ -799,7 +799,7 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
             report = native_menu_widths(mapping, donors)
         native_width_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     ld2_bin = game / "LINKDATA2.BIN"
-    SHARED.update(base_bin=base_bin, index=index, donors=donors, edits=edits,
+    _worker.update(base_bin=base_bin, index=index, donors=donors, edits=edits,
                   ld2_bin=ld2_bin, ld2_index=parse_index((game / "LINKDATA2.IDX").read_bytes(), ld2_bin.stat().st_size),
                   preview=preview_dir, write=bool(output_dir or entries_dir))
 

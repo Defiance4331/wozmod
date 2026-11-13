@@ -32,7 +32,7 @@ images = {name: renderer('A').image for name,renderer in (
 images['menu'] = menu.render('A', 'dark.pause')
 out = {name:[image.mode,list(image.size),hashlib.sha256(image.tobytes()).hexdigest()]
        for name,image in images.items()}
-strip,advances = raster.cells(24, 'legacy')
+strip,advances = raster.cells(24)
 out['latin'] = [list(strip.shape),hashlib.sha256(strip.tobytes()).hexdigest(),
                 hashlib.sha256(advances).hexdigest()]
 print(json.dumps(out,sort_keys=True))
