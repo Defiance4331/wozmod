@@ -380,6 +380,9 @@ static u32 texture(u32 handle)
 #define SPAWN_SQUAD ((void (*)(u8 *))0x440850)
 #define DESPAWN_SQUAD ((void (*)(u8 *))0x43EA70)
 #define PLACE_UNIT ((void (*)(u8 *, float *, float))0x43F660)
+#define MAP_POSITION ((void (*)(float *, const float *))0x4AC400)  /* a world x, y, z to the path grid's map x, z */
+#define NAV_CELL ((u32 (*)(const u8 *))0x4ABB60)  /* a path grid cell (x, z bytes) is on the 32x32 grid and has data */
+#define NAV_CELL_SIZE 5000  /* the path planner 0x4A9CA0's cell: ftol(map coordinate) / 5000, kept as a byte */
 
 static u32 free_units(void)
 {
@@ -396,18 +399,31 @@ static float far2(const u8 *squad, const float *me)
     return dx * dx + dz * dz;
 }
 
+/* Whether a world position lies in a path grid cell with data, as the path search needs of a unit's position:
+   off the grid or on an empty slot, the planner has no cell to search (work/handbacks/crash-4a96b9.md). */
+static int on_path_grid(const float *at)
+{
+    float map[2];
+    u8 cell[2];
+    MAP_POSITION(map, at);
+    cell[0] = (u8)((int)map[0] / NAV_CELL_SIZE), cell[1] = (u8)((int)map[1] / NAV_CELL_SIZE);
+    return NAV_CELL(cell) != 0;
+}
+
 /* Spawn enemy squads until `want` troops stand on square rings from `inner` out around the player; returns how many.
    Room comes from despawning the on-field squads farthest from the player (more than TROOP_KEEP past the nearest
    ring), as the game's squad manager does when a squad leaves the area. Generic-led squads only, so no officer's
-   stage event fires. Within its first frames the game pushes a placed soldier up to about 400 units from its spot. */
-static u32 spawn_troops(u32 want, float inner, u32 *despawned)
+   stage event fires. Within its first frames the game pushes a placed soldier up to about 400 units from its spot.
+   A soldier goes only to a spot in a path grid cell (troop_next_spot skips the others and counts them in *refused);
+   with no such spot left it stays where the game's squad spawn put it. */
+static u32 spawn_troops(u32 want, float inner, u32 *despawned, u32 *refused)
 {
     const float *me = UNIT_AT(UNIT(0));
     float keep = (inner + TROOP_KEEP) * (inner + TROOP_KEEP);
-    u32 i, placed = 0;
+    u32 i, placed = 0, spot = 0;
     u8 *spawned[SQUADS / 8];
     u32 count = 0;
-    *despawned = 0;
+    *despawned = *refused = 0;
     for (i = POOL_FIRST; i < SQUADS && placed < want && count < sizeof spawned / sizeof *spawned; i++) {
         u8 *s = SQUAD(i), *u;
         u32 need, k;
@@ -441,9 +457,11 @@ static u32 spawn_troops(u32 want, float inner, u32 *despawned)
             return placed;
         spawned[count++] = s;
         for (u = UNIT(*(const u32 *)(s + 0x14) & 0xFF); u; u = *(u8 **)(u + 4)) {
-            float xz[2];
-            troop_spot(placed++, inner, &xz[0], &xz[1]);
-            xz[0] += me[0], xz[1] += me[2];
+            float at[3], xz[2];
+            placed++;
+            if (!troop_next_spot(&spot, inner, me, on_path_grid, at, refused))
+                continue;
+            xz[0] = at[0], xz[1] = at[2];
             PLACE_UNIT(u, xz, 0);
         }
         *(u32 *)(s + 0x1C) = (u32)SQUAD(0);  /* the AI target: the player's squad */
@@ -726,7 +744,8 @@ static void test_frame(void)
         break;
     }
     case 9: {
-        /* Spawn arg & 0xFFFF enemy troops around the player, the nearest (arg >> 16) units out; input: spawned, despawned. */
+        /* Spawn arg & 0xFFFF enemy troops around the player, the nearest (arg >> 16) units out; input: spawned,
+           despawned, and ring spots refused as off the path grid. */
         u32 *out = (u32 *)b->input;
         b->result = 3;
         if (!STAGE_DATA || BATTLE_FLAGS & 0x2000000)
@@ -734,7 +753,7 @@ static void test_frame(void)
         b->result = 4;
         if (BATTLE_FLAGS & SCENE_BUSY || BATTLE_STEP != 1)
             break;
-        out[0] = spawn_troops(b->arg & 0xFFFF, (float)(b->arg >> 16), &out[1]);
+        out[0] = spawn_troops(b->arg & 0xFFFF, (float)(b->arg >> 16), &out[1], &out[2]);
         b->result = 0;  /* fewer than asked when the stage runs out of enemy squads or of far squads to despawn */
         break;
     }
@@ -5072,7 +5091,8 @@ u32 enrt_hook(u32 id, struct frame *f)
     return 0;
 }
 
-static void note(const char *s, u32 value)
+/* A log line: the text, then " 0x" and the value in 8 hex digits when there is one (value 0: text only). */
+static void note_line(const char *s, const u32 *value)
 {
     char line[160], *p = line;
     DWORD written;
@@ -5080,11 +5100,17 @@ static void note(const char *s, u32 value)
         *p++ = *s++;
     if (value) {
         *p++ = ' ', *p++ = '0', *p++ = 'x';
-        p = put_hex(p, value, 8);
+        p = put_hex(p, *value, 8);
     }
     *p++ = '\r', *p++ = '\n';
     if (runtime_log != INVALID_HANDLE_VALUE)
         WriteFile(runtime_log, line, p - line, &written, 0);
+}
+
+/* A log line whose value 0 means none: a count or flags with nothing to report print as text only. */
+static void note(const char *s, u32 value)
+{
+    note_line(s, value ? &value : 0);
 }
 
 static int wanted(u8 g)
@@ -5800,7 +5826,7 @@ static void install(HINSTANCE self)
     lstrcpyW(root + n, L"wozmod\\");
     keep_crash_log(path(name, L"runtime.log"), path(crash, L"runtime.crash.log"));
     runtime_log = CreateFileW(name, GENERIC_WRITE, FILE_SHARE_READ, 0, CREATE_ALWAYS, 0, 0);
-    crash_watch(note, name, crash);
+    crash_watch(note_line, name, crash);
     GetSystemTime(&now);  /* UTC: one clock for every player's log */
     wsprintfA(started, "started %04u-%02u-%02u %02u:%02u:%02u UTC", now.wYear, now.wMonth, now.wDay, now.wHour,
               now.wMinute, now.wSecond);

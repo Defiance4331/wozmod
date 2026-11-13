@@ -42,3 +42,39 @@ float keep(void) { return TROOP_KEEP; }
         if far or close:
             wrong.append((inner, far[:3], close[:3]))
     assert not wrong
+
+
+def test_soldiers_take_only_the_ring_spots_the_path_grid_has_cells_for(c_library):
+    """Bugs: the spawner places a soldier off the path grid (the 0x4A96B9 crash's likely trigger), the map test
+    ignored or inverted; a refused spot tried again for the next soldier, or an accepted one handed out twice; spots
+    past TROOP_KEEP, where the spawner would despawn the squad; the refused count off by one; the spot's height not
+    the player's (a multi-level map's cell picks its floor by it). Differential: the spots returned against
+    troop_spot's rings filtered by the same synthetic map edge (x >= 0)."""
+    lib = c_library("next_spot", r'''
+#include "troop_ring.h"
+static int east(const float *at) { return at[0] >= 0 && at[1] == 50; }
+int next(unsigned int *spot, float inner, const float *me, float *at, unsigned int *refused)
+{ return troop_next_spot(spot, inner, me, east, at, refused); }
+void spot(unsigned int j, float inner, float *xz) { troop_spot(j, inner, &xz[0], &xz[1]); }
+float keep(void) { return TROOP_KEEP; }
+''')
+    lib.keep.restype = ctypes.c_float
+    inner, me = 600, (ctypes.c_float * 3)(-1000, 50, 0)
+    expected, refused_expected, j = [], 0, 0
+    while True:
+        xz = (ctypes.c_float * 2)()
+        lib.spot(j, ctypes.c_float(inner), xz)
+        if max(abs(xz[0]), abs(xz[1])) >= inner + lib.keep():
+            break
+        if me[0] + xz[0] >= 0:
+            expected.append((me[0] + xz[0], me[1], me[2] + xz[1]))
+        else:
+            refused_expected += 1
+        j += 1
+    spot, refused, at, got = ctypes.c_uint(0), ctypes.c_uint(0), (ctypes.c_float * 3)(), []
+    while lib.next(ctypes.byref(spot), ctypes.c_float(inner), me, at, ctypes.byref(refused)):
+        got.append(tuple(at))
+        assert len(got) <= len(expected)
+    assert expected and refused_expected  # the edge splits the rings, so both branches run
+    assert (got, refused.value, spot.value) == (expected, refused_expected, j)
+    assert lib.next(ctypes.byref(spot), ctypes.c_float(inner), me, at, ctypes.byref(refused)) == 0  # stays spent

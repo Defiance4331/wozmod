@@ -20,8 +20,8 @@ from wozmod.runtime import text_table
 from wozmod.runtime.latin_font import LATIN_GLYPH
 from wozmod.runtime.prompts import PROMPT_SLOTS, STICK_ITEMS
 from wozmod.runtime.runtime_edits import (
-    CODE_EDITS, FONT_ROUTE, PAD_CAMERA, SAVED_PAD, SOUND_3D, STANDARD_CAMERA, V101_FIXES, VOICE_EDITS, camp_plate_edits,
-    settings_rows,
+    CODE_EDITS, FONT_ROUTE, PAD_CAMERA, PATH_CELLS, SAVED_PAD, SOUND_3D, STANDARD_CAMERA, V101_FIXES, VOICE_EDITS,
+    camp_plate_edits, settings_rows,
 )
 from wozmod.runtime import camp_plate
 
@@ -145,8 +145,8 @@ def edit_groups(header: str) -> dict[int, list[tuple[int, bytes, bytes]]]:
 def test_build_puts_each_edit_list_in_its_text_mode_group(stock_builds, variant: str) -> None:
     """Bugs: a release build keeps the cursor slot of a compiled-out row (MOVING CAMERA FIX); an install with the
     English voice banks keeps the stock sound pool, which they overflow; the Japanese text mode (no English group)
-    leaves the Xbox defaults without the camera, version 1.01's menu fixes, or enemy sounds that mute past their max
-    distance; an edit outside these lists reaches a
+    leaves the Xbox defaults without the camera, version 1.01's menu fixes, enemy sounds that mute past their max
+    distance, or the path search's empty cell lists; an edit outside these lists reaches a
     build; a requested define or its hooks do not reach the compiler. The build also checks each edit and hook against the
     stock bytes it replaces, so a shifted address fails the fixture."""
     options, expected_defines = OPTIONS[variant]
@@ -159,6 +159,7 @@ def test_build_puts_each_edit_list_in_its_text_mode_group(stock_builds, variant:
              "one-row settings": (settings_rows(1, *rows), {1}), "two-row settings": (settings_rows(2, *rows), {2}),
              "PAD_CAMERA": (PAD_CAMERA, {1, 2}), "SAVED_PAD": (SAVED_PAD, {1, 2}),
              "STANDARD_CAMERA": (STANDARD_CAMERA, {1, 2}), "V101_FIXES": (V101_FIXES, {1, 2}), "SOUND_3D": (SOUND_3D, {1, 2}),
+             "PATH_CELLS": (PATH_CELLS, {1, 2}),
              "VOICE_EDITS": (VOICE_EDITS, {2}),
              "camp plate": (camp_plate_edits(camp_plate.width(camp_plate.stock_plate(Path(os.environ["WOZMOD_GAME"])))),
                             {0})}

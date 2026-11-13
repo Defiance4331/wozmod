@@ -31,4 +31,24 @@ static inline void troop_spot(unsigned int j, float inner, float *dx, float *dz)
         *dx = -half, *dz = half - (t - 6 * half);
 }
 
+/* The next spot from *spot on, around the player at me (x, y, z), that on_map accepts, into at (x, y, z; y the
+   player's, for the floor a multi-level map picks by height). *spot moves past every spot tried, so a refused spot
+   is never tried again, and each refused one adds to *refused. Spots stop where their ring lies TROOP_KEEP past the
+   nearest: farther out the spawner would despawn the squad as gone from the area. Returns 0 when none is left. */
+static inline int troop_next_spot(unsigned int *spot, float inner, const float *me, int (*on_map)(const float *at),
+                                  float *at, unsigned int *refused)
+{
+    float dx, dz;
+    for (;;) {
+        troop_spot(*spot, inner, &dx, &dz);
+        if ((dx < 0 ? -dx : dx) >= inner + TROOP_KEEP || (dz < 0 ? -dz : dz) >= inner + TROOP_KEEP)
+            return 0;
+        ++*spot;
+        at[0] = me[0] + dx, at[1] = me[1], at[2] = me[2] + dz;
+        if (on_map(at))
+            return 1;
+        ++*refused;
+    }
+}
+
 #endif

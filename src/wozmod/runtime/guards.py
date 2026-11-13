@@ -134,6 +134,7 @@ FEATURES = (
                    0x58E370,  # runtime_edits.DRAW_STATE, from the V101_FIXES caves
                    0x5DD620)),  # the render-state call the 0x582F24 detour moves into its cave
     Feature("sound3d", "3D sound voices", shown="enemy and object sounds", edits=("SOUND_3D",)),
+    Feature("paths", "path cell lists", shown="unit path finding", edits=("PATH_CELLS",)),
     Feature("rings", "ground rings", shown="battle ground drawing",
             hooks=tuple(range(53, 65))),  # ring_upload.h: the six ring Locks, then the six Unlocks
     Feature("batches", "effect batches", shown="effect drawing", hooks=(23,)),  # their Lock discards (0x6392A0)
@@ -144,7 +145,7 @@ FEATURES = (
     Feature("test", "test harness", hooks=(73, 74, 112, 128, 129, 130, 131, 132, 134), define="ENRT_TEST",
             calls=_c("WINDOW_SET_TEXT", "WINDOW_OPEN", "WINDOW_STYLE", "QUEUE_SCRIPT", "GAIN_EXP", "GIVE_WEAPON",
                      "PLAY_SCENE", "SCENE_ARG", "SPAWN_SQUAD", "DESPAWN_SQUAD", "PLACE_UNIT", "CALL_HORSE", "MOUNT",
-                     "CELL_FLAG")),
+                     "CELL_FLAG", "MAP_POSITION", "NAV_CELL")),
 )
 
 

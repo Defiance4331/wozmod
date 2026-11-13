@@ -232,3 +232,116 @@ def test_3d_effects_start_at_full_volume_and_lose_only_the_mute_at_max_distance(
         flags.append(int(ins.op_str.rsplit(", ", 1)[1], 16))
     assert flags == [0x10 | 0x20000, 0x10]
     assert [round(struct.unpack("<f", gain)[0], 6) for gain in edits[0x72D6A0]] == [0.52, 1.0]
+
+
+def _step_x86(code: bytes, start: int, memory: dict[int, int], regs: dict[str, int]) -> None:
+    """Run code from start to its ret on a byte memory, for the few instructions a cell-list build's early exits use;
+    any other instruction fails the test instead of being skipped."""
+    import capstone
+    from capstone import x86 as cx
+
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    md.detail = True
+    flags = {"zf": False, "cf": False}
+
+    def read(addr: int, size: int) -> int:
+        return int.from_bytes(bytes(memory.get(addr + i, 0) for i in range(size)), "little")
+
+    def write(addr: int, size: int, value: int) -> None:
+        for i, byte in enumerate((value & (1 << 8 * size) - 1).to_bytes(size, "little")):
+            memory[addr + i] = byte
+
+    def address(op) -> int:
+        mem = op.mem
+        index = regs[md.reg_name(mem.index)] * mem.scale if mem.index else 0
+        return (regs[md.reg_name(mem.base)] if mem.base else 0) + index + mem.disp & 0xFFFFFFFF
+
+    def get(op) -> int:
+        if op.type == cx.X86_OP_REG:
+            return regs[md.reg_name(op.reg)]
+        if op.type == cx.X86_OP_IMM:
+            return op.imm & 0xFFFFFFFF
+        return read(address(op), op.size)
+
+    def put(op, value: int) -> None:
+        if op.type == cx.X86_OP_REG:
+            regs[md.reg_name(op.reg)] = value & 0xFFFFFFFF
+        else:
+            write(address(op), op.size, value)
+
+    eip = start
+    while True:
+        [ins] = md.disasm(code[eip - start:eip - start + 16], eip, count=1)
+        eip = ins.address + ins.size
+        ops, name = ins.operands, ins.mnemonic
+        if name in ("mov", "movzx"):
+            put(ops[0], get(ops[1]))
+        elif name == "lea":
+            put(ops[0], address(ops[1]))
+        elif name in ("cmp", "sub", "add"):
+            a, b = get(ops[0]), get(ops[1])
+            result = a - b if name != "add" else a + b
+            flags.update(zf=result & 0xFFFFFFFF == 0, cf=b > a if name != "add" else result > 0xFFFFFFFF)
+            if name != "cmp":
+                put(ops[0], result)
+        elif name == "test":
+            flags.update(zf=get(ops[0]) & get(ops[1]) == 0, cf=False)
+        elif name == "push":
+            regs["esp"] -= 4
+            write(regs["esp"], 4, get(ops[0]))
+        elif name == "pop":
+            put(ops[0], read(regs["esp"], 4))
+            regs["esp"] += 4
+        elif name in ("je", "jne", "jbe"):
+            taken = {"je": flags["zf"], "jne": not flags["zf"], "jbe": flags["zf"] or flags["cf"]}[name]
+            eip = get(ops[0]) if taken else eip
+        elif name == "ret":
+            regs["eip"] = read(regs["esp"], 4)
+            regs["esp"] += 4
+            return
+        else:
+            raise AssertionError(f"{ins.address:#x}: {name} {ins.op_str} is outside this stepper")
+
+
+LINK_LIST_BUILD = (0x4A9560, 0x4A963D)  # 0x4A9560 build_cell_link_list: ebx = the list wrapper {cell, head, built}
+
+
+def test_a_path_cell_list_with_no_cell_ends_empty_like_a_cell_with_no_links() -> None:
+    """Bugs: the crash at 0x4A96B9, a null cell (a point off the path grid or on an empty slot) that leaves the
+    list head as stack garbage; an edit that writes only built, or the head at a wrong offset; a moved push without
+    its pop (the function returns to a wrong address). Differential: the patched build on a null cell against the
+    stock build on a real cell whose link count is 0, the state the search already handles as an empty list."""
+    pytest.importorskip("capstone")
+    exe = Path(os.environ.get("WOZMOD_GAME") or "", "OROCHI_Z.exe")
+    if not exe.is_file():
+        pytest.skip("set WOZMOD_GAME to the stock game folder")
+    image = exe.read_bytes()
+    start, end = LINK_LIST_BUILD
+    offset = pe.file_offset(pe.layout(image), start)
+    stock = bytes(image[offset:offset + end - start])
+    patched = bytearray(stock)
+    for va, before, after in runtime_edits.PATH_CELLS:
+        assert patched[va - start:va - start + len(before)] == before
+        patched[va - start:va - start + len(after)] = after
+
+    wrapper, cell, cell_data, garbage = 0x20000, 0x30000, 0x40000, 0x3F800000
+
+    def build(code: bytes, cell_pointer: int, built: int = 0) -> tuple[int, int, bool]:
+        memory: dict[int, int] = {}
+        for addr, value in ((wrapper, cell_pointer), (wrapper + 4, garbage), (wrapper + 8, built),
+                            (cell, cell_data), (0xFFF00, 0xDEAD0000), (0xFFF04, 0x50000)):
+            memory.update(zip(range(addr, addr + 4), value.to_bytes(4, "little"), strict=True))
+        memory[cell_data + 0x1D] = 0  # the cell's link count
+        saved = {"ebx": wrapper, "ebp": 0x11111111, "edi": 0x22222222, "esi": 0x33333333}
+        regs = {"eax": 0, "ecx": 0, "edx": 0, "esp": 0xFFF00, **saved}
+        _step_x86(code, start, memory, regs)
+        head, flag = (int.from_bytes(bytes(memory[wrapper + k + i] for i in range(4)), "little") for k in (4, 8))
+        kept = {name: regs[name] for name in saved} == saved and regs["esp"] == 0xFFF04 and regs["eip"] == 0xDEAD0000
+        return head, flag, kept
+
+    assert build(stock, 0)[:2] == (garbage, 0)  # the stock bug, so the stepper sees what it guards
+    no_links = build(stock, cell)
+    assert no_links == (0, 1, True)
+    assert build(bytes(patched), 0) == no_links
+    assert build(bytes(patched), cell) == no_links
+    assert build(bytes(patched), 0, built=1) == (garbage, 1, True)  # a list already built is left alone

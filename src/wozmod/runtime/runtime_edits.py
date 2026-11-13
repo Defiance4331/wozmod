@@ -1180,6 +1180,19 @@ VOICE_EDITS = [(va, b"\x68" + p32(STOCK_SOUND_POOL), b"\x68" + p32(SOUND_POOL)) 
 SOUND_3D = [(0x67ACF4, bytes.fromhex("814c241c 10000200"), bytes.fromhex("814c241c 10000000")),
             (0x72D6A0, struct.pack("<f", 0.52), struct.pack("<f", 1.0))]
 
+# A squad's path search keeps, per end cell, a list wrapper {cell, head, built, ...} that 0x4A9560 fills from the
+# cell's links. The three search set-ups (0x4A9800, 0x4A9880, 0x4A9980) store the cell, which is 0 for a point off
+# the 32x32 grid or on an empty grid slot, and clear only built. For a cell with no links 0x4A9560 writes head 0 and
+# built 1 (0x4A962A); for a null cell it returned at once, so 0x4A9640 walked whatever the stack held as the head and
+# crashed at 0x4A96B9 (work/handbacks/crash-4a96b9.md). The null test now takes that no-links exit: the push and lea
+# it needs move ahead of the test (they set no flags), and the je lands on 0x4A962A instead of the return 0x4A9638.
+# The search then sees an empty list and finds no path, as the planner 0x4A9CA0 already does for other dead ends.
+PATH_CELL_START = 0x4A9572
+PATH_CELLS = [(PATH_CELL_START,
+               bytes.fromhex("8b03 85c0 0f84bc000000 8b00 0fb6401d 85c0 57 8d7b04"),
+               bytes.fromhex("57 8d7b04 8b03 85c0") + b"\x0f\x84" + struct.pack("<i", 0x4A962A - 0x4A9580)
+               + bytes.fromhex("8b00 0fb6401d 85c0"))]
+
 # The Xbox defaults (the pad auto-setting's layout 3, block 0x5E378D) bind Camera Up, Down, Left and Right (actions
 # 17-20) to the right stick instead of none: axis 4 is lRy, axis 3 is lRx, which the runtime copies into the lRz
 # slot the stock poll reads. Direction 1 keeps an axis's negative half (up, left). Each action's block is 0x41

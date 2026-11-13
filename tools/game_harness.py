@@ -732,9 +732,9 @@ def spawn(memory: int, block: int, count: int, inner: int) -> dict:
     reach = ring_reach(count + SPAWN_SQUAD - 1, inner) + SPAWN_SCATTER
     before = troops_near(memory, reach)
     test_command(memory, block, 9, count | inner << 16, busy=10)
-    spawned, despawned = struct.unpack("<2I", os.pread(memory, 8, block + 48))
-    return {"asked": count, "spawned": spawned, "despawned": despawned, "near_before": before,
-            "near_after": troops_near(memory, reach), "within": reach}
+    spawned, despawned, off_grid = struct.unpack("<3I", os.pread(memory, 12, block + 48))
+    return {"asked": count, "spawned": spawned, "despawned": despawned, "off_grid_spots": off_grid,
+            "near_before": before, "near_after": troops_near(memory, reach), "within": reach}
 
 
 def stage_scripts(memory: int) -> dict:

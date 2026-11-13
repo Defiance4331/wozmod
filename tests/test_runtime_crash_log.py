@@ -49,25 +49,27 @@ def test_only_a_crashed_runs_log_is_kept(tmp_path: Path) -> None:
 
 CRASHER = r"""#include "crash_log.h"
 static HANDLE log_file;
-static void line(const char *text, unsigned int value)
+static void line(const char *text, const unsigned int *value)
 {
     char out[200];
     DWORD n;
-    WriteFile(log_file, out, value ? wsprintfA(out, "%s 0x%08x\r\n", text, value) : wsprintfA(out, "%s\r\n", text), &n, 0);
+    WriteFile(log_file, out, value ? wsprintfA(out, "%s 0x%08x\r\n", text, *value) : wsprintfA(out, "%s\r\n", text), &n, 0);
 }
 static LONG WINAPI runtime_filter(EXCEPTION_POINTERS *e) { (void)e; ExitProcess(3); }
 /* The game's SetUnhandledExceptionFilter import slot, which the DLL points at crash_set_filter. */
 static LPTOP_LEVEL_EXCEPTION_FILTER (WINAPI *volatile slot)(LPTOP_LEVEL_EXCEPTION_FILTER) = crash_set_filter;
 __attribute__((noinline)) void boom(volatile int *at) { *at = 1; }
+__attribute__((noinline)) int peek(volatile int *at) { return *at; }
 __attribute__((noinline)) void runtime_exit(void) { slot(0); ExitProcess(4); }
 int main(int argc, char **argv)
 {
-    (void)argv;
     log_file = CreateFileW(L"runtime.log", GENERIC_WRITE, FILE_SHARE_READ, 0, CREATE_ALWAYS, 0, 0);  /* as the DLL */
     crash_watch(line, L"runtime.log", L"runtime.crash.log");
     slot(runtime_filter);  /* the C runtime's start-up filter, set after ours */
-    if (argc > 1)
+    if (argc > 1 && argv[1][0] == 'e')
         runtime_exit();
+    if (argc > 1 && argv[1][0] == 'r')
+        return peek((volatile int *)0x10);
     {
         void (*volatile pointer)(volatile int *) = boom;  /* a code address on the stack that no call left there */
         pointer((volatile int *)0x10);
@@ -131,3 +133,21 @@ def test_the_c_runtime_ending_the_run_is_logged_and_kept(tmp_path: Path) -> None
     assert (code, "crash: the C runtime is ending the run" in lines,
             _values(lines).get("crash: called from boom.exe, offset") in spans["_runtime_exit"],
             crash == (tmp_path / "runtime.log").read_bytes()) == (4, True, True, True), lines
+
+
+REGISTERS = ("eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp", "eip")
+
+
+@pytest.mark.skipif(os.environ.get("WOZMOD_RUNTIME_COMPILE") != "1", reason="set WOZMOD_RUNTIME_COMPILE=1")
+def test_a_read_crash_logs_its_zero_access_code_and_the_registers(tmp_path: Path) -> None:
+    """Bugs: a read's access code 0 dropped from its line (the 0x4A96B9 crash read as a write); a register missing,
+    or another's value logged under its name (eip not the crash address, esp off the stack, no register holding the
+    bad pointer 0x10 the read went through)."""
+    code, lines, _, spans = _crash(tmp_path, "read")
+    value = _values(lines)
+    access = [l for l in lines if l.startswith("crash: access (0 read, 1 write, 8 run)")]
+    general = [value.get(f"crash: {r}") for r in REGISTERS[:7]]
+    assert (code, access, value.get("crash: of address"), [r for r in REGISTERS if f"crash: {r}" not in value],
+            value.get("crash: eip") == value.get("crash: address"), value.get("crash: in boom.exe, offset") in spans["_peek"],
+            0x10 in general, 0x10000 <= value.get("crash: esp", 0) < 0x80000000
+            ) == (3, ["crash: access (0 read, 1 write, 8 run) 0x00000000"], 0x10, [], True, True, True, True), lines

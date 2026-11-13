@@ -34,8 +34,8 @@ static inline void keep_crash_log(const WCHAR *log, const WCHAR *crash)
 /* An unhandled exception's code, place and the code addresses on its stack, written through line before Windows ends
    the game: what the crash was and which module (OROCHI_Z.exe, d3d9.dll, a driver) it was in, without the player
    reading it out of Event Viewer. Offsets are from the module's base, so the game's own addresses read as its VAs
-   less 0x400000. A value of 0 prints bare. */
-typedef void (*crash_line_fn)(const char *text, unsigned int value);
+   less 0x400000. Every value prints, 0 included: a read's access code and a null pointer are 0. */
+typedef void (*crash_line_fn)(const char *text, const unsigned int *value);  /* value 0: a line of text only */
 static crash_line_fn crash_line;
 static LPTOP_LEVEL_EXCEPTION_FILTER crash_before;
 static LPTOP_LEVEL_EXCEPTION_FILTER (WINAPI *crash_set_real)(LPTOP_LEVEL_EXCEPTION_FILTER) = SetUnhandledExceptionFilter;
@@ -43,6 +43,11 @@ static WCHAR crash_log_path[MAX_PATH], crash_copy_path[MAX_PATH];
 
 #define CRASH_STACK_DWORDS 1024  /* how far up the stack to look: a few frames of a deep call, not the whole thread */
 #define CRASH_STACK_HITS 16
+
+static void crash_value(const char *text, unsigned int value)
+{
+    crash_line(text, &value);
+}
 
 /* "<what> <module>, offset" and the offset, for an address in a loaded module's code; 0 when it is in none. A module
    outside the game's folder is named with its folder: Windows' own d3d9.dll (system32\d3d9.dll) and the game's
@@ -73,7 +78,7 @@ static int crash_where(const char *what, const void *at)
     while (*name && n < 140)
         line[n++] = *name++;
     lstrcpyA(line + n, ", offset");
-    crash_line(line, (unsigned int)((const char *)at - (const char *)module));
+    crash_value(line, (unsigned int)((const char *)at - (const char *)module));
     return 1;
 }
 
@@ -149,14 +154,19 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS *e)
 {
     static LONG once;
     const EXCEPTION_RECORD *r = e->ExceptionRecord;
+    const CONTEXT *c = e->ContextRecord;
     if (!InterlockedExchange(&once, 1)) {
-        crash_line("crash: exception", (unsigned int)r->ExceptionCode);
-        crash_line("crash: address", (unsigned int)r->ExceptionAddress);
+        crash_value("crash: exception", (unsigned int)r->ExceptionCode);
+        crash_value("crash: address", (unsigned int)r->ExceptionAddress);
         crash_where("crash: in ", r->ExceptionAddress);
         if (r->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && r->NumberParameters >= 2)
-            crash_line("crash: access (0 read, 1 write, 8 run)", (unsigned int)r->ExceptionInformation[0]),
-                crash_line("crash: of address", (unsigned int)r->ExceptionInformation[1]);
-        crash_stack((const DWORD *)e->ContextRecord->Esp);
+            crash_value("crash: access (0 read, 1 write, 8 run)", (unsigned int)r->ExceptionInformation[0]),
+                crash_value("crash: of address", (unsigned int)r->ExceptionInformation[1]);
+        /* the faulting thread's registers: a bad pointer and the object it came from, at first look */
+        crash_value("crash: eax", c->Eax), crash_value("crash: ebx", c->Ebx), crash_value("crash: ecx", c->Ecx);
+        crash_value("crash: edx", c->Edx), crash_value("crash: esi", c->Esi), crash_value("crash: edi", c->Edi);
+        crash_value("crash: ebp", c->Ebp), crash_value("crash: esp", c->Esp), crash_value("crash: eip", c->Eip);
+        crash_stack((const DWORD *)c->Esp);
         crash_keep_now();
     }
     return crash_before ? crash_before(e) : EXCEPTION_CONTINUE_SEARCH;
