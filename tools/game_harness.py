@@ -1959,6 +1959,25 @@ def strip(stage: int) -> dict:
 # does not turn a talk page (run 2026-10-25_1512-skipkeys; Escape and Return skip neither)
 SKIP = ["space"]
 UNLOCK_STEP = {"action": "unlock"}  # every officer gets four weapons: the rest of the run is no longer the plain save
+def pre_battle_exit(menu: str) -> list:
+    """MAIN MENU on a pre-battle screen: Up wraps to it; a prompt whose cursor starts on NO names the title screen
+    but leads to the main menu, cursor on the mode that was played."""
+    return [*[([key], None) for key in ("Up", "Up")], (["Return"], slow("save-prompt")),
+            (["Left"], None), (["Return"], ROUTE_SCREENS[menu])]
+
+
+def battle_exit(menu: str) -> list:
+    """Pause, MAIN MENU, then the battle-lost warning (cursor on NO again), as `pause` to menu@dream does."""
+    return [(["Escape"], ROUTE_SCREENS["pause"]),
+            *[([key], None) for key in ("Up", "Up")], (["Return"], slow("save-prompt")),
+            (["Left"], None), (["Return"], {"seconds": 1.0}),
+            (["Left"], None), (["Return"], ROUTE_SCREENS[menu])]
+
+
+STORY_RESULTS_EXIT = [(["Escape"], {**slow("results", 2.0), "every": 3}), (["Return"], slow("save-prompt")),
+                      (["Return"], None), (["Return"], ROUTE_SCREENS["story-stage-camp"])]
+
+
 # (from, to, steps): each step is (keys or one request, screen to wait for); a bare key list is one
 # step that waits for the destination screen. A move up a level that leaves a submenu cursor on the
 # item it opened ends with the keys that put the cursor back, so the move down works again.
@@ -2221,6 +2240,35 @@ ROUTE_EDGES = [
     ("story-officer-page", "story-team-info", ["Escape"]),
     ("story-team-info", "story-pre-battle", [(["Escape"], ROUTE_SCREENS["story-pre-battle"]), (["Up"], None),
                                              (["Up"], None)]),
+    # Ways out of the story and Free Mode dead ends, so that a check can visit its screens in any order (runs
+    # 2026-11-13_0028-rg-z, _0028-rg-wei, _0030-rg-wb, _0030-rg-fb, _0032-rg-vs, _0046-rg-fc). The Z talk pages
+    # (story-z-still-2 is the last of them) end on the pre-battle screen when skipped, as a chapter's talk does
+    ("story-z-still-2", "story-pre-battle", [(["Escape"], {**ROUTE_SCREENS["story-pre-battle"], "every": 3})]),
+    # a pre-battle screen's MAIN MENU leads to the menu of its mode, cursor on that mode (the dream edge above, in each mode)
+    ("story-pre-battle", "menu@story", pre_battle_exit("menu@story")),
+    ("story-wei-pre-battle", "menu@story", pre_battle_exit("menu@story")),
+    ("free-pre-battle", "menu@free", pre_battle_exit("menu@free")),
+    # a battle's pause menu: MAIN MENU, then both prompts (the `pause` to menu@dream edge above, in each mode)
+    ("story-battle", "menu@story", battle_exit("menu@story")),
+    ("story-wei-battle", "menu@story", battle_exit("menu@story")),
+    ("free-battle", "menu@free", battle_exit("menu@free")),
+    # after a chapter's victory: Escape skips the talk or still to the results; the save prompt (cursor on NO) names
+    # an overwrite, then a cancelled save, and the chapter's camp follows
+    ("story-victory-still", "story-stage-camp", STORY_RESULTS_EXIT),
+    ("story-victory-talk", "story-stage-camp", STORY_RESULTS_EXIT),
+    # the chapter select opens on the chapter just played, so its fingerprint is the plates every cursor position draws
+    # (4082.28), not 4082.0|4082.4; the main menu is one Escape on, whichever chapter the cursor is on
+    # a chapter that adds an officer (run 2026-11-13_1045-rg-qn, --save new-game): Next shows the results, which take
+    # Next after they count up, then a page that a new scenario is available, which needs two Nexts, then the save prompt
+    ("story-new-character", "story-stage-camp", [(["Return"], {**slow("results", 2.0), "every": 3}),
+                                                 (["Return"], {"seconds": 3.0}), (["Return"], {"seconds": 3.0}),
+                                                 (["Return"], slow("save-prompt")), (["Return"], None),
+                                                 (["Return"], ROUTE_SCREENS["story-stage-camp"])]),
+    ("story-stage-camp", "menu@story", [(["Escape"], {"texture": "4082.28"}), (["Escape"], ROUTE_SCREENS["menu@story"])]),
+    # Free Mode backs out one page per Escape: chapter, stories, camp, the character select
+    ("free-chapter", "free-stories", ["Escape"]),
+    ("free-stories", "free-camp", ["Escape"]),
+    ("free-camp", "free-select", ["Escape"]),
 ]
 NAVIGATION = {"key", "keys", "pad", "click", "win", "lose"}  # actions that can move the game off a screen
 

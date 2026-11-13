@@ -611,16 +611,26 @@ def test_run_kills_the_sandbox_once_the_server_ends(tmp_path, monkeypatch):
     assert harness.exit_info(root)["reason"] == "stopped"
 
 
+def test_every_routed_screen_reaches_every_other():
+    """Bug: a new screen routed with no way back passes the single-target check above, then fails a check whose
+    order visits it before another screen (the Z talk pages once left results-discard unreachable)."""
+    screens = [n for n in harness.ROUTE_SCREENS if n not in {"boot", "title"}]  # nothing returns to the boot or the title
+    stuck = []
+    for start in screens:
+        for target in screens:
+            if start != target:
+                try:
+                    harness.route_plan(start, target)
+                except ValueError:
+                    stuck.append((start, target))
+    assert {start for start, _ in stuck} <= {"results-discard"}, stuck
+
+
 def test_route_library_reaches_every_screen_and_back_to_the_menu():
     """Bug: a mistyped screen name in an edge leaves a screen unreachable or a planned path broken."""
     names = set(harness.ROUTE_SCREENS)
     assert {n for edge in harness.ROUTE_EDGES for n in edge[:2]} == names
-    dead_ends = {"story-z-narration", "story-z-still", "story-z-still-2",  # story pages: no verified way out, so a check spec lists them last
-                 "story-narration", "story-wei-pre-battle", "story-wei-battle", "story-victory-still",
-                 "story-stage-camp", "story-stage-scenario", "story-pre-battle", "story-battle",
-                 "story-team-info", "story-officer-page", "ability-acquisition",
-                 "story-stage-narration", "story-stage-talk", "story-victory-talk", "story-new-character", "results-discard",
-                 "free-camp", "free-stories", "free-chapter", "free-pre-battle", "free-battle"}
+    dead_ends = {"results-discard"}  # the weapon-discard page stalls after a pick in every run, so no way out is verified
     for start in names:
         for target in names - {"boot"} | {"menu"}:
             try:
@@ -1149,18 +1159,15 @@ def test_blind_route_step_and_the_tour_keep_their_settle(tmp_path, monkeypatch):
 
 
 def test_check_visits_the_nearest_screen_next_and_a_dead_end_last():
-    """Bugs: screens visited in spec order send a route back to the main menu between neighbours; the narration
+    """Bugs: screens visited in spec order send a route back to the main menu between neighbours; the discard page
     (no way out) is visited before screens that still need the menu."""
     pick = lambda start, names: [sc["name"] for sc in harness.order_screens([{"name": n, "route": n} for n in names], start)]
     # from the options: game-settings and options-controller are one or three edges away, vs-course is 5 edges
     assert pick("options", ["vs-course", "game-settings", "options-controller"]) == [
         "game-settings", "options-controller", "vs-course"]
-    assert pick("menu@story", ["story-z-narration", "vs-course", "game-settings"])[-1] == "story-z-narration"
-    # the narration is as near as the camp here and first in spec order, yet it has no way out
-    assert pick("story-z-scenario", ["story-z-narration", "story-z-camp"]) == ["story-z-camp", "story-z-narration"]
-    # the dead ends lead on from each other, so one boot checks all three, whatever order the spec lists them in
-    assert pick("story-z-scenario", ["story-z-still-2", "story-z-still", "story-z-narration"]) == [
-        "story-z-narration", "story-z-still", "story-z-still-2"]
+    assert pick("menu@story", ["results-discard", "vs-course", "game-settings"])[-1] == "results-discard"
+    # the discard page is as near as the pause menu here and first in spec order, yet it has no way out
+    assert pick("battle", ["results-discard", "pause"]) == ["pause", "results-discard"]
     assert pick(None, ["vs-course", "game-settings"]) == ["vs-course", "game-settings"]  # position unknown: spec order
     assert pick("options", ["vs-course", "no-such-screen", "game-settings"]) == ["game-settings", "vs-course", "no-such-screen"]
 
