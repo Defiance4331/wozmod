@@ -7,6 +7,7 @@
 #include "voice_play.h"
 #include "se_cutoff.h"
 #include "sound_headroom.h"
+#include "volume_curve.h"
 #include "pad_buttons.h"
 #include "pad_kind.h"
 #include "pad_map.h"
@@ -4761,6 +4762,14 @@ static int always(u32 id, struct frame *f, u32 *replace)
         *volume = (u32)headroom_trim((long)*volume);
         return 1;
     }
+    case 150:
+    case 151:
+    case 152:
+    case 153:
+    case 154:
+    case 155:  /* a volume option turned into a gain, the stock gain in edx (volume_curve.h) */
+        f->edx = volume_scaled(f->edx, *(const u8 *)volume_option[id - VOLUME_FIRST]);
+        return 1;
     case 23:  /* an effect batch's Lock (0x6392A0), its arguments pushed: buffer, offset, size, out, flags */
         f->arg[3] = RU_DISCARD;  /* each batch writes its buffer from 0 and draws only what it wrote */
         return 1;

@@ -1180,6 +1180,32 @@ VOICE_EDITS = [(va, b"\x68" + p32(STOCK_SOUND_POOL), b"\x68" + p32(SOUND_POOL)) 
 SOUND_3D = [(0x67ACF4, bytes.fromhex("814c241c 10000200"), bytes.fromhex("814c241c 10000000")),
             (0x72D6A0, struct.pack("<f", 0.52), struct.pack("<f", 1.0))]
 
+# The SE gain reaches its channels at full precision. The SE registers keep the 14-bit gain V (0x3FFF = 1.0), but each
+# of their three pushes to a channel cut it to 7 bits, V*127/16383 floored (0x5E2011 set_audio_register, 0x5E0FCC
+# its fade tick, 0x5E1C90 the re-push), and push_channel_volume 0x5E1980 read that byte over 127.0: under about
+# -30 dB the 3 dB volume steps (volume_curve.h) fell on the same byte, and V under 129 was silent. 0x5E1980 now
+# reads the 16-bit V over the image's own 16383.0 (0x70E340), and the pushes pass V through. On the stock 7-bit grid
+# (V = 129k, 16383 = 127 * 129) the float sent is identical. The channel reset 0x5E1EB0 pushed 127, full gain, with
+# no room for a wider push: its jl to that push is always taken (its channel is 0-15: 16 turns of 0x40 from
+# 0x140BFE2 to 0x140C3E2), so the branch it jumps over is dead, and the jl now lands on a push of 0x3FFF written there,
+# past the dead loop's own branch targets (0x5E1F10, 0x5E1F35) (work/handbacks/se-precision.md).
+SE_RESET, SE_RESET_PUSH = 0x5E1F0D, 0x5E1F37  # the reset's jl, and where its push of 0x3FFF goes
+SE_PRECISION = [
+    (0x5E19A7, bytes.fromhex("0fb64c2414"), bytes.fromhex("0fb74c2414")),  # movzx ecx, word [esp+0x14]: V
+    (0x5E19C0, bytes.fromhex("dc35d8557000"), bytes.fromhex("dc3540e37000")),  # fdiv qword [0x70E340]: 16383.0
+    (0x5E2011, bytes.fromhex("8bcb 6bc97f b809000280 f7e9 03d1 c1fa0d 8bc2 c1e81f 03c2"),
+     bytes.fromhex("8bc3 eb14") + b"\x90" * 20),  # eax = V (ebx), on to 0x5E2029
+    (0x5E202C, bytes.fromhex("88442418"), bytes.fromhex("89442418")),  # the pushed slot holds all of V
+    (0x5E0FCC, bytes.fromhex("0fb7c8 6bc97f 66a3aca64001 b809000280 f7e9 03d1 c1fa0d 8bc2 c1e81f 03c2"),
+     bytes.fromhex("66a3aca64001 0fb7c0 eb14") + b"\x90" * 20),  # keeps the last-V store; eax = V, on to 0x5E0FEB
+    (0x5E1C90, bytes.fromhex("0fb70daca64001 6bc97f b809000280 f7e9 03d1 c1fa0d 8bc2 c1e81f 03c2"),
+     bytes.fromhex("0fb705aca64001 eb14") + b"\x90" * 20),  # eax = the last V, on to 0x5E1CAD
+    (SE_RESET, bytes.fromhex("7c5b"), b"\x7c" + bytes([SE_RESET_PUSH - (SE_RESET + 2)])),  # jl SE_RESET_PUSH
+    (SE_RESET_PUSH, bytes.fromhex("6a04 8d44242c d95c2434 50 55 e83845ffff"),
+     assembled(SE_RESET_PUSH, bytes.fromhex("68ff3f0000 57"), 0x5E1980, bytes.fromhex("83c408"),
+               b"\xeb" + bytes([0x5E1F75 - (SE_RESET_PUSH + 16)]), b"\x90")),  # push 0x3FFF, edi; call; on to 0x5E1F75
+]
+
 # A squad's path search keeps, per end cell, a list wrapper {cell, head, built, ...} that 0x4A9560 fills from the
 # cell's links. The three search set-ups (0x4A9800, 0x4A9880, 0x4A9980) store the cell, which is 0 for a point off
 # the 32x32 grid or on an empty grid slot, and clear only built. For a cell with no links 0x4A9560 writes head 0 and

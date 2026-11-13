@@ -72,6 +72,18 @@ HEADROOM = [
     (0x5E9D23, "50 ffd2 8d4c2440", 143, "ret"),  # a movie's put_Volume at 0x5E9D24, at its open (0x5E9A90)
     (0x5E9F7C, "8b511c 56 50", 144, "esi"),      # a movie's put_Volume at 0x5E9F81, at its level (0x5E9E90)
 ]
+# runtime/volume_curve.h: a hook where each site that turns a volume option into a gain holds the stock gain in edx
+# (after its divide by 15, before the sign fix), and the option byte whose curve it takes. Ids are consecutive: the C
+# indexes by them.
+BGM, SE, VOICE = 0x80151B, 0x80151C, 0x80151D  # the options, levels 0-15, in the game state block (saved)
+VOLUME = [
+    (0x5141E7, "8bca c1e91f", 150, BGM),    # set_bgm_volume 0x5141D0 (level, fade)
+    (0x514217, "8bc2 c1e81f", 151, BGM),    # fade_bgm_level 0x514200 (level), a 15-unit fade
+    (0x513087, "8bc2 c1e81f", 152, SE),     # set_se_level 0x513070 (level)
+    (0x512D57, "8bc2 c1e81f", 153, VOICE),  # set_voice_level 0x512D40 (level)
+    (0x5138AD, "8bc2 c1e81f", 154, SE),     # init_se_channels 0x513880: the SE option itself
+    (0x513A31, "8bf2 c1ee1f", 155, SE),     # set_se_channels_muted 0x513A10, unmute: the SE option itself
+]
 FRAME_WORDS = re.search(r"struct frame \{\s*u32 ([^;]*);", SOURCE)[1].replace(" ", "").split(",")  # C, in order
 # Installed in both text modes.
 ALWAYS_HOOKS = [
@@ -169,6 +181,7 @@ ALWAYS_HOOKS = [
     # from it; the batch rewrites the buffer from 0 and draws only what it wrote, so the hook makes it DISCARD.
     (0x63963F, "8b422c ffd0", 23, None),        # effect batch Lock, its flags pushed (mid-function)
     *((va, prologue, hook_id, None) for va, prologue, hook_id, _ in HEADROOM),
+    *((va, prologue, hook_id, None) for va, prologue, hook_id, _ in VOLUME),
 ]
 # ENRT_MOVING_FIX builds only: out of release 1, kept for later.
 MOVING_FIX_HOOKS = [
@@ -246,8 +259,9 @@ def data_header(exe: bytes, edits: list[tuple[int, str, list[tuple[int, bytes, b
     for group, _, group_edits in edits:
         grouped.setdefault(group, []).extend(group_edits)
     check_spans(exe, grouped, hooks)
-    ids = [hook_id for _, _, hook_id, _ in HEADROOM]
-    _require(ids == list(range(ids[0], ids[0] + len(ids))), "the headroom hook ids are not consecutive")
+    for name, table in (("headroom", HEADROOM), ("volume", VOLUME)):
+        ids = [hook_id for _, _, hook_id, _ in table]
+        _require(ids == list(range(ids[0], ids[0] + len(ids))), f"the {name} hook ids are not consecutive")
     chosen, guards = guard_list(exe, edits, hooks, defines, features)
     records = bytearray()
     for group, _, group_edits in edits:
@@ -272,6 +286,8 @@ def data_header(exe: bytes, edits: list[tuple[int, str, list[tuple[int, bytes, b
         f"static const u32 enrt_wide_reads[] = {{{', '.join(f'{r.read + 5:#x}' for r in ROOMS if r.read)}}};",
         f"#define HEADROOM_FIRST {HEADROOM[0][2]}",
         f"static const u8 headroom_word[] = {{{', '.join(str(FRAME_WORDS.index(w)) for *_, w in HEADROOM)}}};",
+        f"#define VOLUME_FIRST {VOLUME[0][2]}",
+        f"static const u32 volume_option[] = {{{', '.join(f'{option:#x}' for *_, option in VOLUME)}}};",
         f"#define PROMPT_SLOTS {len(PROMPT_SLOTS)}",
         f"#define PROMPT_ITEMS {len(PROMPT_SLOTS) + len(STICK_ITEMS)}",
         f"#define PROMPT_SLOT_LIST {', '.join(map(str, PROMPT_SLOTS + STICK_ITEMS))}",

@@ -20,8 +20,8 @@ from wozmod.runtime import text_table
 from wozmod.runtime.latin_font import LATIN_GLYPH
 from wozmod.runtime.prompts import PROMPT_SLOTS, STICK_ITEMS
 from wozmod.runtime.runtime_edits import (
-    CODE_EDITS, FONT_ROUTE, PAD_CAMERA, PATH_CELLS, SAVED_PAD, SOUND_3D, STANDARD_CAMERA, V101_FIXES, VOICE_EDITS,
-    camp_plate_edits, settings_rows,
+    CODE_EDITS, FONT_ROUTE, PAD_CAMERA, PATH_CELLS, SAVED_PAD, SE_PRECISION, SOUND_3D, STANDARD_CAMERA, V101_FIXES,
+    VOICE_EDITS, camp_plate_edits, settings_rows,
 )
 from wozmod.runtime import camp_plate
 
@@ -50,7 +50,7 @@ def test_colliding_keys_keep_both_rows_and_aligned_shared_name_pointers() -> Non
 def test_data_header_keeps_group_lengths_terminator_and_hook_return_flags() -> None:
     """Bugs: an edit record or hook row loses its text-mode group, so the runtime installs it in the wrong mode; the
     guard list exported is not the build's; a headroom hook trims a frame word other than the one holding its
-    volume."""
+    volume; a volume hook takes the curve of an option byte other than its site's."""
     image = pe_image(0x1200, (b".fixture", 0x1000, 0x9B000, 0x1000, 0x200), image_base=0x700000)
     edits = [(0, "CODE_EDITS", [(0x79B010, b"abc", b"xyz")]), (1, "settings rows", [(0x79B020, b"de", b"fg")]),
              (2, "settings rows", [(0x79B020, b"de", b"hi")])]
@@ -75,9 +75,10 @@ def test_data_header_keeps_group_lengths_terminator_and_hook_return_flags() -> N
     assert bytes(layout.c_array("enrt_widths", header)) == b"\x05\x07"
     assert layout.defines(header) == {"WIDTH_POINTER": 0x79BAC0, "GLYPH_LATIN": LATIN_GLYPH, "WIDE_TEXT": 1024,
                                       "PROMPT_SLOTS": len(PROMPT_SLOTS), "PROMPT_ITEMS": len(PROMPT_SLOTS) + len(STICK_ITEMS),
-                                      "HEADROOM_FIRST": runtime.HEADROOM[0][2]}
+                                      "HEADROOM_FIRST": runtime.HEADROOM[0][2], "VOLUME_FIRST": runtime.VOLUME[0][2]}
     assert [runtime.FRAME_WORDS[i] for i in layout.c_array("headroom_word", header)] == [
         word for *_, word in runtime.HEADROOM]
+    assert list(layout.c_array("volume_option", header)) == [option for *_, option in runtime.VOLUME]
     # The runtime matches the return address of each widened write and draw, as read in the stock code.
     wide = dict(re.findall(r"enrt_wide_(\w+)\[\] = \{([^}]*)\}", header))
     assert {name: sorted(int(v, 16) for v in values.split(",")) for name, values in wide.items()} == {
@@ -163,7 +164,7 @@ def test_build_puts_each_edit_list_in_its_text_mode_group(stock_builds, variant:
              "one-row settings": (settings_rows(1, *rows), {1}), "two-row settings": (settings_rows(2, *rows), {2}),
              "PAD_CAMERA": (PAD_CAMERA, {1, 2}), "SAVED_PAD": (SAVED_PAD, {1, 2}),
              "STANDARD_CAMERA": (STANDARD_CAMERA, {1, 2}), "V101_FIXES": (V101_FIXES, {1, 2}), "SOUND_3D": (SOUND_3D, {1, 2}),
-             "PATH_CELLS": (PATH_CELLS, {1, 2}),
+             "PATH_CELLS": (PATH_CELLS, {1, 2}), "SE_PRECISION": (SE_PRECISION, {1, 2}),
              "VOICE_EDITS": (VOICE_EDITS, {2}),
              "camp plate": (camp_plate_edits(camp_plate.width(camp_plate.stock_plate(Path(os.environ["WOZMOD_GAME"])))),
                             {0})}
@@ -185,6 +186,7 @@ SYNTHETIC_HEADER = "\n".join([
     "#define WIDTH_POINTER 0x79bac0", f"#define GLYPH_LATIN {LATIN_GLYPH}",
     "#define WIDE_TEXT 1024", "static const u32 enrt_wide_writes[] = {0};", "static const u32 enrt_wide_reads[] = {0};",
     "#define HEADROOM_FIRST 140", "static const u8 headroom_word[] = {7};",
+    "#define VOLUME_FIRST 150", "static const u32 volume_option[] = {0x80151b};",
     "#define PROMPT_SLOTS 1", "#define PROMPT_ITEMS 9", "#define PROMPT_SLOT_LIST 0, 1, 2, 3, 4, 5, 6, 7, 8",
     *text_boxes.c_header(), "",
 ]) + true_rate.header(None, [])
