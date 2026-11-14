@@ -273,8 +273,9 @@ def test_scene_command_calls_the_scene_starter_the_games_own_scene_command_calls
 
 # The instructions whose immediate the runtime rewrites (the pad prompt icon widths, guarded by controllers), which
 # runtime_writes lists without their bytes.
-INSTRUCTIONS = {"START_WIDTH": b"\x6a\x1e", "STICK_WIDTH": b"\x6a\x1e",
-             "WIDE_LAST_DRAW": b"\x83\xf8\x14", "WIDE_LAST_MEASURE": b"\x83\xf8\x14"}
+INSTRUCTIONS = {"CODE3_WIDE_DRAW": b"\x74\x14", "CODE3_WIDE_MEASURE": b"\x74\x14",
+                "WIDE_LAST_DRAW": b"\x83\xf8\x14", "WIDE_LAST_MEASURE": b"\x83\xf8\x14",
+                "CODE3_TEXELS": b"\x6a\x3c", "WIDE_TEXELS": b"\x6a\x3c"}
 
 
 def test_stock_code_the_runtime_writes_is_stock_and_clear_of_every_build_edit(stock_builds) -> None:

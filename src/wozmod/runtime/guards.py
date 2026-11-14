@@ -110,8 +110,9 @@ FEATURES = (
             calls=_c("PAD_AUTO", "PACKAGE_ITEM", "TEXTURE_HANDLE", "GAME_NEW", "GAME_DELETE", "DINPUT_CREATE", "PAD_ADD",
                      "PAD_INIT", "PAD_NUMBER", "GAME_QUAD")
             + (0x5E4570,),  # the pad enumeration callback handed to EnumDevices
-            spans=((layout.DEFINES["START_WIDTH"] - 1, 2), (layout.DEFINES["STICK_WIDTH"] - 1, 2),  # push 0x1E
-                   (layout.DEFINES["WIDE_LAST_DRAW"] - 2, 3), (layout.DEFINES["WIDE_LAST_MEASURE"] - 2, 3))),  # cmp eax, 0x14
+            spans=((layout.DEFINES["CODE3_WIDE_DRAW"] - 1, 2), (layout.DEFINES["CODE3_WIDE_MEASURE"] - 1, 2),  # je
+                   (layout.DEFINES["WIDE_LAST_DRAW"] - 2, 3), (layout.DEFINES["WIDE_LAST_MEASURE"] - 2, 3),  # cmp eax, 0x14
+                   (layout.DEFINES["CODE3_TEXELS"] - 1, 2), (layout.DEFINES["WIDE_TEXELS"] - 1, 2))),  # push 0x3C
     Feature("fps", "frame rate", requires=("core",), hooks=(114, 115, 116, 117, 124, 125, 126, 127),
             calls=_c("DISPLAY_APPLY_AT"),  # a FRAME RATE or VSYNC change applies the display at once
             spans=((layout.DEFINES["FPS_LIMITER"], 2),)  # push 60

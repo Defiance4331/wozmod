@@ -6,6 +6,11 @@ All notable changes to wozmod are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- With a controller, the X button (Square on a PlayStation pad) no longer leaves a wide gap before its word in
+  on-screen prompts, such as Random on the officer select screen. It now sits as close as every other button.
+
 ## [0.3.0] - 2026-11-14
 
 The game's sound is quieter in this release, so that big fights stop crackling: turn your system or speaker volume up

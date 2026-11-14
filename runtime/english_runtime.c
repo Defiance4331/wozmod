@@ -2381,10 +2381,15 @@ static void camera_default(u32 player)
 #define PROMPT_TABLE (*(unsigned long long *const *)0xC54C38)
 #define PACKAGE_ITEM ((const void *(*)(const void *, u32))0x5AD170)
 #define TEXTURE_HANDLE ((unsigned long long (*)(const void *, u32, u32))0x5E02C0)
-#define START_WIDTH 0x549CC4
-#define STICK_WIDTH 0x549E68        /* F0 55 quad width (texture 0xB3) */
-#define WIDE_LAST_DRAW 0x54BAE1     /* last double-advance icon code: draw, then measure */
+/* Where the stock text draw makes an icon wide (two cells, 60 texels of its slot) for the stock keyboard art: icon
+ * code 3 (F0 43) and codes 0x11 up to WIDE_LAST (F0 51-54) take a double advance, in the draw and in the measure, and
+ * their slots are sampled 60 texels wide (0x549AD0's cases). */
+#define CODE3_WIDE_DRAW 0x54BAD9    /* je to the double advance for code 3 (74 14): draw, then measure */
+#define CODE3_WIDE_MEASURE 0x54C039
+#define WIDE_LAST_DRAW 0x54BAE1     /* last double-advance code of 0x11-0x14 (cmp eax, 0x14): draw, then measure */
 #define WIDE_LAST_MEASURE 0x54C041
+#define CODE3_TEXELS 0x549BCC       /* code 3's sampled width (push 0x3C) */
+#define WIDE_TEXELS 0x549E3F        /* codes 0x11-0x14's sampled width (push 0x3C) */
 #define KEYS_HELD ((const volatile u8 *)0x140C4E0)
 /* The items of prompts-<family>.bin the runtime makes handles for (enrt_data.h, from wozmod.runtime.prompts): the first
  * PROMPT_SLOTS are the 4079 slots it swaps into the game's icon table, the rest the stick-direction icons. */
@@ -3021,8 +3026,10 @@ static int rebinding;
 /* set: 0 the keyboard, else a pad family's art. */
 static void prompts_show(int set)
 {
-    /* the pad sets draw every icon in the left 32 texels of its slot, so no icon takes a double advance */
-    static const u8 width[3] = {30, 30, 30}, wide_last[3] = {0x14, 0x10, 0x10};
+    /* The pad sets draw every icon in texels 0-29 of its slot, so they make no icon wide: a wide icon would draw its
+       slot's empty right half and leave that gap before the text after it. code3_wide 0 lands the je on the next
+       instruction; wide_last 0x10 empties 0x11-0x14. */
+    static const u8 code3_wide[3] = {0x14, 0, 0}, wide_last[3] = {0x14, 0x10, 0x10}, texels[3] = {60, 30, 30};
     u32 i;
     if (!prompts_ready || set == prompt_set)
         return;
@@ -3030,10 +3037,12 @@ static void prompts_show(int set)
     PAD_PROMPTS = (u8)(set != 0);
     for (i = 0; i < PROMPT_SLOTS; i++)
         PROMPT_TABLE[prompt_slot[i]] = prompt_handle[set][i];
-    write_at(START_WIDTH, &width[set], 1);
-    write_at(STICK_WIDTH, &width[set], 1);
+    write_at(CODE3_WIDE_DRAW, &code3_wide[set], 1);
+    write_at(CODE3_WIDE_MEASURE, &code3_wide[set], 1);
     write_at(WIDE_LAST_DRAW, &wide_last[set], 1);
     write_at(WIDE_LAST_MEASURE, &wide_last[set], 1);
+    write_at(CODE3_TEXELS, &texels[set], 1);
+    write_at(WIDE_TEXELS, &texels[set], 1);
 }
 
 
