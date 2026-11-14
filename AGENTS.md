@@ -75,7 +75,13 @@ instead of skipping. Before handing back a change to the runtime, the art or the
 install, run the slow tests that guard what you changed: `tools/verify.sh`
 followed by their paths (for example the DLL pin in `tests/test_install_pins.py`
 after a runtime change). Run `tools/verify.sh --full`, which runs everything and
-rebuilds the art even when nothing it reads has changed, before a release. Hand back a
+rebuilds the art even when nothing it reads has changed, before a release.
+`tools/verify.sh` runs with the machine to itself: while another heavy run, from
+any worktree, holds `work/.machine.lock`, it waits and says who holds it. Run a
+dev install, an art build or a benchmark the same way, through
+`python3 tools/machine_lock.py COMMAND`, and give a run that may wait a long
+timeout (a full run takes about 26 minutes). Stop only runs you started.
+`work/machine-lock.log` keeps each heavy run's minutes and CPU minutes. Hand back a
 change players see with the
 `evidence/contact-sheet.html` that `tools/run_check.py` writes: each capture beside
 its PASS/FAIL rows. The hooks in `tools/githooks/` lint each

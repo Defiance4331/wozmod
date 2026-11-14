@@ -5,6 +5,8 @@
 # Arguments go to pytest, e.g. tools/verify.sh tests/test_runtime_build.py -k release. A first argument --full also
 # reruns the art build when nothing it reads has changed since it last passed (WOZMOD_ART_FULL=1).
 cd "$(dirname "$0")/.." || exit 1
+# With the machine to itself: waits for any other heavy run, from any worktree, to end first (tools/machine_lock.py).
+[ -n "$WOZMOD_MACHINE_LOCK" ] || exec python3 tools/machine_lock.py tools/verify.sh "$@"
 [ "$1" = --full ] && { export WOZMOD_ART_FULL=1; shift; }
 for flag in ART_COMPOSE ART_NO_WO1PC ART_WORDS AUDIO CONTEXTS EVENT_TIMING FONT_FACE_SOURCE FONT_GEOMETRY INSTALL_E2E MOVIE_CAPTIONS \
   RUNTIME_COMPILE SHOUT_BANKS STEP_KEYS STOCK_PIECES TEXT_ROOM; do

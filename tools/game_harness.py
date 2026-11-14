@@ -24,6 +24,7 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 
+import machine_lock
 from checkout import work
 from prepare_run import local_path, verify_copy
 from wozmod.formats import pe
@@ -1323,43 +1324,13 @@ RUNTIMES = ("steamrt", "steamrt-1")
 
 
 def take_slot(holder: str = "", poll: float = 1.0) -> tuple[int, int]:
-    """Wait for a free game slot and lock it: (descriptor, slot index), writing ``holder`` (the run) and the time into
-    the lock file. The descriptor stays open, so the lock lasts until the process ends."""
-    while True:
-        for index, slot in enumerate(SLOTS):
-            fd = os.open(work() / slot, os.O_RDWR | os.O_CREAT, 0o600)
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                os.close(fd)
-                continue
-            os.ftruncate(fd, 0)
-            os.pwrite(fd, json.dumps({"run": holder, "since": time.time()}).encode(), 0)
-            return fd, index
-        time.sleep(poll)
+    """Wait for a free game slot and lock it: (descriptor, slot index). The lock lasts until the process ends."""
+    return machine_lock.take(SLOTS, holder, poll)
 
 
 def slot_holders() -> list[str]:
     """Who holds each busy game slot, and for how long: `run-name (12 min)`."""
-    held = []
-    for slot in SLOTS:
-        path = work() / slot
-        if not path.is_file():
-            continue
-        with path.open("rb") as handle:
-            try:
-                fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
-                fcntl.flock(handle, fcntl.LOCK_UN)
-                continue  # free
-            except BlockingIOError:
-                pass
-            try:
-                info = json.loads(handle.read() or b"{}")
-            except ValueError:
-                info = {}
-        age = f"{(time.time() - info['since']) / 60:.0f} min" if "since" in info else "age unknown"
-        held.append(f"{info.get('run') or 'a launch without a name'} ({age})")
-    return held
+    return machine_lock.holders(SLOTS)
 
 
 def run(root: Path, args: argparse.Namespace) -> int:
