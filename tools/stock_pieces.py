@@ -4,8 +4,8 @@
                                             # WOZMOD_LETTERING; writes data/stock_pieces.json
     uv run tools/stock_pieces.py --check    # exits 1 when a fresh record differs from the committed one
 
-The three build steps (text, voices, art) run in this process, one after another, with one worker, the art's
-worker pool turned into a thread. While they run:
+The three build steps (text, voices, art) run in this process, one after another: the voices with the installer's
+worker threads, the art with one worker, its worker pool turned into a thread. While they run:
 - every open of a file in the game folder goes through a tracking opener: reads of LINKDATA1/2.BIN and Voice.bin
   are kept as byte ranges, and the exe's bytes come back as TrackedBytes, which keep each span the code looks at
   (indexing, find/index, struct.unpack_from). The .IDX files are only located through, so they are not pieces;
@@ -49,8 +49,10 @@ ABOUT = ("Written by tools/stock_pieces.py: hashes and locations only. The piece
          "installer's build steps read (and the ones wozmod serves its own in place of), which install/stock.py checks.")
 
 
-def run_steps(game: Path, donors: Path, lettering: Path, scratch: Path, jobs: int, on_step=lambda step: None) -> Path:
-    """Run the installer's three build steps into scratch/out (laid out as the game folder) and return it."""
+def run_steps(game: Path, donors: Path, lettering: Path, scratch: Path, jobs: int, art_jobs: int | None = None,
+              on_step=lambda step: None) -> Path:
+    """Run the installer's three build steps into scratch/out (laid out as the game folder) and return it: the voices
+    with jobs workers, the art with art_jobs (default: jobs)."""
     from wozmod import install
     from wozmod.install.stock import STEPS
 
@@ -58,7 +60,7 @@ def run_steps(game: Path, donors: Path, lettering: Path, scratch: Path, jobs: in
     out.mkdir(parents=True, exist_ok=True)
     runs = {"text": lambda: install._text_table(game, donors, out),
             "voices": lambda: install._voice_banks(game, donors, out, jobs=jobs),
-            "art": lambda: install._menu_art(game, donors, lettering, scratch / "art", out, jobs=jobs)}
+            "art": lambda: install._menu_art(game, donors, lettering, scratch / "art", out, jobs=art_jobs or jobs)}
     for step in STEPS:
         on_step(step)
         started = time.monotonic()
@@ -510,8 +512,13 @@ def summary(document: dict) -> str:
 
 def record(game: Path, donors: Path, lettering: Path, scratch: Path) -> tuple[dict, Path]:
     """Run the steps under the recorder; return the pieces document and the build's output folder."""
+    from wozmod.install import worker_count
+
     with Recorder(game) as recorder:
-        out = run_steps(game, donors, lettering, scratch, 1, on_step=lambda step: setattr(recorder, "step", step))
+        # The voices' workers are threads that hand bytes to ffmpeg, which the recorder sees; the art's are processes
+        # it would not, so the art runs with one.
+        out = run_steps(game, donors, lettering, scratch, worker_count(), art_jobs=1,
+                        on_step=lambda step: setattr(recorder, "step", step))
     if recorder.violations:
         raise RuntimeError("stock files read outside the tracked readers:\n" + "\n".join(recorder.violations))
     return pieces_document(game, recorder.reads, out), out

@@ -18,11 +18,8 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 EXCEPTIONS = REPO / "data/text/context_exceptions.json"
 INPUTS = bool(os.environ.get("WOZMOD_GAME") and os.environ.get("WOZMOD_DONORS"))
-pytestmark = [
-    pytest.mark.skipif(not (os.environ.get("WOZMOD_CONTEXTS") == "1" and INPUTS),
-                       reason="set WOZMOD_CONTEXTS=1, WOZMOD_GAME and WOZMOD_DONORS (about two minutes)"),
-    pytest.mark.xdist_group("subtitle-contexts"),  # one worker, so the tests share one text stage and one World
-]
+pytestmark = pytest.mark.skipif(not (os.environ.get("WOZMOD_CONTEXTS") == "1" and INPUTS),
+                                reason="set WOZMOD_CONTEXTS=1, WOZMOD_GAME and WOZMOD_DONORS (about two minutes)")
 
 
 @pytest.fixture(scope="module")

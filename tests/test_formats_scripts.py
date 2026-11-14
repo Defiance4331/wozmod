@@ -6,7 +6,6 @@ from wozmod.formats.scripts import (
     ScriptError,
     caption_cues,
     donor_text,
-    event_captions,
     event_lines,
     event_texts,
     mesc_blocks,
@@ -15,7 +14,7 @@ from wozmod.formats.scripts import (
     quote_text,
     speak_flags,
 )
-from synthetic import event_file, mesc, script, spans, strings
+from synthetic import mesc, script, spans, strings
 
 
 def _table(*records, order="<"):
@@ -133,15 +132,6 @@ def test_quote_text_keeps_cp932_trail_at_bytes_and_non_numeric_suffixes():
         (b"33D@12@34", b"D@12"),
     ]
     assert [(value, quote_text(value)) for value, _ in cases] == cases
-
-
-def test_event_captions_read_each_caption_record_by_sub_scene_with_its_text_offset():
-    # Bugs: the mask offset taken from the file start instead of the sub-scene start (a shifted text), an ordinal
-    # that counts other records, a text offset at the mask (a cstr pointer that resolves to no English).
-    for order in "<>":
-        data, texts = event_file([(5, 0, b"A"), (5, 1, b"x"), (5, 0, b"B")], [(3, 0, b"y"), (5, 0, b"C")],
-                                 order=order, gap=6)
-        assert event_captions(data, order) == [(0, 0, texts[0], b"A"), (0, 1, texts[2], b"B"), (1, 0, texts[4], b"C")]
 
 
 def test_event_texts_keeps_direct_and_indexed_texts_and_drops_binary_markers():

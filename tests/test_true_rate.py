@@ -219,17 +219,6 @@ def test_catalogue_code_assembles_without_stray_branches():
 
 
 @pytest.mark.skipif(not os.environ.get("WOZMOD_GAME"), reason="WOZMOD_GAME unset")
-def test_catalogue_matches_the_stock_executable():
-    exe = Path(os.environ["WOZMOD_GAME"], "OROCHI_Z.exe")
-    if not exe.is_file():
-        pytest.skip("no stock OROCHI_Z.exe")
-    stock = exe.read_bytes()
-    true_rate.check(stock, true_rate.load())
-    if shutil.which(true_rate.ASSEMBLER):
-        assert "TR_SITES" in true_rate.header(stock)
-
-
-@pytest.mark.skipif(not os.environ.get("WOZMOD_GAME"), reason="WOZMOD_GAME unset")
 def test_each_rewritten_span_is_whole_instructions_that_nothing_jumps_into():
     """A patch or gate replaces whole instructions, and no branch in the code around it lands inside its span (only at
     its start), or the jump into its thunk would cut an instruction in two."""

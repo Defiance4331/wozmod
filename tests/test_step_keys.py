@@ -1,6 +1,6 @@
 """The install step keys (wozmod.install.step_keys): a step's key changes with exactly what its output depends on.
 
-The fast tests build a small repository in tmp_path. The slow ones (WOZMOD_STEP_KEYS=1, about 15 minutes) run the
+The fast tests build a small repository in tmp_path. The slow ones (WOZMOD_STEP_KEYS=1, about 18 minutes) run the
 three steps on the real inputs to settle what the keys assume: the worker count and every environment variable but
 the WOZMOD_* ones leave the output alone, a step opens no bundled file and no disc member its key leaves out, and the
 art step runs no font Python.
@@ -230,36 +230,44 @@ def test_a_cross_build_names_the_compiler_it_declares_without_running_one(tmp_pa
 REAL = pytest.mark.skipif(
     os.environ.get("WOZMOD_STEP_KEYS") != "1"
     or not all(os.environ.get(v) for v in ("WOZMOD_GAME", "WOZMOD_DONORS", "WOZMOD_LETTERING")),
-    reason="set WOZMOD_STEP_KEYS=1, WOZMOD_GAME, WOZMOD_DONORS and WOZMOD_LETTERING (about 15 minutes)")
+    reason="set WOZMOD_STEP_KEYS=1, WOZMOD_GAME, WOZMOD_DONORS and WOZMOD_LETTERING (about 18 minutes)")
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUN = Path(__file__).with_name("step_run.py")
+# The few-worker build's worker count per step: one, but two for the voices. The art has code only one worker runs
+# (a player with one core to spare runs it), while the voices' workers are threads with no such code, and two are
+# the fewest whose finishing order can differ from the order the work was handed out. One voice worker took 18 of
+# the fixture's 21 minutes.
+FEW = {"text": 1, "voices": 2, "art": 1}
 
 
-def _run(step: str, out: Path, jobs: int, env: dict, cwd: Path) -> subprocess.CompletedProcess:
-    """Run one step in a fresh Python, as the installer's worker runs it, logging what it opens and starts."""
-    return subprocess.run([sys.executable, str(RUN), step, str(out), str(jobs)], cwd=cwd, env=env, capture_output=True,
-                          text=True, encoding="utf-8", errors="replace")
+def _start(step: str, out: Path, jobs: int, env: dict, cwd: Path) -> subprocess.Popen:
+    """Start one step in a fresh Python, as the installer's worker runs it; what it prints goes to OUT/run.log."""
+    out.mkdir(parents=True)
+    with (out / "run.log").open("w") as log:
+        return subprocess.Popen([sys.executable, str(RUN), step, str(out), str(jobs)], cwd=cwd, env=env,
+                                stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
 
 
 @pytest.fixture(scope="module")
 def two_builds(tmp_path_factory):
-    """Each step built twice: once with one worker, the audit log on and this environment; once with the default
+    """Each step built twice: once with few workers, the audit log on and this environment; once with the default
     workers in another locale, time zone, hash seed and working folder."""
     base = tmp_path_factory.mktemp("step-keys")
     plain = {k: v for k, v in os.environ.items()}
     other = {**plain, "LC_ALL": "C", "LANG": "C", "TZ": "Pacific/Kiritimati", "PYTHONHASHSEED": "4242",
              "PYTHONUTF8": "0", "TMPDIR": str(base)}
     other.pop("WOZMOD_JOBS", None)
-    found = {}
-    for step in step_keys.STEPS:
-        first, second = base / "one" / step, base / "many" / step
-        for out, jobs, env, cwd in ((first, 1, {**plain, "WOZMOD_STEP_AUDIT": "1"}, REPO_ROOT),
-                                    (second, 0, other, base)):
-            out.mkdir(parents=True)
-            run = _run(step, out, jobs, env, cwd)
-            assert run.returncode == 0, run.stderr[-4000:]
-        found[step] = (first, second)
-    return found
+    # All six builds at once: the few-worker ones hold a core or two for minutes, and one after another the six
+    # took half an hour; the default-worker builds fill the other cores meanwhile.
+    audited = {**plain, "WOZMOD_STEP_AUDIT": "1"}
+    runs = {(step, side): _start(step, base / side / step, jobs, env, cwd)
+            for step in step_keys.STEPS
+            for side, jobs, env, cwd in (("few", FEW[step], audited, REPO_ROOT),
+                                         ("many", 0, other, base))}
+    failed = {f"{side}/{step}": (base / side / step / "run.log").read_text(errors="replace")[-4000:]
+              for (step, side), run in runs.items() if run.wait() != 0}
+    assert failed == {}
+    return {step: (base / "few" / step, base / "many" / step) for step in step_keys.STEPS}
 
 
 def _tree(folder: Path) -> dict[str, str]:
@@ -269,13 +277,14 @@ def _tree(folder: Path) -> dict[str, str]:
 
 
 @REAL
+@pytest.mark.slow_first
 def test_a_step_writes_the_same_bytes_with_any_worker_count_and_environment(two_builds):
     """Bug: a step's output depends on the worker count (results joined in finishing order) or on something outside
     its key (the locale's code page, the time zone, set or dict order under another hash seed, the working folder),
     so two players with the same key hold different files, and a kept step is not what this release builds."""
     differ = {}
-    for step, (one, many) in two_builds.items():
-        first, second = _tree(one), _tree(many)
+    for step, (few, many) in two_builds.items():
+        first, second = _tree(few), _tree(many)
         assert first, f"{step} wrote nothing"
         if first != second:
             differ[step] = sorted(name for name in first.keys() | second.keys() if first.get(name) != second.get(name))[:6]
@@ -293,6 +302,7 @@ def _opens(folder: Path) -> list[tuple[str, str]]:
 
 
 @REAL
+@pytest.mark.slow_first
 def test_a_step_opens_no_module_bundled_file_or_disc_member_its_key_leaves_out(two_builds):
     """Bug: a step loads a module its key leaves out (an import by name the source does not show), reads a bundled
     file its key leaves out (a NOT_READ folder it does read, or a projected file read past its reader), or a
@@ -304,7 +314,7 @@ def test_a_step_opens_no_module_bundled_file_or_disc_member_its_key_leaves_out(t
     root = resources.root()
     donors = Path(os.environ["WOZMOD_DONORS"]).resolve()
     unkeyed = {}
-    for step, (one, _) in two_builds.items():
+    for step, (few, _) in two_builds.items():
         reads = step_keys.bundled_reads(step, root)
         keyed = set(reads["keyed"]) | set(reads["projected"])  # a projected file: its reader is checked below
         members = {f"{disc}/{name}" for disc, names in step_keys.disc_reads(step).items() for name in names}
@@ -312,7 +322,7 @@ def test_a_step_opens_no_module_bundled_file_or_disc_member_its_key_leaves_out(t
             members |= {f"{disc}/{each.program.staged}" for disc, each in DISCS.items()}
         modules = set(reads["modules"])
         found = set()
-        for kind, path in _opens(one):
+        for kind, path in _opens(few):
             path = Path(path)
             if kind == "open" and path.is_relative_to(root / "src/wozmod") and path.suffix in (".py", ".pyc"):
                 if (module := _module(path.relative_to(root / "src"))) not in modules:
@@ -333,12 +343,13 @@ def test_a_step_opens_no_module_bundled_file_or_disc_member_its_key_leaves_out(t
 
 
 @REAL
+@pytest.mark.slow_first
 def test_the_install_steps_start_no_program_but_ffmpeg(two_builds):
     """Bug: the art step falls back to the font Python (FontForge through the system Python) on a machine that has
     one, so its output there depends on a program no key covers, and players without it get other bytes."""
     started = {}
-    for step, (one, _) in two_builds.items():
-        programs = sorted({Path(path).name for kind, path in _opens(one) if kind == "start"} - {"ffmpeg", "ffmpeg.exe"})
+    for step, (few, _) in two_builds.items():
+        programs = sorted({Path(path).name for kind, path in _opens(few) if kind == "start"} - {"ffmpeg", "ffmpeg.exe"})
         if programs:
             started[step] = programs
     assert started == {}

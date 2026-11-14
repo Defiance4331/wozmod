@@ -33,12 +33,12 @@ REPO = Path(__file__).resolve().parents[1]
 INPUTS = {"wo1-x360": "WOZMOD_WO1_X360_ISO", "wo2-x360": "WOZMOD_WO2_X360_ISO", "wo2-psp": "WOZMOD_WO2_PSP_ISO",
           "x360-tool": "WOZMOD_X360_TOOL", "psp-tool": "WOZMOD_PSP_TOOL"}
 
-pytestmark = [pytest.mark.skipif(
+pytestmark = pytest.mark.skipif(
     os.environ.get("WOZMOD_INSTALL_E2E") != "1"
     or not all(os.environ.get(v) for v in ["WOZMOD_GAME", "WOZMOD_DONORS", *INPUTS.values()]),
     reason="set WOZMOD_INSTALL_E2E=1, WOZMOD_GAME, WOZMOD_DONORS (the menu words of the lettering) and "
            + ", ".join(INPUTS.values()),
-), pytest.mark.xdist_group("install-e2e")]  # one xdist worker, so its tests share one install in work/install-e2e
+)
 
 
 @pytest.fixture(scope="module")

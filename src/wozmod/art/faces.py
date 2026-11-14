@@ -422,12 +422,12 @@ def face_rows(image: Image.Image, texts: list, is_fill=yellow, least: int = 3, c
     return [(image.crop((0, top, image.width, bottom)), text, is_fill, least, counts)
             for (top, bottom), text in zip(ink_rows(image), texts, strict=True) if text]
 
-FACE_WORK: tuple = ()  # (mapping, donors) for the face workers; set before they start, so forked workers share it
+_face_work: tuple = ()  # (mapping, donors) for the face workers; set before they start, so forked workers share it
 
 
 def _face(name: str) -> Face:
-    """One lettering face, built from the donors in FACE_WORK."""
-    mapping, donors = FACE_WORK
+    """One lettering face, built from the donors in _face_work."""
+    mapping, donors = _face_work
     stages = mapping["stage_names"]
     if name == "stage":
         entry, item, texture = stages["font"]
@@ -479,11 +479,11 @@ def used_faces(edits) -> set[str]:
 def faces(mapping: dict, donors: dict, jobs: int = 1, used: set[str] | None = None) -> dict:
     """The lettering faces (only those in used, when given), one worker process each when jobs > 1 (the longest step
     before the worker pool)."""
-    global FACE_WORK
+    global _face_work
     # a words-only face lends its sheets' words (labels, hi-res rows) and letters nothing, so its art is never read
     names = ["stage", "title", *(name for name, face in mapping.get("faces", {}).items() if not face.get("words_only"))]
     names = [name for name in names if used is None or name in used]
-    FACE_WORK = mapping, donors
+    _face_work = mapping, donors
     report_progress("art", "reading the lettering faces", 0.05, (0, len(names)))
     found = {}
     if jobs > 1 and len(names) > 1:  # an entry may letter with one face or none

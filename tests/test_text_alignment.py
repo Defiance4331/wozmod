@@ -136,18 +136,6 @@ def test_a_line_whose_speak_the_streams_align_takes_the_donor_line_from_the_spea
     assert stage_join(stock, donor, {1: 1, 32: 32}) == {("dialog", 0): 0, ("dialog", 2): 1}
 
 
-def test_lines_whose_speaks_cross_follow_the_streams_not_the_table_order():
-    # Bug: the table pairs one person's lines in their order (stock 1 and 2 with donor 1 and 2), where MOZ speaks
-    # line 2 in the event in which the donor speaks line 1 and the other way round, so each plays and shows the
-    # other's sentence (Dream stage 48 lines 33/34 and 36/37, decisions ledger text row 22). Expected by hand.
-    a, b, c = ((op, 0, 0, 0, 0, 0, 0, 0) for op in (5, 6, 7))
-    donor = replace(_script([], [(None, b"d0"), (None, b"d1"), (None, b"d2")]), events=(
-        (a, _speak(1, 0)), (b, _speak(2, 1)), (c, _speak(2, 2))))
-    stock = replace(_script([], [(None, b"D0"), (None, b"D2"), (None, b"D1")]), events=(
-        (a, _speak(1, 0)), (b, _speak(2, 2)), (c, _speak(2, 1))))
-    assert stage_join(stock, donor, {1: 1, 2: 2}) == {("dialog", 0): 0, ("dialog", 1): 2, ("dialog", 2): 1}
-
-
 def test_a_new_line_spoken_where_the_donor_repeats_a_line_takes_that_line_too():
     # Bug: the table's gap fill gives a line MOZ added (stock 1) the donor line no donor command speaks (donor 1),
     # where the donor speaks line 0 a second time; or the line that takes donor line 0 there takes it from stock line

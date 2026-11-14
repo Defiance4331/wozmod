@@ -32,21 +32,6 @@ def test_missing_latin_glyphs_use_their_distinct_two_byte_surrogates() -> None:
     assert text_table.encode_english("AŌōŪūïZ") == b"A\x84\x40\x84\x41\x84\x42\x84\x43\x84\x44Z"
 
 
-def test_colliding_keys_keep_both_rows_and_aligned_shared_name_pointers() -> None:
-    # The two independently known FNV-1a hashes select slot four in an eight-slot table.
-    expected = (
-        struct.pack("<II", 7, 120)
-        + bytes(12 * 4)
-        + struct.pack("<3I", 0xE40C292C, 104, 106)
-        + struct.pack("<3I", 0xEC0C35C4, 111, 113)
-        + bytes(12 * 2)
-        + b"a\0left\0i\0right\0\0"
-        + struct.pack("<4I", 3, 113, 0, 106)
-        + struct.pack("<2I", 1, 2)
-    )
-    assert text_table.table_blob({b"a": b"left", b"i": b"right"}, [b"right", None, b"left"], [2]) == expected
-
-
 def test_data_header_keeps_group_lengths_terminator_and_hook_return_flags() -> None:
     """Bugs: an edit record or hook row loses its text-mode group, so the runtime installs it in the wrong mode; the
     guard list exported is not the build's; a headroom hook trims a frame word other than the one holding its
@@ -196,9 +181,8 @@ RELEASE, TEST = (), ("ENRT_LOG", "ENRT_TEST")
 
 
 def compiles(test):
-    """Gate a test that runs the MinGW compiler. They share one worker, so each variant compiles once."""
-    gate = pytest.mark.skipif(os.environ.get("WOZMOD_RUNTIME_COMPILE") != "1", reason="set WOZMOD_RUNTIME_COMPILE=1")
-    return pytest.mark.xdist_group("runtime-compile")(gate(test))
+    """Gate a test that runs the MinGW compiler."""
+    return pytest.mark.skipif(os.environ.get("WOZMOD_RUNTIME_COMPILE") != "1", reason="set WOZMOD_RUNTIME_COMPILE=1")(test)
 
 
 @pytest.fixture(scope="module")

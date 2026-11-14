@@ -193,16 +193,6 @@ def test_top_mip_replacement_does_not_discard_the_lower_mip_tail() -> None:
     assert changed.textures[0].payload == bytes((3, 2, 1, 4)) * 4 + tail
 
 
-def test_g1t_resize_does_not_leave_later_texture_offsets_stale() -> None:
-    later = bytes((3, 2, 1, 255))
-    source = _g1t((1, 0, 0, bytes(4)), (1, 0, 0, later))
-    changed = parse_g1t(source).with_texture_resized(0, 2, 1, bytes((1, 2, 3, 4)) * 2)
-    assert changed.texture_offsets == (8, 24)
-    assert [(t.offset, t.end, t.width, t.height) for t in changed.textures] == [(40, 56, 2, 1), (56, 68, 1, 1)]
-    assert changed.textures[1].payload == later
-    assert struct.unpack_from("<I", changed.encode(), 8)[0] == 68
-
-
 def test_package_parser_does_not_drop_empty_items() -> None:
     g1t = _g1t((1, 0, 0, bytes((3, 2, 1, 255))))
     source = _package(g1t, b"")

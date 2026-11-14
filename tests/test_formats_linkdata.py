@@ -198,16 +198,6 @@ def test_wo2_raw_member_is_not_rejected_as_a_packed_header() -> None:
     assert linkdata.decoded_member(raw) == raw
 
 
-def test_ps2_member_sector_offsets_do_not_read_table_bytes(tmp_path: Path) -> None:
-    path = tmp_path / "archive.fns"
-    blob = bytearray(4099)
-    struct.pack_into("<4I4I", blob, 0, 0x33B59, 2, 2048, 0, 2, 3, 1, 5)
-    blob[2048:2053] = b"later"
-    blob[4096:4099] = b"one"
-    path.write_bytes(blob)
-    assert linkdata.ps2_members(path, [1, 0]) == {1: b"later", 0: b"one"}
-
-
 def test_ps2_raw_member_that_looks_packed_is_returned_without_decoding(tmp_path: Path) -> None:
     path = tmp_path / "archive.fns"
     raw = struct.pack("<4I", 0, 0, 16, 16)

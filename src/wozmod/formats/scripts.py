@@ -163,8 +163,8 @@ def event_lines(data: bytes, order: str = "<") -> dict[int, bytes]:
     return {i: t for i, t in lines.items() if t is not None}
 
 
-def event_captions(data: bytes, order: str = "<") -> list[tuple[int, int, int, bytes]]:
-    """An event file's place captions as (sub-scene, ordinal among its captions, text offset, text).
+def event_captions(data: bytes, order: str = "<") -> list[tuple[int, int, bytes]]:
+    """An event file's place captions as (sub-scene, ordinal among its captions, text).
 
     The file starts with u32 count and count u32 sub-scene offsets. A sub-scene is a chain of records: u32 offset
     of the next record from the sub-scene start (0 on the last), u8 type (0xFF ends the chain), u8 kind, u8 field
@@ -178,7 +178,7 @@ def event_captions(data: bytes, order: str = "<") -> list[tuple[int, int, int, b
         while data[at + 4] != 0xFF:
             if data[at + 4:at + 6] == b"\x05\x00":
                 text = base + struct.unpack_from(f"{order}I", data, at + 7 + data[at + 7 + data[at + 6]])[0] + 4
-                found.append((scene, ordinal, text, data[text:data.index(b"\0", text)]))
+                found.append((scene, ordinal, data[text:data.index(b"\0", text)]))
                 ordinal += 1
             if not (step := struct.unpack_from(f"{order}I", data, at)[0]):
                 break

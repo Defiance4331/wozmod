@@ -317,7 +317,7 @@ def stage_join(moz: Script, donor: Script, persons: dict[int, int]) -> dict[tupl
         holders[d].add(r)
     moved = {r: d for r, (d, *more) in latest.items() if not more and earliest.get(r) == {d}
              and pairs.get(("dialog", r)) != d}
-    lost = {h for d in moved.values() for h in holders[d] - moved.keys()
+    lost = {h for d in moved.values() for h in holders[d]  # a moved line that lands here is added back below
             if d not in earliest.get(h, set()) | latest.get(h, set())}
     return {("dialog", r): d for (_, r), d in pairs.items() if r not in moved and r not in lost} | {
         ("dialog", r): d for r, d in moved.items()}
@@ -550,8 +550,8 @@ def event_pairs(moz: bytes, english: dict[int, bytes]) -> list[tuple[bytes, str]
 
 def event_caption_pairs(moz: bytes, donor: bytes, order: str = "<") -> list[tuple[bytes, str]]:
     """Pair the place captions of a stock event and its donor event by sub-scene and order inside it."""
-    english = {(scene, ordinal): text for scene, ordinal, _, text in event_captions(donor, order)}
-    return _decoded((text, english[scene, ordinal]) for scene, ordinal, _, text in event_captions(moz)
+    english = {(scene, ordinal): text for scene, ordinal, text in event_captions(donor, order)}
+    return _decoded((text, english[scene, ordinal]) for scene, ordinal, text in event_captions(moz)
                     if (scene, ordinal) in english)
 
 

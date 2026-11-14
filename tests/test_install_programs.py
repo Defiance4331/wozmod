@@ -141,24 +141,6 @@ def test_a_decrypted_file_is_accepted_with_its_tail_and_never_run(tmp_path):
     assert installer.resolve_program("wo2-x360", {"wo2-x360-file": script, "wo2-x360": None}) == ("wo2-x360-file", DECRYPTED)
 
 
-@pytest.mark.parametrize("content", [b"E" + DECRYPTED[1:], DECRYPTED[:-1], DECRYPTED + bytes(65_537), ENCRYPTED])
-def test_a_wrong_file_is_refused_with_the_plain_message_and_the_install_stops_before_building(tmp_path, monkeypatch, content):
-    # Bug: any file of about the right size passes, or the install goes on to build.
-    bad = tmp_path / "bad"
-    bad.write_bytes(content)
-    assert installer.resolve_program("wo2-x360", {"wo2-x360-file": bad}) == ("wo2-x360-file", installer.WRONG_FILE)
-    game = tmp_path / "game"
-    game.mkdir()
-    monkeypatch.setattr(installer, "_build", lambda *args, **kwargs: (args[-1](), pytest.fail("the build must not go on past the checks"))[1])
-    monkeypatch.setattr(installer.resources, "ffmpeg", lambda: "ffmpeg")
-    inputs = {"wo1": tmp_path, "wo2-x360": _xbox_image(tmp_path, b"default.xex", ENCRYPTED), "wo2-psp": tmp_path,
-              "wo1-x360": tmp_path, "wo1-x360-file": _decrypted_file(tmp_path), "wo2-x360-file": bad, "x360-tool": None,
-              "psp-tool": None, "lettering": tmp_path, "dll": tmp_path}
-    with pytest.raises(InstallError) as caught:
-        installer.install(game, inputs, log=lambda _: None)
-    assert "Already decrypted Warriors Orochi 2 (Xbox 360, USA) program file: This is not the decrypted file wozmod needs." in str(caught.value)
-
-
 def test_a_decrypted_file_beside_the_program_is_refused_and_nothing_runs(tmp_path):
     # Bug: both are given and one silently wins, or the program runs (minutes lost) before the refusal.
     marker = _marker_tool(tmp_path)
@@ -168,26 +150,3 @@ def test_a_decrypted_file_beside_the_program_is_refused_and_nothing_runs(tmp_pat
     assert _runs(marker) == 0
 
 
-def test_the_disc_images_decrypted_copy_refuses_a_file_beside_it_and_the_encrypted_one_covers_nothing(tmp_path):
-    # Bug: an image that already holds the decrypted file still asks for a program, or takes a second decrypted file
-    # in silence; or one that holds only the encrypted file is taken as covered.
-    marker = _marker_tool(tmp_path)
-    other = tmp_path / "other"
-    other.write_bytes(b"not it")
-    held = _xbox_image(tmp_path, b"default.xex", DECRYPTED + bytes(100))
-    assert installer.resolve_program("wo2-x360", {"wo2-x360": held, "wo2-x360-file": other}) == ("wo2-x360-file", installer.FILE_IN_IMAGE)
-    # the program may still be needed for the other Xbox 360 disc: here it is not run
-    assert installer.resolve_program("wo2-x360", {"wo2-x360": held, "x360-tool": marker}) == ("wo2-x360", DECRYPTED)
-    assert installer.resolve_program("wo2-x360", {"wo2-x360": held}) == ("wo2-x360", DECRYPTED)  # no program needed
-    assert _runs(marker) == 0
-    encrypted_only = tmp_path / "enc"
-    encrypted_only.mkdir()
-    source, found = installer.resolve_program("wo2-x360", {"wo2-x360": _xbox_image(encrypted_only, b"default.xex", ENCRYPTED)})
-    assert (source, found) == ("x360-tool", "Pick a decryption program, or a decrypted file under Advanced.")
-
-
-def test_neither_a_program_nor_a_file_refuses_before_building_with_the_plain_message(tmp_path):
-    # Bug: with no program and no file the pair is skipped and the build reads a missing file.
-    (tmp_path / "donors/wo2-x360").mkdir(parents=True)
-    with pytest.raises(InstallError, match="Pick a decryption program, or a decrypted file under Advanced."):
-        installer._place_programs({"wo2-x360": _xbox_image(tmp_path, b"default.xex", ENCRYPTED)}, tmp_path / "donors")

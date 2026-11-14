@@ -36,7 +36,7 @@ def test_immediates_are_read_from_each_instruction_form_that_sets_a_message_id()
     # or the displacement is one byte, takes an unsigned immediate as signed, or reads a PSP word at its address
     # instead of its file offset, so an anchor joins the wrong message.
     code = bytes.fromhex("6880020000" "6a12" "05ee000000" "81c716010000" "83c039" "8d8f2f030000" "8d842d7a010000"
-                         "8d6e6a")
+                         "8d6e6a" "90")  # a nop after the last lea: read as four bytes, its displacement is not 0x6A
     exe = bytearray(0x200)
     struct.pack_into("<I", exe, 0x3C, 0x40)
     exe[0x40:0x44] = b"PE\0\0"

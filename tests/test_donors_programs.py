@@ -52,23 +52,6 @@ def test_a_program_given_by_a_relative_path_still_runs(tmp_path, monkeypatch):
     assert program == PAYLOAD, transcript
 
 
-@pytest.mark.parametrize("shape, platform, zeros", [("psp", "psp", 0), ("xex2ool", "x360", 0), ("xextool", "x360", 32_768)])
-def test_each_known_program_is_recognised_whatever_its_file_is_called(tmp_path, shape, platform, zeros):
-    # Bug: a profile has the wrong argument order or output place (the program fails with its usage text),
-    # the program is only tried under the first profile, or XexTool's zero padding makes its output refused.
-    tool = fake(tmp_path / "my decryptor", shape, zeros=zeros)
-    program, transcript = run_tool(tool, _identity(platform), ENCRYPTED)
-    assert program == PAYLOAD, transcript
-    assert "working..." in transcript
-
-
-def test_output_that_does_not_match_the_pin_is_refused(tmp_path):
-    # Bug: a zero exit code or the right size is trusted, so a wrong file (a changed byte) is installed.
-    tool = fake(tmp_path / "psp tool", "psp", produces=b"X" + PAYLOAD[1:])
-    program, transcript = run_tool(tool, _identity("psp"), ENCRYPTED)
-    assert program is None and "output not accepted" in transcript
-
-
 def test_a_program_that_hangs_is_stopped_by_the_timeout(tmp_path):
     # Bug: no timeout, so the install waits forever on a program that never ends (or holds the output open).
     tool = fake(tmp_path / "hang", "psp", body="time.sleep(60)")

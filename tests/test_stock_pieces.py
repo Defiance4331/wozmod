@@ -1,9 +1,9 @@
 """tools/stock_pieces.py on a synthetic game, and data/stock_pieces.json against the real build: it is what the build
 reads, and all of it.
 
-The real-build tests are slow (about 22 minutes): run them with WOZMOD_STOCK_PIECES=1, WOZMOD_GAME, WOZMOD_DONORS and
-WOZMOD_LETTERING. tools/stock_pieces.py records the three build steps once (one worker); a second build, from a copy
-of the game that keeps only the listed pieces, must write the same bytes.
+The real-build tests are slow (about 11 minutes alone): run them with WOZMOD_STOCK_PIECES=1, WOZMOD_GAME, WOZMOD_DONORS
+and WOZMOD_LETTERING. tools/stock_pieces.py records the three build steps once (the art with one worker); a second
+build, from a copy of the game that keeps only the listed pieces, must write the same bytes.
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ INPUTS = ("WOZMOD_GAME", "WOZMOD_DONORS", "WOZMOD_LETTERING")
 SLOW = pytest.mark.skipif(
     os.environ.get("WOZMOD_STOCK_PIECES") != "1" or not all(os.environ.get(name) for name in INPUTS),
     reason="set WOZMOD_STOCK_PIECES=1, " + ", ".join(INPUTS))
-ONE_WORKER = pytest.mark.xdist_group("stock-pieces")  # both share one record
 
 
 def _inputs() -> tuple[Path, Path, Path]:
@@ -40,7 +39,6 @@ def recorded(tmp_path_factory):
 
 
 @SLOW
-@ONE_WORKER
 def test_a_fresh_record_is_the_committed_one(recorded):
     # Bug: the build now reads a piece the committed record lacks (another mod's change there would go unnoticed and
     # change what is built), or no longer reads one (the install stops for nothing): data/stock_pieces.json was not
@@ -55,7 +53,6 @@ def _files(root: Path) -> dict[str, Path]:
 
 
 @SLOW
-@ONE_WORKER
 def test_a_build_from_only_the_listed_pieces_writes_the_same_bytes(recorded, tmp_path_factory):
     # Bug: the build reads a piece the record does not list (an entry, exe bytes or a clip a reader the recorder does
     # not see opens), so another mod's change there passes the check and changes what is built; or the check does not

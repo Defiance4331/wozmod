@@ -47,9 +47,17 @@ def pytest_configure(config) -> None:
         raise pytest.UsageError(f"WOZMOD_REQUIRE_INPUTS=1, but these inputs do not exist: {', '.join(missing)}")
 
 
+@pytest.hookimpl(tryfirst=True)  # before xdist reads the xdist_group marks
 def pytest_collection_modifyitems(items) -> None:
-    """Move the slow_first tests to the front. xdist starts tests in this order, so a slow test that sorts late
-    keeps one worker busy after the others are done (the fast run took 20 s instead of 15)."""
+    """Keep the tests that share a module fixture on one worker, and move the slow_first tests to the front.
+
+    xdist hands tests to any worker, and each worker makes its own copy of a module fixture: the step keys' builds
+    ran twice at once (31 minutes each), the voice maps' three times. xdist starts tests in the sorted order, so a
+    slow test that sorts late keeps one worker busy after the others are done (the fast run took 20 s instead of 15).
+    """
+    for item in items:
+        if any(defs[-1].scope == "module" for defs in item._fixtureinfo.name2fixturedefs.values()):
+            item.add_marker(pytest.mark.xdist_group(item.module.__name__))
     items.sort(key=lambda item: item.get_closest_marker("slow_first") is None)
 
 

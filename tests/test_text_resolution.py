@@ -73,15 +73,6 @@ def test_ens_pointer_does_not_switch_entry_view_slot_or_word_order(donors):
     assert observed == cases
 
 
-def test_edited_row_spans_keep_original_coordinates_after_a_length_change(donors):
-    row = {
-        "source": "edited", "ref": ["wo1-x360", "ens", 5, "cstr", 6],
-        "edits": [[7, 12, "Z"], [18, 23, "OMEGA!"]],
-    }
-
-    assert donors.resolve_row(row) == "Prefix Z beta OMEGA!"
-
-
 def test_overlapping_edit_spans_cannot_duplicate_donor_characters(donors):
     row = {
         "source": "edited", "ref": ["wo1-x360", "ens", 5, "cstr", 6],

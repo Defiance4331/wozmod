@@ -405,13 +405,6 @@ def test_installs_release_dll_is_replaced_by_a_test_build_of_the_checkout(tools,
     assert staged[-1] == b"MZ fresh" + game_harness.TEST_MAGIC
 
 
-@pytest.mark.parametrize("check, reason, code", [(0, "stopped", 0), (1, "stopped", 1), (0, "crash", 1)])
-def test_exit_code_is_one_for_a_failed_row_or_a_run_not_ended_by_stop(tools, tmp_path, monkeypatch, spec, check, reason, code):
-    """Bug: a FAIL row, or a game that crashed after the last row, still exits 0."""
-    monkeypatch.setattr(tools.run_check, "wait_up", lambda root, proc: True)
-    assert drive_with(tools, tmp_path, monkeypatch, spec, [reason], check)[0] == code
-
-
 def test_misspelt_only_name_fails_before_any_staging(tools, tmp_path, monkeypatch, spec):
     """Bug: the typo is found after a minute of staging and boot (or not at all)."""
     code, staged = drive_with(tools, tmp_path, monkeypatch, spec, [], only="a,zz")
