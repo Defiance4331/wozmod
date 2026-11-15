@@ -66,7 +66,7 @@ def test_every_english_shout_bank_plays_its_own_officers_recordings() -> None:
     files = {disc: (donors / disc / "link_sebank.bdx").read_bytes() for disc in ("wo1-x360", "wo2-x360")}
 
     def clip(disc: str, bank: int, j: int) -> bytes:
-        offset, size, _ = banks[disc][bank][j]
+        offset, size, *_ = banks[disc][bank][j]
         return packs[1][offset:offset + size] if disc == "wo2-psp" else files[disc][offset:offset + size]
 
     # No two MOZ banks play one donor bank, or the same clips.

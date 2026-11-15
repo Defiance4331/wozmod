@@ -8,6 +8,10 @@ All notable changes to wozmod are listed here, newest first. The format follows
 
 ### Fixed
 
+- Each English attack shout now plays at the volume its own game gave it. Before, it kept the volume set for the
+  Japanese shout it replaced, so some officers shouted well above the rest: Dodomeki's shouts are now 3 dB quieter
+  and Wei Yan's 2 dB. Other officers' shouts move by up to about 3.5 dB either way, to the balance their own game
+  gave them.
 - An officer's strategy line in battle now sits on a strip that runs the full width of the screen, as in Warriors
   Orochi 2 on Xbox 360, so long English lines no longer run off its end and fade into the battlefield. The line also
   uses that width: all but one now read on a single row instead of leaving a word or two on a second, and it sits

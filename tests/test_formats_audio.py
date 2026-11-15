@@ -20,6 +20,7 @@ from wozmod.formats.audio import (
     quote_slots,
     se_bank,
     se_entries,
+    psp_se_entries,
     se_plan,
     slot_voice_map,
     wo2_se_entries,
@@ -92,17 +93,21 @@ def test_voice_bank_table_serves_sparse_ids_with_their_own_aligned_records() -> 
     assert {i: (off % 16, bank[off:off + size]) for i, (off, size) in enumerate(table) if size} == {i: (0, clip) for i, clip in clips.items()}
 
 
-def test_se_replacement_keeps_each_clip_offset_and_preserves_non_audio_fields() -> None:
-    original = [struct.pack("<IHHHH4xIII12s", 0x01000000, 48_000, 0x8800, 512, 1017, 9, 0, 512, bytes((k,)) * 12) for k in range(3)]
-    clips = [(256, bytes((1,)) * 512), (512, bytes((2,)) * 1024), (0, b"")]
+def test_se_replacement_keeps_each_clip_offset_takes_the_donor_volume_and_preserves_other_fields() -> None:
+    # Bug: an English shout keeps the stock entry's volume (byte +34), set for the Japanese recording, instead of the
+    # one its donor game plays it at, which made Dodomeki's shouts 3 dB louder than on the Xbox 360.
+    original = [struct.pack("<IHHHH4xIII6shh2s", 0x01000000, 48_000, 0x8800, 512, 1017, 9, 0, 512, bytes((k,)) * 6, -100, 7, b"zz")
+                for k in range(3)]
+    clips = [(256, bytes((1,)) * 512, -401), (512, bytes((2,)) * 1024, 0), (0, b"", -10000)]
     header, data = se_bank(_se_header(original), clips)
 
     assert data == b"_DBW0000" + struct.pack("<I", 1548) + bytes((1,)) * 512 + bytes((2,)) * 1024
     assert struct.unpack_from("<I", header, 16)[0] == 1536
-    for offset, old, (samples, ima) in zip(se_entries(header), original, clips, strict=True):
+    for offset, old, (samples, pcm, volume) in zip(se_entries(header), original, clips, strict=True):
         entry = header[offset:offset + 40]
         count, start, size = struct.unpack_from("<III", entry, 16)
-        assert (count, data[12 + start:12 + start + size], entry[:16] + entry[28:]) == (samples, ima, old[:6] + struct.pack('<HHH', 0x4800, 2, 1) + old[12:16] + old[28:])
+        assert (count, data[12 + start:12 + start + size], struct.unpack_from("<h", entry, 34)[0]) == (samples, pcm, volume)
+        assert entry[:16] + entry[28:34] + entry[36:] == old[:6] + struct.pack("<HHH", 0x4800, 2, 1) + old[12:16] + old[28:34] + old[36:]
 
 
 def test_se_index_reads_header_and_data_as_pairs_without_swapping_offsets() -> None:
@@ -148,12 +153,34 @@ def test_se_bank_whose_officer_bank_has_another_entry_count_stops_the_build() ->
 
 
 def test_wo2_se_entries_use_record_words_and_accumulate_unaligned_bank_sizes() -> None:
-    def bank(records: list[tuple[int, int]]) -> bytes:
-        sample = b"SDsdSmpl" + struct.pack("<II", 0, len(records)) + b"".join(struct.pack("<18I", offset, *([0] * 12), 48_000, 0, 0, 0, size) for offset, size in records)
+    # Bugs: a shifted record word, a dropped volume factor (words 7 to 9 multiply, each in hundredths), or a bank
+    # offset that restarts at each bank.
+    def bank(records: list[tuple[int, int, tuple[int, int, int]]]) -> bytes:
+        sample = b"SDsdSmpl" + struct.pack("<II", 0, len(records)) + b"".join(
+            struct.pack("<18I", offset, *([0] * 6), *factors, *([0] * 3), 48_000, 0, 0, 0, size) for offset, size, factors in records)
         chunk = b"SDsdVers" + bytes(8) + b"SDsdHead" + bytes(40) + sample
         return chunk + bytes(2048 - len(chunk))
 
-    assert wo2_se_entries(bank([(0, 80), (80, 100)]) + bank([(0, 70)])) == [[(0, 80, 48_000), (80, 100, 48_000)], [(180, 70, 48_000)]]
+    banks = wo2_se_entries(bank([(0, 80, (100, 100, 63)), (80, 100, (100, 90, 63))]) + bank([(0, 70, (100, 100, 100))]))
+    assert banks == [[(0, 80, 48_000, -401), (80, 100, 48_000, -493)], [(180, 70, 48_000, 0)]]
+
+
+def test_psp_se_entries_give_each_clip_the_volume_of_the_tone_that_plays_it() -> None:
+    # Bugs: the padding at the end of the tone chunk read as one more tone (which gave San Zang's unplayed clip 15 a
+    # volume), or a tone's clip counted from 0 instead of the PPVA chunk's first index.
+    first = 2
+    tones = [(first, 0x1000), (first + 1, 3200)]
+    pptn = b"".join(struct.pack("<i28xI60x", clip, volume) for clip, volume in tones) + struct.pack("<I", first + 2) + bytes(0x2C)
+    pptn = b"PPTN" + struct.pack("<I24x", 0x20 + len(pptn)) + pptn
+    records = [(0, 16_000, 32), (32, 16_000, 32), (64, 11_025, 32), (0xFFFFFFFF,) * 3]
+    ppva = b"".join(struct.pack("<IIIi", *r, -1) for r in records)
+    ppva = b"PPVA" + struct.pack("<I8xI12x", 0x20 + len(ppva), first) + ppva
+    chunks = b"PPHD" + bytes(28) + pptn + ppva
+    bank = struct.pack("<4I", 2, 16, 16 + len(chunks), 96) + chunks + bytes(96)
+    pack = struct.pack("<4I", 0, 24 + len(bank), 1, 0x800) + struct.pack("<II", 24, len(bank)) + bank
+    body = 24 + 16 + len(chunks)
+
+    assert psp_se_entries(pack) == [[(body, 32, 16_000, 0), (body + 32, 32, 16_000, -214), (body + 64, 32, 11_025, None), None]]
 
 
 def test_slot_voice_map_drops_ambiguous_ids_and_unsuffixed_slots_without_shifting() -> None:
@@ -381,7 +408,7 @@ def test_pcm_se_entries_say_pcm_not_adpcm_and_point_at_whole_samples() -> None:
     # Bug: PCM data under the stock entry's IMA ADPCM format fields, which the game would decode as
     # noise, or sizes counted in ADPCM blocks so that every later clip starts in the wrong place.
     original = [struct.pack("<IHHHH4xIII12s", 0x01000000, 48_000, 0x8800, 512, 1017, 9, 0, 512, bytes(12)) for _ in range(2)]
-    clips = [(3, struct.pack("<3h", 1, -2, 3)), (2, struct.pack("<2h", 4, 5))]
+    clips = [(3, struct.pack("<3h", 1, -2, 3), 0), (2, struct.pack("<2h", 4, 5), 0)]
 
     header, data = se_bank(_se_header(original), clips)
 
@@ -390,7 +417,7 @@ def test_pcm_se_entries_say_pcm_not_adpcm_and_point_at_whole_samples() -> None:
     assert [struct.unpack_from("<HHHH", e, 4) for e in entries] == [(48_000, 0x4800, 2, 1)] * 2
     assert [struct.unpack_from("<III", e, 16) for e in entries] == [(3, 0, 6), (2, 6, 4)]
     with pytest.raises(VoiceBankError):  # ADPCM-sized data does not pass for PCM
-        se_bank(_se_header(original[:1]), [(3, bytes(512))])
+        se_bank(_se_header(original[:1]), [(3, bytes(512), 0)])
 
 
 def test_voice_clip_too_long_for_the_game_slot_is_encoded_again_one_step_lower(tmp_path: Path, monkeypatch) -> None:

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import re
 import struct
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, BinaryIO
+from typing import TYPE_CHECKING, BinaryIO, NamedTuple
 
 from wozmod import process, resources
 from wozmod.formats.linkdata import ps2_extents
@@ -639,8 +640,28 @@ def se_entries(header: bytes) -> list[int]:
     return [12 + o for o in struct.unpack_from(f"<{count}I", header, 20)]
 
 
-def wo2_se_entries(hdx: bytes) -> list[list[tuple[int, int, int]]]:
-    """Read X360 sound-bank BDX offsets, sizes and rates."""
+class DonorShout(NamedTuple):
+    """A donor's attack-shout clip: where it sits in its file, its sample rate, and the volume its own game plays it
+    at, in MOZ's unit for a shout entry's volume (se_volume); None for a clip its own game never plays, which so has
+    no volume to carry over."""
+    offset: int
+    size: int
+    rate: int
+    volume: int | None
+
+
+def se_volume(gain: float) -> int:
+    """MOZ's volume for a shout played at linear amplitude gain (at most 1): hundredths of a dB, the signed 16-bit
+    value at entry byte +34 that the voice start adds to its channel and pool terms (0x67AC70 loads it, 0x679FD0
+    sets it with DirectSound SetVolume, whose floor of -10000 is silence)."""
+    return round(2000 * math.log10(gain)) if gain > 0 else -10000
+
+
+def wo2_se_entries(hdx: bytes) -> list[list[DonorShout]]:
+    """Read X360 sound-bank BDX offsets, sizes, rates and volumes. The donor's voice start plays a clip at its class
+    volume times Smpl words 7, 8 and 9, each in hundredths (WO2 0x82307D98-0x82307DA4, WO1 0x822B9A18-0x822B9A3C,
+    with 1e-6 at 0x820F68F8); it first copies its program's volume over word 9 (0x82307540), and the two are equal
+    in every region of both discs."""
     banks, base = [], 0
     for start in range(0, len(hdx), 2048):
         if hdx[start:start + 8] != b"SDsdVers":
@@ -648,17 +669,31 @@ def wo2_se_entries(hdx: bytes) -> list[list[tuple[int, int, int]]]:
         smpl = hdx.index(b"SDsdSmpl", start)
         count = struct.unpack_from("<I", hdx, smpl + 12)[0]
         words = [struct.unpack_from("<18I", hdx, smpl + 16 + 0x48 * k) for k in range(count)]
-        banks.append([(base + w[0], w[17], w[13]) for w in words])
+        banks.append([DonorShout(base + w[0], w[17], w[13], se_volume(w[7] * w[8] * w[9] / 1e6)) for w in words])
         base += max(w[0] + w[17] for w in words)
     return banks
 
 
-def psp_se_entries(pack: bytes) -> list[list[tuple[int, int, int] | None]]:
+def _psp_tone_volumes(bank: bytes, ppva: int) -> dict[int, int]:
+    """The volume of each PPVA record a tone plays, by its place in the PPVA chunk. A tone record (0x60 bytes from
+    PPTN byte 0x20) names its record by u32 0, counted from the PPVA chunk's u32 at 0x10 (a noise tone's -1 names
+    none), and its u32 at 0x20 is the volume the voice start hands sceSasSetVolume, 0x1000 at full (EBOOT 0x1C43D4,
+    0x1B7CD0, 0x1BA34C). No two tones of the stock packs play one record."""
+    pptn = bank.find(b"PPTN")
+    if pptn < 0:
+        return {}
+    first = struct.unpack_from("<I", bank, ppva + 0x10)[0]
+    count = (struct.unpack_from("<I", bank, pptn + 4)[0] - 0x20) // 0x60  # the chunk's size may end in padding
+    tones = (struct.unpack_from("<i28xI", bank, pptn + 0x20 + 0x60 * t) for t in range(count))
+    return {clip - first: se_volume(volume / 0x1000) for clip, volume in tones}
+
+
+def psp_se_entries(pack: bytes) -> list[list[DonorShout | None]]:
     """Read the WO2 PSP sound pack (LINKDATA.ENS member 0 or 1): u32 0, size, bank count, 0x800, then each bank's
     (offset, size). A bank is u32 2, its PPHD offset, its VAG body offset and size, then PPHD, PPPG, PPTN and
     PPVA chunks; each PPVA record from byte 0x20 is (VAG offset in the body, rate, size, -1), all ones for an empty
-    slot. Returns each bank's VAGs as (offset in the pack, size, rate), None for an empty slot; the size leaves out
-    a closing 16-byte block of flag 7, which ends the sound rather than holding samples."""
+    slot. Returns each bank's VAGs with the volume of the tone that plays each (_psp_tone_volumes), None for an empty
+    slot; the size leaves out a closing 16-byte block of flag 7, which ends the sound rather than holding samples."""
     zero, size, count, _ = struct.unpack_from("<4I", pack)
     if zero or size != len(pack) or len(pack) < 16 + 8 * count:
         raise VoiceBankError("not a WO2 PSP sound pack")
@@ -669,6 +704,7 @@ def psp_se_entries(pack: bytes) -> list[list[tuple[int, int, int] | None]]:
         records = []
         if len(bank) >= 16 and ppva >= 0:
             body = struct.unpack_from("<I", bank, 8)[0]
+            volumes = _psp_tone_volumes(bank, ppva)
             for r in range(ppva + 0x20, ppva + struct.unpack_from("<I", bank, ppva + 4)[0], 16):
                 offset, rate, clip, _ = struct.unpack_from("<IIIi", bank, r)
                 if not (offset or rate or clip):
@@ -680,7 +716,7 @@ def psp_se_entries(pack: bytes) -> list[list[tuple[int, int, int] | None]]:
                     raise VoiceBankError("a WO2 PSP sound bank's clip runs past the bank")
                 if clip >= 16 and bank[body + offset + clip - 15] == 7:
                     clip -= 16
-                records.append((at + body + offset, clip, rate))
+                records.append(DonorShout(at + body + offset, clip, rate, volumes.get(len(records))))
         banks.append(records)
     return banks
 
@@ -714,21 +750,25 @@ def _pcm16(clips: list[tuple[str, bytes, int, int]], jobs: int | None) -> list[t
 SE_FORMAT_PCM = (0x4800, 2, 1)
 
 
-def se_bank(header: bytes, clips: list[tuple[int, bytes]]) -> tuple[bytes, bytes]:
-    """Replace sound-bank formats, sample counts, offsets and data with 16-bit PCM clips."""
+def se_bank(header: bytes, clips: list[tuple[int, bytes, int | None]]) -> tuple[bytes, bytes]:
+    """Replace sound-bank formats, sample counts, offsets, volumes and data with (samples, 16-bit PCM, se_volume)
+    clips. The stock volume was set for the stock recording, so each clip takes the one its donor plays it at; a clip
+    its donor never plays (volume None) keeps the stock entry's."""
     entries = se_entries(header)
-    if len(clips) != len(entries) or any(len(pcm) != 2 * n for n, pcm in clips):
+    if len(clips) != len(entries) or any(len(pcm) != 2 * n for n, pcm, _ in clips):
         raise VoiceBankError("English SE clips do not fit the bank's entries")
     out, data = bytearray(header), bytearray()
-    for at, (samples, pcm) in zip(entries, clips, strict=True):
+    for at, (samples, pcm, volume) in zip(entries, clips, strict=True):
         struct.pack_into("<HHH", out, at + 6, *SE_FORMAT_PCM)
         struct.pack_into("<III", out, at + 16, samples, len(data), len(pcm))
+        if volume is not None:
+            struct.pack_into("<h", out, at + 34, volume)
         data += pcm
     struct.pack_into("<I", out, 16, len(data))
     return bytes(out), b"_DBW0000" + struct.pack("<I", 12 + len(data)) + bytes(data)
 
 
-def se_plan(stock: list[tuple[bytes, bytes]], donors: dict[str, list[list[tuple[int, int, int]]]]
+def se_plan(stock: list[tuple[bytes, bytes]], donors: dict[str, list[list[DonorShout | None]]]
             ) -> dict[int, list[tuple[str, int, int]]]:
     """The donor (disc, bank, entry) of each entry of every MOZ bank whose unit type a donor has (se_donor_bank),
     in SE_DONORS order: WO1 X360's entry as SE_WO1_ENTRIES pairs it, else entry k of the first later donor with
@@ -762,22 +802,23 @@ def english_se_bank(seidx: bytes, se: bytes, wo1_hdx: bytes, wo1_bdx: Path, wo2_
     donors = {"wo1-x360": wo2_se_entries(wo1_hdx), "wo2-x360": wo2_se_entries(wo2_hdx), "wo2-psp": psp_se_entries(psp_pack)}
     files = {"wo1-x360": wo1_bdx, "wo2-x360": wo2_bdx}
     for disc, bdx in files.items():
-        if max(o + n for bank in donors[disc] for o, n, _ in bank) > bdx.stat().st_size:
+        if max(clip.offset + clip.size for bank in donors[disc] for clip in bank) > bdx.stat().st_size:
             raise VoiceBankError(f"{bdx.name} is shorter than its HDX describes")
-    work, tiers = {}, dict.fromkeys(SE_DONORS, 0)
+    work, volumes, tiers = {}, {}, dict.fromkeys(SE_DONORS, 0)
     with files["wo1-x360"].open("rb") as one, files["wo2-x360"].open("rb") as two:
         read = {"wo1-x360": lambda o, n: _read_at(one, o, n), "wo2-x360": lambda o, n: _read_at(two, o, n),
                 "wo2-psp": lambda o, n: psp_pack[o:o + n]}
         for moz, sources in se_plan(stock, donors).items():
             header = stock[moz][0]
-            work[moz] = []
+            work[moz], volumes[moz] = [], []
             for at, (disc, bank, j) in zip(se_entries(header), sources, strict=True):
-                offset, size, donor_rate = donors[disc][bank][j]
-                work[moz].append((disc, read[disc](offset, size), donor_rate,
+                clip = donors[disc][bank][j]
+                work[moz].append((disc, read[disc](clip.offset, clip.size), clip.rate,
                                   struct.unpack_from("<H", header, at + 4)[0]))
+                volumes[moz].append(clip.volume)
                 tiers[disc] += 1
     converted = iter(_pcm16([job for entries in work.values() for job in entries], jobs))
-    banks = {moz: se_bank(stock[moz][0], [next(converted) for _ in entries]) for moz, entries in work.items()}
+    banks = {moz: se_bank(stock[moz][0], [(*next(converted), volume) for volume in volumes[moz]]) for moz in work}
     table, body = bytearray(_aligned_size(4 + 16 * SE_BANKS)), bytearray()
     struct.pack_into("<I", table, 0, SE_BANKS)
     for moz, (header, data) in sorted(banks.items()):
