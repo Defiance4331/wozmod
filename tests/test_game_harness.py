@@ -1619,6 +1619,7 @@ def test_video_pins_the_screen_stream_to_bgrx(tmp_path, monkeypatch):
     (tmp_path / "evidence").mkdir()
     calls = []
     monkeypatch.setattr(harness.subprocess, "Popen", lambda command, **kwargs: calls.append(command))
+    monkeypatch.setattr(harness, "watch_recording", lambda *args: None)  # no xrun journal into a removed tmp_path
     harness.perform(tmp_path, {"action": "video", "name": "clip", "seconds": 5})
     command = calls[0]
     link = command.index("!", command.index("pipewiresrc"))
@@ -1716,3 +1717,17 @@ def test_reenumerate_unlinks_one_identity_and_links_the_other(tmp_path):
     harness.write_json(one / "evidence/session.json", {"pads": [{"model": "switch", "node": str(first), "hidden": str(hide_a)}]})
     with pytest.raises(ValueError, match="second pad"):
         harness.reenumerate_pad(one)
+
+
+def test_xrun_count_is_the_err_column_of_pw_tops_last_iteration() -> None:
+    # Bugs: reading the first iteration (pw-top's first is taken before any cycle ran), or another column.
+    text = """S   ID  QUANT   RATE    WAIT    BUSY   W/Q   B/Q  ERR FORMAT           NAME 
+R   54    256  48000  50.8us   9.4us  0.01  0.00    0    F32LE 2 48000 musou_harness
+R   57    480  48000  24.3us  18.6us  0.00  0.00   14    F32LE 2 48000  + game window title
+S   ID  QUANT   RATE    WAIT    BUSY   W/Q   B/Q  ERR FORMAT           NAME 
+S   30      0      0    ---     ---   ---   ---     2                  Dummy-Driver
+R   54    256  48000  38.3us   5.6us  0.01  0.00    1    F32LE 2 48000 musou_harness
+R   57    480  48000  24.5us   6.8us  0.00  0.00 2721    F32LE 2 48000  + game window title
+R   66   6521  48000  25.0us  18.6us  0.00  0.00   30    F32LE 2 48000  + parecord
+"""
+    assert harness.pw_top_errors(text) == 2 + 1 + 2721 + 30

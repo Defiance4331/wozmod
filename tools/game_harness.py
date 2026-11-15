@@ -619,6 +619,43 @@ def recordings_slow(root: Path, target: int) -> list[str]:
     return slow
 
 
+def pw_top_errors(text: str) -> int | None:
+    """The ERR column of `pw-top --batch-mode`'s last iteration, summed over its nodes: the server's xruns so far."""
+    lines = text.splitlines()
+    heads = [i for i, line in enumerate(lines) if line.split()[:2] == ["S", "ID"]]
+    if not heads:
+        return None
+    rows = [line.split() for line in lines[heads[-1] + 1:]]
+    return sum(int(row[8]) for row in rows if len(row) > 8 and row[8].isdigit())
+
+
+def watch_recording(root: Path, name: str, seconds: float) -> None:
+    """Journal the private audio server's xruns over a recording, from 2 s in (a new recorder counts its own at start)
+    to its last seconds. A rise means the server, or a stream feeding it, missed a cycle, so the recording lost or
+    gained time in 256-sample steps: a loaded host, not the mod."""
+    def errors() -> int | None:
+        try:
+            return pw_top_errors(subprocess.run(["pw-top", "--batch-mode", "--iterations", "2"], capture_output=True,
+                                                text=True, timeout=10).stdout)
+        except (OSError, subprocess.SubprocessError):
+            return None
+    if seconds < 5:
+        return
+    time.sleep(2)
+    first, start = errors(), time.monotonic()
+    time.sleep(max(0.0, seconds - 4.5 - (time.monotonic() - start)))
+    with (root / "evidence/xruns.jsonl").open("a") as log:
+        log.write(json.dumps({"name": name, "first": first, "last": errors()}) + "\n")
+
+
+def recordings_dropped(root: Path) -> list[str]:
+    """Recordings over whose stretch the audio server's xrun count rose: their audio lost or gained time."""
+    path = root / "evidence/xruns.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()] if path.is_file() else []
+    return [row["name"] for row in rows if row["first"] is not None and row["last"] is not None
+            and row["last"] > row["first"]]
+
+
 def log_frames(root: Path, stop: "threading.Event") -> None:
     """The supervisor's sampler: the runtime's frame count once a second, until stop is set."""
     block = None
@@ -1106,6 +1143,7 @@ def perform(root: Path, request: dict) -> dict:
         subprocess.Popen(["timeout", str(seconds), "parecord", "--device=musou_harness.monitor",
                           "--format=float32le", "--rate=48000", "--channels=2", "--file-format=wav", str(destination)],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        threading.Thread(target=watch_recording, args=(root, name, seconds), daemon=True).start()
         return {"path": str(destination), "seconds": seconds}
     elif action == "video":
         # Gamescope's PipeWire screen stream and the private sink's monitor, muxed by one pipeline so they stay in step.
@@ -1128,6 +1166,7 @@ def perform(root: Path, request: dict) -> dict:
                  "opusenc", "bitrate=192000", "!", "queue", "!", "mux.",
                  "matroskamux", "name=mux", "!", "filesink", f"location={destination}"],
                 stdout=log, stderr=subprocess.STDOUT)
+        threading.Thread(target=watch_recording, args=(root, name, seconds), daemon=True).start()
         return {"path": str(destination), "seconds": seconds}
     elif action not in ("status", "stop"):
         raise ValueError(f"unknown action: {action}")
@@ -1212,7 +1251,8 @@ def serve(root: Path) -> int:
                 busy_until = time.monotonic() + (float(request.get("seconds", 0)) if request.get("action") in
                                                  ("record", "video") else 0)
                 if request.get("action") == "stop":  # how the game kept its frame rate, for every run's last word
-                    response.update(fps=fps_summary(root, target), slow_recordings=recordings_slow(root, target))
+                    response.update(fps=fps_summary(root, target), slow_recordings=recordings_slow(root, target),
+                                    dropped_recordings=recordings_dropped(root))
                 with (root / "evidence/actions.jsonl").open("a") as journal:
                     journal.write(json.dumps({
                         "time": time.time(), "request": request,
@@ -1348,6 +1388,49 @@ def run(root: Path, args: argparse.Namespace) -> int:
         os.close(lock)
 
 
+AUDIO_DAEMONS = ("pipewire", "wireplumber", "pipewire-pulse")
+RTKIT = ["busctl", "call", "--system", "org.freedesktop.RealtimeKit1", "/org/freedesktop/RealtimeKit1",
+         "org.freedesktop.RealtimeKit1"]
+
+
+def raise_audio_priority(root: Path, raised: dict[int, str]) -> None:
+    """Give the run's private audio server the priority a desktop session gives its own: each daemon's data-loop
+    threads real-time (SCHED_RR 20) and its main thread nice -11, through rtkit. Without it the server inherits
+    run_check's nice 10 and, on a busy host, misses 5 ms graph cycles, so recordings lose time in 256-sample steps.
+    Runs outside the sandbox because rtkit takes host thread ids, which the sandbox's PID namespace hides; falls back
+    to the lowest nice RLIMIT_NICE allows. ``raised`` (thread id -> what it got) makes a repeat skip done threads."""
+    tag = f"MUSOU_HARNESS_ROOT={root}".encode()
+    floor = 20 - resource.getrlimit(resource.RLIMIT_NICE)[0]
+    before = len(raised)
+    for proc in Path("/proc").iterdir():
+        try:
+            if (not proc.name.isdigit() or (proc / "comm").read_text().strip() not in AUDIO_DAEMONS
+                    or tag not in (proc / "environ").read_bytes().split(b"\0")):
+                continue
+            pid = int(proc.name)
+            threads = [(int(task.name), (task / "comm").read_text().strip()) for task in (proc / "task").iterdir()]
+        except (OSError, ValueError):
+            continue  # gone, or not ours
+        for tid, name in threads:
+            loop = name.startswith("data-loop")
+            if tid in raised or not (loop or tid == pid):
+                continue
+            with contextlib.suppress(OSError):  # rtkit grants only to a thread capped at its 200 ms CPU budget
+                resource.prlimit(pid, resource.RLIMIT_RTTIME, (200000, 200000))
+            call = ["MakeThreadRealtimeWithPID", "ttu", str(pid), str(tid), "20"] if loop else \
+                   ["MakeThreadHighPriorityWithPID", "tti", str(pid), str(tid), "-11"]
+            if not subprocess.run(RTKIT + call, capture_output=True, timeout=5).returncode:
+                raised[tid] = "SCHED_RR 20" if loop else "nice -11"
+                continue
+            try:
+                os.setpriority(os.PRIO_PROCESS, tid, max(floor, -11))
+                raised[tid] = f"nice {max(floor, -11)} (rtkit refused)"
+            except OSError as exc:
+                raised[tid] = f"unchanged ({exc.strerror})"
+    if len(raised) != before:
+        write_json(root / "evidence/audio-priority.json", {str(tid): got for tid, got in raised.items()})
+
+
 def launch_in_slot(root: Path, args: argparse.Namespace, game: Path, launcher: Path, slot: int) -> int:
     steamrt = (work() / "runtime-tests/_template" / RUNTIMES[slot]).resolve()
     if args.target != XENIA:  # a MOZ run is staged by prepare_run.py; the reference emulator's are not
@@ -1466,8 +1549,12 @@ def launch_in_slot(root: Path, args: argparse.Namespace, game: Path, launcher: P
                 preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_CORE, (0, 0)),
             )
             try:
-                active = 0
+                active, raised = 0, {}
+                audio_until, audio_next = time.monotonic() + 60, 0.0  # the daemons start in the first seconds
                 while process.poll() is None and not served.exists():
+                    if audio_next <= time.monotonic() < audio_until:
+                        raise_audio_priority(root, raised)
+                        audio_next = time.monotonic() + 1
                     which = root / "control/pad-active.json"
                     if which.is_file():
                         try:
