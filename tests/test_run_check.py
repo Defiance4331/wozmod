@@ -153,20 +153,32 @@ def test_tools_and_tests_read_the_main_checkouts_harness_toml_from_a_linked_work
 
 
 def pinned(template: Path) -> None:
-    """A template as a refresh leaves it: launch.sh runs the pinned Proton, which set the prefix up."""
-    proton = template / "proton"
+    """A template as a refresh leaves it: launch.sh runs the pinned Proton, which set the prefix up after Steam's last
+    update, so config_info holds what Proton computes at launch."""
+    proton, steam = template / "proton", template.parents[2] / "steam"
     (proton / "files/share/wine").mkdir(parents=True)
     (proton / "files/share/wine/wine.inf").write_text("[Version]\n")
+    (proton / "files/share/default_pfx").mkdir()
+    (proton / "files/share/default_pfx/system.reg").write_text("WINE REGISTRY Version 2\n")
+    (steam / "legacycompat").mkdir(parents=True)
+    for name in ("steamclient.dll", "steamclient64.dll", "Steam.dll"):
+        (steam / "legacycompat" / name).write_bytes(b"MZ")
     (template / "launch.sh").write_text(f'PROTON="{proton}/proton"\nexit 0\n')
     (template / "prefix/pfx").mkdir(parents=True, exist_ok=True)
     (template / "prefix/pfx/.update-timestamp").write_text(str(int((proton / "files/share/wine/wine.inf").stat().st_mtime)))
-    (template / "prefix/config_info").write_text(f"CachyOS-11.0-100\n{proton}/files/share/fonts/\n")
+    mtime = lambda path: str(os.path.getmtime(path))  # noqa: E731  Proton's getmtimestr
+    (template / "prefix/config_info").write_text("\n".join([
+        "CachyOS-11.0-100", f"{proton}/files/share/fonts/", f"{proton}/files/lib/", str(steam),
+        *(mtime(steam / "legacycompat" / n) for n in ("steamclient.dll", "steamclient64.dll", "Steam.dll")),
+        f"{proton}/files/share/default_pfx/", mtime(proton / "files/share/default_pfx/system.reg"), "False", "True"]))
 
 
-@pytest.mark.parametrize("drift", ["self-updating launcher", "proton updated", "set up by another proton"])
+@pytest.mark.parametrize("drift", ["self-updating launcher", "proton updated", "set up by another proton",
+                                   "steam updated"])
 def test_template_a_launch_would_rebuild_is_refused(tools, tmp_path, monkeypatch, drift):
-    """Bugs: the launcher runs a Proton that updates itself, or the prefix was set up by another Proton build, so
-    every launch rewrites about 250 MB of Wine DLLs into the run's own overlay (the 100+ GB work/ held in 2026-10)."""
+    """Bugs: the launcher runs a Proton that updates itself, the prefix was set up by another Proton build, or Steam
+    updated its client DLLs since the prefix was set up, so every launch rewrites about 300 MB of Wine DLLs into the
+    run's own overlay (the 100+ GB work/ held in 2026-10; ~210 GB of runs by 2026-11-15 after a Steam update)."""
     work, prep = tmp_path / "work", tools.prepare_run
     template = work / "runtime-tests/_template"
     pinned(template)
@@ -176,8 +188,12 @@ def test_template_a_launch_would_rebuild_is_refused(tools, tmp_path, monkeypatch
     elif drift == "proton updated":  # the pinned copy replaced in place by a newer build
         inf = template / "proton/files/share/wine/wine.inf"
         os.utime(inf, (inf.stat().st_atime, inf.stat().st_mtime + 86400))
-    else:
-        (template / "prefix/config_info").write_text("CachyOS-11.0-100\n/elsewhere/Proton-CachyOS Latest/files/share/fonts/\n")
+    elif drift == "set up by another proton":
+        info = template / "prefix/config_info"
+        info.write_text(info.read_text().replace(str(template / "proton"), "/elsewhere/Proton-CachyOS Latest"))
+    else:  # Steam's client update replaces steamclient.dll, whose mtime Proton keys the prefix on
+        dll = tmp_path / "steam/legacycompat/steamclient.dll"
+        os.utime(dll, (dll.stat().st_atime, dll.stat().st_mtime + 86400))
     with pytest.raises(ValueError, match="pinned Proton|another Proton build"):
         prep.prepare("run", tmp_path / "install", None, "s")
     assert not (work / "runtime-tests/run").exists()

@@ -165,22 +165,33 @@ def settings_ini(settings: list[str]) -> str:
     return "".join(f"[{section}]\r\n" + "".join(f"{line}\r\n" for line in lines) for section, lines in sections.items())
 
 
+def proton_mtime(path: Path) -> str:
+    """A file's mtime as Proton writes it into config_info (its getmtimestr): str of the float, "0" when missing."""
+    try:
+        return str(path.stat().st_mtime)
+    except OSError:
+        return "0"
+
+
 def check_template(template: Path) -> None:
     """Refuse a template whose prefix a launch would rebuild. Wine rewrites its built-in DLLs when the prefix's
-    .update-timestamp is not wine.inf's mtime, and Proton recopies them when another Proton build wrote config_info;
-    in a run those writes land in its own overlay, about 250 MB of unshared data per run. So launch.sh runs a pinned
-    copy of Proton in the template, and the prefix must have been set up by that copy."""
+    .update-timestamp is not wine.inf's mtime, and Proton recopies them when config_info differs from what it computes
+    at launch: its build's folders, the Steam folder, and the mtimes of Steam's client DLLs and of its default prefix.
+    In a run those writes land in its own overlay, about 300 MB of unshared data per launch. So launch.sh runs a pinned
+    copy of Proton in the template, and the prefix must have been set up by that copy since Steam last updated."""
     proton = template / "proton"
     if f'PROTON="{proton}/proton"' not in (template / "launch.sh").read_text():
         raise ValueError(f"{template}/launch.sh must run the pinned Proton {proton}/proton, not a copy that updates "
                          "itself (copy it there with cp -a --reflink=always)")
     stamp = (template / "prefix/pfx/.update-timestamp").read_text().strip()
-    if (stamp != str(int((proton / "files/share/wine/wine.inf").stat().st_mtime))
-            or f"{proton}/files/" not in (template / "prefix/config_info").read_text()):
-        raise ValueError(f"the template prefix was set up by another Proton build; refresh it once: "
-                         f"STEAM_COMPAT_DATA_PATH={template}/prefix STEAM_COMPAT_CLIENT_INSTALL_PATH=$HOME/.local/share/"
-                         f"Steam $HOME/.local/share/Steam/steamapps/common/SteamLinuxRuntime_4/run --batch -- "
-                         f"{proton}/proton run wineboot.exe -u")
+    info = (template / "prefix/config_info").read_text().split("\n")
+    steam, files = Path(info[3] if len(info) > 3 else ""), f"{proton}/files/"
+    key = [f"{files}share/fonts/", f"{files}lib/", str(steam),
+           *(proton_mtime(steam / "legacycompat" / name) for name in ("steamclient.dll", "steamclient64.dll", "Steam.dll")),
+           f"{files}share/default_pfx/", proton_mtime(proton / "files/share/default_pfx/system.reg")]
+    if stamp != str(int((proton / "files/share/wine/wine.inf").stat().st_mtime)) or info[1:9] != key:
+        raise ValueError("the template prefix was set up by another Proton build or before Steam last updated; "
+                         "refresh it once with: uv run python tools/refresh_template.py")
 
 
 def key_configs(save: str) -> dict[str, bytes]:
