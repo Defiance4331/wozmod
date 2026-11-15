@@ -36,9 +36,9 @@ MEASURE_CHARACTERS = 75
 MEAN_ADVANCE = 13.1
 MEASURE = round(MEASURE_CHARACTERS * MEAN_ADVANCE)
 
-# The pitch of a one-row line's rows when it takes two, at cell 24: the X360's event subtitles (cell 24, pitch 28,
-# runtime_edits at 0x49EABF). Notices, the strategy cut-in and event subtitles all draw at it.
-ONE_ROW_PITCH = 28
+# The pitch of battle and event text rows at cell 24: the X360's event subtitles (cell 24, pitch 28, runtime_edits at
+# 0x49EABF). The dialogue box, notices, the strategy cut-in and event subtitles all draw at it.
+LINE_PITCH = 28
 
 
 @dataclass(frozen=True)
@@ -136,7 +136,7 @@ def c_header() -> list[str]:
         f"#define LANE_WINDOWS {{{{{lane('window1').width}, {lane('window1').width}}}, "
         f"{{{lane('window2').width}, {lane('window2').width}}}}}",
         f"#define LANE_CUTIN {lane('cutin').width}",
-        f"#define LANE_ONE_ROW_PITCH {ONE_ROW_PITCH}",
+        f"#define LANE_LINE_PITCH {LINE_PITCH}",
         f"#define LANE_MESSAGE_MOST {lane('message').width}",
         f"#define LANE_CAPTION {lane('caption').width}",
         f"#define LANE_HISTORY {lane('history').width}",

@@ -15,9 +15,9 @@ All notable changes to wozmod are listed here, newest first. The format follows
 - Text no longer runs past the edges of the screen or gets squeezed to fit its box. Battle notices and movie captions
   stay inside the screen's safe area, and take a second row only when they are too long for it. Then the two rows are
   about the same length and each is centred, and a battle notice's bar grows to hold both instead of leaving the
-  second row on its faded edge. Battle dialogue, the weapon info boxes and Story Z narration use the full width of
-  their box. Upgrade skill descriptions, battle history, conditions and pre-battle panels wrap at their box instead of
-  being squeezed narrower.
+  second row on its faded edge. Battle dialogue rows have a little space between them, as notices and subtitles do.
+  Battle dialogue, the weapon info boxes and Story Z narration use the full width of their box. Upgrade skill
+  descriptions, battle history, conditions and pre-battle panels wrap at their box instead of being squeezed narrower.
 - With a controller, the X button (Square on a PlayStation pad) no longer leaves a wide gap before its word in
   on-screen prompts, such as Random on the officer select screen. It now sits as close as every other button.
 

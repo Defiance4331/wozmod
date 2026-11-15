@@ -80,7 +80,6 @@ static const u32 *enrt_table;
 #define WINDOWS 0xC2CF68
 #define WINDOW_SIZE 0x128
 #define WINDOW_MEASURE 0x54E807
-#define WINDOW_PITCH 24
 /* Battle notices (window 2) are drawn only by 0x550DF0: a 1224 bar centred on the window's y (+4), as tall as the
    text's measured height (+0x18) plus 34 (0x54E780 keeps the bar, +0x10, at least that), then the text from the
    window's x at y - height / 2, rows left-aligned at whatever pitch the last draw left (the stock 0x22). The runtime
@@ -171,12 +170,6 @@ static u32 window_width(u32 slot, u32 column)
     return slot == 1 && CUTIN ? LANE_CUTIN : windows[slot - 1][column];
 }
 
-/* Window slot's (1, 2) row pitch: notices and the strategy cut-in are one-row lines (wozmod.runtime.text_lanes),
-   whose rows share one pitch; the dialogue box's rows draw at WINDOW_PITCH. */
-static u32 window_pitch(u32 slot)
-{
-    return slot == 2 || CUTIN ? LANE_ONE_ROW_PITCH : WINDOW_PITCH;
-}
 static const int squish = 1;
 static struct text_fit active_fit = {1.0, 0.0};
 static double fit_anchor;
@@ -4328,9 +4321,9 @@ static void draw_notice(const char *s, u32 alpha, u32 window)
     volatile u32 *w = (volatile u32 *)window;
     char row[0x128];
     char tag[2] = {0, 0};
-    u32 n, x, y = block_y(w[1] - w[4] / 2, w[4], s, window_pitch(2), w[1] - w[6] / 2);
+    u32 n, x, y = block_y(w[1] - w[4] / 2, w[4], s, LANE_LINE_PITCH, w[1] - w[6] / 2);
     u8 pitch = FONT_CELL[2];
-    FONT_CELL[2] = window_pitch(2);
+    FONT_CELL[2] = LANE_LINE_PITCH;
     while (*s) {
         n = 0;
         if (tag[0])
@@ -4353,7 +4346,7 @@ static void draw_notice(const char *s, u32 alpha, u32 window)
         inner++;
         GAME_DRAW(row, x, y, alpha, window);
         inner--;
-        y += window_pitch(2);
+        y += LANE_LINE_PITCH;
         if (*s == '\n')
             s++;
     }
@@ -4409,7 +4402,7 @@ static u32 english_hook(u32 id, struct frame *f)
             u32 slot = (f->esi - WINDOWS) / WINDOW_SIZE;
             u8 pitch = FONT_CELL[2];
             if (slot == 1 || slot == 2)
-                FONT_CELL[2] = window_pitch(slot);
+                FONT_CELL[2] = LANE_LINE_PITCH;
             inner++;
             GAME_MEASURE((const char *)f->arg[0], (u32 *)f->arg[1], (u32 *)f->arg[2]);
             inner--;
@@ -4454,9 +4447,9 @@ static u32 english_hook(u32 id, struct frame *f)
         if (id == 1 && !inner && f->ret == 0x54F8CF && width && f->arg[0]) {
             u8 pitch = FONT_CELL[2];
             if (CUTIN && f->arg[4] == 0xC2D090)
-                f->arg[2] = block_y(CUTIN_STRIP_Y, CUTIN_STRIP_ROWS, (const char *)f->arg[4] + 0x25, window_pitch(1),
+                f->arg[2] = block_y(CUTIN_STRIP_Y, CUTIN_STRIP_ROWS, (const char *)f->arg[4] + 0x25, LANE_LINE_PITCH,
                                     f->arg[2]);
-            FONT_CELL[2] = window_pitch(1);
+            FONT_CELL[2] = LANE_LINE_PITCH;
             draw_fit((const char *)f->arg[0], f->arg[1], f->arg[2], f->arg[3], f->arg[4], width, 0);
             FONT_CELL[2] = pitch;
             return 1;

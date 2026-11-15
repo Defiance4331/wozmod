@@ -594,7 +594,7 @@ X360_LAYOUT = [
     (0x53A79E, bytes.fromhex("6a23"), bytes.fromhex("6a46")),
     # Movie subtitle cell and pitch, and the two line bases.
     (0x49EAA1, bytes.fromhex("b020"), bytes.fromhex("b018")),
-    (0x49EABF, bytes.fromhex("c6050eaec20024"), bytes.fromhex("c6050eaec200") + bytes([text_lanes.ONE_ROW_PITCH])),
+    (0x49EABF, bytes.fromhex("c6050eaec20024"), bytes.fromhex("c6050eaec200") + bytes([text_lanes.LINE_PITCH])),
     immediate(0x49EAFE, "b8", 628, 652), immediate(0x49EB39, "b8", 664, 680),
     # Strategy cut-in strip (0x54F2F0 -> 0x54D990: a 150 px cap, the stretched body, then a fading 150 px cap at x +
     # width): the X360 width, so the art runs off the right edge and English phrases stay on it. Sliding out, sliding

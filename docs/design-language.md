@@ -76,7 +76,7 @@ The X360 menus space on a 7 px unit. Use these steps; anything else needs a stoc
 | Text inset in a plate | 10 from the plate's left edge to the name's ink (within 1 px); trailing numbers end 10 from its right edge |
 | Vertical | see below |
 | Free-text boxes | the stock inset of that box kind (scaled with the box when the box grows) |
-| Line pitch | one per kind of text, measured and drawn alike. One-row lines that take a second row (battle notices, the strategy cut-in, event subtitles): 28 at cell 24, the X360 event subtitles' (`ONE_ROW_PITCH` in `wozmod.runtime.text_lanes`). Page boxes: their stock pitch scaled to cell 24 (36, 33, 30). The battle dialogue box: 24 |
+| Line pitch | one per kind of text, measured and drawn alike, and at least 1.15 times its cell height, so rows keep a gap between descenders and the next row's capitals; it scales with the cell, never one pitch for every text (28 at cell 24, 23 at cell 20). Battle and event text at cell 24 (the dialogue box, notices, the strategy cut-in, event subtitles): 28, the X360 event subtitles' (`LINE_PITCH` in `wozmod.runtime.text_lanes`). Scenario text: 23 at cell 20. Page boxes: their stock pitch scaled to cell 24 (36, 33, 30), roomier on purpose for text read as a page. Still below the floor: the three described panels (`DESCRIBED_PITCH`, 24 at cell 24) |
 
 Vertical placement measures ink from the first row's cap line to the last row's baseline (descenders hang below), and
 centres it on the art drawn behind the text, its full visible rows, within 1 px:
