@@ -1,13 +1,14 @@
 #ifndef WOZMOD_VOICE_PLAY_H
 #define WOZMOD_VOICE_PLAY_H
 
-/* The game's voice manager ([0xE00404]): two clip buffers of 0x40 bytes from +0xC (voice id at +0x10, flags at +0x1C),
-   and at +0xB0 the buffer a load waits for while that buffer still plays (2 for none), its voice id at +0xB4. A line's
-   clip is loaded while the line before it plays, into the buffer the line before that played: each line's start
-   (0x513720, with the line to play and the line to load next) plays the buffer last loaded, switches buffers and
-   loads the next line's clip into the other. A load sets the buffer's bit 3, and play (0x5D7BF0) starts only such a
-   buffer, doing nothing otherwise. A load that has to wait is made by the voice frame (0x5D8590) once its buffer falls
-   quiet. Every load is a read on the one archive reader, which takes no new read until the last one is reaped.
+/* The game's voice manager ([0xE00404]): two clip buffers of 0x40 bytes from +0xC (take size at +4, voice id at +0x10,
+   flags at +0x1C), and at +0xB0 the buffer a load waits for while that buffer still plays (2 for none), its voice id at
+   +0xB4. A line's clip is loaded while the line before it plays, into the buffer the line before that played: each
+   line's start (0x513720, with the line to play and the line to load next) plays the buffer last loaded, switches
+   buffers and loads the next line's clip into the other. A load sets the buffer's bit 3, and play (0x5D7BF0) starts
+   only such a buffer, doing nothing otherwise. A load that has to wait is made by the voice frame (0x5D8590) once its
+   buffer falls quiet. Every load is a read on the one archive reader, which takes no new read until the last one is
+   reaped.
 
    Two stock gaps lose a line when the reader is busy, and this file closes both by waiting for it:
    - A start that finds the reader busy (0x5D9AE0(0) false) does nothing and returns 0. An event speak (0x4A6BC0) then
@@ -23,6 +24,7 @@
      frame then prepares once read.
    The voice stop (0x5D82A0: both buffers stopped, at a scene's end among others) ends what still waits to play: had it
    played on time, the stop would have ended it. */
+#define VOICE_SIZE(m, slot) (*(volatile unsigned int *)((m) + 0xC + 0x40 * (slot) + 4))
 #define VOICE_ID(m, slot) (*(volatile unsigned int *)((m) + 0xC + 0x40 * (slot) + 0x10))
 #define VOICE_FLAGS(m, slot) (*(volatile unsigned int *)((m) + 0xC + 0x40 * (slot) + 0x1C))
 #define VOICE_WAITING(m) (*(volatile unsigned int *)((m) + 0xB0))

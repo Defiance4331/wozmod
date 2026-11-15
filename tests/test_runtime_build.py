@@ -20,8 +20,8 @@ from wozmod.runtime import text_table
 from wozmod.runtime.latin_font import LATIN_GLYPH
 from wozmod.runtime.prompts import PROMPT_SLOTS, STICK_ITEMS
 from wozmod.runtime.runtime_edits import (
-    CODE_EDITS, FONT_ROUTE, PAD_CAMERA, PATH_CELLS, SAVED_PAD, SE_PRECISION, SOUND_3D, STANDARD_CAMERA, V101_FIXES,
-    VOICE_EDITS, camp_plate_edits, settings_rows,
+    CODE_EDITS, FONT_ROUTE, PAD_CAMERA, PATH_CELLS, SAVED_PAD, SE_PRECISION, SOUND_3D, STAGE_DUCK, STANDARD_CAMERA,
+    V101_FIXES, VOICE_EDITS, camp_plate_edits, settings_rows,
 )
 from wozmod.runtime import camp_plate
 
@@ -150,6 +150,7 @@ def test_build_puts_each_edit_list_in_its_text_mode_group(stock_builds, variant:
              "PAD_CAMERA": (PAD_CAMERA, {1, 2}), "SAVED_PAD": (SAVED_PAD, {1, 2}),
              "STANDARD_CAMERA": (STANDARD_CAMERA, {1, 2}), "V101_FIXES": (V101_FIXES, {1, 2}), "SOUND_3D": (SOUND_3D, {1, 2}),
              "PATH_CELLS": (PATH_CELLS, {1, 2}), "SE_PRECISION": (SE_PRECISION, {1, 2}),
+             "STAGE_DUCK": (STAGE_DUCK, {1, 2}),
              "VOICE_EDITS": (VOICE_EDITS, {2}),
              "camp plate": (camp_plate_edits(camp_plate.width(camp_plate.stock_plate(Path(os.environ["WOZMOD_GAME"])))),
                             {0})}

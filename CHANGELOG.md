@@ -13,14 +13,16 @@ All notable changes to wozmod are listed here, newest first. The format follows
 
 ## [0.3.0] - 2026-11-14
 
-The game's sound is quieter in this release, so that big fights stop crackling: turn your system or speaker volume up
-once after you update.
-
 ### Changed
 
-- Every sound plays 13 dB quieter: effects, shouts, menu sounds, music, dialogue and movies. Large battles added up to
-  as much as 12 dB past what the sound output can carry and crackled; voices over loud scenes, such as Taigong Wang's
-  lines during the falling rocks at Odani Castle, are clean now. The balance between sounds stays the same.
+- Big fights no longer crackle, and the game plays at the loudness of other current PC games, which is quieter than
+  before. Large battles added up to as much as 12 dB past what the sound output can carry; the game now mixes with
+  room to spare and brings the finished sound back up without letting it clip. Voices over loud scenes, such as
+  Taigong Wang's lines during the falling rocks at Odani Castle, are clean now. The balance between sounds stays the
+  same.
+- Characters' lines during a battle are easier to hear over the fighting. While one speaks, music and battle sounds
+  drop about 4 dB further than before, by the same amount whatever your sliders are set to, and they come back when
+  the line ends. A line with no recorded voice no longer quiets the battle.
 - The BGM, SE and Voice sliders lower their sound by the same 3 dB a step, from full at 15 to silent at 0. Before,
   their top half barely changed anything and the bottom fell off a cliff. A slider you had lowered now sounds quieter
   than before; at full volume nothing changes.

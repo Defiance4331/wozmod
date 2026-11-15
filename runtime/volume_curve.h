@@ -7,11 +7,11 @@
    level 15 is the stock full level (0 dB), level L is -3 * (15 - L) dB, level 1 is -42 dB, level 0 is silent. 3 dB
    is the owner's choice: with the 13 dB trim after it (sound_headroom.h) level 1 plays near -62 LUFS, faint but
    heard.
-   The game also passes its setters a level under the option to duck a category (music 3L/4 and effects 4L/5 while a
-   stage line plays, music L/2 on some screens). So the curve scales the gain the game computed, stock ceiling,
-   stock duck and stock rounding included, by curve gain over stock gain at the option's level: every duck keeps its
-   stock ratio at every slider position, and level 15 is stock bit for bit. The hooks (english_runtime.VOLUME) sit
-   where each of the six sites holds its stock gain (14-bit, 0x3FFF = 1.0) in edx.
+   The game also passes its setters a level under the option to duck a category (music 3L/4 in an event scene, music L/2
+   on some screens; a stage line's duck is a fixed depth, stage_duck.h). So the curve scales the gain the game computed,
+   stock ceiling, stock duck and stock rounding included, by curve gain over stock gain at the option's level: every
+   duck keeps its stock ratio at every slider position, and level 15 is stock bit for bit. The hooks
+   (english_runtime.VOLUME) sit where each of the six sites holds its stock gain (14-bit, 0x3FFF = 1.0) in edx.
 
    volume_scale[L] = 65536 * 10^(-3 * (15 - L) / 20) / (L / 15), rounded; 0 for level 0. Each is within 0.001 dB of
    its step, and 65536 at level 15 keeps the stock gain exactly. */

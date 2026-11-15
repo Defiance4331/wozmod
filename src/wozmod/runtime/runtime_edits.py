@@ -1206,6 +1206,15 @@ SE_PRECISION = [
                b"\xeb" + bytes([0x5E1F75 - (SE_RESET_PUSH + 16)]), b"\x90")),  # push 0x3FFF, edi; call; on to 0x5E1F75
 ]
 
+# A stage line no longer ducks by a whole level: start_stage_line_voice 0x4F4F80 passes fade_bgm_level and
+# set_se_level the full BGM and SE option, and runtime/stage_duck.h sets the depth on those two calls.
+STAGE_DUCK = [
+    (0x4F4FDC, bytes.fromhex("8d0440 99 83e203 03c2 c1f802"),
+     bytes.fromhex("eb0a") + b"\x90" * 10),  # music: eax keeps the option (3L/4 skipped), on to its push 0x4F4FE8
+    (0x4F4FFB, bytes.fromhex("03c9 03c9 b867666666 f7e9 d1fa 8bc2 c1e81f 03c2"),
+     bytes.fromhex("8bc1 eb10") + b"\x90" * 16),  # effects: eax = the option (4L/5 skipped), on to its push 0x4F500F
+]
+
 # A squad's path search keeps, per end cell, a list wrapper {cell, head, built, ...} that 0x4A9560 fills from the
 # cell's links. The three search set-ups (0x4A9800, 0x4A9880, 0x4A9980) store the cell, which is 0 for a point off
 # the 32x32 grid or on an empty grid slot, and clear only built. For a cell with no links 0x4A9560 writes head 0 and

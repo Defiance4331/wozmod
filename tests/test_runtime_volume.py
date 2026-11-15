@@ -1,5 +1,5 @@
-"""The volume options on a 3 dB curve (runtime/volume_curve.h, english_runtime.VOLUME) and the SE gain at full
-precision (runtime_edits.SE_PRECISION)."""
+"""The volume options on a 3 dB curve (runtime/volume_curve.h, english_runtime.VOLUME), the SE gain at full
+precision (runtime_edits.SE_PRECISION) and a stage line's fixed duck (runtime/stage_duck.h, runtime_edits.STAGE_DUCK)."""
 
 from __future__ import annotations
 
@@ -14,12 +14,13 @@ import pytest
 
 from wozmod.formats import pe
 from wozmod.runtime import english_runtime as runtime
-from wozmod.runtime.runtime_edits import SE_PRECISION
+from wozmod.runtime.layout import DEFINES
+from wozmod.runtime.runtime_edits import SE_PRECISION, STAGE_DUCK
 
 MUSIC, EFFECTS, VOICE = 0x2CCC, 0x3FFF, 0x2EEE  # each category's stock ceiling: its gain at level 15 (0x3FFF = 1.0)
-# How the stock callers turn an option level into the level they pass: the option itself, or a duck of it, with the
-# stock integer rounding (all values are 0-15, so the shifts and magic divides are floors).
-DUCKS = {"option": lambda o: o, "3/4": lambda o: 3 * o // 4, "4/5": lambda o: 4 * o // 5, "1/2": lambda o: o // 2}
+# How the callers turn an option level into the level they pass, with the edits: the option itself, or a duck of it,
+# with the stock integer rounding (all values are 0-15, so the shifts and magic divides are floors).
+DUCKS = {"option": lambda o: o, "3/4": lambda o: 3 * o // 4, "1/2": lambda o: o // 2}
 
 
 def _curve(c_library):
@@ -30,7 +31,7 @@ def _curve(c_library):
 
 
 def test_level_15_and_every_duck_keep_their_stock_gain_ratio(c_library):
-    """Bugs: a curve indexed by the level the caller passed instead of the option (the stage-line music duck at
+    """Bugs: a curve indexed by the level the caller passed instead of the option (the event-scene music duck at
     level 15 goes from -2.7 to -12 dB), a scale that is not exactly 1 at level 15 (the default changes), rounding the
     stock gain again instead of keeping the game's (a duck at level 15 moves by one step). Every ceiling, option and
     duck the stock callers use; each failing row is reported."""
@@ -229,8 +230,8 @@ CALLERS = {
     0x4B32C4: (0x4B32BC, "option"),
     0x4F4138: (0x4F4130, "option"),  # 0x4F4130: music back
     0x4F42AE: (0x4F4297, "3/4"),     # start_event_scene 0x4F4230: music ducked
-    0x4F4FEF: (0x4F4FD5, "3/4"),     # start_stage_line_voice 0x4F4F80: music and effects ducked
-    0x4F5010: (0x4F4FF4, "4/5"),     # (4L * 0x66666667) >> 33
+    0x4F4FEF: (0x4F4FD5, "option"),  # start_stage_line_voice 0x4F4F80: stock 3L/4 and 4L/5, the full level with
+    0x4F5010: (0x4F4FF4, "option"),  # STAGE_DUCK (stage_duck.h sets the depth)
     0x4F5123: (0x4F511B, "option"),  # open_stage_dialog_window 0x4F5090: both back
     0x4F5130: (0x4F5128, "option"),
     0x53F914: (0x53F90A, "1/2"),     # setup_battle_state 0x53F650: music halved
@@ -258,8 +259,10 @@ SETTERS = {0x5141D0: 0x5141E7, 0x514200: 0x514217, 0x513070: 0x513087, 0x512D40:
 def test_every_caller_of_a_level_setter_passes_its_option_or_a_duck_of_it():
     """Bugs: a caller that passes a level not made from the setter's option byte at the call (a level from another
     option, or one stored after the call), whose gain the curve would scale by the wrong option; a call added or
-    misread. The curve needs level <= option, which every derivation here keeps. Each call runs from its level's
-    first instruction twice, the option byte and the registers disagreeing, so a level from neither is caught."""
+    misread; a STAGE_DUCK edit that leaves part of the stock factor (4L, the x4 kept: louder than the option, or 3L).
+    The curve needs level <= option, which every derivation here keeps. Each call runs from its level's first
+    instruction twice, with the edits, the option byte and the registers disagreeing, so a level from neither is
+    caught."""
     pytest.importorskip("capstone")
     image, layout = _image()
     option_of = {va: option for va, _, _, option in runtime.VOLUME}
@@ -272,7 +275,7 @@ def test_every_caller_of_a_level_setter_passes_its_option_or_a_duck_of_it():
         option = option_of[SETTERS[calls[call]]]
         for level in range(16):
             for registers in (level, (level + 7) % 16):
-                machine = _Machine(image, layout)
+                machine = _Machine(image, layout, SE_PRECISION + STAGE_DUCK)
                 machine.regs.update(dict.fromkeys(REGISTERS, 0x5A5A5A00 | registers), esp=0x100000)
                 machine.write(option, 1, level)
                 machine.run(start, call)
@@ -385,3 +388,95 @@ def test_the_channel_reset_still_sends_full_gain():
         assert push[1].op_str == "edi" and push[0].operands[0].type == capstone.x86.X86_OP_IMM
         gains.append(_push_channel_volume(machine, push[0].operands[0].imm))
     assert gains == [1.0, 1.0]
+
+
+# ---- a stage line's duck ----
+
+def _duck(c_library):
+    lib = c_library("stage_duck", '#include "volume_curve.h"\n#include "stage_duck.h"\n'
+                                  "static struct stage_duck d;\n"
+                                  "void line(int voiced) { stage_duck_line(&d, voiced); }\n"
+                                  "void release(int spoken) { stage_duck_release(&d, spoken); }\n"
+                                  "int restore(void) { return stage_duck_restore(&d); }\n"
+                                  "unsigned ducked(unsigned stock, unsigned level, int music) {\n"
+                                  "    return stage_duck_gain(&d, volume_scaled(stock, level),\n"
+                                  "                           music ? STAGE_DUCK_MUSIC : STAGE_DUCK_EFFECTS); }\n")
+    lib.ducked.argtypes, lib.ducked.restype = [ctypes.c_uint, ctypes.c_uint, ctypes.c_int], ctypes.c_uint
+    lib.restore.restype = ctypes.c_int
+    return lib
+
+
+def test_a_voiced_stage_line_ducks_music_and_effects_by_the_owners_depth_at_every_level(c_library):
+    """Bugs: a depth made from 3/4 instead of the stock 11/15 heard at full sliders (music 0.19 dB off), the music
+    and effects depths swapped, a whole-level duck left in (the depth moves with the slider, level 1 mutes), a duck on
+    a line with no voice, level 0 no longer silent. The owner's depth, ledger row 42: the stock drop at full sliders
+    (music 11/15, effects 12/15) and 4 dB more, on the curve's gain at every option; a line with no voice keeps it."""
+    lib = _duck(c_library)
+    wrong = []
+    for music, ceiling, stock_duck in ((1, MUSIC, 11 / 15), (0, EFFECTS, 12 / 15)):
+        depth = 20 * math.log10(stock_duck) - 4
+        for level in range(16):
+            curve = ceiling * 10 ** (-3 * (15 - level) / 20) if level else 0
+            for voiced in (1, 0):
+                lib.line(voiced)
+                gain = lib.ducked(ceiling * level // 15, level, music)
+                expected = curve * 10 ** (depth / 20) if voiced else curve
+                if abs(gain - expected) > 1.5 or (level and not gain):
+                    wrong.append(("music" if music else "effects", level, voiced, gain, round(expected, 1)))
+    assert wrong == []
+
+
+def test_a_released_spoken_window_is_restored_by_its_ticks_end_unless_a_line_takes_over(c_library):
+    """Bugs: a restore between two chained lines (the bed swells for a moment under every word-5 chain), a restore
+    left pending (made every tick, or at the next battle's first tick), a notice box's close restoring (undoing an
+    event scene's own music level), the stock leak kept (an event that ends on word 5 = 1 stays ducked). A tick is
+    0x4F5090 (the release), then the window commands (a line), then 0x4ED6D0 (the restore check)."""
+    lib = _duck(c_library)
+    ticks = {  # each tick's events before its end: the restores due at each end
+        "chained voiced line": ([["release 1", "line 1"]], [0]),
+        "chained unvoiced load": ([["release 1", "line 0"]], [0]),  # its own setter calls set the full level
+        "the event ends on word 5 = 1": ([["release 1"], []], [1, 0]),
+        "a voiceless line follows": ([["release 1"]], [1]),  # index < 0 or kind 3: it calls no setter
+        "the notice box closes": ([["release 0"]], [0]),
+        "a line, no release": ([["line 1"], []], [0, 0]),
+    }
+    wrong = []
+    for case, (events, expected) in ticks.items():
+        lib.restore()
+        got = []
+        for tick in events:
+            for event in tick:
+                name, value = event.split()
+                getattr(lib, name)(int(value))
+            got.append(lib.restore())
+        if got != expected:
+            wrong.append((case, got, expected))
+    assert wrong == []
+
+
+def test_the_stage_duck_hooks_sit_on_the_line_its_two_setter_calls_and_each_ticks_end():
+    """Bugs: a return address taken from a call's own address (the duck never applies), the music and effects returns
+    swapped (music ducked by the effects depth), a line hook that does not see the load's result in edi, a caller of
+    the window commands whose tick never reaches the restore check (a released duck kept on, the stock leak)."""
+    image, layout = _image()
+    hooks = {hook_id: va for va, _, hook_id in runtime.STAGE_DUCK_HOOKS}
+    sites = _direct_branches(image, layout, {0x5137F0, 0x514200, 0x513070, 0x4EECC0, 0x4ED6D0})
+
+    def call_before(va: int) -> int | None:
+        return sites.get(va - 5)
+
+    at = pe.file_offset(layout, hooks[156])
+    wrong = []
+    if call_before(hooks[156] - 2) != 0x5137F0 or image[at - 2:at] != bytes.fromhex("8bf8"):
+        wrong.append("the line hook is not right after the load and its mov edi, eax")
+    if call_before(DEFINES["STAGE_LINE_MUSIC"]) != 0x514200:
+        wrong.append("STAGE_LINE_MUSIC is not the return of fade_bgm_level")
+    if call_before(DEFINES["STAGE_LINE_EFFECTS"]) != 0x513070:
+        wrong.append("STAGE_LINE_EFFECTS is not the return of set_se_level")
+    if not hooks[156] < DEFINES["STAGE_LINE_MUSIC"] < DEFINES["STAGE_LINE_EFFECTS"] < 0x4F5052:
+        wrong.append("the setter calls are not the line's own, between its load and its load test")
+    commands = sorted(va for va, target in sites.items() if target == 0x4EECC0)
+    ends = sorted(va for va, target in sites.items() if target == 0x4ED6D0)
+    if hooks[158] != 0x4ED6D0 or [va + 5 for va in commands] != ends:
+        wrong.append(("the window commands and the tick's end", [hex(v) for v in commands], [hex(v) for v in ends]))
+    assert wrong == []

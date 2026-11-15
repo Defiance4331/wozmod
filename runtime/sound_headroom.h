@@ -6,7 +6,8 @@
    sound's own level, -10000 (DSBVOLUME_MIN) silence.
    13 dB: the loudest fight measured (stage 40, melee, +12.1 dB true peak) then peaks at about -1 dB, under full
    scale (work/handbacks/audio-clipping.md). The same trim on every sound keeps the balance between sounds and what
-   the BGM, SE and Voice options do to it.
+   the BGM, SE and Voice options do to it. The trim is the mix's headroom: the master stage (sound_master.h) brings the
+   finished mix back up after the sum, where nothing clips.
    The hooks (english_runtime.HEADROOM) sit on the game's every call that sets a volume the player hears, after its
    own clamp to -10000..0: the effect buffers (0x67A009 in 0x679FD0), the streams for music and dialogue (0x677EB6 in
    0x677E90, and their first volume at 0x678F42 in 0x678BA0), and the movie's IBasicAudio put_Volume (0x5E9D24 in

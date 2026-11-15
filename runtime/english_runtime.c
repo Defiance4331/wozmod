@@ -7,6 +7,8 @@
 #include "voice_play.h"
 #include "se_cutoff.h"
 #include "sound_headroom.h"
+#include "sound_master.h"
+#include "stage_duck.h"
 #include "volume_curve.h"
 #include "pad_buttons.h"
 #include "pad_kind.h"
@@ -4773,6 +4775,19 @@ static long __stdcall ring_unlock(void *buffer)
     return r;
 }
 
+/* A stage line's duck (stage_duck.h). The line's two setter calls return to STAGE_LINE_MUSIC and STAGE_LINE_EFFECTS;
+   a release's restore makes the calls the window's close makes (0x4F511B). Buffer 0's take size is at +4 of the
+   buffer (voice_play.h), stored by the load core (0x5D823F) on success. */
+#define STAGE_LINE_MUSIC 0x4F4FF4    /* after fade_bgm_level, in start_stage_line_voice 0x4F4F80 */
+#define STAGE_LINE_EFFECTS 0x4F5015  /* after set_se_level */
+#define FADE_BGM_LEVEL ((void (*)(u32))0x514200)
+#define SET_SE_LEVEL ((void (*)(u32))0x513070)
+#define BGM_OPTION (*(volatile u8 *)0x80151B)
+#define SE_OPTION (*(volatile u8 *)0x80151C)
+#define VOICE_MANAGER (*(const u8 *const volatile *)0xE00404)
+#define STAGE_WINDOW (*(volatile u32 *)0x9C9308)  /* the stage window shown: 2 is the notice box */
+static struct stage_duck stage_duck;
+
 static int always(u32 id, struct frame *f, u32 *replace)
 {
     struct loose *e;
@@ -4815,6 +4830,20 @@ static int always(u32 id, struct frame *f, u32 *replace)
     case 154:
     case 155:  /* a volume option turned into a gain, the stock gain in edx (volume_curve.h) */
         f->edx = volume_scaled(f->edx, *(const u8 *)volume_option[id - VOLUME_FIRST]);
+        if (id == 151 && f->ret == STAGE_LINE_MUSIC)
+            f->edx = stage_duck_gain(&stage_duck, f->edx, STAGE_DUCK_MUSIC);
+        else if (id == 152 && f->ret == STAGE_LINE_EFFECTS)
+            f->edx = stage_duck_gain(&stage_duck, f->edx, STAGE_DUCK_EFFECTS);
+        return 1;
+    case 156:  /* a stage line loaded into buffer 0 (edi: the load's result), its two setter calls next */
+        stage_duck_line(&stage_duck, f->edi && VOICE_SIZE(VOICE_MANAGER, 0));
+        return 1;
+    case 157:  /* a stage window released with no restore */
+        stage_duck_release(&stage_duck, STAGE_WINDOW != 2);
+        return 1;
+    case 158:  /* the tick's stage window commands are done */
+        if (stage_duck_restore(&stage_duck))
+            FADE_BGM_LEVEL(BGM_OPTION), SET_SE_LEVEL(SE_OPTION);
         return 1;
     case 23:  /* an effect batch's Lock (0x6392A0), its arguments pushed: buffer, offset, size, out, flags */
         f->arg[3] = RU_DISCARD;  /* each batch writes its buffer from 0 and draws only what it wrote */
@@ -5932,6 +5961,204 @@ static void install(HINSTANCE self)
 }
 
 
+/* The master stage (sound_master.h) on every output stream, where the finished mix leaves the process. DirectSound mixes
+   in-process and hands each block to the system through IAudioRenderClient: GetBuffer, then the mix written there,
+   then ReleaseBuffer (Wine 11 dlls/dsound/mixer.c, DSOUND_PerformMix, flags 0); a movie's DirectShow sound goes through
+   its own DirectSound the same way. So the runtime hooks the audio client's shared vtables: Initialize (each stream's
+   format), GetService (its render client) and the render client's GetBuffer and ReleaseBuffer, which runs the stage on
+   the frames written before passing them on. The vtables come from a probe client the runtime makes itself before the
+   game's DirectSound exists: the game makes Direct3D (0x5CA860, called at 0x5AB2B2 in its start-up 0x5AB250) before its
+   DirectSound (0x671D40, by way of 0x5AE7E0 at 0x5AB2E7), so the probe runs in this DLL's Direct3DCreate9, on the game's
+   thread, where COM may be used. A stream the hooks do not see start, or in a format the stage does not take, passes
+   through untouched at the mix level, and runtime.log says which. */
+#define SOUND_STREAMS 16
+#define SOUND_INITIALIZE 3    /* IAudioClient: QueryInterface, AddRef, Release, Initialize, ... */
+#define SOUND_GET_SERVICE 14  /* ... GetBufferSize, GetStreamLatency, GetCurrentPadding, IsFormatSupported,
+                                 GetMixFormat, GetDevicePeriod, Start, Stop, Reset, SetEventHandle, GetService */
+#define SOUND_GET_BUFFER 3    /* IAudioRenderClient: QueryInterface, AddRef, Release, GetBuffer, ReleaseBuffer */
+#define SOUND_RELEASE_BUFFER 4
+
+/* A stream: the audio client Initialize made it with, its render client once GetService hands that out, the buffer
+   GetBuffer lent, and the stage's state. used: the stream's last ReleaseBuffer, so a new stream takes the slot of the
+   one longest silent (a released client's slot is never told it is free). */
+struct sound_stream {
+    void *client, *render;
+    BYTE *data;
+    UINT32 lent;
+    u32 used;
+    int on;
+    struct master_format format;
+    struct master stage;
+};
+
+static struct sound_stream sound_streams[SOUND_STREAMS];
+static struct hooks sound_hooks;
+static CRITICAL_SECTION sound_lock;  /* the streams: mixer threads (one per DirectSound device) and the ones making them */
+static u32 sound_tick;
+static int sound_hooked, sound_seen;  /* the probe hooked the client; a stream came through it */
+
+typedef HRESULT(WINAPI *sound_initialize_fn)(void *, int, DWORD, LONGLONG, LONGLONG, const WAVEFORMATEX *, const GUID *);
+typedef HRESULT(WINAPI *sound_service_fn)(void *, REFIID, void **);
+typedef HRESULT(WINAPI *sound_get_buffer_fn)(void *, UINT32, BYTE **);
+typedef HRESULT(WINAPI *sound_release_buffer_fn)(void *, UINT32, DWORD);
+
+static const GUID sound_iid_render = {0xF294ACFC, 0x3146, 0x4483, {0xA7, 0xBF, 0xAD, 0xDC, 0xA7, 0xC2, 0x60, 0xE2}};
+
+static struct sound_stream *sound_of_render(const void *render)
+{
+    u32 i;
+    for (i = 0; i < SOUND_STREAMS; i++)
+        if (sound_streams[i].render == render)
+            return &sound_streams[i];
+    return 0;
+}
+
+/* tenths as "-1.0" */
+static char *sound_tenths(char *p, int tenths)
+{
+    return p + wsprintfA(p, "%s%d.%d", tenths < 0 ? "-" : "", (tenths < 0 ? -tenths : tenths) / 10,
+                         (tenths < 0 ? -tenths : tenths) % 10);
+}
+
+static void sound_note(const struct sound_stream *s)
+{
+    static const char *const kinds[] = {"", "float32", "int16", "int24", "int32"};
+    char line[160], *p = line;
+    p += wsprintfA(p, "sound: stream ");
+    p += s->format.kind ? wsprintfA(p, "%s", kinds[s->format.kind]) : wsprintfA(p, "tag 0x%x %u-bit", s->format.tag,
+                                                                              s->format.bits);
+    p += wsprintfA(p, ", %u Hz, %u ch: ", s->format.rate, s->format.channels);
+    if (!s->on) {
+        wsprintfA(p, "passes through at the mix level, %s", s->format.kind ? "too many channels or too high a rate"
+                                                                            : "a format the master stage does not take");
+    } else {
+        p += wsprintfA(p, "master on, +");
+        p = sound_tenths(p, (int)(MASTER_GAIN_DB * 10 + 0.5));
+        p += wsprintfA(p, " dB, limiter ");
+        p = sound_tenths(p, (int)(MASTER_CEILING_DBTP * 10 - 0.5));
+        p += wsprintfA(p, " dBTP, delay ");
+        sound_tenths(p, (int)((s->stage.line_frames - 1) * 10000ull / s->format.rate));
+        lstrcatA(line, " ms");
+    }
+    note(line, 0);
+}
+
+static HRESULT WINAPI sound_initialize(void *client, int mode, DWORD flags, LONGLONG duration, LONGLONG period,
+                                       const WAVEFORMATEX *format, const GUID *session)
+{
+    HRESULT hr = ((sound_initialize_fn)hook_real(&sound_hooks, client, SOUND_INITIALIZE))(client, mode, flags, duration,
+                                                                                         period, format, session);
+    if (SUCCEEDED(hr) && format) {
+        struct sound_stream *s = sound_streams;
+        u32 i;
+        EnterCriticalSection(&sound_lock);
+        for (i = 0; i < SOUND_STREAMS; i++) {  /* a client's own slot (its address reused), else a free one, else the
+                                                  longest silent */
+            struct sound_stream *t = &sound_streams[i];
+            if (t->client == client) {
+                s = t;
+                break;
+            }
+            if (s->client && (!t->client || sound_tick - t->used > sound_tick - s->used))
+                s = t;
+        }
+        s->client = client, s->render = 0, s->data = 0, s->used = sound_tick;
+        s->format = master_format_of((const u8 *)format);
+        s->on = s->format.kind != MASTER_NONE && master_init(&s->stage, s->format.rate, s->format.channels);
+        LeaveCriticalSection(&sound_lock);
+    }
+    return hr;
+}
+
+static HRESULT WINAPI sound_get_buffer(void *render, UINT32 frames, BYTE **data)
+{
+    HRESULT hr = ((sound_get_buffer_fn)hook_real(&sound_hooks, render, SOUND_GET_BUFFER))(render, frames, data);
+    struct sound_stream *s;
+    EnterCriticalSection(&sound_lock);
+    if ((s = sound_of_render(render)))
+        s->data = SUCCEEDED(hr) && data ? *data : 0, s->lent = frames;
+    LeaveCriticalSection(&sound_lock);
+    return hr;
+}
+
+static HRESULT WINAPI sound_release_buffer(void *render, UINT32 frames, DWORD flags)
+{
+    struct sound_stream *s;
+    EnterCriticalSection(&sound_lock);
+    if ((s = sound_of_render(render))) {
+        if (s->on && s->data && frames && frames <= s->lent)
+            flags = master_release(&s->stage, &s->format, s->data, frames, flags), s->used = ++sound_tick;
+        s->data = 0;
+    }
+    LeaveCriticalSection(&sound_lock);
+    return ((sound_release_buffer_fn)hook_real(&sound_hooks, render, SOUND_RELEASE_BUFFER))(render, frames, flags);
+}
+
+static HRESULT WINAPI sound_service(void *client, REFIID riid, void **out)
+{
+    HRESULT hr = ((sound_service_fn)hook_real(&sound_hooks, client, SOUND_GET_SERVICE))(client, riid, out);
+    if (SUCCEEDED(hr) && out && *out && IsEqualGUID(riid, &sound_iid_render)) {
+        u32 i;
+        EnterCriticalSection(&sound_lock);
+        if (!hook_put(&sound_hooks, *out, SOUND_GET_BUFFER, (void *)sound_get_buffer, vtable_write)
+            || !hook_put(&sound_hooks, *out, SOUND_RELEASE_BUFFER, (void *)sound_release_buffer, vtable_write))
+            note("refused: could not hook a render client; its stream plays at the mix level", 0);
+        for (i = 0; i < SOUND_STREAMS && sound_streams[i].client != client; i++)
+            ;
+        if (i < SOUND_STREAMS)
+            sound_streams[i].render = *out, sound_seen = 1, sound_note(&sound_streams[i]);
+        else
+            note("sound: a stream made without the hooked Initialize plays at the mix level", 0);
+        LeaveCriticalSection(&sound_lock);
+    }
+    return hr;
+}
+
+#define SOUND_CALL(object, slot, type) ((type)(*(void ***)(object))[slot])
+
+/* The probe: the default output's audio client, made and let go, for its vtable. Its module is pinned, so the hooked
+   vtable stays where it is when COM lets the module go. Once; with COM set up and taken down again around it as Wine's
+   dsound does (get_mmdevenum), so the game's own COM set-up later on this thread finds it as before. */
+static void sound_attach(void)
+{
+    static const GUID clsid_enumerator = {0xBCDE0395, 0xE52F, 0x467C, {0x8E, 0x3D, 0xC4, 0x57, 0x92, 0x91, 0x69, 0x2E}};
+    static const GUID iid_enumerator = {0xA95664D2, 0x9614, 0x4F35, {0xA7, 0x46, 0xDE, 0x8D, 0xB6, 0x36, 0x17, 0xE6}};
+    static const GUID iid_client = {0x1CB9AD4C, 0xDBFA, 0x4C32, {0xB1, 0x78, 0xC2, 0xF5, 0x68, 0xA7, 0x03, 0xB2}};
+    static int tried;
+    void *enumerator = 0, *device = 0, *client = 0;
+    HMODULE module;
+    HRESULT init, hr;
+    if (tried)
+        return;
+    tried = 1;
+    InitializeCriticalSection(&sound_lock);
+    init = CoInitialize(0);
+    hr = CoCreateInstance(&clsid_enumerator, 0, CLSCTX_INPROC_SERVER, &iid_enumerator, &enumerator);
+    if (SUCCEEDED(hr))  /* IMMDeviceEnumerator::GetDefaultAudioEndpoint(eRender, eConsole) */
+        hr = SOUND_CALL(enumerator, 4, HRESULT(WINAPI *)(void *, int, int, void **))(enumerator, 0, 0, &device);
+    if (SUCCEEDED(hr))  /* IMMDevice::Activate */
+        hr = SOUND_CALL(device, 3, HRESULT(WINAPI *)(void *, REFIID, DWORD, void *, void **))(device, &iid_client,
+                                                                                            CLSCTX_INPROC_SERVER, 0,
+                                                                                            &client);
+    if (SUCCEEDED(hr)
+        && GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+                              (LPCWSTR)*(void **)client, &module)
+        && hook_put(&sound_hooks, client, SOUND_INITIALIZE, (void *)sound_initialize, vtable_write)
+        && hook_put(&sound_hooks, client, SOUND_GET_SERVICE, (void *)sound_service, vtable_write))
+        sound_hooked = 1, note("sound: master stage hooked on the audio client", 0);
+    else
+        note("refused: sound: no audio client to hook; the game plays at the mix level", (u32)hr);
+    if (client)
+        SOUND_CALL(client, 2, ULONG(WINAPI *)(void *))(client);
+    if (device)
+        SOUND_CALL(device, 2, ULONG(WINAPI *)(void *))(device);
+    if (enumerator)
+        SOUND_CALL(enumerator, 2, ULONG(WINAPI *)(void *))(enumerator);
+    if (SUCCEEDED(init))
+        CoUninitialize();
+}
+
+
 static void *(WINAPI *system_create)(UINT);  /* Windows' own Direct3DCreate9 */
 
 /* Windows' own d3d9.dll, by its path in the system folder, loaded with the DLL: the stock game has it from its start, as
@@ -5955,7 +6182,10 @@ static void system_load(void)
 
 __declspec(dllexport) void *WINAPI Direct3DCreate9(UINT version)
 {
-    void *d3d = system_create ? system_create(version) : 0;
+    void *d3d;
+    if (wozmod_on)
+        sound_attach();  /* before the game's DirectSound (see sound_attach) */
+    d3d = system_create ? system_create(version) : 0;
     if (d3d && wozmod_on)  /* wozmod off: the game's own Direct3D, untouched */
         hook_slot(d3d, SLOT_CREATE_DEVICE, (void *)create_device);
     return d3d;
@@ -5979,6 +6209,8 @@ BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID reserved)
         install(self);
         system_load();  /* after install: the log is open */
     }
+    if (reason == DLL_PROCESS_DETACH && sound_hooked && !sound_seen)  /* this system's DirectSound used another client */
+        note("sound: no stream came through the hooked audio client; the game played at the mix level", 0);
     if (reason == DLL_PROCESS_DETACH)  /* 2: the process is ending; no line at all: it crashed or was ended from outside */
         note(EXIT_LINE, reserved ? 2 : 1);
     return TRUE;

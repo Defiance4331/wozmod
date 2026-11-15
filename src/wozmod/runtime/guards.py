@@ -144,9 +144,13 @@ FEATURES = (
             spans=tuple((va, 4) for va in _column("weapon_slot_sites", 0))),  # weapon_slots.h: the table's immediates
     Feature("headroom", "sound headroom", shown="game volume",
             hooks=(140, 141, 142, 143, 144)),  # english_runtime.HEADROOM: every volume the player hears, 13 dB lower
-    Feature("volume", "volume options", shown="volume sliders", hooks=tuple(range(150, 156)),  # english_runtime.VOLUME
-            edits=("SE_PRECISION",),  # the SE gain at full precision, so the low steps stay apart
-            calls=(0x5E1980,)),  # push_channel_volume, called from the channel reset's new push
+    Feature("volume", "volume options", shown="volume sliders",
+            hooks=tuple(range(150, 159)),  # english_runtime.VOLUME, then STAGE_DUCK_HOOKS
+            edits=("SE_PRECISION",  # the SE gain at full precision, so the low steps stay apart
+                   "STAGE_DUCK"),  # a stage line's setter calls take the full level; stage_duck.h sets the depth
+            calls=(0x5E1980,)  # push_channel_volume, called from the channel reset's new push
+            + _c("FADE_BGM_LEVEL", "SET_SE_LEVEL"),  # a released line's restore
+            returns=_c("STAGE_LINE_MUSIC", "STAGE_LINE_EFFECTS")),  # the line's two setter calls
     # Builds with a define only; keep them last, so the features above keep their numbers in every build.
     Feature("moving", "moving camera fix", hooks=(72,), define="ENRT_MOVING_FIX"),
     Feature("test", "test harness", hooks=(73, 74, 112, 128, 129, 130, 131, 132, 134), define="ENRT_TEST",

@@ -84,6 +84,12 @@ VOLUME = [
     (0x5138AD, "8bc2 c1e81f", 154, SE),     # init_se_channels 0x513880: the SE option itself
     (0x513A31, "8bf2 c1ee1f", 155, SE),     # set_se_channels_muted 0x513A10, unmute: the SE option itself
 ]
+# runtime/stage_duck.h: a stage line's duck, from its start to its window's end.
+STAGE_DUCK_HOOKS = [
+    (0x4F4FD5, "0fb6051b158000", 156),  # start_stage_line_voice 0x4F4F80: the line loaded (edi), its setters next
+    (0x4F5146, "201d40969c00", 157),    # open_stage_dialog_window 0x4F5090: a window released with no restore
+    (0x4ED6D0, "f60540969c0020", 158),  # run_quote_box_queue: the tick's window commands (0x4EECC0) are done
+]
 FRAME_WORDS = re.search(r"struct frame \{\s*u32 ([^;]*);", SOURCE)[1].replace(" ", "").split(",")  # C, in order
 # Installed in both text modes.
 ALWAYS_HOOKS = [
@@ -184,6 +190,7 @@ ALWAYS_HOOKS = [
     (0x63963F, "8b422c ffd0", 23, None),        # effect batch Lock, its flags pushed (mid-function)
     *((va, prologue, hook_id, None) for va, prologue, hook_id, _ in HEADROOM),
     *((va, prologue, hook_id, None) for va, prologue, hook_id, _ in VOLUME),
+    *((va, prologue, hook_id, None) for va, prologue, hook_id in STAGE_DUCK_HOOKS),
 ]
 # ENRT_MOVING_FIX builds only: out of release 1, kept for later.
 MOVING_FIX_HOOKS = [
@@ -303,7 +310,8 @@ def compile_dll(output: Path, header: str, defines: tuple[str, ...] = ()) -> Non
     flags = ["-std=c11", "-O2", "-Wall", "-Werror", "-shared", "-static-libgcc",
              "-fno-asynchronous-unwind-tables", *(f"-D{d}" for d in defines),
              f"-Wl,--no-insert-timestamp,--kill-at,--disable-dynamicbase,--image-base,{DLL_BASE:#x}",
-             "-o", "d3d9.dll", "english_runtime.c", "-lgdi32"]  # gdi32: the borderless bars' black brush
+             # gdi32: the borderless bars' black brush; ole32: the master stage's audio-client probe (sound_attach)
+             "-o", "d3d9.dll", "english_runtime.c", "-lgdi32", "-lole32"]
     if shutil.which(COMPILER) is None:
         raise FileNotFoundError(f"{COMPILER} is missing: install Fedora's mingw32-gcc package")
     with tempfile.TemporaryDirectory() as tmp:

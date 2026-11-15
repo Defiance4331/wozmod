@@ -16,8 +16,8 @@ from . import true_rate
 from .latin_font import WIDTHS
 from . import camp_plate
 from .runtime_edits import (
-    CODE_EDITS, FONT_ROUTE, PAD_CAMERA, PATH_CELLS, SAVED_PAD, SE_PRECISION, SOUND_3D, STANDARD_CAMERA, V101_FIXES,
-    VOICE_EDITS, camp_plate_edits, settings_rows,
+    CODE_EDITS, FONT_ROUTE, PAD_CAMERA, PATH_CELLS, SAVED_PAD, SE_PRECISION, SOUND_3D, STAGE_DUCK, STANDARD_CAMERA,
+    V101_FIXES, VOICE_EDITS, camp_plate_edits, settings_rows,
 )
 
 
@@ -27,7 +27,7 @@ def edit_lists(camp_width: int, *, moving_fix: bool = False) -> list[tuple[int, 
     banks."""
     both = [("PAD_CAMERA", PAD_CAMERA), ("SAVED_PAD", SAVED_PAD), ("STANDARD_CAMERA", STANDARD_CAMERA),
             ("V101_FIXES", V101_FIXES), ("SOUND_3D", SOUND_3D), ("PATH_CELLS", PATH_CELLS),
-            ("SE_PRECISION", SE_PRECISION)]
+            ("SE_PRECISION", SE_PRECISION), ("STAGE_DUCK", STAGE_DUCK)]
     return [
         (ENGLISH, "FONT_ROUTE", FONT_ROUTE), (ENGLISH, "CODE_EDITS", CODE_EDITS),
         (ENGLISH, "camp plate", camp_plate_edits(camp_width)),
