@@ -14,7 +14,7 @@ import pytest
 from synthetic import pe_image
 from wozmod.formats import pe
 from wozmod.install.stock import EXE, recorded
-from wozmod.runtime import build, guards, layout, text_boxes, true_rate
+from wozmod.runtime import build, guards, layout, text_boxes, text_lanes, true_rate
 from wozmod.runtime import english_runtime as runtime
 from wozmod.runtime import text_table
 from wozmod.runtime.latin_font import LATIN_GLYPH
@@ -59,6 +59,7 @@ def test_data_header_keeps_group_lengths_terminator_and_hook_return_flags() -> N
         bytes(image), edits, hooks, (), features))
     assert bytes(layout.c_array("enrt_widths", header)) == b"\x05\x07"
     assert layout.defines(header) == {"WIDTH_POINTER": 0x79BAC0, "GLYPH_LATIN": LATIN_GLYPH, "WIDE_TEXT": 1024,
+                                      **layout.defines("\n".join(text_lanes.c_header())),
                                       "PROMPT_SLOTS": len(PROMPT_SLOTS), "PROMPT_ITEMS": len(PROMPT_SLOTS) + len(STICK_ITEMS),
                                       "HEADROOM_FIRST": runtime.HEADROOM[0][2], "VOLUME_FIRST": runtime.VOLUME[0][2]}
     assert [runtime.FRAME_WORDS[i] for i in layout.c_array("headroom_word", header)] == [
@@ -170,11 +171,12 @@ SYNTHETIC_HEADER = "\n".join([
     "static const struct site enrt_hooks[] = {{0x5c9fd0, 0, 24, 0, 5, {0x83,0xec,0x1c,0x53,0x55}}};",
     "static const u8 enrt_widths[1] = {24};",
     "#define WIDTH_POINTER 0x79bac0", f"#define GLYPH_LATIN {LATIN_GLYPH}",
-    "#define WIDE_TEXT 1024", "static const u32 enrt_wide_writes[] = {0};", "static const u32 enrt_wide_reads[] = {0};",
+    "#define WIDE_TEXT 1024",
+    "static const u32 enrt_wide_writes[] = {0};", "static const u32 enrt_wide_reads[] = {0};",
     "#define HEADROOM_FIRST 140", "static const u8 headroom_word[] = {7};",
     "#define VOLUME_FIRST 150", "static const u32 volume_option[] = {0x80151b};",
     "#define PROMPT_SLOTS 1", "#define PROMPT_ITEMS 9", "#define PROMPT_SLOT_LIST 0, 1, 2, 3, 4, 5, 6, 7, 8",
-    *text_boxes.c_header(), "",
+    *text_boxes.c_header(), *text_lanes.c_header(), "",
 ]) + true_rate.header(None, [])
 
 

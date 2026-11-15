@@ -237,6 +237,18 @@ def text_within_edge(screen: dict, text: dict | None, edge: int = LAYOUT_W, allo
                                      "reported_ends": [t["x"] + t.get("reported_width", t["width"]) for t in ts]})
 
 
+def text_within_safe_area(screen: dict, text: dict | None, allow_empty: bool = False, *,
+                          img: Image.Image | None = None, ink: bool = True) -> Check:
+    """Each selected text starts and ends inside the safe area's x range (docs/design-language.md, Text lanes): a
+    notice or caption centred on the screen, or a column near its edge. With `img`, a text spans its drawn ink."""
+    ts = drawn_texts(_texts(screen, text), img if ink else None)
+    if not ts:
+        return _empty("texts=0", allow_empty)
+    outside = [{"text_at": (t["x"], t["y"]), "right_end": t["x"] + t["width"]} for t in ts
+               if t["x"] < SAFE_LEFT or t["x"] + t["width"] > SAFE_RIGHT]
+    return Check(not outside, {"texts": len(ts), "safe": (SAFE_LEFT, SAFE_RIGHT), "outside": outside})
+
+
 def text_within_box(screen: dict, text: dict | None, box: str, allow_empty: bool = False, *,
                     img: Image.Image | None = None, ink: bool = True) -> Check:
     """Each selected text starts and ends inside a box drawn by caller `box` whose height holds its y: a list's
@@ -643,6 +655,7 @@ ASSERTIONS: dict[str, tuple[Callable[..., Check], bool]] = {
     "text_within_box": (text_within_box, False),
     "quad_within_box": (quad_within_box, False),
     "box_within_safe_area": (box_within_safe_area, False),
+    "text_within_safe_area": (text_within_safe_area, False),
     "text_inset": (text_inset, False),
     "text_position": (text_position, False),
     "text_box": (text_box, False),
@@ -659,7 +672,8 @@ ASSERTIONS: dict[str, tuple[Callable[..., Check], bool]] = {
 }
 RUN_FILES = {"device_matches_mode"}  # read the run's runtime.log and settings.ini, not the screen
 # take the capture as `img=`
-INK_WIDTH = {"text_clear_of_quad", "text_clear_of_text", "text_within_edge", "text_within_box", "text_box"}
+INK_WIDTH = {"text_clear_of_quad", "text_clear_of_text", "text_within_edge", "text_within_box", "text_box",
+             "text_within_safe_area"}
 SCREEN_KEYS = {"name", "route", "fixture", "battle", "script", "spawn", "keys", "notice", "wait", "assert"}
 
 

@@ -63,9 +63,9 @@ def test_each_page_box_grows_by_its_own_rows_and_keeps_the_stock_margins():
         # plate at y 440 and the name at 454 (0x59A2DE, 0x59A3D5) move up with it.
         "z-talk": ((bar.edges, bar.y, bar.stretch, bar.room(3), immediates(bar, slice(1, None))),
                    ((482, 626), 510, (22, 96, 21), (28, 32), {0x59A70D: 482, 0x59A2DE: 419, 0x59A3D5: 433})),
-        # At the stock y 507 a fifth line lands on the prompt bar (y 638 to 668). The WO1 narration's four lines end
-        # at 465 + 24 + 3 * 36 = 597; five Z lines at pitch 33 take 24 + 4 * 33 = 156, so they start at 441.
-        "z-narration": ((narration.y, narration.y + narration.block(5)), (441, 597)),
+        # The WO1 narration's four lines end at 465 + 24 + 3 * 36 = 597; four Z lines at pitch 33 take
+        # 24 + 3 * 33 = 123, so they start at 474.
+        "z-narration": ((narration.y, narration.y + narration.block(4)), (474, 597)),
     }
     wrong = {name: got for name, (got, expected) in rows.items() if got != expected}
     assert wrong == {}

@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 from wozmod.formats import pe
 
-from . import layout, true_rate
+from . import layout, text_lanes, true_rate
 from .text_room import ROOMS, WIDE
 
 V100 = (0x4AF69DF7, 0x101A000)  # version 1.00's TimeDateStamp (2009-11-08 10:31:19 UTC) and SizeOfImage
@@ -74,9 +74,9 @@ TEXT_RETURNS = (
        "BRIEFING_DRAW", "NARRATION_Z_DRAW", "STILL_Z_DRAW", "NARRATION_Z_COUNT", "BRIEFING_COUNT", "SCENARIO_TEXT_DRAW",
        "DREAM_SUMMARY_DRAW", "ARMY_NAME_DRAW", "WEAPON_READING_DRAW", "WEAPON_INFO_READING_DRAW", "BANNER_TEXT_DRAW",
        "ARMY_TITLE_OUTLINE", "ARMY_TITLE", "BANNER_NAME_DRAW", "PLAIN_BOX_CALL", "DIALOG_PLATE_1", "DIALOG_PLATE_2",
-       "SPEAK_PARSE")
+       "SPEAK_PARSE", "NOTICE_DRAW")
     + (0x5990EE, 0x5995D9)  # STILL_Z_COUNTS
-    + _column("glyph_sites", 0) + _column("boxed", 0) + _column("reflow", 0) + _column("described", 0)
+    + _column("glyph_sites", 0) + text_lanes.SITES
     + _column("single_line", 0) + _column("key_first", 0, 1)
     + (0x52E78F, 0x52E7C3, 0x52E7EE, 0x52E8BF, 0x52E8E9, 0x52E910, 0x533497, 0x5973F5, 0x5974CC)  # row_columns
     + (0x54E76F, 0x54F8CF, 0x55194F)  # english_hook: message box, battle dialog, notice measures

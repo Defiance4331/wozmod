@@ -7,7 +7,7 @@ import struct
 from .latin_font import (
     LATIN_COUNT, LATIN_FIRST, LATIN_GLYPH, SURROGATE_CODE, SURROGATE_GLYPH, SURROGATE_LETTERS,
 )
-from . import camp_plate
+from . import camp_plate, text_lanes
 from .text_boxes import box
 
 from .design import (  # noqa: F401 (the tokens are read from here too)
@@ -594,8 +594,13 @@ X360_LAYOUT = [
     (0x53A79E, bytes.fromhex("6a23"), bytes.fromhex("6a46")),
     # Movie subtitle cell and pitch, and the two line bases.
     (0x49EAA1, bytes.fromhex("b020"), bytes.fromhex("b018")),
-    (0x49EABF, bytes.fromhex("c6050eaec20024"), bytes.fromhex("c6050eaec2001c")),
+    (0x49EABF, bytes.fromhex("c6050eaec20024"), bytes.fromhex("c6050eaec200") + bytes([text_lanes.ONE_ROW_PITCH])),
     immediate(0x49EAFE, "b8", 628, 652), immediate(0x49EB39, "b8", 664, 680),
+    # Strategy cut-in strip (0x54F2F0 -> 0x54D990: a 150 px cap, the stretched body, then a fading 150 px cap at x +
+    # width): the X360 width, so the art runs off the right edge and English phrases stay on it. Sliding out, sliding
+    # in, at rest.
+    immediate(0x54F363, "69d2", 0x2AA, 0x4CE), immediate(0x54F398, "69c0", 0x2AA, 0x4CE),
+    immediate(0x54F3AB, "be", 0x2AA, 0x4CE),
 ]
 
 # The pre-battle army list (0x536630, slid by 0x536960) and the officer panel (0x535E20, base slid by 0x535FF0) at

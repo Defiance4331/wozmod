@@ -50,6 +50,9 @@ ROOMS = (
     Room(0x5A1A65, WIDE, read=0x5A1ABD),
     Room(0x5851DE, WIDE),
     # Sites that fit today.
+    # The message box: 0x54D140 copies its text, unbounded, into 0xC2AE30, whose 262 bytes end at the box's cell
+    # (0xC2AF36), x and width; a longer text overwrites them and ends the game. Any message can be its text.
+    Room(0x54D140, 0xC2AF36 - 0xC2AE30, tuple(range(MESSAGE_COUNT))),
     Room(0x5851EA, 256, tuple(range(0x38F))),
     Room(0x527EA4, 256, (0x2FB,), fills=0x6FD310),
     Room(0x52936E, 256, (0x2FE,), fills=0x6FD310),

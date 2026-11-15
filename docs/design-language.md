@@ -4,8 +4,10 @@ How wozmod lays out every menu, list, card and text box it changes. Each patch t
 these rules, and each rule names the check that proves it (section 7). Values are logical pixels on the game's
 1280x720 layout; harness captures are 1.5x that.
 
-The goal is one sentence: **the game looks as if Koei had shipped it in English.** English text is longer than
-Japanese, so boxes grow; when they grow, they grow the way the official art and the X360 English release would have.
+The goal is one sentence: **the game looks as if Koei had shipped it in English, and the English reads well.** English
+text is longer than Japanese, so boxes grow. The official art and the X360 English release show how Koei grew them, so
+they are the first thing to reach for. They are evidence, not authority: where one of their choices breaks a rule
+below, the rule wins, and the reason is written beside the value.
 
 ## 1. Principles, in priority order
 
@@ -15,13 +17,30 @@ An explicit decision of the project owner outranks every rule here.
 2. **Names are never squeezed.** A list slot is sized for the widest real string it can show, measured with the
    runtime's own metrics. Condensing stays the fallback only for free text (descriptions, hints, titles), and only
    by what is still needed after using the free room.
-3. **One text size.** Every menu string draws at cell 24. X360 cells are a different unit:
+3. **Text lanes.** Free text (a sentence or more: dialogue, narration, descriptions, notices) wraps at its lane, and
+   its lane is the narrowest of:
+   - the inner width of the art drawn behind that text, never a width borrowed from another element;
+   - the room from the text's start to the safe area's edge (section 2);
+   - for text that can run to more than one line, a reading measure of 75 characters (at cell 24, 75 times the mean
+     advance of English text, `MEASURE` in `wozmod.runtime.text_lanes`), so the eye finds the next line's start.
+
+   Text wraps at the full lane, not short of it. Example: the strategy cut-in's strip runs the full width of the
+   screen, so its lane runs from the text's start at x 300 to the safe area's edge at 1216; it used to wrap at the
+   battle dialogue box's 720, a width it borrowed.
+
+   **One-row lines** are the exception. A line read in one glance over the scene (a battle notice, a subtitle, a movie
+   caption, the strategy cut-in) has no measure: it keeps to one row up to its art or the safe area, since it has no
+   next line to find, and a second row costs the scene more than a long row does. When it does not fit, it splits
+   into rows of even length within its lane, and a centred line centres each row, so it still reads as one unit with
+   no word left alone on a row.
+4. **One text size.** Every menu string draws at cell 24. X360 cells are a different unit:
    X360 20 is our 24 (`CELL_EDITS` in `tests/test_runtime_x360_layout.py`).
-4. **Official first.** Frames, plates, tabs and icons are the stock art at native size. Where the X360 English
-   release has the screen, its geometry is the starting point; where it does not, stock Japanese is.
-5. **One rule per kind of element.** The same kind of element (a list row, a tab, a card) has the same geometry on
+5. **Official first.** Frames, plates, tabs and icons are the stock art at native size. Where the X360 English
+   release has the screen, its geometry is the first candidate, and it stays when it meets the rules above; where it
+   breaks one, the rule wins. Where the X360 release does not have the screen, stock Japanese is the first candidate.
+6. **One rule per kind of element.** The same kind of element (a list row, a tab, a card) has the same geometry on
    every screen. A screen does not get its own exception.
-6. **Derived, not tuned.** Every grown width is computed from the content it holds and the tokens below. A
+7. **Derived, not tuned.** Every grown width is computed from the content it holds and the tokens below. A
    measured offset that only makes one screen look right is a workaround (AGENTS.md, Root causes).
 
 ## 2. Canvas and safe area
@@ -55,8 +74,22 @@ The X360 menus space on a 7 px unit. Use these steps; anything else needs a stoc
 |---|---|
 | Cell | 24 for every menu string (names, counts, tabs, hints, help bar, descriptions) |
 | Text inset in a plate | 10 from the plate's left edge to the name's ink (within 1 px); trailing numbers end 10 from its right edge |
-| Vertical | ink centred in the plate, within 1 px |
+| Vertical | see below |
 | Free-text boxes | the stock inset of that box kind (scaled with the box when the box grows) |
+| Line pitch | one per kind of text, measured and drawn alike. One-row lines that take a second row (battle notices, the strategy cut-in, event subtitles): 28 at cell 24, the X360 event subtitles' (`ONE_ROW_PITCH` in `wozmod.runtime.text_lanes`). Page boxes: their stock pitch scaled to cell 24 (36, 33, 30). The battle dialogue box: 24 |
+
+Vertical placement measures ink from the first row's cap line to the last row's baseline (descenders hang below), and
+centres it on the art drawn behind the text, its full visible rows, within 1 px:
+
+- **A label on a plate** (a name, a tag, a tab label): centred on the plate.
+- **A short, whole text in a box of fixed height** (narration, the Dream briefing, the strategy cut-in's phrase): its
+  rows centred as one block for their own count, so one row and three rows both sit in the middle.
+- **Conversation that types out into a box sized for its longest page** (camp talk, Story Z talk, the battle dialogue
+  box): the first row at the box's top inset, so a page reads from the same place each time.
+
+Art that grows with its text (the battle notice bar, the message box) is sized from the rows as they are drawn: the
+text is measured at the pitch it draws at, so a second row gets the same room as the first. Example: the notice bar
+was sized for rows 24 apart while its rows drew 34 apart, so a second row sat 10 px low, on the bar's faded edge.
 
 ## 5. Elements
 
@@ -144,7 +177,9 @@ that followed it (commit b64efcb) applied the After column; `data/checks/layout.
 
 ## 7. Checks
 
-Every rule above is enforced in the game by `data/checks/layout.toml` and offline by tests. The check kinds are the
+Every rule above is enforced in the game by `data/checks/layout.toml` and offline by tests. Text lanes: every lane
+the runtime sets lives in `wozmod.runtime.text_lanes`, and `tests/test_text_lanes.py` checks each against its three
+bounds; in the game, `text_within_safe_area` checks drawn text against the safe area. The check kinds are the
 keys of `ASSERTIONS` in `tools/screen_checks.py`; for example `box_within_safe_area` keeps every logged box on the
 screen inside x 64..1216, but the stock full-screen backdrops in `SAFE_AREA_FULL_WIDTH`. Kinds to add with the
 rollout:

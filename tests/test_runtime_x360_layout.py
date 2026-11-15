@@ -19,7 +19,8 @@ EDITS = {
     0x53A65E: 0x82294B20, 0x53A676: 0x82294B30, 0x53A764: 0x82294B30, 0x53A68B: 0x82294B6C,
     0x53A73D: 0x82294C44, 0x539F94: 0x82294200, 0x53A686: 0x82294B5C,
     0x53A7AC: 0x82294CBC, 0x53A7A7: 0x82294CB8, 0x53A7A0: 0x82294CA8, 0x53A79E: 0x82294CA0,
-    0x49EABF: 0x822EA288, 0x49EAFE: 0x822EA2C8, 0x49EB39: 0x822EA330}
+    0x49EABF: 0x822EA288, 0x49EAFE: 0x822EA2C8, 0x49EB39: 0x822EA330,
+    0x54F363: 0x822A4E0C, 0x54F398: 0x822A4E30, 0x54F3AB: 0x822A4E40}
 # Edits whose X360 value is a cell width: ours is 24/20 of it.
 CELL_EDITS = {0x49EAA1: 0x822EA2E8, 0x538C4E: 0x822935C0, 0x550821: 0x822A622C}
 
@@ -81,17 +82,15 @@ CAVES = {
 # The officer card's reading-line call, which the X360 card does not make.
 NOPS = {0x535EC1}
 
-# Site: the X360 wrap width and the cell w it wraps at; the box is that width unless our art moves it (False), or
-# that width grown as its info box grew to the card's width (CARD: docs/design-language.md, Panels on a page).
+# Site: the X360 wrap width, which our box keeps (True), or that width grown as its info box grew to the card's width
+# (CARD: docs/design-language.md, Panels on a page). Lines break at our box (wozmod.runtime.text_lanes), not where the
+# X360's smaller cell broke them.
 CARD = runtime_edits.CARD_WIDTH - runtime_edits.STOCK_CARD_WIDTH
-WRAPS = {
-    0x595F93: (0x822D974C, 0x822D972C, True), 0x5975C6: (0x822DB240, 0x822DB224, False),
-    0x593B98: (0x822DB318, 0x822DB224, True), 0x595679: (0x822D8D30, 0x822D8D20, CARD),
-    0x5956FA: (0x822D8D30, 0x822D8D20, CARD), 0x53C225: (0x82296084, 0x82296070, True),
-    0x53C2A5: (0x8229611C, 0x82296108, True), 0x526BE8: (0x822824E0, 0x822824B8, False),
-    0x539F9F: (0x822941E4, 0x822941D4, True), 0x598125: (0x822DBA6C, 0x822DBA3C, True),
-    0x59818B: (0x822DBB0C, 0x822DBAC8, True),
-    0x49DACE: (0x822EA300, 0x822EA2E8, True), 0x49DB4C: (0x822EA300, 0x822EA2E8, True)}
+BOXES = {
+    0x595F93: (0x822D974C, True), 0x593B98: (0x822DB318, True), 0x595679: (0x822D8D30, CARD),
+    0x5956FA: (0x822D8D30, CARD), 0x53C225: (0x82296084, True), 0x53C2A5: (0x8229611C, True),
+    0x539F9F: (0x822941E4, True), 0x598125: (0x822DBA6C, True), 0x59818B: (0x822DBB0C, True),
+    0x49DACE: (0x822EA300, True), 0x49DB4C: (0x822EA300, True)}
 
 
 @pytest.fixture(scope="module")
@@ -127,12 +126,9 @@ def test_layout_values_do_not_drift_from_the_x360_screens(x360: bytes) -> None:
     edits = {va: ours(edit) for va, edit in panels.items()}
     rows = [(f"edit {va:#x}", edits[va], immediate(x360, at)) for va, at in EDITS.items()]
     rows += [(f"edit {va:#x}", edits[va], round(immediate(x360, at) * 24 / 20)) for va, at in CELL_EDITS.items()]
-    boxes, wraps = layout.sites(), layout.reflow_rules()
-    for site, (width_at, cell_at, boxed) in WRAPS.items():
-        width, cell = immediate(x360, width_at), immediate(x360, cell_at)
-        rows.append((f"wrap {site}", wraps.get(site, boxes[site][0]), round(width * 20 / cell)))
-        if boxed is not False:
-            rows.append((f"box {site}", boxes[site][0], width + (0 if boxed is True else boxed)))
+    boxes = layout.sites()
+    rows += [(f"box {site:#x}", boxes[site][0], immediate(x360, at) + (0 if grown is True else grown))
+             for site, (at, grown) in BOXES.items()]
     x = lambda at: immediate(x360, at)
     rows += [(f"panel {va:#x}", ours(panels[va]), x(at)) for va, at in PANEL_EDITS.items()]
     rows += [(f"panel {va:#x}", ours(panels[va]), value(x)) for va, value in DERIVED.items()]

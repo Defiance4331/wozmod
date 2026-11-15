@@ -17,6 +17,7 @@ from .latin_font import LATIN_GLYPH
 from .layout import C_SOURCE, SOURCE
 from .prompts import PROMPT_SLOTS, STICK_ITEMS
 from .text_boxes import c_header as text_box_header
+from .text_lanes import c_header as text_lane_header
 from .text_room import ROOMS, WIDE
 
 COMPILER = "i686-w64-mingw32-gcc"
@@ -301,6 +302,7 @@ def data_header(exe: bytes, edits: list[tuple[int, str, list[tuple[int, bytes, b
         f"#define PROMPT_ITEMS {len(PROMPT_SLOTS) + len(STICK_ITEMS)}",
         f"#define PROMPT_SLOT_LIST {', '.join(map(str, PROMPT_SLOTS + STICK_ITEMS))}",
         *text_box_header(),
+        *text_lane_header(),
         "",
     ])
 

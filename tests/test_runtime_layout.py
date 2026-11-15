@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from wozmod.runtime import layout, text_boxes
+from wozmod.runtime import layout, text_lanes
 
 
 SOURCE = """
@@ -13,35 +13,26 @@ SOURCE = """
 #define DREAM_SUMMARY_DRAW 0x30
 #define CAPTION_CUE 0x40
 #define HISTORY_DRAW 0x50
-static const u32 windows[2][2] = {{45, 41}, {33, 29}};
-#define SCENARIO_TEXT_WIDTH 31
-#define DREAM_SUMMARY_WIDTH 23
-#define CAPTION_WIDTH 19
-#define HISTORY_WIDTH 15
-static const int boxed[][2] = {{0xA0, 13}, /* ignored */ {0xB0, 11}};
-static const int described[][2] = {{0xC0, 7}};
-static const int single_line[][2] = {{0xD0, 9}};
+static const int single_line[][2] = {{0xD0, 9}, /* ignored */ {0xE0, 5}};
 """
 
 
-def test_sites_does_not_drop_a_supported_array_row() -> None:
-    assert layout.sites(SOURCE) == {
-        ("window", 1): (41, False), ("window", 2): (29, False),
-        0x20: (31, True), 0x30: (23, True), 0x40: (19, False),
-        0x50: (15, False),
-        0xA0: (13, False), 0xB0: (11, False), 0xC0: (7, True), 0xD0: (9, False),
-        **{site: (row[6], True) for site, row in text_boxes.page_rows().items()},
-    }
+def test_sites_holds_every_lane_and_single_line():
+    # Red when sites() drops a lane kind (the screen checks would then find no width for its draws) or a single-line
+    # row while parsing.
+    found = layout.sites(SOURCE)
+    tabled = [row for row in text_lanes.LANES if row.kind in ("boxed", "described")]
+    assert {site: found.get(site, (None,))[0] for row in tabled for site in row.sites} == {
+        site: row.width for row in tabled for site in row.sites}
+    assert (found[0x20][0], found[0x30][0], found[0x40][0], found[0x50][0]) == (
+        text_lanes.lane("scenario").width, text_lanes.lane("dream").width, text_lanes.lane("caption").width,
+        text_lanes.lane("history").width)
+    assert (found[0xD0], found[0xE0]) == ((9, False), (5, False))
 
 
-@pytest.mark.parametrize(("array", "original", "perturbed"), [
-    ("boxed", "{0xA0, 13}", "{0xA0, 13 + 1}"),
-    ("described", "{0xC0, 7}", "{0xC0}"),
-    ("single_line", "{0xD0, 9}", "{0xD0, WIDTH}"),
-])
-def test_sites_rejects_unparseable_rows_instead_of_dropping_boxes(array: str, original: str, perturbed: str) -> None:
-    with pytest.raises(ValueError, match=rf"{array}.*initializer"):
-        layout.sites(SOURCE.replace(original, perturbed))
+def test_sites_rejects_an_unparseable_single_line_row_instead_of_dropping_it() -> None:
+    with pytest.raises(ValueError, match=r"single_line.*initializer"):
+        layout.sites(SOURCE.replace("{0xD0, 9}", "{0xD0, WIDTH}"))
 
 
 def test_defines_reads_each_integer_define_and_no_expression() -> None:

@@ -111,6 +111,15 @@ def test_a_box_past_either_safe_edge_fails_and_only_named_full_width_art_is_exem
     assert not sc.box_within_safe_area({"boxes": [box(0, 1280, "0x58d319")]}).ok  # nothing left to check
 
 
+def test_a_text_past_either_safe_edge_fails():
+    """Bug: a battle notice centred in its 1224 lane runs x 28..1252, and a Dream summary ends at 1218, past the safe
+    area's 1216; the screen-edge check passed both."""
+    assert sc.text_within_safe_area({"texts": [text(64, 527, 1152)]}, None).ok  # both edges exactly on it
+    c = sc.text_within_safe_area({"texts": [text(28, 527, 1224), text(980, 408, 238)]}, None)
+    assert not c.ok and c.numbers["outside"] == [{"text_at": (28, 527), "right_end": 1252},
+                                                 {"text_at": (980, 408), "right_end": 1218}]
+
+
 def test_a_name_one_px_off_the_inset_in_its_own_row_plate_fails():
     """Bug: the officer lists draw names 7 in and the weapon rows 11 in, against the 10 of section 4; or the check
     measures from the list's frame (drawn by the same caller, further left) instead of the row's own plate."""

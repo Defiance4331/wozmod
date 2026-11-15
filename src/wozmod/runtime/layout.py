@@ -55,17 +55,17 @@ if _twice := sorted(defines(SHARED_H.read_text(encoding="utf-8")).keys() & defin
 
 
 def sites(source: str = SOURCE) -> dict:
-    """Read wrapping widths and reflow flags from the runtime source, and the pages' from text_boxes."""
-    from . import text_boxes
-    known = defines(source)
-    found = {("window", k + 1): (box, False) for k, (_, box) in enumerate(windows(source))} | {
-             known[f"{name}_DRAW"]: (known[f"{name}_WIDTH"], True) for name in ("SCENARIO_TEXT", "DREAM_SUMMARY")}
-    found[known["CAPTION_CUE"]] = (known["CAPTION_WIDTH"], False)
-    if "HISTORY_DRAW" in known and "HISTORY_WIDTH" in known:
-        found[known["HISTORY_DRAW"]] = (known["HISTORY_WIDTH"], False)
+    """Wrapping widths and description flags by draw site: the lanes' from text_lanes, the pages' from text_boxes, the
+    single lines' from the runtime source."""
+    from . import text_boxes, text_lanes
+    known, lane = defines(source), text_lanes.lane
+    found = {("window", 1): (lane("window1").width, False), ("window", 2): (lane("window2").width, False),
+             known["SCENARIO_TEXT_DRAW"]: (lane("scenario").width, True),
+             known["DREAM_SUMMARY_DRAW"]: (lane("dream").width, True),
+             known["CAPTION_CUE"]: (lane("caption").width, False), known["HISTORY_DRAW"]: (lane("history").width, False)}
     found |= {site: (row[6], True) for site, row in text_boxes.page_rows().items()}
-    found |= {va: (width, False) for va, width in c_array("boxed", source)}
-    found |= {va: (width, True) for va, width in c_array("described", source)}
+    found |= {site: (row.width, row.kind == "described") for row in text_lanes.LANES
+              if row.kind in ("boxed", "described") for site in row.sites}
     return found | {site: (width, False) for site, width in single_line_sites(source).items()}
 
 def single_line_sites(source: str = SOURCE) -> dict[int, int]:
@@ -80,22 +80,6 @@ def glyph_sites(source: str = SOURCE) -> dict[int, int]:
     if not set(found.values()) <= {0, 1}:
         raise ValueError(f"glyph_sites names a glyph register other than 0 or 1: {found}")
     return found
-
-def windows(source: str = SOURCE) -> list[tuple[int, int]]:
-    """Read the two windows' wrap and drawn widths."""
-    rows = c_array("windows", source)
-    if len(rows) != 2:
-        raise ValueError("windows layout array initializer does not list two windows")
-    return rows
-
-def reflow_rules(source: str = SOURCE) -> dict[int, int]:
-    """Read each site's wrap width where it differs from its box (the pages' from text_boxes)."""
-    from . import text_boxes
-    rules = {site: row[5] for site, row in text_boxes.page_rows().items()}
-    rules |= {("window", k + 1): wrap for k, (wrap, _) in enumerate(windows(source))}
-    if re.search(r"\breflow\s*\[", source):
-        rules |= dict(c_array("reflow", source))
-    return rules
 
 def runtime_writes(source: str = SOURCE) -> list[tuple[str, int, bytes | None, int]]:
     """List the stock code the runtime checks or rewrites itself as the game starts, beside the build's edits: name,

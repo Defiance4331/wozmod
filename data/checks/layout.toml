@@ -99,6 +99,10 @@ route = "gallery-movie-two-line"
   centre = 640
   cell = 28
 
+  [[screen.assert]]
+  kind = "text_within_safe_area"    # a caption is a one-row line: it wraps at the safe area (text_lanes)
+  text = { caller = "0x56a116" }
+
 # Treasure (Old): the MOZ list and detail panel (names from x 228, detail text from x 635 in a 416 box).
 [[screen]]
 name = "gallery-treasure-guide"
@@ -435,7 +439,7 @@ route = "story-orochi-scenario"
   quad = "4079.158"
   side = "right"
 
-# Dream summary (Old): the stock cell (24) and pitch (28) in its column, at most 7 lines, ending inside the 240 column.
+# Dream summary (Old): the stock cell (24) and pitch (28) in its column, at most 7 lines, ending inside the safe area.
 [[screen]]
 name = "dream-select"
 route = "dream-select"
@@ -451,9 +455,8 @@ route = "dream-select"
   cell = 24
 
   [[screen.assert]]
-  kind = "text_within_edge"
+  kind = "text_within_safe_area"
   text = { x = 980, y = 408 }
-  edge = 1220
 
 # Briefing (Mixed): the band widened and grown to hold five lines, the text centred in it (text_boxes "briefing").
 [[screen]]
@@ -789,6 +792,33 @@ wait = { caller = "0x550f0b", timeout = 30 }
 
   [[screen.assert]]
   kind = "text_on_one_line"
+  text = { caller = "0x550f0b" }
+
+  [[screen.assert]]
+  kind = "text_within_safe_area"    # a notice is a one-row line: it wraps at the safe area (text_lanes), centred
+  text = { caller = "0x550f0b" }
+
+# A notice too long for one row (1355 px at cell 24): two rows as even as its words allow (701 and 646), each centred
+# on 640, 28 apart (the one-row line pitch, measured and drawn alike), the block on the bar's centre, y 527
+# (docs/design-language.md, Text lanes and Vertical). Uneven rows on purpose: a left-aligned second row is 28 px off.
+[[screen]]
+name = "battle-notice-two-rows"
+route = "battle"
+notice = "Hold the northern ford until the reserve arrives, then drive the rear guard back across the riverbanks!"
+wait = { caller = "0x550f0b", timeout = 30 }
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x550f0b", y = 502 }
+  centre = 640
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x550f0b", y = 530 }
+  centre = 640
+
+  [[screen.assert]]
+  kind = "text_within_safe_area"
   text = { caller = "0x550f0b" }
 
 # Upgrade Skills after a skill is picked: the officers, and the chosen officer's weapons. Both draw their weapon list

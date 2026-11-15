@@ -34,7 +34,7 @@ RUNTIME_FILES = ("wozmod/settings.ini", "wozmod/runtime.log", "wozmod/runtime.cr
 # The game folder is checked piece by piece: only the parts of the stock files the build reads (install/stock.py).
 # Release assets built by us; a release updates both pins with the files it ships.
 LETTERING = (18_385_576, "e5176ec1d0e9915b898c1991c0745d78684c3e6adf14aab5da1019e1eb512ae1")
-DLL = (304_644, "18eb596901fe68e6df1c2d53342d7bd4bc4010d2a3211dc013a26ef576b903a0")
+DLL = (306_777, "2c2ae1f80da6fedd29446a294a92dfa07e112e642c91af3f3f149dc08ec31187")
 
 _MOD_PATH = re.compile(r"d3d9\.dll|wozmod(/[A-Za-z0-9_][A-Za-z0-9_.-]*)+")
 

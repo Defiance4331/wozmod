@@ -193,7 +193,7 @@ def _wrap(text: str, at: int, cell: int) -> str:
 
 
 # Every page is drawn at cell 24, most with the stock pitch scaled to it (42, 38 and 35 become 36, 33 and 30). The
-# four boxed pages share one text lane: x and wrap width, centred on the screen as each box's art is.
+# pages share one text lane: x and wrap width, centred on the screen as each box's art is.
 LANE = (160, 960)
 BOXES = {box.kind: box for box in (
     # WO1 chapter narration: the stock panel (4072.0) drawn taller from y 381, its rows stretched (its middle is not
@@ -205,10 +205,10 @@ BOXES = {box.kind: box for box in (
     Box("camp", "STILL_DRAW", Art((4104, 1), 412, 262, (56, 203), middle=(190, 190), sampled_at=(0x59C709,),
                                   drawn_at=(0x59C717,), y_at=((0x59C723, 0), (0x59C433, -14), (0x59C4A2, 0))),
         (508, 42, 2), x=LANE[0], wrap=LANE[1], width=LANE[1], lines=3, cell=(24, 24), pitch=36),
-    # Z chapter narration: no box art; the X360 box's x and wrap, its most lines ending where the WO1 narration's do
-    # (the stock text's place, 507, put a fifth line on the prompt bar).
-    Box("z-narration", "NARRATION_Z_DRAW", None, (507, 38, 3), x=200, wrap=742, width=757, lines=5, cell=(24, 24),
-        pitch=33),
+    # Z chapter narration: no box art; the WO1 narration's lane (one rule per kind), its most lines ending where the
+    # WO1 narration's do (the stock text's place, 507, put a fifth line on the prompt bar).
+    Box("z-narration", "NARRATION_Z_DRAW", None, (507, 38, 3), x=LANE[0], wrap=LANE[1], width=LANE[1], lines=4,
+        cell=(24, 24), pitch=33),
     # Story Z talk scenes: the stock bar (4102.2) at the X360 still event's x and width, grown upward by stretching
     # its middle, a colour gradient between its inner lines (rows 22 to 96); the name plate and the name keep their
     # stock places on its top (0x59A2DE at -63, 0x59A3D5 at -49). Its rows are pushed as imm8, which a grown bar
