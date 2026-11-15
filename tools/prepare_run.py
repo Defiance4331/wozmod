@@ -165,6 +165,44 @@ def settings_ini(settings: list[str]) -> str:
     return "".join(f"[{section}]\r\n" + "".join(f"{line}\r\n" for line in lines) for section, lines in sections.items())
 
 
+# Proton deletes and recopies its Steam client, DXVK and vkd3d DLLs into the prefix on every launch (try_copy). A run
+# sees the template prefix through an overlay, so each recopy writes the whole file into the run's own folder, about
+# 120 MB a launch. The pinned copy is patched to keep a file that already holds the same bytes.
+KEEP_IDENTICAL = "# wozmod: try_copy keeps a file that already holds the same bytes"
+TRY_COPY = ("def try_copy(src, dst, prefix=None, add_write_perm=True, copy_metadata=False, optional=False,\n"
+            "             follow_symlinks=True, track_file=None, link_debug=False):\n")
+TRY_COPYFILE = "\ndef try_copyfile(src, dst):\n"
+KEEP_IDENTICAL_CODE = f"""{KEEP_IDENTICAL}
+def _keep_identical(copy):
+    import filecmp
+
+    def try_copy(src, dst, prefix=None, add_write_perm=True, copy_metadata=False, optional=False,
+                 follow_symlinks=True, track_file=None, link_debug=False):
+        path = os.path.join(prefix, dst) if prefix is not None else dst
+        if os.path.isdir(path):
+            path = os.path.join(path, os.path.basename(src))
+        if (os.path.isfile(src) and (follow_symlinks or not os.path.islink(src)) and os.path.isfile(path)
+                and not os.path.islink(path) and filecmp.cmp(src, path, shallow=False)):
+            return
+        return copy(src, dst, prefix, add_write_perm, copy_metadata, optional, follow_symlinks, track_file, link_debug)
+    return try_copy
+
+
+try_copy = _keep_identical(try_copy)
+
+"""
+
+
+def keep_identical(proton: str) -> str:
+    """The Proton script with try_copy wrapped to keep identical files; unchanged when already patched. Refuses a
+    script whose try_copy is not the one the wrapper was written for, so a newer Proton is not patched blind."""
+    if KEEP_IDENTICAL in proton:
+        return proton
+    if TRY_COPY not in proton or TRY_COPYFILE not in proton or proton.index(TRY_COPY) > proton.index(TRY_COPYFILE):
+        raise ValueError("this Proton's try_copy changed; update KEEP_IDENTICAL_CODE in tools/prepare_run.py for it")
+    return proton.replace(TRY_COPYFILE, "\n" + KEEP_IDENTICAL_CODE + TRY_COPYFILE.lstrip("\n"), 1)
+
+
 def proton_mtime(path: Path) -> str:
     """A file's mtime as Proton writes it into config_info (its getmtimestr): str of the float, "0" when missing."""
     try:
@@ -183,6 +221,9 @@ def check_template(template: Path) -> None:
     if f'PROTON="{proton}/proton"' not in (template / "launch.sh").read_text():
         raise ValueError(f"{template}/launch.sh must run the pinned Proton {proton}/proton, not a copy that updates "
                          "itself (copy it there with cp -a --reflink=always)")
+    if KEEP_IDENTICAL not in (proton / "proton").read_text():
+        raise ValueError(f"{proton}/proton recopies unchanged DLLs into every run; patch it once with: "
+                         "uv run python tools/refresh_template.py")
     stamp = (template / "prefix/pfx/.update-timestamp").read_text().strip()
     info = (template / "prefix/config_info").read_text().split("\n")
     steam, files = Path(info[3] if len(info) > 3 else ""), f"{proton}/files/"

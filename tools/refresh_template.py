@@ -3,8 +3,10 @@
 
     uv run python tools/refresh_template.py
 
-It waits until no game runs and holds both game slots while Proton updates the prefix, because every running game
-sees the template prefix through its overlay. It does nothing when prepare_run would already accept the template.
+It first patches the pinned Proton to keep DLLs that are already identical (prepare_run.keep_identical), which takes
+effect at the next launch. It then waits until no game runs and holds both game slots while Proton updates the prefix,
+because every running game sees the template prefix through its overlay. It does nothing when prepare_run would already
+accept the template.
 Proton's run never returns on its own here (Wine's services keep the session open), so once prepare_run accepts the
 template it ends the session with wineserver -k, which saves the registry.
 """
@@ -19,7 +21,7 @@ from pathlib import Path
 
 import machine_lock
 from game_harness import SLOTS
-from prepare_run import WORK, check_template
+from prepare_run import WORK, check_template, keep_identical
 
 TEMPLATE = WORK / "runtime-tests/_template"
 STEAM = Path.home() / ".local/share/Steam"
@@ -34,7 +36,21 @@ def current() -> bool:
         return False
 
 
+def patch_proton() -> None:
+    """Write keep_identical's script over the pinned Proton, by rename so a launch never reads half of it."""
+    script = TEMPLATE / "proton/proton"
+    text = script.read_text()
+    patched = keep_identical(text)
+    if patched != text:
+        staged = script.with_name("proton.wozmod-new")
+        staged.write_text(patched)
+        staged.chmod(script.stat().st_mode)
+        staged.replace(script)
+        print(f"patched {script}")
+
+
 def main() -> int:
+    patch_proton()
     if current():
         print(f"{TEMPLATE} is current; nothing to refresh")
         return 0

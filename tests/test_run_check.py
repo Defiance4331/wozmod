@@ -152,9 +152,31 @@ def test_tools_and_tests_read_the_main_checkouts_harness_toml_from_a_linked_work
     assert (stager["CONFIG"], setup["CONFIG"], stager["WORK"]) == (main / "work/harness.toml",) * 2 + (main / "work",)
 
 
+# The part of Proton's script that keep_identical patches: try_copy as Proton has it, reduced to its copy.
+PROTON = """import os
+import shutil
+
+
+def try_copy(src, dst, prefix=None, add_write_perm=True, copy_metadata=False, optional=False,
+             follow_symlinks=True, track_file=None, link_debug=False):
+    if prefix is not None:
+        dst = os.path.join(prefix, dst)
+    if os.path.isdir(dst):
+        dst = os.path.join(dst, os.path.basename(src))
+    if os.path.lexists(dst):
+        os.remove(dst)
+    shutil.copyfile(src, dst)
+
+
+def try_copyfile(src, dst):
+    pass
+"""
+
+
 def pinned(template: Path) -> None:
-    """A template as a refresh leaves it: launch.sh runs the pinned Proton, which set the prefix up after Steam's last
-    update, so config_info holds what Proton computes at launch."""
+    """A template as a refresh leaves it: launch.sh runs the pinned, patched Proton, which set the prefix up after
+    Steam's last update, so config_info holds what Proton computes at launch."""
+    import prepare_run
     proton, steam = template / "proton", template.parents[2] / "steam"
     (proton / "files/share/wine").mkdir(parents=True)
     (proton / "files/share/wine/wine.inf").write_text("[Version]\n")
@@ -164,6 +186,7 @@ def pinned(template: Path) -> None:
     for name in ("steamclient.dll", "steamclient64.dll", "Steam.dll"):
         (steam / "legacycompat" / name).write_bytes(b"MZ")
     (template / "launch.sh").write_text(f'PROTON="{proton}/proton"\nexit 0\n')
+    (proton / "proton").write_text(prepare_run.keep_identical(PROTON))
     (template / "prefix/pfx").mkdir(parents=True, exist_ok=True)
     (template / "prefix/pfx/.update-timestamp").write_text(str(int((proton / "files/share/wine/wine.inf").stat().st_mtime)))
     mtime = lambda path: str(os.path.getmtime(path))  # noqa: E731  Proton's getmtimestr
@@ -174,7 +197,7 @@ def pinned(template: Path) -> None:
 
 
 @pytest.mark.parametrize("drift", ["self-updating launcher", "proton updated", "set up by another proton",
-                                   "steam updated"])
+                                   "steam updated", "unpatched proton"])
 def test_template_a_launch_would_rebuild_is_refused(tools, tmp_path, monkeypatch, drift):
     """Bugs: the launcher runs a Proton that updates itself, the prefix was set up by another Proton build, or Steam
     updated its client DLLs since the prefix was set up, so every launch rewrites about 300 MB of Wine DLLs into the
@@ -191,12 +214,41 @@ def test_template_a_launch_would_rebuild_is_refused(tools, tmp_path, monkeypatch
     elif drift == "set up by another proton":
         info = template / "prefix/config_info"
         info.write_text(info.read_text().replace(str(template / "proton"), "/elsewhere/Proton-CachyOS Latest"))
-    else:  # Steam's client update replaces steamclient.dll, whose mtime Proton keys the prefix on
+    elif drift == "steam updated":  # Steam's client update replaces steamclient.dll, whose mtime Proton keys on
         dll = tmp_path / "steam/legacycompat/steamclient.dll"
         os.utime(dll, (dll.stat().st_atime, dll.stat().st_mtime + 86400))
-    with pytest.raises(ValueError, match="pinned Proton|another Proton build"):
+    else:  # a new pinned copy, not yet patched to keep identical DLLs
+        (template / "proton/proton").write_text(PROTON)
+    with pytest.raises(ValueError, match="pinned Proton|another Proton build|recopies unchanged"):
         prep.prepare("run", tmp_path / "install", None, "s")
     assert not (work / "runtime-tests/run").exists()
+
+
+def test_patched_proton_keeps_identical_dlls_and_replaces_changed_ones(tools, tmp_path):
+    """Bugs: the patched try_copy recopies a DLL the prefix already holds byte for byte (about 120 MB into every run's
+    overlay), keeps one whose bytes differ (a run gets a stale DXVK after a Proton update), or patching twice wraps
+    it twice."""
+    patched = tools.prepare_run.keep_identical(PROTON)
+    assert tools.prepare_run.keep_identical(patched) == patched
+    proton = {}
+    exec(compile(patched, "proton", "exec"), proton)
+    source, prefix = tmp_path / "dist", tmp_path / "prefix/drive_c/windows/system32"
+    source.mkdir()
+    prefix.mkdir(parents=True)
+    for name, held in (("same.dll", b"MZ same"), ("changed.dll", b"MZ old")):
+        (source / name).write_bytes(b"MZ same" if name == "same.dll" else b"MZ new")
+        (prefix / name).write_bytes(held)
+    kept = (prefix / "same.dll").stat().st_ino
+    for name in ("same.dll", "changed.dll"):
+        proton["try_copy"](str(source / name), "drive_c/windows/system32", prefix=str(tmp_path / "prefix"))
+    assert (prefix / "same.dll").stat().st_ino == kept
+    assert (prefix / "changed.dll").read_bytes() == b"MZ new"
+
+
+def test_a_proton_whose_try_copy_changed_is_not_patched(tools):
+    """Bug: a newer Proton's try_copy takes other arguments, and the wrapper, patched in blind, breaks every launch."""
+    with pytest.raises(ValueError, match="try_copy changed"):
+        tools.prepare_run.keep_identical(PROTON.replace("link_debug=False", "link_debug=False, sandbox=None"))
 
 
 def record(install: Path) -> None:
@@ -499,6 +551,7 @@ def test_boot_clock_starts_once_the_run_holds_a_slot_and_the_wait_names_the_hold
     """Bugs: the wait for a busy slot counts against the boot limit, so a launch behind another game fails as never
     started; or the waiting launch cannot say who holds the slots (a free one listed, or a holder left out)."""
     monkeypatch.setattr(tools.run_check.harness, "work", lambda: tmp_path / "work")
+    monkeypatch.setattr(tools.run_check.harness.machine_lock, "work", lambda: tmp_path / "work")  # the slots' files
     (tmp_path / "work").mkdir()
     held = tools.run_check.harness.take_slot("their-run")[0]
     assert tools.run_check.harness.slot_holders() == ["their-run (0 min)"]
