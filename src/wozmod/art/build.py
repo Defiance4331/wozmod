@@ -38,6 +38,7 @@ from .imaging import (
 )
 from . import packing
 from .stage_titles import title_members, title_sources
+from .logos import logo_image, resolved
 from .packing import packed_lzp2, worker_pool
 from .faces import (
     BANNER_LINES, BANNER_SAMPLE_WIDTH, BANNER_SINGLE_CENTRE, BASELINE, CARD_CENTRE, CARD_DROP, DREAM_NAME_BASELINES,
@@ -334,6 +335,8 @@ def payload(target, edit: dict, donors: dict, package) -> bytes:
     native = native_menu_payload(target, edit, donors)
     if native is not None:
         return native
+    if "logo" in edit:  # wozmod.art.logos: an English X360 series logo in place of the stock Japanese one
+        return target.encode_rgba(logo_image(rgba(target), edit["logo"], donors, package).tobytes())
     if edit.get("camp_plate"):  # wozmod.runtime.camp_plate: the stock plate, as wide as the longest speaker's name
         stock = rgba(target)
         return target.encode_rgba(camp_plate.widened(stock, camp_plate.width(stock)).tobytes())
@@ -743,7 +746,7 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
     mapping = words.load(MAPPING)
     edits: dict[int, list[dict]] = {}
     for edit in mapping["textures"]:  
-        for ordinal, step in expanded(edit):
+        for ordinal, step in expanded(resolved(edit, mapping.get("logos", {}))):
             edits.setdefault(ordinal, []).append(step)
     stages = mapping["stage_names"]
     for strips in stages["strips"]:
@@ -761,7 +764,8 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
             raw_names, words.DONORS.program(WO1_X360.name)), strict=True)))
     flat = [e for group in edits.values() for e in group]
     flat += [piece for e in flat for piece in [*sum(e.get("rows", []), []), *e.get("draw", []), e.get("plate"),
-                                               e.get("banner", {}).get("badge"), e.get("card")] if piece]
+                                               e.get("banner", {}).get("badge"), e.get("card"),
+                                               e.get("logo"), e.get("logo", {}).get("under")] if piece]
     flat += [source for face in mapping.get("faces", {}).values() for source in face["rows"]]
     edits[FONT_ENTRY] = []
     if entries:  
@@ -784,7 +788,7 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
     stored: dict[int, bytes] = {}
     with base_bin.open("rb") as stream:
         donors |= {("moz", k): donor_g1ts(read_entry(stream, index.entries[k])[0])
-                   for k in sorted({e[key][0] for e in flat for key in ("against", "base") if key in e})}
+                   for k in sorted({e[key][0] for e in flat for key in ("against", "base", "footprint", "cover") if key in e})}
     donors["faces"] = faces(mapping, donors, jobs, used_faces(list(edits.values())))
     review_dir = output_dir / "review" if output_dir else preview_dir or entries_dir
     donors["menu_labels"] = prepare_menu_labels(mapping, review_dir / "native-menu-labels" if review else None,

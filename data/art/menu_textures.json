@@ -17854,6 +17854,163 @@
         0
       ],
       "source": "wo2-x360"
+    },
+    {
+      "entry": 4082,
+      "item": 23,
+      "texture": 0,
+      "also": [
+        [
+          4077,
+          171
+        ]
+      ],
+      "logo": {
+        "recipe": "wo1-story"
+      },
+      "source": "wo1-x360"
+    },
+    {
+      "entry": 4082,
+      "item": 22,
+      "texture": 0,
+      "also": [
+        [
+          4077,
+          170
+        ]
+      ],
+      "logo": {
+        "recipe": "wo1-story",
+        "fade": 0.377
+      },
+      "source": "edited"
+    },
+    {
+      "entry": 4082,
+      "item": 25,
+      "texture": 0,
+      "also": [
+        [
+          4077,
+          173
+        ]
+      ],
+      "logo": {
+        "recipe": "wo2-story"
+      },
+      "source": "wo2-x360"
+    },
+    {
+      "entry": 4082,
+      "item": 24,
+      "texture": 0,
+      "also": [
+        [
+          4077,
+          172
+        ]
+      ],
+      "logo": {
+        "recipe": "wo2-story",
+        "fade": 0.377
+      },
+      "source": "edited"
+    },
+    {
+      "entry": 4077,
+      "item": 174,
+      "texture": 0,
+      "logo": {
+        "recipe": "wo1-badge"
+      },
+      "source": "wo1-x360"
+    },
+    {
+      "entry": 4077,
+      "item": 175,
+      "texture": 0,
+      "logo": {
+        "recipe": "wo2-badge"
+      },
+      "source": "wo2-x360"
+    },
+    {
+      "entry": 4067,
+      "item": 0,
+      "texture": 0,
+      "logo": {
+        "recipe": "wo1-z"
+      },
+      "source": "wo1-x360"
+    },
+    {
+      "entry": 4067,
+      "item": 2,
+      "texture": 0,
+      "logo": {
+        "silhouette": {
+          "items": [
+            1,
+            0
+          ],
+          "radius": 7,
+          "strength": 1.8
+        }
+      },
+      "source": "edited"
+    },
+    {
+      "entry": 4085,
+      "item": 0,
+      "texture": 0,
+      "logo": {
+        "recipe": "wo1-z",
+        "under": {
+          "footprint": [
+            4067,
+            0,
+            0
+          ],
+          "scale": 2.275,
+          "offset": [
+            -0.3,
+            -16.95
+          ],
+          "cover": [
+            4067,
+            1,
+            0
+          ]
+        }
+      },
+      "source": "edited"
+    },
+    {
+      "entry": 4068,
+      "item": 0,
+      "texture": 0,
+      "logo": {
+        "recipe": "wo1-z",
+        "under": {
+          "footprint": [
+            4067,
+            0,
+            0
+          ],
+          "scale": 0.725,
+          "offset": [
+            1.3,
+            -3.05
+          ],
+          "cover": [
+            4067,
+            1,
+            0
+          ]
+        }
+      },
+      "source": "edited"
     }
   ],
   "faces": {
@@ -28473,5 +28630,129 @@
       "sha256": "628db0c7598820b101769164f5228a5096e4f531ee71ee7e5e31d734dd38fe64"
     },
     "QUIT GAME"
-  ]
+  ],
+  "logos": {
+    "wo1-logo": {
+      "wo1-x360": [
+        22,
+        0,
+        0
+      ],
+      "box": [
+        41,
+        26,
+        744,
+        381
+      ],
+      "orochi": [
+        193,
+        313
+      ]
+    },
+    "wo2-logo": {
+      "wo2-x360": [
+        18,
+        0,
+        0
+      ],
+      "box": [
+        9,
+        109,
+        705,
+        371
+      ],
+      "orochi": [
+        140,
+        232
+      ]
+    },
+    "wo1-story": {
+      "recipe": "wo1-logo",
+      "line": [
+        124,
+        88.0,
+        36.5
+      ],
+      "glow": [
+        3,
+        0.8,
+        [
+          13,
+          16,
+          55
+        ]
+      ]
+    },
+    "wo2-story": {
+      "recipe": "wo2-logo",
+      "line": [
+        167,
+        128.0,
+        36.3
+      ],
+      "glow": [
+        14,
+        1.0,
+        [
+          75,
+          38,
+          93
+        ]
+      ]
+    },
+    "wo1-badge": {
+      "recipe": "wo1-logo",
+      "slot": [
+        7,
+        16,
+        129,
+        88
+      ],
+      "glow": [
+        3,
+        1.6,
+        [
+          108,
+          113,
+          204
+        ]
+      ]
+    },
+    "wo2-badge": {
+      "recipe": "wo2-logo",
+      "slot": [
+        7,
+        16,
+        129,
+        88
+      ],
+      "glow": [
+        3,
+        1.6,
+        [
+          155,
+          109,
+          207
+        ]
+      ]
+    },
+    "wo1-z": {
+      "recipe": "wo1-logo",
+      "slot": [
+        31,
+        59,
+        267,
+        168
+      ],
+      "glow": [
+        4,
+        1.6,
+        [
+          0,
+          0,
+          0
+        ]
+      ]
+    }
+  }
 }
