@@ -10,7 +10,6 @@ import re
 import shutil
 import signal
 import sys
-import tempfile
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, wait
@@ -21,7 +20,7 @@ from pathlib import Path
 
 from wozmod.version import __version__ as VERSION
 from wozmod import progress as reporting
-from wozmod import process, remembered, resources
+from wozmod import permissions, process, remembered, resources
 from wozmod.donors.discs import DISCS, DonorsFolder
 from wozmod.install import step_keys
 from wozmod.install.stock import STEPS, Verdict, check_game
@@ -387,6 +386,19 @@ def _remove(game: Path, files: dict[str, str]) -> dict[str, str]:
     return changed
 
 
+def _unlock(game: Path, names, log) -> None:
+    """Give the installed files the game folder's permissions before anything reads them: releases up to 0.2.1
+    placed them so that only the account that installed them could open them (wozmod.permissions)."""
+    try:
+        changed = permissions.inherit(game / name for name in names)
+    except PermissionError as error:
+        raise InstallError(f"wozmod needs administrator rights, just this once, to fix its files in {game}. Close "
+                           "wozmod, right-click wozmod-setup.exe, choose \"Run as administrator\", and try "
+                           "again.") from error
+    if changed:
+        log(f"gave {changed} installed files the game folder's permissions")
+
+
 def _write_manifest(game: Path, files: dict[str, str], version: str | None = VERSION, steps: dict | None = None) -> None:
     """Write the install record: format 2 holds the version, the platform and every installed file with its SHA-256,
     and, when steps is given, each step's key and files ({"key", "parts", "files"}) and each movie's key under
@@ -453,6 +465,7 @@ def uninstall(game: Path, keep_settings: bool = True, log=print) -> dict[str, st
         raise InstallError(f"no wozmod install in {game} ({MANIFEST} is missing)")
     files = read_manifest(game)
     version = installed_version(game)
+    _unlock(game, files, log)
     changed = _remove(game, files)
     if changed:
         _write_manifest(game, changed, version)
@@ -825,6 +838,7 @@ def install(game: Path, inputs: dict[str, Path], force: bool = False, log=print,
     if foreign:
         raise InstallError("these files were not written by the installer; move them away first:\n"
                            + "\n".join(foreign))
+    _unlock(game, old, log)
     jobs = worker_count()
     reporting.attach(progress.apply, progress.cancel)
     try:
@@ -845,7 +859,7 @@ def install(game: Path, inputs: dict[str, Path], force: bool = False, log=print,
             progress.checkpoint()
 
         try:
-            staging = Path(tempfile.mkdtemp(prefix=".wozmod-build-", dir=game))
+            staging = permissions.staging_folder(game, ".wozmod-build-")
         except OSError:
             checked()  # a game folder that is not there is named by the checks
             raise

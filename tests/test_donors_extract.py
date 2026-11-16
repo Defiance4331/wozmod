@@ -1,4 +1,5 @@
 import hashlib
+import os
 import struct
 
 import pytest
@@ -109,3 +110,18 @@ def test_output_parent_symlink_cannot_redirect_an_extracted_member(tmp_path):
     with pytest.raises(ValueError, match="symlink"):
         extract_donor(_disc(tmp_path), _donor(), destination)
     assert list(outside.iterdir()) == []
+
+
+def test_members_are_built_in_a_folder_with_the_destinations_permissions(tmp_path):
+    """Bug: the members are built in a private temporary folder (tempfile), and on Windows the files moved out of it
+    keep its owner-only access list, so the game fails to start (0xc0000022) for every other account. On Linux the
+    same mistake shows as the folder's mode, which is what this reads while the member is copied."""
+    destination, seen = tmp_path / "output" / "movie", []
+    mask = os.umask(0o022)
+    try:
+        (tmp_path / "output" / "plain").mkdir(parents=True)
+        extract_donor(_disc(tmp_path), _donor(), destination, on_bytes=lambda done, total: seen.extend(
+            p.stat().st_mode for p in (tmp_path / "output").glob(".donor-*")))
+    finally:
+        os.umask(mask)
+    assert seen and set(seen) == {(tmp_path / "output" / "plain").stat().st_mode}

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -224,6 +225,27 @@ def test_a_cancelled_update_leaves_the_install_as_it_was(setup):
         _install(game, inputs, seen, Progress(cancel_when))
     assert _installed(game) == before and _record(game) == record
     assert not list(game.glob(".wozmod-build-*"))
+
+
+def test_the_build_folder_has_the_game_folders_permissions(setup, monkeypatch):
+    """Bug: the install builds in a private temporary folder (tempfile.mkdtemp), and on Windows the files moved out of
+    it keep its owner-only access list, so the game fails to start (0xc0000022) for every other account, the
+    player's own after Windows is reinstalled. On Linux the same mistake shows as the folder's mode."""
+    game, inputs, seen, _ = setup
+    monkeypatch.setattr(installer, "_menu_art", _art_noting_the_build_folder)
+    mask = os.umask(0o022)
+    try:
+        (game / "plain").mkdir()
+        _install(game, inputs, seen)
+    finally:
+        os.umask(mask)
+    assert (game / "build-folder-mode.txt").read_text() == oct((game / "plain").stat().st_mode)
+
+
+def _art_noting_the_build_folder(game, donors, lettering, staging, out, jobs):
+    """The art step, in a worker process: notes the mode of the folder it builds in."""
+    (game / "build-folder-mode.txt").write_text(" ".join(oct(p.stat().st_mode) for p in game.glob(".wozmod-build-*")))
+    _fake_art(game, donors, lettering, staging, out, jobs)
 
 
 def test_an_update_stops_only_for_changed_pieces_the_steps_it_rebuilds_read(tmp_path, monkeypatch):

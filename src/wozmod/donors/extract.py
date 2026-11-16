@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import os
-import tempfile
+import shutil
 from pathlib import Path
 from typing import Callable, Iterable
 
 from wozmod.discs.common import DiscError
 from wozmod.discs.iso9660 import Iso9660
 from wozmod.discs.xdvdfs import Xdvdfs
+from wozmod.permissions import staging_folder
 
 from .inventory import DONORS, Donor, DonorFile
 
@@ -109,31 +110,33 @@ def extract_donor(
     destination = Path(destination)
     targets = tuple(_target(destination, member.path) for member in selected)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with _open_disc(image, donor) as disc, tempfile.TemporaryDirectory(
-        prefix=".donor-", dir=destination.parent, ignore_cleanup_errors=True  # as in audio._ffmpeg_each
-    ) as staging:
-        available = {member.path.casefold(): member for member in disc.files()}
-        resolved = {}
-        for member in selected:
-            actual = available.get(member.source.casefold())
-            if not _holds(actual and actual.size, member):
-                raise DiscError(f"Missing or wrong-sized donor member: {member.source}")
-            resolved[member.source] = actual.path
-        total, done = sum(member.size for member in selected), 0
-        staged = {}
-        for member in selected:
-            path = Path(staging) / member.path
-            path.parent.mkdir(parents=True, exist_ok=True)
-            staged[member.path] = path
-            with path.open("wb") as output, disc.open(resolved[member.source]) as source:
-                for count in _copy(source, output, member):
-                    done += count
-                    if on_bytes:
-                        on_bytes(done, total)
-        for member in selected:
-            verify_file(staged[member.path], member)
-        for member, target in zip(selected, targets, strict=True):
-            _target(destination, member.path)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(staged[member.path], target)
+    staging = staging_folder(destination.parent, ".donor-")  # the members are moved out: tempfile would lock them
+    try:
+        with _open_disc(image, donor) as disc:
+            available = {member.path.casefold(): member for member in disc.files()}
+            resolved = {}
+            for member in selected:
+                actual = available.get(member.source.casefold())
+                if not _holds(actual and actual.size, member):
+                    raise DiscError(f"Missing or wrong-sized donor member: {member.source}")
+                resolved[member.source] = actual.path
+            total, done = sum(member.size for member in selected), 0
+            staged = {}
+            for member in selected:
+                path = Path(staging) / member.path
+                path.parent.mkdir(parents=True, exist_ok=True)
+                staged[member.path] = path
+                with path.open("wb") as output, disc.open(resolved[member.source]) as source:
+                    for count in _copy(source, output, member):
+                        done += count
+                        if on_bytes:
+                            on_bytes(done, total)
+            for member in selected:
+                verify_file(staged[member.path], member)
+            for member, target in zip(selected, targets, strict=True):
+                _target(destination, member.path)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(staged[member.path], target)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)  # a virus scanner can hold a new file; a leftover folder is harmless
     return targets
