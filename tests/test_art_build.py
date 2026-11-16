@@ -927,6 +927,16 @@ def test_art_build_runs_without_the_warriors_orochi_pc_disc(tmp_path):
     keyed = set(art_sources(repo))
     unkeyed = [p for p in imported if p.is_relative_to(repo) and not p.is_relative_to(repo / ".venv") and p not in keyed]
     assert sorted(unkeyed) == [], "add these to the key"  # .venv is keyed by its package list
+    # Bug: a stage after the entry build changes an entry (the hires pass once cleaned the dark plates in place), so the
+    # entries a partial build hands a test run (`run_check.py --entries-dir`) differ from the ones players get. 4077
+    # holds dark plates (the RECORD labels).
+    partial = subprocess.run([sys.executable, "-m", "wozmod.art.build", "--game", str(game),
+                              "--wo1-x360-donor", str(donors / "wo1-x360/linkdata_ens"),
+                              "--wo2-x360-donor", str(donors / "wo2-x360/linkdata_ens"), "--text-donors", str(donors),
+                              "--entries", "4077", "--entries-dir", str(tmp_path / "partial")],
+                             capture_output=True, text=True)
+    assert partial.returncode == 0, partial.stdout[-2000:] + partial.stderr[-4000:]
+    assert (tmp_path / "partial/4077.bin").read_bytes() == (tmp_path / "out/wozmod/entries/4077.bin").read_bytes()
     passed.parent.mkdir(exist_ok=True)
     passed.write_text(key)
 

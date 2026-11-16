@@ -24,7 +24,6 @@ from wozmod.fonts.menu_plates import X360_PLATES, clean_substrate
 from wozmod.fonts.menu_references import reference
 from wozmod.fonts.word_key import word_key
 from .imaging import ink, restriped, rgba, tinted
-from .packing import packed_lzp2, worker_pool
 from .faces import BASELINE, gaps, ink_rows, source_image
 
 
@@ -802,7 +801,10 @@ def plate_lettering(served: Image.Image, badge: bool = False) -> tuple[Image.Ima
     return stripe, mask, box
 
 def plate_art(entry: int, item: int, g1t, edit: dict, text: str, scale: int,
-              squeeze: bool = False, donors: dict | None = None) -> tuple:
+              squeeze: bool = False, donors: dict | None = None, lettered: bool = True) -> tuple:
+    """(the plate without its 1x lettering, the hires label over it, the plate's width) for a dark plate. lettered says
+    whether g1t still carries its 1x lettering: the entry build cleans it (lettered); the hires pass reads the built,
+    already clean entry for the label alone."""
 
     texture, style = g1t.textures[0], DARK_PLATE[(entry, item)]
     served = rgba(texture)
@@ -855,6 +857,12 @@ def plate_art(entry: int, item: int, g1t, edit: dict, text: str, scale: int,
         return native, overlay, width
     if width > served.width:
         raise ValueError(f"{entry}.{item}: full-width plate needs a {width}-wide texture")
+    overlay = Image.new("RGBA", (served.width * scale, served.height * scale))
+    if x + metrics["ink"][0] < 0 or x + metrics["ink"][2] > overlay.width:
+        raise ValueError(f"{entry}.{item}: full-width vector leaves its plate texture")
+    overlay.paste(label, (x, y))
+    if not lettered:
+        return g1t, overlay, width
     stripe, mask, _ = plate_lettering(served, badge)
     clean = served.copy()
     clean.paste(stripe.resize(served.size, Image.Resampling.NEAREST), (0, 0), mask)
@@ -864,12 +872,13 @@ def plate_art(entry: int, item: int, g1t, edit: dict, text: str, scale: int,
         clean.paste(stripe.resize((width - old_right, served.height), Image.Resampling.NEAREST),
                     (old_right - end, 0))
         clean.paste(slant, (width - end, 0))
-    g1t = native_plate(g1t, clean)
-    overlay = Image.new("RGBA", (served.width * scale, served.height * scale))
-    if x + metrics["ink"][0] < 0 or x + metrics["ink"][2] > overlay.width:
-        raise ValueError(f"{entry}.{item}: full-width vector leaves its plate texture")
-    overlay.paste(label, (x, y))
-    return g1t, overlay, width
+    return native_plate(g1t, clean), overlay, width
+
+
+def cleaned_plate(entry: int, item: int, g1t, mapping: dict, donors: dict, squeeze: bool):
+    """A dark plate's 1x texture with its lettering cleaned off and room made for the hires label that letters it."""
+    edit = rows_edit(entry, item, mapping, rgba(g1t.textures[0]), style=DARK[(entry, item)])
+    return plate_art(entry, item, g1t, edit, hires_texts(edit, mapping, donors)[0], HIRES_SCALE, squeeze, donors)[0]
 
 def native_menu_art(entry: int, item: int, served: Image.Image, mapping: dict,
                     donors: dict, scale: int, squeeze: bool = False) -> Image.Image:
@@ -930,19 +939,16 @@ def hires_bin(entries: Path, vector: tuple, squeeze: bool = False, jobs: int = 1
               review: Path | None = None) -> bytes:
     """The large-menu sheets. With the native codecs (they let go of the GIL) the texture encoding and the
     LZP2 packing of each sheet run on `jobs` threads while the next sheet is drawn; the bytes are the same.
-    vector is (the menu_textures mapping, the donors); review is the developer folder that keeps the plate sources
-    and the per-sheet layout details."""
+    vector is (the menu_textures mapping, the donors); review is the developer folder that keeps the per-sheet
+    layout details. It reads the built entries and never changes them: the entry build cleans the dark plates."""
     if not (native.module and jobs > 1):
-        return _hires_bin(entries, vector, squeeze, jobs, _now, review)
+        return _hires_bin(entries, vector, squeeze, _now, review)
     with ThreadPoolExecutor(jobs) as pool:
-        return _hires_bin(entries, vector, squeeze, jobs, pool.submit, review)
+        return _hires_bin(entries, vector, squeeze, pool.submit, review)
 
 
-def _hires_bin(entries: Path, vector: tuple, squeeze: bool, jobs: int, later, review: Path | None) -> bytes:
-    rows, packages, parsed = [], {}, {}
-    plate_sources = review and review / "vector-plate-sources"
-    if review:
-        plate_sources.mkdir(parents=True, exist_ok=True)
+def _hires_bin(entries: Path, vector: tuple, squeeze: bool, later, review: Path | None) -> bytes:
+    rows, parsed = [], {}
     extras = list(DARK) + sorted(HIRES_NATIVE_MENU)
     plates = HIRES + [(e, i, 0, 0, 0, 0) for e, i in extras]
     for number, (entry, item, w, h, band, per_col) in enumerate(plates):
@@ -954,11 +960,6 @@ def _hires_bin(entries: Path, vector: tuple, squeeze: bool, jobs: int, later, re
             parsed[entry] = parse_texture_package(parse_lzp2(data).decoded if data[:4] == b"LZP2" else data)
         package = parsed[entry]
         g1t = package.items[item].g1t
-        if review and (entry, item) in DARK_PLATE:
-            original = plate_sources / f"{entry}.{item}.g1t"
-            if not original.exists():
-                original.write_bytes(g1t.encode())
-            g1t = parse_g1t(original.read_bytes())
         served = rgba(g1t.textures[0])
         if not w:  
             w, h, band = served.width, served.height, served.height
@@ -997,9 +998,7 @@ def _hires_bin(entries: Path, vector: tuple, squeeze: bool, jobs: int, later, re
             if (entry, item) in HIRES_NATIVE_MENU:
                 pass
             elif (entry, item) in DARK_PLATE:
-                clean, art, minimum = plate_art(entry, item, g1t, edit, texts[0], scale, squeeze, donors)
-                packages[entry] = packages.get(entry, package).with_g1t(item, rekeyed(clean))
-                w, h = clean.textures[0].width, clean.textures[0].height
+                _, art, minimum = plate_art(entry, item, g1t, edit, texts[0], scale, squeeze, donors, lettered=False)
                 if review and "plate" in art.info:
                     details = review / "plate-cleanup"
                     details.mkdir(parents=True, exist_ok=True)
@@ -1026,14 +1025,4 @@ def _hires_bin(entries: Path, vector: tuple, squeeze: bool, jobs: int, later, re
     if (4069, 2) in {plate[:2] for plate in plates}:  # entry 0: no stock texture, the runtime draws it
         rows.append((dict(entry=0, item=0, w=OPTION_W, h=len(OPTION_ROWS) * OPTION_BAND, band=OPTION_BAND, per_col=0),
                      later(hires_blocks, option_rows_art(HIRES_SCALE, squeeze), OPTION_W, OPTION_BAND, 0)))
-    encoded = {entry: package.encode() for entry, package in packages.items()}
-    packed = [entry for entry in encoded if (entries / f"{entry}.bin").read_bytes()[:4] == b"LZP2"]
-    if jobs > 1 and len(packed) > 1 and not native.module:  # the Python encoder is slow: one entry per process
-        with worker_pool(min(jobs, len(packed))) as pool:
-            results = dict(zip(packed, pool.map(packed_lzp2, [encoded[entry] for entry in packed]), strict=True))
-    else:
-        packing = {entry: later(packed_lzp2, encoded[entry]) for entry in packed}
-        results = {entry: done.result() for entry, done in packing.items()}
-    for entry, data in encoded.items():
-        (entries / f"{entry}.bin").write_bytes(results.get(entry, data))
     return hires_bank([HiresRow(**fields, blocks=blocks.result()) for fields, blocks in rows])

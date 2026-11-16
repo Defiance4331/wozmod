@@ -47,7 +47,7 @@ from .faces import (
 from .vector import (
     ABILITY_QUAD_MINIMUM, DARK, HIRES, MENU_RASTER, hires_bin, menu_label_key, menu_render_options,
     native_menu_label, native_menu_layout, native_menu_payload, native_menu_role, native_menu_text, native_plate,
-    native_reference_entries, native_stage_baseline, native_stage_left, rekeyed,
+    native_reference_entries, native_stage_baseline, native_stage_left, rekeyed, DARK_PLATE, cleaned_plate,
     sound_menu_rows, squished_native_label, value_label, value_tinted,
 )
 MAPPING = REPO / "data/art/menu_textures.json"
@@ -545,6 +545,8 @@ def edited_entry(data: bytes, edits: list[dict], donors: dict, preview: Path | N
 
                 g1t = native_plate(g1t, rgba(g1t.textures[edit["texture"]]))
             g1t = g1t.with_texture_payload(edit["texture"], payload(g1t.textures[edit["texture"]], edit, donors, package))
+            if (edit.get("entry"), edit["item"]) in DARK_PLATE:  # its words are the hires label's, over the clean plate
+                g1t = cleaned_plate(edit["entry"], edit["item"], g1t, donors["mapping"], donors, donors["squish"])
         if g1t.encode() != donors["stock"].items[edit["item"]].source:
             g1t = rekeyed(g1t)
         package = package.with_g1t(edit["item"], g1t)
@@ -781,8 +783,9 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
         wo2.with_suffix(".lnk"), wo2.with_suffix(".idx"),
         sorted({e[WO2_X360.name][0] for e in flat if WO2_X360.name in e}
                | {s[WO2_X360.name][0] for e in flat for s in e.get("draw", []) if WO2_X360.name in s}
-               | {3} | native_reference_entries(mapping))).items()}
+               | {3} | set(X360_PLATE_ENTRIES) | native_reference_entries(mapping))).items()}
     donors["squish"] = squeeze
+    donors["mapping"] = mapping
     base_bin = game / "LINKDATA1.BIN"
     index = parse_index((game / "LINKDATA1.IDX").read_bytes(), base_bin.stat().st_size)
     stored: dict[int, bytes] = {}
@@ -902,7 +905,7 @@ def main(argv: list[str] | None = None) -> int:
         packing.LZP2_CACHE = lzp2_cache
         words.use(args.text_donors)
         write_hires(args.output_dir, args.wo1_x360_donor, args.wo2_x360_donor, not args.no_squish, args.jobs,
-                    review=True, fresh=False)
+                    review=True)
     else:
         try:
             build_art(args.game, args.wo1_x360_donor, args.wo2_x360_donor, args.text_donors, args.output_dir,
@@ -923,14 +926,10 @@ def write_manifest(directory: Path) -> None:
 
 
 def write_hires(output_dir: Path, wo1_x360: Path | None, wo2: Path | None, squeeze: bool, jobs: int = 1,
-                review: bool = False, fresh: bool = True) -> None:
-    """Write output_dir/wozmod/hires.bin over the built entries; review and fresh as for build_art, where fresh
-    clears the plate sources a --hires-only run reuses."""
+                review: bool = False) -> None:
+    """Write output_dir/wozmod/hires.bin from the built entries, which it reads and never changes; review as for
+    build_art."""
     mapping = words.load(MAPPING)
-    if review and fresh:
-        cache = output_dir / "vector-plate-sources"
-        for old in cache.glob("*.g1t"):
-            old.unlink()
     pieces = [p for e in mapping["textures"] if (e["entry"], e.get("item")) in {h[:2] for h in HIRES} | set(DARK)
               for row in e.get("rows") or [e.get("draw", [])] for p in row]
     donors = wo1_donors(wo1_x360, {p[WO1_X360.name][0] for p in pieces if "box" in p and WO1_X360.name in p} | {1, 16})
