@@ -23,6 +23,7 @@ import math
 import struct
 import sys
 from array import array
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -46,14 +47,16 @@ def audible_end(pcm: bytes, rate: int = AUDIBLE_RATE) -> float:
     samples.frombytes(pcm[:len(pcm) // 2 * 2])
     if sys.byteorder == "big":
         samples.byteswap()
+    return audible_length(samples, rate)
+
+
+def audible_length(samples: Sequence[float], rate: int, background: float = 0.0) -> float:
+    """audible_end's measure of mono samples of any type (16-bit integers, floats); a frame whose peak is not above
+    background (in the samples' unit) is not audible either."""
     hop = rate // 100
     peaks = [max(map(abs, samples[i:i + hop])) for i in range(0, len(samples) - hop + 1, hop)]
-    loudest = max(peaks, default=0)
-    if not loudest:
-        return 0.0
-    floor = loudest * 10 ** (AUDIBLE_FLOOR_DB / 20)
-    last = max(i for i, peak in enumerate(peaks) if peak > floor)
-    return (last + 1) * hop / rate
+    floor = max(max(peaks, default=0) * 10 ** (AUDIBLE_FLOOR_DB / 20), background)
+    return max((i + 1 for i, peak in enumerate(peaks) if peak > floor), default=0) * hop / rate
 
 
 def subtitle_window(stock: tuple[int, int], donor: tuple[int, int] | None, audible: float, limit: float,
@@ -311,16 +314,10 @@ FOLDER = "captions/voice"  # below wozmod/: served in place of the stock entry o
 
 def clip_pcm(clips: dict[int, bytes], jobs: int | None = None) -> dict[int, bytes]:
     """Each KOVS clip decoded to mono 16 kHz signed 16-bit PCM, by voice id."""
-    from wozmod.formats.audio import KOVS_HEADER_BYTES, _ffmpeg_each
-
-    def ogg(record: bytes) -> bytes:
-        stream = bytearray(record[KOVS_HEADER_BYTES:])
-        for position in range(min(256, len(stream))):
-            stream[position] ^= position
-        return bytes(stream)
+    from wozmod.formats.audio import _ffmpeg_each, kovs_ogg
 
     ids = sorted(clips)
-    pcms = _ffmpeg_each([(["-f", "ogg"], ogg(clips[i]), ["-ac", "1", "-ar", str(AUDIBLE_RATE), "-f", "s16le"])
+    pcms = _ffmpeg_each([(["-f", "ogg"], kovs_ogg(clips[i]), ["-ac", "1", "-ar", str(AUDIBLE_RATE), "-f", "s16le"])
                          for i in ids], jobs, "timing event subtitles", (0.85, 0.9))
     return dict(zip(ids, pcms, strict=True))
 

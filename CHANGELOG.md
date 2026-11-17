@@ -6,12 +6,20 @@ All notable changes to wozmod are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- In English voice mode, the twelve Dream stage cutscenes of Musou Orochi Z speak English, taken from Warriors
+  Orochi 2 for PSP, with mouths that move to the English words.
+- The two Dream Mode movies play the English voices of Warriors Orochi 2 for PSP over the PC's own high-resolution
+  picture and music.
+
 ### Fixed
 
 - Each English attack shout now plays at the volume its own game gave it. Before, it kept the volume set for the
   Japanese shout it replaced, so some officers shouted well above the rest: Dodomeki's shouts are now 3 dB quieter
   and Wei Yan's 2 dB. Other officers' shouts move by up to about 3.5 dB either way, to the balance their own game
   gave them.
+- English lines taken from Warriors Orochi 2 for PSP no longer start about a tenth of a second after their subtitles.
 - An officer's strategy line in battle now sits on a strip that runs the full width of the screen, as in Warriors
   Orochi 2 on Xbox 360, so long English lines no longer run off its end and fade into the battlefield. The line also
   uses that width: all but one now read on a single row instead of leaving a word or two on a second, and it sits
@@ -24,6 +32,17 @@ All notable changes to wozmod are listed here, newest first. The format follows
   descriptions, battle history, conditions and pre-battle panels wrap at their box instead of being squeezed narrower.
 - With a controller, the X button (Square on a PlayStation pad) no longer leaves a wide gap before its word in
   on-screen prompts, such as Random on the officer select screen. It now sits as close as every other button.
+- In event scenes, mouths move with the voice as it plays. They used to start a little before the voice, and after
+  any slow frame they stayed behind it for the rest of the line.
+- The 45 English cutscene lines that no disc times mouths for, such as two lines of the He Fei scene in the Orochi
+  story, now move the speaker's mouth with the English words. The installer learns which mouth shape goes with which
+  sound from the lines the Xbox 360 discs do time, so the mouth opens, rounds or spreads with the vowel, changes shape
+  where the sound does, holds each shape about as long as Koei's animators do instead of twitching within a
+  syllable, and keeps the speaker's expression. It also lines each clip up with the words of its subtitle, sound by
+  sound, so the mouth takes the shape Koei's animators gave that sound: on lines they did animate, the made mouth now
+  picks their shape on about half of the frames, where it picked it on two in five. The Dream stage cutscenes' mouths
+  are made the same way. Their mouths used to follow the Japanese line, stretched to the English one's length, so they
+  seldom matched what was said.
 
 ## [0.3.0] - 2026-11-14
 

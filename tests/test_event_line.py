@@ -11,7 +11,7 @@ import pytest
 
 from wozmod.formats import pe
 from wozmod.formats.audio import WO1_EVENT_VOICES, WO2_EVENT_VOICES
-from wozmod.text.stock import event_voice_form
+from wozmod.text.keys import event_voice_form
 
 
 def test_runtime_keys_an_event_line_by_its_voice_exactly_as_the_installer_lists_it(c_library):

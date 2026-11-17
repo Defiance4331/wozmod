@@ -103,7 +103,7 @@ def test_series_titles_use_the_western_number():
 
     from wozmod.text.psp_exe import EXE_STRING
     from wozmod.text.resolver import DonorResolver
-    from wozmod.text.stock import stock_key
+    from wozmod.text.keys import stock_key
 
     resolver = DonorResolver(Path(os.environ["WOZMOD_DONORS"]))
     # The gallery titles are program strings; scanning only the program keeps this test fast.
@@ -142,7 +142,7 @@ def test_each_shown_notice_and_spoken_line_takes_the_donor_record_its_command_sh
     from wozmod.formats.scripts import NOTICE, SPEAK, donor_text, parse_script
     from wozmod.text.resolver import DonorResolver
     from wozmod.text.script_alignment import PSP_STAGE_MEMBERS, moz_scripts, stage_joins, wo1_scripts, wo2_x360
-    from wozmod.text.stock import stock_key
+    from wozmod.text.keys import stock_key
     from wozmod.voices.build import PSP_TEXT
 
     folders = DonorsFolder(Path(os.environ["WOZMOD_DONORS"]))
@@ -209,7 +209,7 @@ def test_each_briefing_takes_the_donor_string_its_stage_shows():
     from wozmod.formats.scripts import mesc_blocks
     from wozmod.text.script_alignment import PSP_STAGE_MEMBERS
     from wozmod.text.resolver import DonorResolver
-    from wozmod.text.stock import stock_key
+    from wozmod.text.keys import stock_key
 
     donors, game = Path(os.environ["WOZMOD_DONORS"]), Path(os.environ["WOZMOD_GAME"])
     exe = (game / "OROCHI_Z.exe").read_bytes()

@@ -446,6 +446,18 @@ def test_borderless_fails_when_its_device_is_full_screen():
     assert sc.device_matches_mode("display: device windowed\r\n", "[display]\nmode=fullscreen\n").ok
 
 
+def test_lips_follow_voice_needs_a_stalled_line_and_none_off_its_voice():
+    """Bugs: the check passes a run where no voiced line stalled (op 16 never reached the game, or the scene had no
+    voice), so it proves nothing; or it misses a line whose mouths ended off their voice."""
+    stalled = "lip test: stalled the game 1 s into voice id 0x00000b75\r\n"
+    off = "lips off their voice: id B75, start gap 0.0, end drift -2.9 lip frames\r\n"
+    assert sc.lips_follow_voice("ready\r\n" + stalled + stalled.replace("b75", "b76"), "").numbers == {
+        "stalled": ["00000b75", "00000b76"], "off": []}
+    assert sc.lips_follow_voice(stalled, "").ok
+    assert not sc.lips_follow_voice("ready\r\n", "").ok
+    assert not sc.lips_follow_voice(stalled + off, "").ok
+
+
 def test_a_centred_page_is_checked_at_the_y_of_its_own_line_count():
     """Bug: the narration box is checked at one y whatever its line count (the runtime centres the lines on y 531),
     or a page one line over its box passes. Oracle: cell 24 and pitch 36 by hand, centred on 531, half way between

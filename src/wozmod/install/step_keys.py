@@ -20,7 +20,8 @@ A key covers everything the step's output can depend on, in two parts:
   members and decrypted programs the step reads (DISC_READS, PROGRAMS), lettering.zip by its pin; and the values of
   the environment variables named above.
 
-Movies have no step key: each is a donor member copied whole, so its pin (data/movies.json) is its key.
+Copied movies have no step key: each is a donor member copied whole, so its pin (data/movies.json) is its key. The
+Dream movies the voices step builds (voices/dream_movies.py) are that step's files.
 """
 
 from __future__ import annotations
@@ -51,7 +52,10 @@ _ENV = re.compile(r"WOZMOD_[A-Z0-9_]+")
 
 # Bundled files a step's code names but the step never opens (proved by the audit run in tests/test_step_keys.py).
 NOT_READ = {
-    "voices": {"data/text": "the voices pair each stage line by its trigger, not through the translation",
+    "voices": {**{f"data/text/{name}": "the voices pair each stage line by its trigger, not through the translation; "
+                  "they read only table.json, for the English a Dream scene line shows (voices.phones.shown_lines)"
+                  for name in ("context_exceptions.json", "dub_captions.json", "japanese_voices.json",
+                               "left_japanese.json", "movie_captions.json")},
                "data/movies.json": "the movies are copied, not built"},
     "art": {"data/text": "the menu words come from data/art and the donors' programs, not from the translation",
             "data/movies.json": "the movies are copied, not built",
@@ -356,11 +360,18 @@ def _lettering_pin() -> str:
     return LETTERING[1]
 
 
+def _speech_pins() -> str:
+    from wozmod.voices.phones import MODEL
+
+    return key(MODEL)
+
+
 # How the player's part covers each input a step function takes (its other parameters are SCRATCH).
 PLAYER_INPUTS: dict[str, Callable[[str, Path], object]] = {
     "game": lambda step, root: stock_pieces(root, step),
     "donors": lambda step, root: _donor_pins(step),
     "lettering": lambda step, root: _lettering_pin(),
+    "speech": lambda step, root: _speech_pins(),
 }
 
 

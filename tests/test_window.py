@@ -19,6 +19,7 @@ import wozmod.install as installer
 from wozmod import __main__ as cli, remembered, window
 from wozmod.version import __version__
 from wozmod.install import InstallError
+from synthetic import speech_model
 
 
 @pytest.fixture(autouse=True)
@@ -34,7 +35,7 @@ def test_the_window_and_the_command_give_the_same_verdict_on_each_input(tmp_path
     wrong = tmp_path / "wrong"
     wrong.write_bytes(b"xyz")
     values = {"game": str(tmp_path), "wo1-x360": str(wrong), "wo2-x360": str(tmp_path / "none"), "wo2-psp": str(wrong),
-              "lettering": str(wrong), "dll": str(wrong)}
+              "lettering": str(wrong), "dll": str(wrong), "speech": str(wrong)}
 
     def same_verdicts(names):
         with pytest.raises(InstallError) as caught:
@@ -45,9 +46,10 @@ def test_the_window_and_the_command_give_the_same_verdict_on_each_input(tmp_path
             assert problem, name
             assert f"{installer.INPUTS[name].label}: {problem}" in lines, name
 
-    same_verdicts(("lettering", "dll"))  # the release files are checked first, on their own
+    same_verdicts(installer.RELEASE_FILES)  # the release files are checked first, on their own
     monkeypatch.setattr(installer, "LETTERING", (3, hashlib.sha256(b"xyz").hexdigest()))
     monkeypatch.setattr(installer, "DLL", installer.LETTERING)
+    values["speech"] = str(speech_model(tmp_path / "speech", monkeypatch))
     same_verdicts(("game", "wo1-x360", "wo2-x360", "wo2-psp"))
 
 
@@ -139,7 +141,7 @@ def test_every_input_has_a_command_line_option_a_window_row_and_an_install_key(s
     failures = [f"{name}: the command line hands the install {given['command line'].get(name)}"
                 for name, path in paths.items() if given["command line"].get(name) != path]
     for name, path in paths.items():
-        if name in ("lettering", "dll"):  # the window takes the release files from beside itself
+        if name in installer.RELEASE_FILES:  # the window takes the release files from beside itself
             if name not in given["window"]:
                 failures.append(f"{name}: the window never hands it to the install")
         elif name not in rows:
@@ -171,7 +173,8 @@ def test_every_place_names_each_disc_the_same_way(shown, tmp_path, monkeypatch, 
     monkeypatch.setattr(installer, "LETTERING", (3, hashlib.sha256(b"xyz").hexdigest()))
     monkeypatch.setattr(installer, "DLL", installer.LETTERING)
     with pytest.raises(InstallError) as caught:
-        installer.check_inputs(tmp_path, {name: wrong for name in installer.INPUTS})
+        installer.check_inputs(tmp_path, {name: wrong for name in installer.INPUTS}
+                               | {"speech": speech_model(tmp_path / "speech", monkeypatch)})
     error_lines = str(caught.value).splitlines()
 
     shown_lines = set()

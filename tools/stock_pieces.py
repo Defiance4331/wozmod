@@ -6,15 +6,16 @@
 
 The three build steps (text, voices, art) run in this process, one after another: the voices with the installer's
 worker threads, the art with one worker, its worker pool turned into a thread. While they run:
-- every open of a file in the game folder goes through a tracking opener: reads of LINKDATA1/2.BIN and Voice.bin
-  are kept as byte ranges, and the exe's bytes come back as TrackedBytes, which keep each span the code looks at
-  (indexing, find/index, struct.unpack_from). The .IDX files are only located through, so they are not pieces;
+- every open of a file in the game folder goes through a tracking opener: reads of LINKDATA1/2.BIN, Voice.bin and
+  any other file (the Dream movies, read whole) are kept as byte ranges, and the exe's bytes come back as
+  TrackedBytes, which keep each span the code looks at (indexing, find/index, struct.unpack_from). The .IDX files
+  are only located through, so they are not pieces;
 - an audit hook stops the run at any other open of a game file (os.open, a subprocess given its path, ...);
 - the text step's scan of every NUL-ended exe string (text.stock.EXE_STRING) keeps only the strings a translation row
   is found by and that no other source holds: the rest of the scan cannot change what is built.
 
 Byte ranges become pieces through the stock indexes: a LINKDATA entry, or a Voice.bin clip (through the voice index,
-LINKDATA1 4058, which only locates the clips the voices step reads). An entry read only unpacked (Archive.read,
+LINKDATA1 4058, which only locates the clips the voices step reads); in the exe and any other file, spans. An entry read only unpacked (Archive.read,
 entry_bytes) also passes the installer's check when its unpacked bytes match. The served pieces are read off the
 build's output: wozmod/entries, wozmod/captions and the clips of wozmod/voice/Voice.bin.
 
@@ -49,7 +50,7 @@ ABOUT = ("Written by tools/stock_pieces.py: hashes and locations only. The piece
          "installer's build steps read (and the ones wozmod serves its own in place of), which install/stock.py checks.")
 
 
-def run_steps(game: Path, donors: Path, lettering: Path, scratch: Path, jobs: int, art_jobs: int | None = None,
+def run_steps(game: Path, donors: Path, lettering: Path, speech: Path, scratch: Path, jobs: int, art_jobs: int | None = None,
               on_step=lambda step: None) -> Path:
     """Run the installer's three build steps into scratch/out (laid out as the game folder) and return it: the voices
     with jobs workers, the art with art_jobs (default: jobs)."""
@@ -59,7 +60,7 @@ def run_steps(game: Path, donors: Path, lettering: Path, scratch: Path, jobs: in
     out = scratch / "out"
     out.mkdir(parents=True, exist_ok=True)
     runs = {"text": lambda: install._text_table(game, donors, out),
-            "voices": lambda: install._voice_banks(game, donors, out, jobs=jobs),
+            "voices": lambda: install._voice_banks(game, donors, speech, out, jobs=jobs),
             "art": lambda: install._menu_art(game, donors, lettering, scratch / "art", out, jobs=art_jobs or jobs)}
     for step in STEPS:
         on_step(step)
@@ -210,10 +211,8 @@ class Recorder:
             if any(flag in mode for flag in "wax+"):
                 raise PermissionError(f"the build opened stock {name} to write")
             kind = {"OROCHI_Z.exe": "exe", "LINKDATA1.BIN": "LINKDATA1", "LINKDATA2.BIN": "LINKDATA2",
-                    "data/Sound/Voice/Voice.bin": "voice", "LINKDATA1.IDX": "index", "LINKDATA2.IDX": "index"}.get(name)
-            if kind is None:
-                self.violations.append(f"{self.step}: opened {name}, which no piece covers")
-                raise PermissionError(f"stock_pieces: the build read stock {name}, which no piece covers")
+                    "data/Sound/Voice/Voice.bin": "voice", "LINKDATA1.IDX": "index", "LINKDATA2.IDX": "index"}.get(
+                name, name)  # any other file: its spans
             self._local.allowed = True
             try:
                 raw = real_open(file, mode, *args, **kwargs)
@@ -337,7 +336,7 @@ class _UsedCatalog(dict):
         if key in self._rest or not dict.__contains__(self, key):
             return
         if self._spans is None:
-            from wozmod.text.stock import stock_key
+            from wozmod.text.keys import stock_key
             self._spans = {}
             for start, end, value in self._matches:
                 if (keyed := stock_key(value)) and keyed[0] not in self._spans:
@@ -481,6 +480,11 @@ def pieces_document(game: Path, reads: dict, out: Path) -> dict:
             stream.seek(offset)
             rows.append([clip, _sha(stream.read(size)), order(readers.get(clip, ())), int(clip in served_clips)])
     document["pieces"][VOICE] = rows
+    for name in sorted({kind for kinds in reads.values() for kind in kinds} - {"exe", *ARCHIVES, "voice"}):
+        data = (game / name).read_bytes()
+        spans = [(start, end, step) for step, kinds in reads.items() for start, end, _ in kinds.get(name, ())]
+        document["pieces"][name] = [[start, end - start, _sha(data[start:end]), order(steps)]
+                                    for start, end, steps in _merged(spans)]
     return document
 
 
@@ -501,23 +505,24 @@ def summary(document: dict) -> str:
 
     lines = []
     for name, rows in document["pieces"].items():
-        steps = [row[-1] if name == "OROCHI_Z.exe" else row[-2] for row in rows]
+        spans = name not in ("LINKDATA1", "LINKDATA2", "data/Sound/Voice/Voice.bin")
+        steps = [row[-1] if spans else row[-2] for row in rows]
         per_step = {step: sum(step in s.split() for s in steps) for step in STEPS}
         unread = sum(not s for s in steps)
-        extra = f", {sum(row[1] for row in rows)} bytes" if name == "OROCHI_Z.exe" else ""
+        extra = f", {sum(row[1] for row in rows)} bytes" if spans else ""
         lines.append(f"{name}: {len(rows)} pieces{extra}; read by "
                      + ", ".join(f"{step} {n}" for step, n in per_step.items()) + f"; served only {unread}")
     return "\n".join(lines)
 
 
-def record(game: Path, donors: Path, lettering: Path, scratch: Path) -> tuple[dict, Path]:
+def record(game: Path, donors: Path, lettering: Path, speech: Path, scratch: Path) -> tuple[dict, Path]:
     """Run the steps under the recorder; return the pieces document and the build's output folder."""
     from wozmod.install import worker_count
 
     with Recorder(game) as recorder:
         # The voices' workers are threads that hand bytes to ffmpeg, which the recorder sees; the art's are processes
         # it would not, so the art runs with one.
-        out = run_steps(game, donors, lettering, scratch, worker_count(), art_jobs=1,
+        out = run_steps(game, donors, lettering, speech, scratch, worker_count(), art_jobs=1,
                         on_step=lambda step: setattr(recorder, "step", step))
     if recorder.violations:
         raise RuntimeError("stock files read outside the tracked readers:\n" + "\n".join(recorder.violations))
@@ -529,7 +534,8 @@ def record(game: Path, donors: Path, lettering: Path, scratch: Path) -> tuple[di
 def junk_game(game: Path, document: dict, destination: Path) -> None:
     """A copy of the game files the build reads, with only the listed pieces kept: every other LINKDATA entry
     replaced by a small junk entry of as many parts (so every later entry moves), the exe's bytes outside the spans
-    scrambled, and the Voice.bin clips no piece lists zeroed (a sparse file)."""
+    scrambled, the Voice.bin clips no piece lists zeroed (a sparse file), and any other file's bytes outside its
+    spans scrambled."""
     from wozmod.formats.linkdata import align
     from wozmod.install.stock import ARCHIVES, EXE, VOICE, VOICE_INDEX
 
@@ -572,12 +578,20 @@ def junk_game(game: Path, document: dict, destination: Path) -> None:
             source.seek(offset)
             target.seek(offset)
             target.write(source.read(size))
+    for name in [name for name in pieces if name not in (EXE, *ARCHIVES, VOICE)]:
+        data = bytearray(rng.randbytes((game / name).stat().st_size))
+        stock_data = (game / name).read_bytes()
+        for offset, length, _, _ in pieces[name]:
+            data[offset:offset + length] = stock_data[offset:offset + length]
+        (destination / name).parent.mkdir(parents=True, exist_ok=True)
+        (destination / name).write_bytes(data)
 
 
-def inputs(args) -> tuple[Path, Path, Path]:
+def inputs(args) -> tuple[Path, Path, Path, Path]:
     found = checkout.inputs()
     paths = []
-    for value, name in ((args.game, "WOZMOD_GAME"), (args.donors, "WOZMOD_DONORS"), (args.lettering, "WOZMOD_LETTERING")):
+    for value, name in ((args.game, "WOZMOD_GAME"), (args.donors, "WOZMOD_DONORS"), (args.lettering, "WOZMOD_LETTERING"),
+                        (args.speech, "WOZMOD_SPEECH")):
         value = value or found.get(name)
         if not value:
             raise SystemExit(f"stock_pieces: give --{name.removeprefix('WOZMOD_').lower()} or set {name}")
@@ -590,12 +604,13 @@ def main(argv=None) -> int:
     parser.add_argument("--game", type=Path)
     parser.add_argument("--donors", type=Path, help="a donors folder as the installer lays it out")
     parser.add_argument("--lettering", type=Path)
+    parser.add_argument("--speech", type=Path, help="the speech model folder")
     parser.add_argument("--output", type=Path, default=OUTPUT)
     parser.add_argument("--check", action="store_true", help="compare with --output instead of writing it")
     args = parser.parse_args(argv)
-    game, donors, lettering = inputs(args)
+    game, donors, lettering, speech = inputs(args)
     with tempfile.TemporaryDirectory(prefix="stock-pieces-", dir=checkout.work()) as scratch:
-        document, _ = record(game, donors, lettering, Path(scratch))
+        document, _ = record(game, donors, lettering, speech, Path(scratch))
     text = dumps(document)
     print(summary(document))
     if args.check:

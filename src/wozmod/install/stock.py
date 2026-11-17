@@ -2,7 +2,7 @@
 
 data/stock_pieces.json (written by tools/stock_pieces.py) lists each piece by where it is and its SHA-256, with the
 build steps that read it and whether wozmod serves its own in its place:
-- spans of OROCHI_Z.exe, by file offset;
+- spans of OROCHI_Z.exe, and of any other file the build reads whole (the Dream movies), by file offset;
 - LINKDATA1 and LINKDATA2 entries, found through the player's own .IDX (another mod may have resized entries);
 - Voice.bin clips, found through the player's own voice index (LINKDATA1 entry 4058).
 
@@ -42,12 +42,19 @@ SHOWN = 6  # changed pieces named per file; the rest are counted
 KEPT_NOTE = ("Note: {name}: another mod changed {what}, which wozmod reads to build its {purpose}. wozmod kept the "
              "{purpose} it built before. Put back the original {file} before an update needs to build its {purpose} "
              "again.")
+# The same two lines for a file the build reads whole that is not there (wording approved 2026-11-16).
+ABSENT_LINE = ("{name} is missing, and wozmod reads it to build its {purpose}. Put back the original {file} (reinstalling "
+               "the game restores it), then install again.")
+ABSENT_NOTE = ("Note: {name} is missing, and wozmod reads it to build its {purpose}. wozmod kept the {purpose} it built "
+               "before. Put back the original {file} (reinstalling the game restores it) before an update needs to "
+               "build its {purpose} again.")
 
 
 @dataclass(frozen=True)
 class Piece:
-    """One stock piece: an exe span (at = file offset, length), a LINKDATA entry or a Voice.bin clip (at = number)."""
-    file: str  # EXE, "LINKDATA1", "LINKDATA2" or VOICE
+    """One stock piece: a span of the exe or another file (at = file offset, length), a LINKDATA entry or a Voice.bin
+    clip (at = number)."""
+    file: str  # EXE, "LINKDATA1", "LINKDATA2", VOICE, or the path of another file in the game folder
     at: int
     sha256: str
     steps: frozenset[str]  # the build steps that read it; empty for a piece wozmod only serves its own in place of
@@ -70,7 +77,8 @@ class Verdict:
     version: str = "1.00"  # "1.00", "1.01" or "other"
     wrong_files: tuple[str, ...] = ()
     guarded: tuple[str, ...] = ()  # the DLL's names of the features whose code (its guards) another mod changed
-    changed: tuple[Piece, ...] = ()
+    changed: tuple[Piece, ...] = ()  # pieces that differ, including every piece of a file in absent
+    absent: tuple[str, ...] = ()  # files the build reads whole that are not in the game folder
     pieces: int = 0  # how many pieces were hashed
 
     def blocking(self, rebuilt=STEPS) -> tuple[Piece, ...]:
@@ -98,7 +106,9 @@ class Verdict:
             lines.append(_guarded_line(self.guarded))
         blocking = self.blocking(rebuilt)
         for name in dict.fromkeys(p.shown_file for p in blocking):
-            lines.append(_changed_line(name, [p for p in blocking if p.shown_file == name]))
+            pieces = sorted((p for p in blocking if p.shown_file == name), key=lambda p: p.at)
+            lines.append(ABSENT_LINE.format(name=name, purpose=_purpose(pieces), file=Path(name).name)
+                         if name in self.absent else _changed_line(name, pieces))
         return "\n".join(lines) or None
 
     def kept_notes(self, rebuilt=STEPS) -> list[str]:
@@ -108,8 +118,8 @@ class Verdict:
         lines = []
         for name in dict.fromkeys(p.shown_file for p in reused):
             pieces = sorted((p for p in reused if p.shown_file == name), key=lambda p: p.at)
-            lines.append(KEPT_NOTE.format(name=name, what=_what(name, pieces), purpose=_purpose(pieces),
-                                          file=Path(name).name))
+            lines.append((ABSENT_NOTE if name in self.absent else KEPT_NOTE).format(
+                name=name, what=_what(name, pieces), purpose=_purpose(pieces), file=Path(name).name))
         return lines
 
     def notes(self) -> list[str]:
@@ -147,6 +157,8 @@ def _and(values: list[str]) -> str:
 def _what(name: str, pieces: list[Piece]) -> str:
     if name == EXE:
         return f"the bytes at {_listed([f'{p.at:#x}' for p in pieces])}"
+    if pieces[0].file not in (*ARCHIVES, VOICE):
+        return "this file"  # a file the build reads whole
     noun = _noun(name)
     plural = "entries" if noun == "entry" else noun + "s"
     return f"{noun if len(pieces) == 1 else plural} {_listed([str(p.at) for p in pieces])}"
@@ -157,7 +169,6 @@ def _purpose(pieces: list[Piece]) -> str:
 
 
 def _changed_line(name: str, pieces: list[Piece]) -> str:
-    pieces = sorted(pieces, key=lambda p: p.at)
     return (f"{name}: another mod changed {_what(name, pieces)}, which wozmod reads to build its {_purpose(pieces)}. "
             f"Put back the original {Path(name).name}, or remove that mod, then install again.")
 
@@ -192,8 +203,9 @@ def parse(document: dict) -> Recorded:
     if document.get("format") != 1:
         raise ValueError("unsupported stock pieces format")
     pieces = []
-    for offset, length, digest, steps in document["pieces"][EXE]:
-        pieces.append(Piece(EXE, offset, digest, frozenset(steps.split()), length=length))
+    for name in [name for name in document["pieces"] if name not in (*ARCHIVES, VOICE)]:  # the exe's, other files'
+        for offset, length, digest, steps in document["pieces"][name]:
+            pieces.append(Piece(name, offset, digest, frozenset(steps.split()), length=length))
     for name in ARCHIVES:
         for entry, digest, decoded, steps, served in document["pieces"][name]:
             pieces.append(Piece(name, entry, digest, frozenset(steps.split()), bool(served), decoded_sha256=decoded))
@@ -274,9 +286,20 @@ def _changed_clips(game: Path, index, pieces: list[Piece]) -> list[Piece]:
     return changed
 
 
-def _changed_spans(game: Path, pieces: list[Piece]) -> list[Piece]:
-    exe = (game / EXE).read_bytes()
-    return [p for p in pieces if step_keys.digest(exe[p.at:p.at + p.length]) != p.sha256 or p.at + p.length > len(exe)]
+def _changed_spans(game: Path, name: str, pieces: list[Piece]) -> list[Piece]:
+    """The spans of one file that differ; all of them when the file is missing."""
+    try:
+        stream = (game / name).open("rb")
+    except FileNotFoundError:
+        return list(pieces)
+    changed = []
+    with stream:
+        for piece in pieces:
+            stream.seek(piece.at)
+            data = stream.read(piece.length)
+            if len(data) != piece.length or step_keys.digest(data) != piece.sha256:
+                changed.append(piece)
+    return changed
 
 
 def check_game(game: Path, record: Recorded | None = None, dll: Path | None = None) -> Verdict:
@@ -288,9 +311,11 @@ def check_game(game: Path, record: Recorded | None = None, dll: Path | None = No
     record = record or recorded()
     if (version := _version(game / EXE, record.stamp)) != "1.00":
         return Verdict(version=version)
-    by_file = {name: [p for p in record.pieces if p.file == name] for name in (EXE, *ARCHIVES, VOICE)}
+    by_file = {name: [p for p in record.pieces if p.file == name]
+               for name in dict.fromkeys([EXE, *ARCHIVES, VOICE, *(p.file for p in record.pieces)])}
     indexes = {name: _player_index(game, name) for name in ARCHIVES}
-    jobs = {EXE: lambda: _changed_spans(game, by_file[EXE])}
+    jobs = {name: lambda name=name: _changed_spans(game, name, by_file[name])
+            for name in by_file if name not in (*ARCHIVES, VOICE)}
     for name in ARCHIVES:
         if indexes[name] is not None:
             jobs[name] = lambda name=name: _changed_entries(game, name, indexes[name], by_file[name])
@@ -303,7 +328,8 @@ def check_game(game: Path, record: Recorded | None = None, dll: Path | None = No
         pieces = found.get(name)
         if name in ARCHIVES and indexes[name] is None:
             wrong.append(f"{name}.BIN")  # its index does not describe it
-        elif pieces is not None and 2 * sum(bool(p.steps) for p in pieces) > sum(bool(p.steps) for p in by_file[name]):
+        elif name in (EXE, VOICE, *ARCHIVES) and pieces is not None \
+                and 2 * sum(bool(p.steps) for p in pieces) > sum(bool(p.steps) for p in by_file[name]):
             wrong.append(f"{name}.BIN" if name in ARCHIVES else name)  # most of what the build reads differs: another
             # release, or another game's file. Pieces wozmod only serves its own in place of do not count.
         elif pieces:
@@ -313,5 +339,6 @@ def check_game(game: Path, record: Recorded | None = None, dll: Path | None = No
         from wozmod.runtime.guard_report import refused_features  # here: guards reads the runtime's C at import
 
         guarded = tuple(refused_features((game / EXE).read_bytes(), Path(dll).read_bytes()))
-    return Verdict(wrong_files=tuple(wrong), guarded=guarded, changed=tuple(changed),
+    absent = tuple(name for name in by_file if name not in (EXE, *ARCHIVES, VOICE) and not (game / name).is_file())
+    return Verdict(wrong_files=tuple(wrong), guarded=guarded, changed=tuple(changed), absent=absent,
                    pieces=sum(map(len, by_file.values())))

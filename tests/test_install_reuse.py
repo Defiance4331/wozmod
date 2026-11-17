@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 import wozmod.install as installer
-from synthetic import fake_step_keys, stock_game
+from synthetic import fake_step_keys, speech_model, stock_game
 from wozmod import movies, remembered
 from wozmod.donors import Donor, DonorFile
 from wozmod.install import STEPS, step_keys
@@ -29,7 +29,7 @@ def _fake_text(game, donors, out):
     (out / "wozmod/table.bin").write_bytes(b"table from " + (donors / "wo1-x360/linkdata_fns/369.bin").read_bytes())
 
 
-def _fake_voices(game, donors, out, jobs):
+def _fake_voices(game, donors, speech, out, jobs):
     _ran(game, "voices")
     (out / "wozmod/voice").mkdir(parents=True, exist_ok=True)
     for name in ("Voice.bin", "Lips.bin", "SE.bin"):
@@ -55,7 +55,8 @@ def setup(tmp_path, monkeypatch):
     (tmp_path / "lettering.zip").write_bytes(b"bundle")
     (tmp_path / "d3d9.dll").write_bytes(b"dll")
     inputs = {**{flag: tmp_path / flag for flag in ("wo1-x360", "wo2-x360", "wo2-psp", "x360-tool", "psp-tool")},
-              "lettering": tmp_path / "lettering.zip", "dll": tmp_path / "d3d9.dll"}
+              "lettering": tmp_path / "lettering.zip", "dll": tmp_path / "d3d9.dll",
+              "speech": speech_model(tmp_path / "speech", monkeypatch)}
     seen = {"reads": [], "programs": [], "rebuilt": []}
 
     def extract(flag, image, donor, destination, files, *rest, **options):

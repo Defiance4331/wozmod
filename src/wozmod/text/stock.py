@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 from wozmod.formats.audio import MOZ_EVENT_LINES, WO1_EVENT_VOICES, WO2_EVENT_VOICES
@@ -10,27 +9,13 @@ from wozmod.formats.linkdata import archive
 from wozmod.formats.pe import pointer_strings
 from wozmod.formats.scripts import EVENT_TEXT, event_lines, mesc_blocks, quote_tables, quote_text
 
+from .keys import event_voice_form, stock_key
 from .build import NAME_PARTS, NAME_TABLE, TableBuildError
 from .inventory import EVENTS, inventory
 from .narration_voices import VOICE_KEYED, line_voices
 from .psp_exe import EXE_STRING
 from .script_alignment import EVENTS as PAIRED_EVENTS
 from .script_alignment import QUOTES, moz_scripts
-
-
-def stock_key(raw: bytes) -> tuple[str, bytes] | None:
-    """(SHA-256 hex, canonical CP932 bytes) that key a translation row; None when ``raw`` is not CP932."""
-    try:
-        canonical = raw.decode("cp932").encode("cp932")
-    except UnicodeError:
-        return None
-    return hashlib.sha256(canonical).hexdigest(), canonical
-
-
-def event_voice_form(text: bytes, voice: int) -> bytes:
-    """An event, narration page or still event line with its voice id, as the runtime looks it up before the text alone
-    (runtime event_line)."""
-    return text + b"@V%04d" % voice
 
 
 def stage_line_form(text: bytes, stage: int, line: int) -> bytes:

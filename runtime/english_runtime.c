@@ -21,6 +21,7 @@
 #include "voice_slots.h"
 #include "weapon_slots.h"
 #include "ring_upload.h"
+#include "lip_clock.h"
 
 typedef unsigned int u32;
 typedef unsigned short u16;
@@ -543,6 +544,9 @@ static u32 mount_player(u32 slot)
 #define LIFE_MAX(u) (*(volatile short *)((u) + 0x80))
 static u32 test_keep, test_clock;
 static volatile u32 test_voice_delay;  /* ms each English voice read takes longer: a slow disk (op 15) */
+static volatile u32 test_lip_stall, test_lip_event_clock;  /* op 16: a stall 1 s into each voiced line; mouths left
+                                                             to the event clock (the lip clock only measures) */
+static volatile u32 test_stock_voices;  /* op 17: voices play as `voice=japanese` picks them, whatever the setting */
 
 static void keep_battle(void)
 {
@@ -586,6 +590,142 @@ static struct test_block {
 } enrt_test = {"ENRT-TEST-BLOCK", TEST_VERSION, sizeof(struct test_block)};
 
 static struct test_report reports[2], *current = reports, *last = reports + 1;
+
+/* Test op 30, the A/V probe: when the game made each frame and each mouth, so a recording can be put on the game's
+   own clock (game_harness.py `video`) and a lip measurement can tell the stages apart (work/handbacks/lip-av-offset.md).
+   arg bit 0 logs, to lipav.log in the game folder, a P row per Present (QPC on either side of the real Present) and a
+   T row per event tick (hook 117: QPC, the Presents so far, each event slot's lip time as the clock wrote it); bit 1
+   paints the Present number into the top-left corner (14 cells of AV_CELL px: white, 12 bits low first, black), so
+   each recorded frame names the Present that made it; bit 2 makes every slot with a lip block alternate, from its
+   next tick, between its block's frame 0 and its widest open key, arg >> 8 & 0xFF ticks each, so a recording shows
+   which Present a tick's pose reaches. arg >> 16, when set, is the seconds after which the probe ends by itself (a
+   recording's length), its log written out. Rows are buffered and written each 4 KB or half second, without a flush
+   to disk, so the probe cannot stall a pass. Wine's QPC is CLOCK_MONOTONIC_RAW (lip-premise.md). */
+#define AV_CELL 8
+typedef unsigned long long av_u64;
+static u32 av_mode, av_presents, av_ticks, av_square_from;
+static av_u64 av_until, av_flushed, av_hz;
+static HANDLE av_file = INVALID_HANDLE_VALUE;
+static char av_buf[8192];
+static u32 av_len;
+
+static void av_flush(void)
+{
+    DWORD w;
+    if (av_file == INVALID_HANDLE_VALUE)
+        av_file = CreateFileA("lipav.log", GENERIC_WRITE, FILE_SHARE_READ, 0, CREATE_ALWAYS, 0, 0);
+    if (av_file != INVALID_HANDLE_VALUE && av_len)
+        WriteFile(av_file, av_buf, av_len, &w, 0);
+    av_len = 0;
+}
+
+static void av_row(const char *row)
+{
+    u32 n = lstrlenA(row);
+    if (av_len + n > sizeof av_buf)
+        av_flush();
+    CopyMemory(av_buf + av_len, row, n), av_len += n;
+    if (av_len > 4096)
+        av_flush();
+}
+
+static av_u64 av_qpc(void)
+{
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    return (av_u64)now.QuadPart;
+}
+
+/* The event context's arrays, as 0x4A1C40 reads them: actor count, lip tracks (0x10 each, +4 the block), lip times. */
+#define AV_EVENT(va) (*(u8 *volatile *)((va) + 0x40 * *(volatile u32 *)0x89A370))
+#define AV_ACTORS (*(volatile u32 *)(0x89AA24 + 0x40 * *(volatile u32 *)0x89A370))
+
+/* The lip frame of block's widest open mouth key: track B's first key of the largest weight whose shape is not shut
+   (lips.py: values 55 + 15 set + shape, shape 0 shut). */
+static float av_open_frame(const u8 *block)
+{
+    const u16 *counts = (const u16 *)(block + 16);
+    const u8 *key = block + 0x20 + 3 * counts[0];
+    u32 i, at = 0, best = 0, weight = 0;
+    for (i = 0; i < counts[1]; i++, key += 3) {
+        if (i)
+            at += key[2];
+        if (key[0] >= 55 && key[0] < 100 && (key[0] - 55) % 15 && (key[0] - 55) % 15 < 10 && key[1] > weight)
+            weight = key[1], best = at;
+    }
+    return (float)best;
+}
+
+/* After the lip clock, before the poses read the times (hook 117). */
+static void av_tick(void)
+{
+    u8 *tracks = AV_EVENT(0x89A9F8), *times = AV_EVENT(0x89AA04);
+    u32 slot, n = AV_ACTORS, on;
+    char row[512], *p;
+    av_u64 q = av_qpc();
+    av_ticks++;
+    if (!tracks || !times || n > 32)
+        return;
+    on = av_mode & 4 && (av_ticks - av_square_from) / (av_mode >> 8 & 0xFF ? av_mode >> 8 & 0xFF : 1) % 2;
+    p = row + wsprintfA(row, "T %u %08X%08X %u", av_ticks, (u32)(q >> 32), (u32)q, av_presents);
+    for (slot = 0; slot < n; slot++) {
+        const u8 *block = *(u8 *const *)(tracks + slot * 0x10 + 4);
+        float *time = (float *)(times + slot * 4);
+        if (!*(u32 *)(tracks + slot * 0x10) || !block)
+            continue;
+        p += wsprintfA(p, " %u:%d/%u", slot, (int)(*time * 1000.0f), *(const u32 *)(block + 12));
+        if (av_mode & 4)
+            *time = on ? av_open_frame(block) : 0.0f;
+        if (p > row + sizeof row - 40)
+            break;
+    }
+    if (av_mode & 4)
+        p += wsprintfA(p, " sq %u", on);
+    *p++ = '\r', *p++ = '\n', *p = 0;
+    if (av_mode & 1)
+        av_row(row);
+}
+
+typedef long (__stdcall *av_back_fn)(void *, u32, u32, u32, void **);
+typedef long (__stdcall *av_fill_fn)(void *, void *, const RECT *, u32);
+typedef long (__stdcall *av_desc_fn)(void *, u32 *);
+typedef u32 (__stdcall *av_release_fn)(void *);
+
+/* Before the real Present: the corner code, painted on the back buffer. */
+static av_u64 av_before(void *device)
+{
+    void *back = 0, **vt = *(void ***)device;
+    u32 i, desc[8];
+    av_presents++;
+    if (av_mode & 2 && ((av_back_fn)vt[18])(device, 0, 0, 0, &back) >= 0 && back) {
+        void **sv = *(void ***)back;
+        if (((av_desc_fn)sv[12])(back, desc) >= 0 && desc[6] >= 14 * AV_CELL)
+            for (i = 0; i < 14; i++) {
+                RECT cell = {(long)(i * AV_CELL), 0, (long)((i + 1) * AV_CELL), AV_CELL};
+                u32 white = i == 0 || (i < 13 && av_presents >> (i - 1) & 1);
+                ((av_fill_fn)vt[35])(device, back, &cell, white ? 0xFFFFFFFF : 0xFF000000);
+            }
+        ((av_release_fn)sv[2])(back);
+    }
+    return av_qpc();
+}
+
+static void av_after(av_u64 before)
+{
+    char row[96];
+    av_u64 q = av_qpc();
+    if (!(av_mode & 1)) {
+        if (av_until && q >= av_until)
+            av_mode = 0, av_until = 0;
+        return;
+    }
+    wsprintfA(row, "P %u %08X%08X %08X%08X\r\n", av_presents, (u32)(before >> 32), (u32)before, (u32)(q >> 32), (u32)q);
+    av_row(row);
+    if (q - av_flushed > av_hz / 2)
+        av_flush(), av_flushed = q;
+    if (av_until && q >= av_until)
+        av_row("E probe ended\r\n"), av_flush(), av_mode = 0, av_until = 0;
+}
 
 static void words(void *dst, const void *src, u32 bytes)
 {
@@ -862,6 +1002,37 @@ static void test_frame(void)
         test_voice_delay = b->arg;
         b->result = 0;
         break;
+    case 16:
+        /* Each voiced event line from now on stalls the game arg & 0xFFFF ms (0: none) once, 1 s into its voice, as a
+           slow frame would; bit 16 leaves its mouths to the event clock, as stock, and the lip clock only measures them
+           (runtime/lip_clock.h). The stall is noted in runtime.log with the line's voice id. */
+        test_lip_stall = b->arg & 0xFFFF, test_lip_event_clock = b->arg >> 16 & 1;
+        b->result = 0;
+        break;
+    case 17:
+        /* arg 1: every voice started from now on is the stock Japanese one, as with `voice=japanese` (a heard check
+           measures where the game starts the stock clip of a line, to compare its English take with); 0: the voice
+           setting picks again. Movies keep following the setting. */
+        test_stock_voices = b->arg & 1;
+        b->result = 0;
+        break;
+    case 30: {
+        /* The A/V probe (av_tick, av_before): arg as there; an H row (QPC frequency, the mode) starts each setting. */
+        LARGE_INTEGER hz;
+        char row[64];
+        QueryPerformanceFrequency(&hz);
+        if (b->arg & 4 && !(av_mode & 4))
+            av_square_from = av_ticks + 1;
+        av_mode = b->arg & 0x7, av_hz = (av_u64)hz.QuadPart;
+        av_until = b->arg >> 16 && av_mode ? av_qpc() + (av_u64)(b->arg >> 16) * av_hz : 0;
+        if (av_mode & 4)
+            av_mode |= b->arg & 0xFF00;
+        wsprintfA(row, "H %u mode %X ticks %u presents %u\r\n", (u32)hz.QuadPart, b->arg, av_ticks, av_presents);
+        av_row(row);
+        av_flush();
+        b->result = 0;
+        break;
+    }
     default:
         b->result = 2;
     }
@@ -1742,6 +1913,11 @@ static WCHAR root[MAX_PATH];
 static HANDLE runtime_log = INVALID_HANDLE_VALUE;
 static int english;
 static u32 text_saved, voice_saved;
+#ifdef ENRT_TEST
+#define VOICES_JAPANESE (voice_saved || test_stock_voices)
+#else
+#define VOICES_JAPANESE voice_saved
+#endif
 static u32 rows;
 static u32 reloads;
 static FILETIME table_stamp;
@@ -1879,7 +2055,7 @@ static struct loose *served(u32 key)
     struct loose *found = 0;
     u32 i;
     for (i = 0; i < loose_count; i++)
-        if (loose[i].key == key && !(loose[i].dir == VOICE_DIR && voice_saved)
+        if (loose[i].key == key && !(loose[i].dir == VOICE_DIR && VOICES_JAPANESE)
             && (!found || loose[i].dir == VOICE_DIR))
             found = &loose[i];
     return found;
@@ -1945,6 +2121,7 @@ static u32 *voice_table, voice_ids;
 #define READER_FREE ((u32 (*)(u32))0x5D9AE0)  /* with 0: starts a queued job, else reaps; true when the reader is free */
 #define VOICE_START_BODY 0x513731  /* the voice start (0x513720) past its free check, ecx's slot pushed */
 #define VOICE_END (VOICE_MODE ? 0x1FFu : 0x150u)  /* the voice mode's end marker: no line */
+#define VOICE_BASE (VOICE_MODE ? 0x8F4u : 0xAF3u)  /* the voice mode's first id: line 0 */
 static struct voice_play kept_play = {VOICE_NONE, 0, {0}, VOICE_NONE, 0, {{0}}, 0, 0};
 
 
@@ -2029,7 +2206,7 @@ static int open_voices(void)
 static const u32 *english_voice(u32 id)
 {
     const u32 *e = voice_table + 2 * id;
-    return !voice_saved && id < voice_ids && e[1] && e[1] <= VOICE_SLOT ? e : 0;
+    return !VOICES_JAPANESE && id < voice_ids && e[1] && e[1] <= VOICE_SLOT ? e : 0;
 }
 
 /* Lips.bin: u32 id count, (u32 offset, u32 size) per voice id, the blocks. The stock lip block of a spoken
@@ -2038,7 +2215,7 @@ static const u32 *english_voice(u32 id)
 static const u8 *english_lips(u32 index)
 {
     const u32 *e;
-    u32 id = (VOICE_MODE ? 0x8F4 : 0xAF3) + index;
+    u32 id = VOICE_BASE + index;
     if (!lips || index >= (VOICE_MODE ? 0x1FFu : 0x150u) || !english_voice(id) || lips_size < 4
         || id >= *(const u32 *)lips || 4 + 8 * id + 8 > lips_size)
         return 0;
@@ -2066,13 +2243,108 @@ static int stock_voice_start(u32 play, u32 next)
 static void voice_start_note(const char *what, const struct voice_start *s, u32 frames)
 {
     char line[160], ids[2][8];
-    u32 base = VOICE_MODE ? 0x8F4 : 0xAF3, i, lines[2] = {s->play, s->next};
+    u32 base = VOICE_BASE, i, lines[2] = {s->play, s->next};
     for (i = 0; i < 2; i++)
         wsprintfA(ids[i], lines[i] < VOICE_END ? "0x%04X" : "-", base + lines[i]);
     wsprintfA(line, "%s %u frames, play %s, load %s", what, frames, ids[0], ids[1]);
     note(line, 0);
 }
 static const struct voice_stock voice_stock = {reader_idle, stock_voice_start, voice_start_note};
+
+/* lip_clock.h's reads of the game. The event actors' arrays are per context (0x40 apart), the context running at
+ * 0x89A370: actor count +0x89AA24, actors +0x89A9F0, lip tracks (0x10 each: +0 its motion, +4 its block) +0x89A9F8,
+ * lip times +0x89AA04, slot flags +0x89AA14 (0x20: the stepper zeroes the time), as 0x4A1C40 reads them. */
+#define EVENT_ARRAY(va) (*(u8 *volatile *)((va) + 0x40 * *(volatile u32 *)0x89A370))
+#define EVENT_ACTORS (*(volatile u32 *)(0x89AA24 + 0x40 * *(volatile u32 *)0x89A370))
+#define VOICE_MANAGER (*(const u8 *const volatile *)0xE00404)
+#define SOUND_STATUS ((u32 (__attribute__((thiscall)) *)(u8 *, u32, u32 *, u32))0x670900)  /* engine, channel */
+#define STREAM_POSITION ((u32 (__attribute__((thiscall)) *)(u8 *, u32 *, u32 *, u32 *, u32 *))0x678780)
+static struct lip_clock lip_clock;
+#define VOICE_CURRENT (*(volatile u32 *)0xC0E594)  /* the buffer the next voice start plays (0x513720) */
+
+/* The ids whose play waits on each voice buffer (voice_play.h), for lip_clock.h. */
+static const u32 *voice_waiting(u32 waits[2])
+{
+    voice_waits(&kept_play, VOICE_CURRENT, VOICE_BASE, VOICE_END, waits);
+    return waits;
+}
+
+/* Voice buffer b plays on sound channel b (0x5D8590 hands it mask 1 << b), whose record (0x7C each, at engine +0x4C,
+ * count +0x50) names its stream (+8; 0x588 each at engine +0x20, count +0x24); the stream's player at +0x398 counts
+ * the samples played from the play cursor under its own lock (0x678780), which the stream thread holds to refill.
+ * The rate is the channel status's word 4 (0x670900), the clip's format. */
+static u32 lip_stream(u32 b, u32 *played, u32 *rate)
+{
+    const u8 *vm = VOICE_MANAGER;
+    u8 *engine, *rec, *stream;
+    u32 i, status[16];
+    if (!vm || !*(u8 **)(vm + 4) || !(engine = *(u8 **)(*(u8 **)(vm + 4) + 0xC)) || b >= *(u32 *)(engine + 0x50))
+        return 0;
+    rec = *(u8 **)(engine + 0x4C) + b * 0x7C, i = *(u32 *)(rec + 8);
+    if (i >= *(u32 *)(engine + 0x24))
+        return 0;
+    stream = *(u8 **)(engine + 0x20) + i * 0x588;
+    if (!*(volatile u32 *)(stream + 8 + 0x418))  /* the channel's locks are not made */
+        return 0;
+    if (!*rate && SOUND_STATUS(engine, b, status, 0) == 0 && status[0] & 1)
+        *rate = status[4];
+    return STREAM_POSITION(stream + 0x398, 0, 0, played, 0);
+}
+
+static float *lip_slot(u32 slot, u32 *length)
+{
+    u8 *actors = EVENT_ARRAY(0x89A9F0), *tracks = EVENT_ARRAY(0x89A9F8), *times = EVENT_ARRAY(0x89AA04);
+    u8 *flags = EVENT_ARRAY(0x89AA14), *track = tracks + slot * 0x10;
+    *length = 0;
+    if (slot >= EVENT_ACTORS || !actors || !*(u32 *)(actors + slot * 4) || !tracks || !times)
+        return 0;
+    if (*(u32 *)track && *(u8 **)(track + 4) && !(flags && *(u32 *)(flags + slot * 4) & 0x20))
+        *length = *(u32 *)(*(u8 **)(track + 4) + 0xC);
+#ifdef ENRT_TEST
+    if (test_lip_event_clock)
+        *length = 0;
+#endif
+    return (float *)(times + slot * 4);
+}
+
+#ifdef ENRT_TEST
+/* Op 16's stall: once per line, on the first pass its voice has been heard for 1 s. */
+static void lip_stall(void)
+{
+    static u32 stalled = LIP_NO_VOICE;
+    u32 b, played, rate;
+    for (b = 0; b < 2 && test_lip_stall; b++) {
+        const struct lip_line *l = &lip_clock.line[b];
+        if (l->phase != LIP_HEARD || l->id == stalled || !l->rate)
+            continue;
+        played = 0, rate = l->rate;
+        lip_stream(b, &played, &rate);
+        if (played >= rate) {
+            stalled = l->id;
+            note("lip test: stalled the game 1 s into voice id", l->id);
+            Sleep(test_lip_stall);
+        }
+    }
+}
+#endif
+
+static void lip_report(const struct lip_line *l)
+{
+    char line[96];
+    note(lip_text(l, line), 0);
+}
+
+static double lip_now(void)
+{
+    static LARGE_INTEGER hz;
+    LARGE_INTEGER now;
+    if (!hz.QuadPart)
+        QueryPerformanceFrequency(&hz);
+    QueryPerformanceCounter(&now);
+    return (double)now.QuadPart / (double)hz.QuadPart;
+}
+
+static const struct lip_game lip_game = {lip_stream, lip_slot, lip_report, lip_now};
 
 static u32 read_voice(struct frame *f, HANDLE bank)
 {
@@ -4139,7 +4411,14 @@ static long __stdcall present(void *device, const void *from, const void *to, vo
     view = rect_refused ? present_window(DISPLAY_WINDOW) : 0;
     if (display_mode == BORDERLESS && !to && !window)  /* the output scaled onto the desktop, its shape kept */
         to = view ? 0 : &present_to, window = view;
+#ifdef ENRT_TEST
+    av_u64 av_at = av_mode ? av_before(device) : 0;
+#endif
     result = REAL(present_fn, device, SLOT_PRESENT)(device, from, to, window, dirty);
+#ifdef ENRT_TEST
+    if (av_at)
+        av_after(av_at);
+#endif
     if (result == D3DERR_INVALIDCALL && to == &present_to && (view = (rect_refused = 1, present_window(DISPLAY_WINDOW)))) {
         note("display: Present refuses a destination rectangle; borderless presents into a child window", 0);
         result = REAL(present_fn, device, SLOT_PRESENT)(device, from, 0, view, dirty);  /* this frame again */
@@ -4855,7 +5134,6 @@ static long __stdcall ring_unlock(void *buffer)
 #define SET_SE_LEVEL ((void (*)(u32))0x513070)
 #define BGM_OPTION (*(volatile u8 *)0x80151B)
 #define SE_OPTION (*(volatile u8 *)0x80151C)
-#define VOICE_MANAGER (*(const u8 *const volatile *)0xE00404)
 #define STAGE_WINDOW (*(volatile u32 *)0x9C9308)  /* the stage window shown: 2 is the notice box */
 static struct stage_duck stage_duck;
 
@@ -5100,6 +5378,17 @@ static int always(u32 id, struct frame *f, u32 *replace)
     case 126:
         if (tr.rate != 60)
             tr_tick(&tr);
+        if (id == 117 && VOICE_MANAGER) {
+            u32 waits[2];
+#ifdef ENRT_TEST
+            lip_stall();
+#endif
+            lip_pass(&lip_clock, &lip_game, VOICE_MANAGER, (u32)EVENT_ARRAY(0x89AA04), voice_waiting(waits));
+        }
+#ifdef ENRT_TEST
+        if (id == 117 && av_mode)
+            av_tick();
+#endif
         return 1;
     case 127:  /* state 6 (the way into an event scene) after its step 0x4B2730: [esp+8] set runs the battle's ticks
                   (hook 115), 0 makes the step alone the pass's tick */
@@ -5150,13 +5439,22 @@ static int always(u32 id, struct frame *f, u32 *replace)
             char line[] = "lips ja 0000 index 000 frames";
             if (lip)
                 line[5] = 'e', line[6] = 'n';
-            put_hex(line + 8, (VOICE_MODE ? 0x8F4 : 0xAF3) + *(const u16 *)(f->edi + 4), 4);
+            put_hex(line + 8, VOICE_BASE + *(const u16 *)(f->edi + 4), 4);
             put_hex(line + 19, *(const u16 *)(f->edi + 4), 3);
             note(line, *(const u32 *)(f->arg[2] + 12));
         }
 #endif
+        {   /* any hand-off ends the slot's lip line; the speak's, made once its voice started, follows that voice. One
+             * pended for the scene's start (state bit 0x10 clear) keeps the event clock. */
+            const u8 *vm = VOICE_MANAGER;
+            u32 waits[2], voiced = vm && f->ret == 0x49E65F && *(const u8 *)f->arg[0] & 0x10;
+            lip_hand(&lip_clock, &lip_game, vm, f->arg[1] & 0xFFFF, (u32)EVENT_ARRAY(0x89AA04),
+                     voiced ? VOICE_BASE + *(const u16 *)(f->edi + 4) : LIP_NO_VOICE, voice_waiting(waits));
+        }
         return 1;
-    case 109:  /* play (thiscall: slot and three arguments): one whose clip waits to be loaded is kept (voice_play.h) */
+    case 109:  /* play (thiscall: slot and three arguments): a loaded clip drops the replaced clip's started bit; one
+                  whose clip waits to be loaded is kept (voice_play.h) */
+        voice_fresh((u8 *)f->ecx, f->arg[0]);
         voice_keep(&kept_play, (u8 *)f->ecx, f->arg[0], f->arg + 1);
         return 1;
     case 110:  /* the voice frame starts (thiscall): a waiting load waits for a free reader, a kept play is made */
@@ -5189,7 +5487,7 @@ static int always(u32 id, struct frame *f, u32 *replace)
     case 39:
     case 40:
     case 41:
-        if (!voice_saved && f->arg[0] < se_banks && (se = se_table + 4 * f->arg[0])[1])
+        if (!VOICES_JAPANESE && f->arg[0] < se_banks && (se = se_table + 4 * f->arg[0])[1])
             f->eax = se[id - 38] | (id & 1 ? 0 : VOICE_TAG), *replace = 1;
         return 1;
     case 21:

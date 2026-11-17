@@ -68,7 +68,7 @@ def test_quote_voices_and_rows_follow_the_slot_the_quote_pickers_read(files, map
     from wozmod.formats.audio import WO1_RECORD_BASE, WO2_CLIP_BASE, quote_voice
     from wozmod.formats.scripts import quote_tables, quote_text
     from wozmod.text.script_alignment import QUOTE_INSERT, QUOTE_SLOTS, WO1_QUOTE_INSERT
-    from wozmod.text.stock import stock_key
+    from wozmod.text.keys import stock_key
 
     stock = quote_tables(files["stock"])
     donors = {"wo2-x360": (quote_tables(files["wo2"], ">"), QUOTE_INSERT, WO2_CLIP_BASE, 17),
@@ -126,7 +126,7 @@ def test_psp_quote_voices_and_rows_follow_the_slot_both_pickers_read(files) -> N
     from wozmod.formats.scripts import quote_tables, quote_text
     from wozmod.text.psp_alignment import psp_quote_text
     from wozmod.text.script_alignment import PSP_QUOTES, QUOTE_SLOTS
-    from wozmod.text.stock import stock_key
+    from wozmod.text.keys import stock_key
     from wozmod.voices.build import PSP_TEXT, psp_text_voice_map
 
     fns = files["folders"].folder("wo2-psp") / PSP_TEXT

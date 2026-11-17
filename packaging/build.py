@@ -133,6 +133,7 @@ def main() -> int:
     (stage / "licenses").mkdir()
     shutil.copy2(BUILD / "ffmpeg-LICENSE.txt", stage / "licenses")
     shutil.copy2(ROOT / "packaging/FFMPEG-NOTICE.txt", stage / "licenses")
+    shutil.copy2(ROOT / "packaging/POCKETSPHINX-NOTICE.txt", stage / "licenses")
 
     codecs = list((stage / "_internal").rglob("wozmod_native*"))
     if not codecs or not (stage / "_internal/ffmpeg").is_dir():

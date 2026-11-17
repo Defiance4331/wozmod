@@ -20,7 +20,7 @@ from pathlib import Path
 
 from wozmod.version import __version__ as VERSION
 from wozmod import progress as reporting
-from wozmod import permissions, process, remembered, resources
+from wozmod import native, permissions, process, remembered, resources
 from wozmod.donors.discs import DISCS, DonorsFolder
 from wozmod.install import step_keys
 from wozmod.install.stock import STEPS, Verdict, check_game
@@ -33,7 +33,7 @@ RUNTIME_FILES = ("wozmod/settings.ini", "wozmod/runtime.log", "wozmod/runtime.cr
 # The game folder is checked piece by piece: only the parts of the stock files the build reads (install/stock.py).
 # Release assets built by us; a release updates both pins with the files it ships.
 LETTERING = (18_385_576, "e5176ec1d0e9915b898c1991c0745d78684c3e6adf14aab5da1019e1eb512ae1")
-DLL = (306_789, "5a0791c5ff54004f2fafe3176426760f776849de0b5d64e5eb151f05d9badd6a")
+DLL = (311_322, "ab4b466d7ff256e1af141604d27c05cc009a99bf2c2da0d277843e2ffe59f8f0")
 
 _MOD_PATH = re.compile(r"d3d9\.dll|wozmod(/[A-Za-z0-9_][A-Za-z0-9_.-]*)+")
 
@@ -140,7 +140,9 @@ INPUTS = {
                            "The decrypted PSP_GAME/SYSDIR/EBOOT.BIN. Use it instead of the program above."),
     "lettering": Input("lettering.zip", None),  # for development: the release lettering bundle
     "dll": Input("d3d9.dll", None),  # for development: the release d3d9.dll
+    "speech": Input("Speech model folder", None),  # PocketSphinx's US English model (voices.phones.MODEL)
 }
+RELEASE_FILES = ("lettering", "dll", "speech")  # what the release download gives the install, beside the program
 # disc image input: (the encrypted file inside the image, the decryption program input the player has for it,
 # the alternative input: that file already decrypted, checked against the pin and never run). One program serves
 # both Xbox 360 discs.
@@ -297,6 +299,12 @@ def check_input(name: str, path: Path | str) -> str | None:
         if not path.is_file():
             return "File not found. Pick the file again."
         return None if _trimmed(FILE_PROGRAMS[name], path) is not None else WRONG_FILE
+    if name == "speech":
+        from wozmod.voices.phones import model_problem
+
+        if problem := model_problem(path):
+            return f"{problem}. Download wozmod again."
+        return None
     pin = {"lettering": LETTERING, "dll": DLL}[name]
     if wrong := _pinned(path, pin):
         return "File not found. Download wozmod again." if wrong == "missing" else "Not the file that goes with this release. Download wozmod again."
@@ -325,10 +333,10 @@ def check_inputs(game: Path, inputs: dict[str, Path | None], log=None, rebuilt=S
     another mod in the game folder also replaces, and what it changed that only kept steps read). rebuilt: the steps
     this install builds; the others are kept from the last install.
 
-    The two files of the release download come first, on their own: a wrong download is named in milliseconds,
-    not after the seconds the game folder's hashes take. Every other wrong input is then named in one error.
+    The release download's two files and its speech model come first, on their own: a wrong download is named in
+    a moment, not after the seconds the game folder's hashes take. Every other wrong input is then named in one error.
     """
-    if wrong := [f"{INPUTS[name].label}: {problem}" for name in ("lettering", "dll")
+    if wrong := [f"{INPUTS[name].label}: {problem}" for name in RELEASE_FILES
                  if (problem := check_input(name, inputs[name]))]:
         raise InstallError("\n".join(wrong))
     problem, verdict = _game_check(Path(game), rebuilt, inputs["dll"])
@@ -341,6 +349,10 @@ def check_inputs(game: Path, inputs: dict[str, Path | None], log=None, rebuilt=S
     lines = [f"{INPUTS[name].label}: {problem}" for name, problem in problems.items() if problem]
     if "voices" in rebuilt and resources.ffmpeg() is None:
         lines.append("ffmpeg was not found on PATH; the voice build needs it")
+    if "voices" in rebuilt and not all(hasattr(native.module, name) for name in ("xcorr_lag", "lip_shapes", "aligned_phones")):
+        # a checkout synced without --extra native, or before the package gained the mouths
+        lines.append("the wozmod-native package is missing or out of date; the voice build needs it for the Dream "
+                     "movies and scenes and the event lines' mouths")
     if lines:
         raise InstallError("\n".join(lines))
     return [*verdict.notes(), *verdict.kept_notes(rebuilt)]
@@ -528,7 +540,7 @@ def _recorded_steps(record: dict) -> dict | str:
 
 def _changed_parts(old: dict, new: dict) -> str:
     names = {"mod": "the mod's code or data", "game": "the game files it reads", "donors": "the disc files it reads",
-             "lettering": "lettering.zip", "environment": "WOZMOD_ settings"}
+             "lettering": "lettering.zip", "speech": "the speech model", "environment": "WOZMOD_ settings"}
     parts = [names.get(p, p) for p in new if (old or {}).get(p) != new[p]]
     return ", ".join(parts) or "its key"
 
@@ -650,7 +662,7 @@ def _worker_start(events, stop, log_path=None) -> None:
             os.dup2(log.fileno(), descriptor)
 
 
-def _voice_banks(game: Path, donors: Path, out: Path, jobs: int) -> None:
+def _voice_banks(game: Path, donors: Path, speech: Path, out: Path, jobs: int) -> None:
     """The voice stage, at a lower priority than the art stage: the banks go below out/wozmod.
 
     The voices are many independent ffmpeg runs that can fill any gap; the art stage has long serial steps
@@ -667,7 +679,7 @@ def _voice_banks(game: Path, donors: Path, out: Path, jobs: int) -> None:
             os.sched_setscheduler(0, os.SCHED_BATCH, os.sched_param(0))
         except OSError:
             pass  # the system does not allow it: the voices only take a little longer
-    build_voice_banks(game, donors, out / "wozmod", jobs)
+    build_voice_banks(game, donors, speech, out / "wozmod", jobs)
 
 
 def _drain(events, progress: Progress) -> None:
@@ -766,7 +778,7 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
     # The builds are independent: run them side by side, each in its own process, each into its own folder laid out
     # as the game folder, so that the record knows which step wrote which file.
     progress.begin("build")
-    builds = {"text": partial(_text_table, game, donors), "voices": partial(_voice_banks, game, donors, jobs=jobs),
+    builds = {"text": partial(_text_table, game, donors), "voices": partial(_voice_banks, game, donors, inputs["speech"], jobs=jobs),
               "art": partial(_menu_art, game, donors, inputs["lettering"], staging / "art", jobs=jobs)}
     builds = {name: build for name, build in builds.items() if name in rebuilt}
     targets = {name: staging / "steps" / name for name in builds}
@@ -805,9 +817,12 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
             os.replace(built, target)
             written[name].append(relative)
     progress.finish("build")
-    if (donors / "movie").is_dir():
-        (out / "wozmod").mkdir(parents=True, exist_ok=True)
-        os.replace(donors / "movie", out / "wozmod/movie")
+    for copied in sorted(p for p in (donors / "movie").rglob("*") if p.is_file()):  # beside the movies the voices built
+        target = out / "wozmod/movie" / copied.relative_to(donors / "movie")
+        if target.exists():
+            raise InstallError(f"a build step wrote the copied movie {target.relative_to(out).as_posix()}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(copied, target)
     out.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(inputs["dll"], out / "d3d9.dll")
     return out, written

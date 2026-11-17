@@ -1,0 +1,73 @@
+# The Dream English (src/wozmod/voices/dream_events.py, dream_movies.py), heard in game:
+# `tools/run_check.py --install DIR data/checks/dream.toml` (a --test build; about 25 minutes, Whisper on the CPU).
+# Each event screen plays sub-scene 1 of a Z Dream stage's event scene (stage 132 + n plays event 402 + n) through
+# the game's own scene starter twice, recording it while the screen is polled for its captions: first with every
+# voice the stock Japanese one (listen's `stock`, test op 17), then as the voice setting picks. `lines_in_english`
+# finds each caption's English take in the second recording, hears its language, and holds the take to where the
+# game started the same line's stock clip in the first (tools/voice_checks.py). Each listen runs the sub-scene's
+# length (403: 69.2 s, 408: 31.5, 410: 69.4, 411: 83.0, from the stock event files), up to 2.3 s for the scene to
+# start, and about 4 s with no caption after it. `require` names the lines that kept their Japanese until commit
+# 7f7e835. The movie screens play movie200 and movie201 from the Gallery; `movie_voice` expects the file and the
+# language the voice setting picks.
+# Red runs: `--setting language.voice=japanese` turns every event row red (Japanese voices; the movie rows then
+# expect the stock files and Japanese, and pass); `--file wozmod/movie/voice/movie200.wmv=<stock movie200.wmv>`
+# turns movie200's row red. Runs: green 2026-11-16_1054-rf2-dream; red _1123-rf2-dream-ja, _1121-rf2-movie200-stock.
+
+[[screen]]
+name = "event-403"
+route = "battle"
+battle = 133
+listen = { seconds = 76, scene = 1, stock = true }
+
+  [[screen.assert]]
+  kind = "lines_in_english"
+  require = ["0xc25"]  # line 306
+
+[[screen]]
+name = "event-408"
+route = "battle"
+battle = 138
+listen = { seconds = 40, scene = 1, stock = true }
+
+  [[screen.assert]]
+  kind = "lines_in_english"
+
+[[screen]]
+name = "event-410"
+route = "battle"
+battle = 140
+listen = { seconds = 76, scene = 1, stock = true }
+
+  [[screen.assert]]
+  kind = "lines_in_english"
+  require = ["0xbf2"]  # line 255
+
+[[screen]]
+name = "event-411"
+route = "battle"
+battle = 141
+listen = { seconds = 90, scene = 1, stock = true }
+
+  [[screen.assert]]
+  kind = "lines_in_english"
+  require = ["0xc04"]  # line 273
+
+[[screen]]
+name = "movie200"
+route = "gallery-movie-play"
+movie = 200
+listen = { seconds = 40 }
+
+  [[screen.assert]]
+  kind = "movie_voice"
+  movie = 200
+
+[[screen]]
+name = "movie201"
+route = "gallery-movie-play"
+movie = 201
+listen = { seconds = 40 }
+
+  [[screen.assert]]
+  kind = "movie_voice"
+  movie = 201

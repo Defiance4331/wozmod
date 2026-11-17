@@ -14,7 +14,8 @@ from wozmod.text.build import (
     TableBuildError, _load_data, resolved_text, table_index, table_pairs, table_parts, write_table,
 )
 from synthetic import pe_image, script as synthetic_script
-from wozmod.text.stock import resolve_stock_ref, stock_key, stock_strings
+from wozmod.text.keys import stock_key
+from wozmod.text.stock import resolve_stock_ref, stock_strings
 
 TABLE = Path(__file__).resolve().parents[1] / "data/text/table.json"
 # The shipped table's rows: their count and the SHA-256 of their sorted keys, one per line.

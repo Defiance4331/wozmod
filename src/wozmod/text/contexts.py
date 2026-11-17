@@ -38,7 +38,6 @@ from wozmod.runtime.text_table import decode_english, table_lookup
 from wozmod.text.narration_voices import VOICE_KEYED, camp_lines_drawn, line_voices
 from wozmod.text.script_alignment import NARRATION, X360_ENS, quote_slot_read
 from wozmod.text.stock import stage_line_form
-from wozmod.voices.events import _records
 
 CUE_TICKS = 29.97  # a movie caption schedule counts 29.97 a second (MovieTelop counter 0x5E91F0)
 PAL_TICKS = 25  # a French or German schedule counts 25 a second
@@ -124,8 +123,14 @@ PSP_MOVIE_CAPTIONS = {175: 196, 176: 197}
 
 def event_voice(ordinal: int, index: int) -> int | None:
     """An event line's voice id: index + 0xAF3, or + 0x8F4 when [0x801F24] is set (0x513731), which it is for the
-    WO1 scenes 245-383 and 401. For 384-400 and 402-413 the mode is not known."""
-    if 177 <= ordinal < 245:
+    WO1 scenes 245-383 and 401. For 384-400 the mode is not known.
+
+    The Z Dream scenes 402-413 play index + 0xAF3, a measurement rather than a trace of the flag: their indexes run
+    241-335, from the WO2 X360's last event line (0xF1) to the limit of that mode (0x150), and in the WO2 PSP's
+    movies of these scenes the stock clip index + 0xAF3 of 91 of their 96 voiced speaks sits whole in the Japanese
+    track (gain 0.70-0.79, 0.12-0.22 s after the subtitle; the other 5 begin there, the PSP having edited their
+    rest), while index + 0x8F4 matches none (gain 0.01-0.21, correlation at most 0.12)."""
+    if 177 <= ordinal < 245 or 402 <= ordinal <= 413:
         return WO2_EVENT_VOICES[0] + index if index < MOZ_EVENT_LINES["wo2-x360"] else None
     if 245 <= ordinal < 384 or ordinal == 401:
         return WO1_EVENT_VOICES[0] + index if index < MOZ_EVENT_LINES["wo1-x360"] else None
@@ -177,6 +182,7 @@ def event_file(data: bytes, order: str = "<") -> bool:
     bases = struct.unpack_from(f"{order}{count}I", data, 4)
     if bases[0] < 4 + 4 * count or any(a >= b for a, b in zip(bases, bases[1:], strict=False)) or bases[-1] >= len(data):
         return False
+    from wozmod.voices.events import _records  # wozmod.voices imports this module (voices.dream_events)
     try:
         return all(_records(data, base, order) for base in bases)
     except (struct.error, IndexError, ValueError):
@@ -197,6 +203,7 @@ def event_scenes(data: bytes, order: str = "<") -> EventScene:
     """Every subtitle window and place caption of an event file, by simulating each sub-scene's clock: it starts
     at -1, clamps to 0, then counts one a frame; a gate above the clock stops the chain; the scene ends when the
     clock passes its length. A subtitle shows from its speak to the next text record or the scene end."""
+    from wozmod.voices.events import _records
     windows, captions, lengths = [], [], []
     count = struct.unpack_from(f"{order}I", data)[0]
     for sub, base in enumerate(struct.unpack_from(f"{order}{count}I", data, 4)):
@@ -600,8 +607,9 @@ class World:
     def scene_donor(self, ordinal: int, scene: EventScene) -> tuple[str, int] | None:
         """The donor event of the same scene: of the donor files that share at least half its voiced lines, the one
         with the most sub-scenes of the same length (many short scenes share a few stock battle lines), then the
-        most shared lines. Its voice ids say which donor game: WO2 X360 for 177-244, else WO1 X360."""
-        donor = "wo2-x360" if 177 <= ordinal < 245 else "wo1-x360" if event_voice(ordinal, 0) is not None else None
+        most shared lines. Its voice ids say which donor game: WO2 X360 for 177-244, WO1 X360 for the scenes that
+        play 0x8F4 + index. No Xbox 360 game holds the Z Dream scenes 402-413 (the WO2 PSP plays them as movies)."""
+        donor = "wo2-x360" if 177 <= ordinal < 245 else "wo1-x360" if 245 <= ordinal < 384 or ordinal == 401 else None
         ours = scene.lines()
         if donor is None or not ours:
             return None

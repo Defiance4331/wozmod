@@ -99,7 +99,8 @@ FEATURES = (
             returns=TEXT_RETURNS),
     Feature("voices", "English voices", requires=("served",), hooks=(36, 37, 38, 39, 40, 41, 71, 109, 110, 118,
                                                                          135, 136),
-            edits=("VOICE_EDITS",), calls=_c("VOICE_PLAY", "READER_IDLE", "READER_FREE", "VOICE_START_BODY"),
+            edits=("VOICE_EDITS",), calls=_c("VOICE_PLAY", "READER_IDLE", "READER_FREE", "VOICE_START_BODY",
+                                     "SOUND_STATUS", "STREAM_POSITION"),  # the last two: lip_clock.h
             returns=(0x49E65F,  # the speak command's lip block (hook 71)
                      0x5D2AEA)),  # SE.bin's size asked (hook 31)
     Feature("rows", "Game Settings rows", requires=("core",), hooks=(27, 28, 29), edits=("settings rows",),

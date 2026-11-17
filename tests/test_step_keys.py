@@ -39,7 +39,7 @@ REPO = {
             from wozmod.text import build
             build(out)
 
-        def _voice_banks(game, donors, out, jobs):
+        def _voice_banks(game, donors, speech, out, jobs):
             from wozmod.voices import run
             run(NICE)
 
@@ -111,10 +111,11 @@ def _table(rows: list[dict]) -> str:
 
 
 def test_each_step_key_changes_with_exactly_the_inputs_its_output_depends_on(tmp_path, monkeypatch):
-    """Bug: an input drops out of a step's key, so a stale step stays installed (a donor pin changes and the old
-    voices are kept); or one leaks into the wrong key, so a translation edit or a DLL-only release rebuilds the
-    voices for minutes."""
+    """Bug: an input drops out of a step's key, so a stale step stays installed (a donor pin or the speech model
+    changes and the old voices are kept); or one leaks into the wrong key, so a caption edit or a DLL-only release
+    rebuilds the voices for minutes."""
     import wozmod.install as installer
+    from wozmod.voices import phones
 
     root = _repo(tmp_path)
     install, pieces, table = root / "src/wozmod/install/__init__.py", root / "data/stock_pieces.json", root / "data/text/table.json"
@@ -128,8 +129,11 @@ def test_each_step_key_changes_with_exactly_the_inputs_its_output_depends_on(tmp
         "a dub schedule only the text reads": ({"text"}, lambda: _repin_member(monkeypatch, "wo1-x360", "linkdata_fns/369.bin")),
         "a decrypted program": ({"text", "art"}, lambda: _repin_program(monkeypatch, "wo2-psp")),
         "the lettering bundle": ({"art"}, lambda: monkeypatch.setattr(installer, "LETTERING", (1, "other bundle"))),
-        "a translation's English": ({"text"}, lambda: table.write_text(_table([ROWS[0], {**ROWS[1], "en": "Other"}]))),
-        "a translation's donor pointer": ({"text"}, lambda: table.write_text(_table([{**ROWS[0], "ref": ["x"]}, ROWS[1]]))),
+        "the speech model": ({"voices"}, lambda: monkeypatch.setattr(phones, "MODEL", {"en-us/mdef": (1, "other")})),
+        # The voices read the translation for the words a Dream scene line's mouth says (voices.phones.shown_lines).
+        "a translation's English": ({"text", "voices"}, lambda: table.write_text(_table([ROWS[0], {**ROWS[1], "en": "Other"}]))),
+        "a translation's donor pointer": ({"text", "voices"},
+                                          lambda: table.write_text(_table([{**ROWS[0], "ref": ["x"]}, ROWS[1]]))),
         "a caption file of the text": ({"text"}, lambda: (root / "data/text/movie_captions.json").write_text('{"a": 1}')),
         "an art recipe": ({"art"}, lambda: (root / "data/art/map.json").write_text('{"row": 1}')),
         "the faces, which only draw lettering.zip": (set(), lambda: (root / "data/art/faces/face.py").write_text("x = 1")),

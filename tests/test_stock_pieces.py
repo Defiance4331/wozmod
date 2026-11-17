@@ -1,8 +1,8 @@
 """tools/stock_pieces.py on a synthetic game, and data/stock_pieces.json against the real build: it is what the build
 reads, and all of it.
 
-The real-build tests are slow (about 11 minutes alone): run them with WOZMOD_STOCK_PIECES=1, WOZMOD_GAME, WOZMOD_DONORS
-and WOZMOD_LETTERING. tools/stock_pieces.py records the three build steps once (the art with one worker); a second
+The real-build tests are slow (about 11 minutes alone): run them with WOZMOD_STOCK_PIECES=1, WOZMOD_GAME, WOZMOD_DONORS,
+WOZMOD_LETTERING and WOZMOD_SPEECH. tools/stock_pieces.py records the three build steps once (the art with one worker); a second
 build, from a copy of the game that keeps only the listed pieces, must write the same bytes.
 """
 
@@ -18,22 +18,22 @@ import stock_pieces
 from wozmod.install import worker_count
 from wozmod.install.stock import check_game, parse
 
-INPUTS = ("WOZMOD_GAME", "WOZMOD_DONORS", "WOZMOD_LETTERING")
+INPUTS = ("WOZMOD_GAME", "WOZMOD_DONORS", "WOZMOD_LETTERING", "WOZMOD_SPEECH")
 SLOW = pytest.mark.skipif(
     os.environ.get("WOZMOD_STOCK_PIECES") != "1" or not all(os.environ.get(name) for name in INPUTS),
     reason="set WOZMOD_STOCK_PIECES=1, " + ", ".join(INPUTS))
 
 
-def _inputs() -> tuple[Path, Path, Path]:
+def _inputs() -> tuple[Path, Path, Path, Path]:
     return tuple(Path(os.environ[name]) for name in INPUTS)
 
 
 @pytest.fixture(scope="module")
 def recorded(tmp_path_factory):
     """(the pieces document of a fresh record, the build's output folder)."""
-    game, donors, lettering = _inputs()
+    game, donors, lettering, speech = _inputs()
     started = time.monotonic()
-    found = stock_pieces.record(game, donors, lettering, tmp_path_factory.mktemp("recorded"))
+    found = stock_pieces.record(game, donors, lettering, speech, tmp_path_factory.mktemp("recorded"))
     print(f"record: {time.monotonic() - started:.0f} s")
     return found
 
@@ -58,13 +58,13 @@ def test_a_build_from_only_the_listed_pieces_writes_the_same_bytes(recorded, tmp
     # not see opens), so another mod's change there passes the check and changes what is built; or the check does not
     # find the pieces through the player's indexes (every unlisted entry here changes size, so the later ones move).
     document, out = recorded
-    game, donors, lettering = _inputs()
+    game, donors, lettering, speech = _inputs()
     junk = tmp_path_factory.mktemp("junk") / "game"
     stock_pieces.junk_game(game, document, junk)
     verdict = check_game(junk, parse(document))  # the clips wozmod only serves are zeroed: noted, not blocking
     assert (verdict.problem(), verdict.blocking()) == (None, ())
     started = time.monotonic()
-    rebuilt = stock_pieces.run_steps(junk, donors, lettering, tmp_path_factory.mktemp("rebuilt"), worker_count())
+    rebuilt = stock_pieces.run_steps(junk, donors, lettering, speech, tmp_path_factory.mktemp("rebuilt"), worker_count())
     print(f"build from the junked copy: {time.monotonic() - started:.0f} s")
     before, after = _files(out), _files(rebuilt)
     assert sorted(after) == sorted(before)
@@ -75,7 +75,8 @@ def test_the_recorder_keeps_what_each_step_reads_and_how(tmp_path):
     # Bug: an entry the art reads as stored (here also unpacked by the text) gets an unpacked hash (a repacked copy would pass, and the art would pack
     # it again where the stock entry was not packed); an exe span is kept at a shifted offset; the voice index is
     # listed as a piece (re-laid-out clips would stop the install); a served entry or clip is put under the wrong
-    # archive or number; or a read past the tracking opener goes unseen.
+    # archive or number; a read past the tracking opener goes unseen; or a file read whole (a Dream movie) is
+    # refused or kept as anything but one span.
     import struct
 
     from synthetic import stock_game
@@ -85,6 +86,8 @@ def test_the_recorder_keeps_what_each_step_reads_and_how(tmp_path):
 
     game = tmp_path / "game"
     stock_game(game)
+    (game / "movie").mkdir()
+    (game / "movie/movie200.wmv").write_bytes(b"a stock movie" * 9)
     with stock_pieces.Recorder(game) as recorder:
         recorder.step = "text"
         archive(game / "LINKDATA1").read([3])
@@ -101,6 +104,7 @@ def test_the_recorder_keeps_what_each_step_reads_and_how(tmp_path):
         with open(game / VOICE, "rb") as stream:
             stream.seek(struct.unpack_from(">I", table, 16)[0])
             stream.read(4)  # the start of clip 1
+        (game / "movie/movie200.wmv").read_bytes()
         with pytest.raises(PermissionError):
             os.open(game / "LINKDATA2.BIN", os.O_RDONLY)
         recorder.step = None
@@ -118,6 +122,7 @@ def test_the_recorder_keeps_what_each_step_reads_and_how(tmp_path):
         "LINKDATA1": [[2, "sha", None, "art", 0], [3, "sha", None, "text art", 0]],
         "LINKDATA2": [[0, "sha", "sha", "voices", 0], [2, "sha", None, "", 1]],
         VOICE: [[1, "sha", "voices", 1]],
+        "movie/movie200.wmv": [[0, 117, "sha", "voices"]],
     }
 
 

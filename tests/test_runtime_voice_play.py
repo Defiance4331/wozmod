@@ -44,12 +44,19 @@ void keep(struct voice_play *k, unsigned char *m, unsigned int slot, const unsig
     voice_keep(k, m, slot, arg);
 }
 int frame(struct voice_play *k, unsigned char *m, const struct voice_stock *s) { return voice_frame(k, m, s); }
+void fresh(unsigned char *m, unsigned int slot) { voice_fresh(m, slot); }
 void stop(struct voice_play *k, unsigned int end, const struct voice_stock *s) { voice_stop(k, end, s); }
+void waits(const struct voice_play *k, unsigned int current, unsigned int end, unsigned int *ids)
+{
+    voice_waits(k, current, 0, end, ids);
+}
 ''')
     lib.start.argtypes = [ctypes.POINTER(Kept), ctypes.c_uint, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(Stock)]
     lib.keep.argtypes = [ctypes.POINTER(Kept), ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p]
     lib.frame.argtypes = [ctypes.POINTER(Kept), ctypes.c_void_p, ctypes.POINTER(Stock)]
+    lib.fresh.argtypes = [ctypes.c_void_p, ctypes.c_uint]
     lib.stop.argtypes = [ctypes.POINTER(Kept), ctypes.c_uint, ctypes.POINTER(Stock)]
+    lib.waits.argtypes = [ctypes.POINTER(Kept), ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p]
     return lib
 
 
@@ -66,6 +73,7 @@ class Game:
         self.data, self.until, self.cur, self.busy, self.now = [OLD, OLD], [0, 0], 0, 0, 0
         self.heard, self.notes = [], []
         self.expected, self.order = END, []
+        self.named, self.plays = [], []  # voice_waits' ids per buffer at each frame's end; each play: (frame, buffer, line)
         self._calls = (IDLE(self.free), START(self.start), NOTE(self.note))  # kept alive while C holds them
         self.stock = Stock(*self._calls)
 
@@ -90,6 +98,7 @@ class Game:
         if flags.value & LOADED:
             flags.value &= ~LOADED
             self.heard.append(self.data[slot])
+            self.plays.append((self.now, slot, self.data[slot]))
             self.until[slot] = self.now + self.lengths.get(self.data[slot], 1)
 
     def start(self, play, next_):  # 0x513720 as stock: nothing done while the reader is busy
@@ -130,6 +139,9 @@ class Game:
             self.load(slot, self.word(WAITING_ID).value)
             self.word(WAITING).value, self.word(WAITING_ID).value = NONE, 0xFFFFFFFF
         events(self, now)
+        ids = (ctypes.c_uint * 2)()
+        self.voice.waits(ctypes.byref(self.kept), self.cur, END, ids)
+        self.named.append(tuple(ids))
         self.busy -= 1
 
 
@@ -206,6 +218,32 @@ def test_a_start_that_finds_the_reader_busy_still_voices_the_scene(voice, row):
     assert (game.heard, game.notes) == (heard, log)
 
 
+@pytest.mark.parametrize("row", SCENES, ids=[r[0] for r in SCENES])
+def test_a_play_that_waits_is_named_on_the_buffer_it_plays(voice, row):
+    # Bug: voice_waits (which lip_clock.h reads at a speak's hand-off) names a waiting start's line on the buffer that
+    # is current now rather than the one the start will play once the starts before it are made, or forgets the start:
+    # that line's mouths then keep the event clock and run ahead of its late voice. Each line heard after its start
+    # waited must have been named on its buffer at every frame from its speak until it played.
+    _, order, read, lengths, speaks, stop, _, log = row
+    game = Game(voice, read=read, lengths=lengths)
+
+    def events(game, frame):
+        if frame == 0:
+            game.scene(order)
+        if frame in speaks:
+            game.speak(speaks[frame])
+        if frame == stop:
+            game.stop()
+
+    for frame in range(800):
+        game.frame(frame, events)
+    waited = {line for what, line, _ in log if what == "made" and line != END}
+    spoken = {line: frame for frame, line in speaks.items()}
+    named = [line for at, b, line in game.plays if line in waited
+             if all(game.named[f][b] == line for f in range(spoken[line], at))]
+    assert sorted(named) == sorted(waited)
+
+
 def test_a_start_made_as_a_waiting_load_falls_due_leaves_the_reader_to_that_load(voice):
     # Bug: were the waiting start made after the voice frame's reader check, the reader would look free, the start's
     # read would begin, and the game's waiting load (line C, behind a long English line) would be dropped by the busy
@@ -220,3 +258,34 @@ def test_a_start_made_as_a_waiting_load_falls_due_leaves_the_reader_to_that_load
     for frame in range(20):
         game.frame(frame, events)
     assert (game.heard, game.notes) == ([C], [("made", C, 4)])
+
+
+PENDING, STARTED = 0x2, 0x4  # a buffer's flags: its play waits for the voice frame; handed to the sound engine
+
+
+@pytest.mark.parametrize("put_off", [0, 1, 3], ids=["started at once", "start put off a frame", "put off 3 frames"])
+def test_a_clip_loaded_over_a_started_one_keeps_its_id_until_its_channel_falls_quiet(voice, put_off):
+    # Bug: the load (0x5D8160) kept the replaced clip's started bit, and when the new clip's start was put off (its
+    # channel or the reader busy) the voice frame's end check wiped the waiting clip's id. The clip still played, but
+    # the lip clock lost its voice: sub-scene 1's first line, loaded over a battle voice, kept the event clock.
+    m = (ctypes.c_ubyte * 0x100)()
+    flags, ident = ctypes.c_uint.from_buffer(m, FLAGS), ctypes.c_uint.from_buffer(m, ID)
+    flags.value, ident.value = 0x10 | STARTED, OLD  # the battle voice before, its channel already quiet
+    flags.value |= LOADED | PENDING  # 0x5D8160 loads the scene's first clip over it
+    ident.value = LINE
+    voice.fresh(m, 0)  # hook 109, then 0x5D7BF0: the play of a loaded buffer leaves its start to the voice frame
+    flags.value &= ~LOADED
+    playing_until, seen = None, []
+    for frame in range(12):  # 0x5D8590's loop for this buffer, as decompiled
+        quiet = playing_until is None or frame >= playing_until
+        if flags.value & PENDING and quiet and frame >= put_off:
+            playing_until = frame + 5  # the engine reports the channel playing from its start
+            flags.value = flags.value & ~PENDING | STARTED
+        quiet = playing_until is None or frame >= playing_until
+        if flags.value & STARTED and quiet:
+            flags.value &= ~STARTED
+            ident.value = 0xFFFFFFFF
+        seen.append(ident.value)
+    end = put_off + 5
+    assert seen == [LINE] * end + [0xFFFFFFFF] * (12 - end)
+

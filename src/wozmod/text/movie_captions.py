@@ -30,7 +30,7 @@ from wozmod.runtime.text_table import encode_english
 from wozmod.movies import movie_rows
 
 from .contexts import x360_schedules
-from .stock import stock_key
+from .keys import stock_key
 
 if TYPE_CHECKING:
     from .resolver import DonorResolver

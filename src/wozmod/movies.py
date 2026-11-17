@@ -1,7 +1,8 @@
 """English movies: donor movie files copied as they are into wozmod/movie/<setting>/movieNNN.wmv.
 
 The runtime plays wozmod/movie/voice/movieNNN.wmv in place of movie/movieNNN.wmv while the voices are English,
-and wozmod/movie/text/movieNNN.wmv (title cards) while the text is English.
+and wozmod/movie/text/movieNNN.wmv (title cards) while the text is English. The voices step builds the Dream
+movies' (voices/dream_movies.py).
 """
 
 from __future__ import annotations

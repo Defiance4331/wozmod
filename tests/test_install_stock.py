@@ -131,6 +131,39 @@ def test_only_exe_bytes_inside_the_spans_count(tmp_path):
         "back the original OROCHI_Z.exe, or remove that mod, then install again.")
 
 
+@pytest.mark.parametrize("movie", [b"another mod's movie", None])
+def test_a_changed_or_missing_movie_the_voices_read_whole_stops_only_a_voices_build(tmp_path, movie):
+    # Bug: a file the build reads whole (a Dream movie) goes unchecked, so another mod's movie passes and the English
+    # one is built from it; it is called not from version 1.00 (the half rule, on its one piece); or its steps are
+    # lost, so an update that keeps the voices stops for it.
+    import hashlib
+
+    name, stock_movie = "movie/movie200.wmv", b"the stock Dream movie" * 50
+    record = stock_game(tmp_path / "stock")
+    record = stock.Recorded(record.stamp, (*record.pieces, stock.Piece(
+        name, 0, hashlib.sha256(stock_movie).hexdigest(), frozenset({"voices"}), length=len(stock_movie))))
+    stock_game(tmp_path / "game")
+    (tmp_path / "game/movie").mkdir()
+    (tmp_path / "game" / name).write_bytes(stock_movie)
+    assert check_game(tmp_path / "game", record).problem() is None
+    if movie is None:
+        (tmp_path / "game" / name).unlink()
+    else:
+        (tmp_path / "game" / name).write_bytes(movie)
+    verdict = check_game(tmp_path / "game", record)
+    if movie is None:  # Bug: a deleted movie is blamed on another mod.
+        assert verdict.problem() == (
+            "movie/movie200.wmv is missing, and wozmod reads it to build its voices. Put back the original "
+            "movie200.wmv (reinstalling the game restores it), then install again.")
+        assert verdict.kept_notes({"text", "art"})[0].startswith("Note: movie/movie200.wmv is missing, and wozmod")
+    else:
+        assert verdict.problem() == (
+            "movie/movie200.wmv: another mod changed this file, which wozmod reads to build its voices. Put back the "
+            "original movie200.wmv, or remove that mod, then install again.")
+        assert verdict.kept_notes({"text", "art"})[0].startswith("Note: movie/movie200.wmv: another mod changed")
+    assert verdict.blocking({"text", "art"}) == ()
+
+
 def test_what_wozmod_replaces_without_reading_it_is_only_noted(tmp_path):
     # Bug: another mod's clips or entry that wozmod serves its own in place of stop the install, go unnoted, or count
     # toward calling Voice.bin a file from another release (a voice mod that replaced most clips).
@@ -199,7 +232,7 @@ def test_another_mods_edit_of_the_code_wozmod_patches_stops_the_install(tmp_path
     game, dll = stock_and_dll
     copy = tmp_path / "game"
     copy.mkdir()
-    for name in stock.NEEDED:
+    for name in dict.fromkeys([*stock.NEEDED, *(p.file for p in stock.recorded().pieces if p.file not in stock.ARCHIVES)]):
         (copy / name).parent.mkdir(parents=True, exist_ok=True)
         (copy / name).symlink_to(game / name)
     exe = bytearray((game / "OROCHI_Z.exe").read_bytes())

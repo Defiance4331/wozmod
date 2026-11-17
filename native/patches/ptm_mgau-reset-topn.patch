@@ -1,0 +1,36 @@
+PocketSphinx 5.1.1: start each utterance's top-N Gaussian search from the defaults the model loads with.
+
+ptm_mgau_frame_eval() seeds each frame's top-N codewords from the frame before it, in a rotating history
+buffer. On an utterance's first frame that is the buffer's last slot, which holds the defaults only until the
+first utterance has filled it: from then on each utterance starts from the last frame of the one before, so a
+reused decoder's phones depend on what it decoded earlier. wozmod (native/build.rs) applies this to the pinned
+source release; packaging/POCKETSPHINX-NOTICE.txt lists it.
+
+--- a/src/ptm_mgau.c
++++ b/src/ptm_mgau.c
+@@ -436,9 +436,22 @@
+             lastf = s->hist + s->n_fast_hist - 1;
+         else
+             lastf = s->hist + fast_eval_idx - 1;
+-        /* Copy in initial top-N info */
+-        memcpy(s->f->topn[0][0], lastf->topn[0][0],
+-               s->g->n_mgau * s->g->n_feat * s->max_topn * sizeof(ptm_topn_t));
++        /* Copy in initial top-N info.  On the first frame of an utterance
++         * start from the defaults ptm_mgau_reset_fast_hist() gives, not from
++         * the last frame of the previous utterance, so that an utterance
++         * decodes the same whatever the decoder decoded before it. */
++        if (frame == 0) {
++            int j, k, m;
++            for (j = 0; j < s->g->n_mgau; ++j)
++                for (k = 0; k < s->g->n_feat; ++k)
++                    for (m = 0; m < s->max_topn; ++m) {
++                        s->f->topn[j][k][m].cw = m;
++                        s->f->topn[j][k][m].score = WORST_DIST;
++                    }
++        }
++        else
++            memcpy(s->f->topn[0][0], lastf->topn[0][0],
++                   s->g->n_mgau * s->g->n_feat * s->max_topn * sizeof(ptm_topn_t));
+         /* Generate initial active codebook list (this might not be
+          * necessary) */
+         ptm_mgau_calc_cb_active(s, senone_active, n_senone_active, compallsen);

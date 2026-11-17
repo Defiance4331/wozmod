@@ -1,4 +1,11 @@
-//! Fast LZP2 and DXT5 codecs. Each function gives the same bytes as the Python codec in wozmod.
+//! Fast LZP2 and DXT5 codecs, each giving the same bytes as the Python codec in wozmod, and the audio alignment
+//! (align.rs), the mouth shapes learned from speech (lips.rs) and the phones of speech (speech.rs, PocketSphinx),
+//! which have no Python twin.
+
+mod align;
+mod lips;
+mod scenes;
+mod speech;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -588,5 +595,17 @@ fn wozmod_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(lzp2_decode_stream, module)?)?;
     module.add_function(wrap_pyfunction!(dxt5_encode, module)?)?;
     module.add_function(wrap_pyfunction!(dxt5_encode_edit, module)?)?;
+    module.add_function(wrap_pyfunction!(align::xcorr_lag, module)?)?;
+    module.add_function(wrap_pyfunction!(align::fit_gain, module)?)?;
+    module.add_function(wrap_pyfunction!(align::splice_drops, module)?)?;
+    module.add_function(wrap_pyfunction!(scenes::frame_peaks, module)?)?;
+    module.add_function(wrap_pyfunction!(scenes::difference, module)?)?;
+    module.add_function(wrap_pyfunction!(scenes::scaled, module)?)?;
+    module.add_function(wrap_pyfunction!(scenes::add_pieces, module)?)?;
+    module.add_function(wrap_pyfunction!(scenes::overlap_add, module)?)?;
+    module.add_function(wrap_pyfunction!(scenes::leftover_energies, module)?)?;
+    module.add_function(wrap_pyfunction!(lips::lip_shapes, module)?)?;
+    module.add_function(wrap_pyfunction!(speech::aligned_phones, module)?)?;
+    module.add_function(wrap_pyfunction!(speech::heard_phones, module)?)?;
     Ok(())
 }

@@ -4,17 +4,22 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from wozmod.donors import WO1_X360, WO2_X360, DonorsFolder
+from wozmod.donors import WO1_X360, WO2_PSP, WO2_X360, DonorsFolder
 from wozmod.formats.audio import (
-    WO1_EVENT_VOICES, WO2_EVENT_VOICES, english_se_bank, english_voice_bank, english_voice_clips,
+    WO1_EVENT_VOICES, WO2_EVENT_VOICES, VoiceBankError, decoded_clips, english_se_bank, english_voice_bank,
+    english_voice_clips,
 )
 from wozmod.formats.linkdata import archive, decoded_member, ps2_members
 from wozmod.formats.scripts import Script, parse_script
+from wozmod.text.resolver import DonorResolver
 from wozmod.text.script_alignment import (
     EVENTS, PSP_QUOTE_INSERT, PSP_QUOTES, PSP_STAGE_MEMBERS, QUOTES, WO1_QUOTE_INSERT, donor_event_entries, moz_scripts,
     paired_quote_tables, stage_joins, wo1_scripts, wo2_x360,
 )
 
+from . import phones
+from .dream_events import DREAM_EVENTS, build_dream_events
+from .dream_movies import DREAM_MOVIES, build_dream_movies
 from .events import build_event_schedules
 from .lips import donor_lips, english_lips, lip_bank, stock_lips, wo1_fits, x360_fits
 from .maps import dialogue_voice_maps, psp_voice_map, slot_records, slot_table, stage_triggers, voice_slots
@@ -26,7 +31,9 @@ VOICE_DONOR_FILES = (
 )
 PSP_TEXT, PSP_VOICES = "PSP_GAME/USRDIR/LINKDATA_NA.FNS", "PSP_GAME/USRDIR/sound/voice_na.bns"
 PSP_SHOUTS, PSP_ENGLISH_SHOUTS = "PSP_GAME/USRDIR/LINKDATA.ENS", 1  # the English sound pack (EBOOT 0x1BEE48)
-PSP_VOICE_FILES = (PSP_TEXT, PSP_VOICES, PSP_SHOUTS)
+# The PSP movies whose English soundtracks the voices cut: the Dream movies, and the Z Dream scenes (events 402-413).
+PSP_MOVIES = (*DREAM_MOVIES.values(), *DREAM_EVENTS.values())
+PSP_VOICE_FILES = (PSP_TEXT, PSP_VOICES, PSP_SHOUTS, *PSP_MOVIES)
 
 
 def psp_text_voice_map(moz: dict[int, Script], quotes: bytes, fns: Path) -> dict[int, int]:
@@ -36,10 +43,26 @@ def psp_text_voice_map(moz: dict[int, Script], quotes: bytes, fns: Path) -> dict
                          paired_quote_tables(quotes, psp[PSP_QUOTES], insert=PSP_QUOTE_INSERT))
 
 
-def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | None = None) -> None:
-    """Write voice/Voice.bin, voice/Slots.bin, voice/Lips.bin and voice/SE.bin below the supplied mod folder; jobs
-    caps the ffmpeg processes."""
-    stock, donors, output_dir = Path(stock), Path(donors), Path(output_dir)
+def said(clips: dict[int, bytes], sources: dict[int, str], donor_events: dict, stock_events: list[tuple[int, bytes]],
+         resolver: DonorResolver) -> dict[int, str]:
+    """The English each clip of an event line says, where it is known. A clip from an Xbox 360 disc says the donor's
+    own event line for its record, from donor_events {source: (voice id to record, event files, byte order, (first
+    event record, event lines))}; a clip from the PSP (the Z Dream scenes) says what the game shows under it, the
+    translation of its stock line from stock_events (voice base, event file)."""
+    found = {}
+    for source, (records, events, order, (first, count)) in donor_events.items():
+        lines = phones.donor_lines(events, order)
+        found |= {voice: lines[records[voice] - first] for voice in clips if sources[voice] == source
+                  and voice in records and 0 <= records[voice] - first < count and records[voice] - first in lines}
+    shown = {voice for voice in clips if sources[voice] == WO2_PSP.name}
+    return found | phones.shown_lines(stock_events, shown, resolver)
+
+
+def build_voice_banks(stock: Path, donors: Path, speech: Path, output_dir: Path, jobs: int | None = None) -> None:
+    """Write voice/Voice.bin, voice/Slots.bin, voice/Lips.bin and voice/SE.bin, and the English Dream movies in
+    movie/voice, below the supplied mod folder; speech is the PocketSphinx model folder (phones.MODEL) the generated
+    mouths' phones come from; jobs caps the ffmpeg processes and the speech threads."""
+    stock, donors, speech, output_dir = Path(stock), Path(donors), Path(speech), Path(output_dir)
     folders = DonorsFolder(donors)
     wo1, wo2, psp = folders.folder("wo1-x360"), folders.folder("wo2-x360"), folders.folder("wo2-psp")
     moz = moz_scripts(stock / "LINKDATA2")
@@ -63,6 +86,12 @@ def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | N
         voiceidx, stock / "data/Sound/Voice/Voice.bin", jobs, psp=(three, psp / PSP_VOICES),
         stock_ids={s.slot: s.voices[0] for s in slots.values()},
     )
+    # The Z Dream scenes have no donor clip: their lines are cut from the PSP's movies of them, at the stock ids.
+    dream_events = linkdata2.read(list(DREAM_EVENTS))
+    for voice, record in build_dream_events(stock, psp, voiceidx, dream_events, jobs)[0].items():
+        if voice in clips:
+            raise VoiceBankError(f"voice id {voice} has both a {sources[voice]} clip and a Z Dream scene's take")
+        clips[voice], sources[voice] = record, WO2_PSP.name
     destination = output_dir / "voice"
     destination.mkdir(parents=True, exist_ok=True)
     (destination / "Voice.bin").write_bytes(english_voice_bank(clips))
@@ -73,13 +102,19 @@ def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | N
     # Under the English voice each event subtitle ends with its English line: retimed event files, served by voice.
     build_event_schedules(stock_events, clips, output_dir, jobs,
                           {WO1_X360.name: (wo1_events, ">"), WO2_X360.name: (wo2_events, wo2_donor.order)})
-    lips, _ = english_lips(clips, sources, stock_lips(
-        [(WO2_EVENT_VOICES[0] if source == WO2_X360.name else WO1_EVENT_VOICES[0], stock_events[o])
-         for ordinals, source, _ in EVENTS for o in ordinals]), {
+    # A line with no donor block gets its stock block stretched to the English clip: the Z Dream ones too (0xAF3 +
+    # index, text.contexts.event_voice).
+    stock_bases = ([(WO2_EVENT_VOICES[0] if source == WO2_X360.name else WO1_EVENT_VOICES[0], stock_events[o])
+                    for ordinals, source, _ in EVENTS for o in ordinals]
+                   + [(WO2_EVENT_VOICES[0], data) for _, data in sorted(dream_events.items())])
+    lips, _ = english_lips(clips, sources, stock_lips(stock_bases), {
         "wo1-x360": (one, donor_lips(wo1_events.values(), ">", *WO1_EVENT_VOICES[1:]), wo1_fits),
         "wo2-x360": (two, donor_lips(wo2_events.values(), wo2_donor.order, *WO2_EVENT_VOICES[1:]), x360_fits),
         "wo2-psp": (three, {}, x360_fits),  # the PSP plays its scenes as movies: no voiced line has a lip block
-    })
+    }, lambda some, rate: decoded_clips(some, rate, jobs),
+        said(clips, sources, {WO1_X360.name: (one, wo1_events.values(), ">", WO1_EVENT_VOICES[1:]),
+                              WO2_X360.name: (two, wo2_events.values(), wo2_donor.order, WO2_EVENT_VOICES[1:])},
+             stock_bases, DonorResolver(donors)), phones.Listener(speech, jobs))
     (destination / "Lips.bin").write_bytes(lip_bank(lips))
     seidx, se = linkdata1.read([4056, 4057]).values()
     bank, _ = english_se_bank(
@@ -88,3 +123,4 @@ def build_voice_banks(stock: Path, donors: Path, output_dir: Path, jobs: int | N
         ps2_members(psp / PSP_SHOUTS, [PSP_ENGLISH_SHOUTS])[PSP_ENGLISH_SHOUTS], jobs,
     )
     (destination / "SE.bin").write_bytes(bank)
+    build_dream_movies(stock, psp, output_dir)

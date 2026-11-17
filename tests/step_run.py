@@ -49,14 +49,15 @@ def _audit(step: str, log: Path) -> None:
 def main(step: str, out: Path, jobs: int) -> None:
     from wozmod import install
 
-    game, donors, lettering = (Path(os.environ[name]) for name in ("WOZMOD_GAME", "WOZMOD_DONORS", "WOZMOD_LETTERING"))
+    game, donors, lettering, speech = (Path(os.environ[name]) for name in
+                                       ("WOZMOD_GAME", "WOZMOD_DONORS", "WOZMOD_LETTERING", "WOZMOD_SPEECH"))
     jobs = jobs or install.worker_count()
     if os.environ.get("WOZMOD_STEP_AUDIT") == "1":
         _audit(step, out / "audit.log")
     target = out / "out"
     target.mkdir(parents=True, exist_ok=True)
     {"text": lambda: install._text_table(game, donors, target),
-     "voices": lambda: install._voice_banks(game, donors, target, jobs=jobs),
+     "voices": lambda: install._voice_banks(game, donors, speech, target, jobs=jobs),
      "art": lambda: install._menu_art(game, donors, lettering, out / "art-staging", target, jobs=jobs)}[step]()
 
 

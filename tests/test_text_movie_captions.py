@@ -208,7 +208,7 @@ def test_with_japanese_voices_each_movie_cue_shows_its_own_english_on_the_stock_
     from wozmod.formats.scripts import event_texts
     from wozmod.text.inventory import inventory
     from wozmod.text.psp_exe import EXE_STRING
-    from wozmod.text.stock import stock_key
+    from wozmod.text.keys import stock_key
 
     stock, folder, resolver, rows = real_movies
     game = Path(os.environ["WOZMOD_GAME"])

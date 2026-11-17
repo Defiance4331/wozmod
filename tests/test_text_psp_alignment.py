@@ -11,7 +11,7 @@ from wozmod.text.contexts import (
     CUE_TICKS, EVENT_TICKS, PSP_EVENT_CAPTIONS, PSP_MOVIE_CAPTIONS, event_scenes, psp_line_cues,
 )
 from wozmod.text.psp_alignment import PspPair, paired_psp_rows, psp_quote_text
-from wozmod.text.stock import stock_key
+from wozmod.text.keys import stock_key
 from synthetic import mesc, script, spans, strings, timed_event, write_stock_archive
 
 REPO = Path(__file__).resolve().parents[1]

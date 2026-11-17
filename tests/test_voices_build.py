@@ -14,7 +14,15 @@ def _script(order):
     return script(strings(order=order), strings(order=order), order)
 
 
-def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_under_mod_voice(tmp_path):
+def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_under_mod_voice(tmp_path, monkeypatch):
+    import wozmod.voices.build
+
+    # No ATRAC3plus encoder makes a fixture PSP movie: tests/test_dream_movies.py and tests/test_dream_events.py
+    # build the real ones. The Z Dream scenes give one take, which the bank must hold at its voice id.
+    movies, scenes, take = [], [], kovs(96)
+    monkeypatch.setattr(wozmod.voices.build, "build_dream_movies", lambda *folders: movies.append(folders))
+    monkeypatch.setattr(wozmod.voices.build, "build_dream_events",
+                        lambda *given: scenes.append(given) or ({0xAF3 + 241: take}, {}))
     stock, donors, output = tmp_path / "stock", tmp_path / "donors", tmp_path / "mod"
     one, two, psp = donors / "wo1-x360", donors / "wo2-x360", donors / "wo2-psp/PSP_GAME/USRDIR"
     for folder in (stock, one, two, psp / "sound", stock / "data/Sound/Voice"):
@@ -26,13 +34,13 @@ def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_unde
     seidx = struct.pack(">II", 244, 0) + (struct.pack(">II", 0, 20) + struct.pack(">II", 20, 0)) * 122
     write_stock_archive(stock, "LINKDATA1", {4056: seidx, 4057: se_header, 4058: voiceidx, 4084: _quotes("<")}, 4085)
     # event files with one empty sub-scene (count, offset, a chain end) and no lip blocks
-    events = {o: struct.pack("<III", 1, 8, 0) + b"\xff\0\0\0" for o in range(177, 402)}
+    events = {o: struct.pack("<III", 1, 8, 0) + b"\xff\0\0\0" for o in range(177, 414)}
     donor_event = struct.pack(">III", 1, 8, 0) + b"\xff\0\0\0"
     def dream(notices, lines):  # a Z Dream stage with the line counts the PSP pairing expects
         return script(strings(*[b"32Fixture"] * notices), strings(*[b"00Fixture@0001"] * lines))
 
     zdream = {o: dream(56 if o == 142 else 1, 76 if o == 139 else 1) for o in range(132, 144)}
-    write_stock_archive(stock, "LINKDATA2", {**{o: _script("<") for o in range(40, 68)}, **zdream, **events}, 402)
+    write_stock_archive(stock, "LINKDATA2", {**{o: _script("<") for o in range(40, 68)}, **zdream, **events}, 414)
     write_ps2_archive(psp / "LINKDATA_NA.FNS", {27: _quotes("<"), **{
         o + 138: dream(49 if o == 142 else 1, 64 if o == 139 else 1) for o in range(132, 144)}}, 282)
     write_ps2_archive(psp / "sound/voice_na.bns", dict.fromkeys(range(1420), b"RIFF fixture"))
@@ -53,12 +61,17 @@ def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_unde
         (folder / "link_sebank.bdx").write_bytes(bytes(2 * banks))
     before = {p: hashlib.sha256(p.read_bytes()).digest() for p in tmp_path.rglob("*") if p.is_file()}
 
-    build_voice_banks(stock, donors, output)
+    build_voice_banks(stock, donors, tmp_path / "no speech model: no line here needs a mouth made", output)
 
+    table = bytearray(struct.pack("<I", 22665) + bytes(181324))
+    struct.pack_into("<II", table, 4 + 8 * (0xAF3 + 241), len(table), len(take))
     assert {str(p.relative_to(output)): p.read_bytes() for p in output.rglob("*") if p.is_file()} == {
-        "voice/Voice.bin": struct.pack("<I", 22665) + bytes(181324),
+        "voice/Voice.bin": bytes(table) + take,
         "voice/Slots.bin": struct.pack("<I", 0),  # no two lines share a voice id here
         "voice/SE.bin": struct.pack("<I", 122) + bytes(1964),
         "voice/Lips.bin": struct.pack("<I", 22665) + bytes(8 * 22665),
     }
+    assert movies == [(stock, donors / "wo2-psp", output)]
+    assert [given[:3] for given in scenes] == [(stock, donors / "wo2-psp", voiceidx)]
+    assert sorted(scenes[0][3]) == list(range(402, 414))  # the stock event files of the scenes
     assert all(hashlib.sha256(p.read_bytes()).digest() == digest for p, digest in before.items())

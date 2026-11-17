@@ -68,7 +68,7 @@ def test_every_program_string_row_takes_the_donor_string_its_twin_code_reads():
     # name), where a per-index part override must give each slot its own words. Rows the join cannot reach are not
     # judged.
     from wozmod.text.resolver import DonorResolver
-    from wozmod.text.stock import stock_key
+    from wozmod.text.keys import stock_key
 
     resolver = DonorResolver(Path(os.environ["WOZMOD_DONORS"]))
     exe = (Path(os.environ["WOZMOD_GAME"]) / "OROCHI_Z.exe").read_bytes()

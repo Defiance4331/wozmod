@@ -156,6 +156,9 @@ def test_each_text_hook_looks_up_the_key_the_context_model_uses(tmp_path: Path) 
         "typedef unsigned int u32; typedef unsigned short u16; typedef unsigned char u8;",
         "static u32 inner; static const u32 *enrt_table; static u32 voice_saved;",
         re.search(r"^#define VOICE_DIR .*$", source, re.M).group(0) if "#define VOICE_DIR" in source else "",
+        # the release build's Japanese-voice test in served() (a test build adds a test op's override to it)
+        re.search(r"^#define VOICES_JAPANESE voice_saved$", source, re.M).group(0)
+        if "#define VOICES_JAPANESE voice_saved" in source else "",
         re.search(r"^static struct loose \{.*$", source, re.M).group(0), "static u32 loose_count;",
         "static struct loose loose_store[64];",  # the runtime may grow its table at run time: loose is then a pointer
         _c_function(source, r"struct frame \{").replace("\n}\n", "\n}"), ";",

@@ -24,6 +24,7 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 
+import av_sync
 import machine_lock
 from checkout import work
 from prepare_run import local_path, verify_copy
@@ -648,6 +649,20 @@ def watch_recording(root: Path, name: str, seconds: float) -> None:
         log.write(json.dumps({"name": name, "first": first, "last": errors()}) + "\n")
 
 
+def watch_growth(wav: Path, seconds: float = 3.0, gap: float = 0.002) -> None:
+    """Journal a `record` WAV's size against the wall clock for its first seconds, to NAME.growth.json, so a check
+    can put the recording on the clock its screen polls use (voice_checks.recording_start): the recorder writes each
+    block once captured, so a block's arrival bounds when the recording began."""
+    rows, end, last = [], time.time() + seconds, -1
+    while time.time() < end:
+        size = wav.stat().st_size if wav.exists() else 0
+        if size != last:
+            rows.append([time.time(), size])
+            last = size
+        time.sleep(gap)
+    wav.with_suffix(".growth.json").write_text(json.dumps(rows))
+
+
 def recordings_dropped(root: Path) -> list[str]:
     """Recordings over whose stretch the audio server's xrun count rose: their audio lost or gained time."""
     path = root / "evidence/xruns.jsonl"
@@ -986,7 +1001,7 @@ def perform(root: Path, request: dict) -> dict:
         with open(f"/proc/{game_pid()}/mem", "rb", buffering=0) as memory:
             return stage_scripts(memory.fileno())
     if action in ("screen", "wait", "say", "notice", "win", "lose", "script", "scene", "unlock", "spawn",
-                  "mount", "switch", "teleport", "keep", "crash", "slow-voice"):
+                  "mount", "switch", "teleport", "keep", "crash", "slow-voice", "av-probe", "lip-test", "stock-voices"):
         with open(f"/proc/{game_pid()}/mem", "r+b", buffering=0) as memory:
             block = test_block(memory.fileno())
             if action == "screen":
@@ -1013,6 +1028,20 @@ def perform(root: Path, request: dict) -> dict:
                 # test op 15: each English voice read takes this much longer, as on a slow disk
                 test_command(memory.fileno(), block, 15, request["ms"])
                 return {"slow-voice": request["ms"]}
+            if action == "lip-test":
+                # test op 16: each voiced event line stalls the game once, 1 s into its voice; bit 16 leaves the mouths
+                # to the event clock (the runtime's lip clock then only measures them)
+                test_command(memory.fileno(), block, 16, request["stall"] | request["event_clock"] << 16)
+                return {"lip-test": {"stall": request["stall"], "event_clock": request["event_clock"]}}
+            if action == "stock-voices":
+                # test op 17: every voice started from now on is the stock Japanese one (on 1), or the voice
+                # setting's again (on 0)
+                test_command(memory.fileno(), block, 17, request["on"])
+                return {"stock-voices": request["on"]}
+            if action == "av-probe":
+                # test op 30: lipav.log rows, the Present number in the corner, a square-wave mouth, a white frame
+                test_command(memory.fileno(), block, 30, request["mode"])
+                return {"av-probe": request["mode"]}
             if action == "crash":
                 # test op 14, sent without waiting: the game ends instead of answering
                 command = struct.unpack("<I", os.pread(memory.fileno(), 4, block + 28))[0]
@@ -1140,15 +1169,17 @@ def perform(root: Path, request: dict) -> dict:
         destination = local_path(root, f"evidence/{name}.wav")
         if destination.exists():
             raise ValueError(f"recording already exists: {destination}")
-        subprocess.Popen(["timeout", str(seconds), "parecord", "--device=musou_harness.monitor",
+        subprocess.Popen(["timeout", str(seconds), "parecord", "--device=musou_harness.monitor", "--latency-msec=20",
                           "--format=float32le", "--rate=48000", "--channels=2", "--file-format=wav", str(destination)],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         threading.Thread(target=watch_recording, args=(root, name, seconds), daemon=True).start()
+        threading.Thread(target=watch_growth, args=(destination,), daemon=True).start()
         return {"path": str(destination), "seconds": seconds}
     elif action == "video":
-        # Gamescope's PipeWire screen stream and the private sink's monitor, muxed by one pipeline so they stay in step.
-        # NVENC keeps encoding off the CPU the game needs; start the run with --video (1080p output) for full speed.
-        # Pin BGRx: offered NV12, Gamescope converts each frame on its compositor thread and the game drops to 30 fps.
+        # Gamescope's PipeWire screen stream and the private sink's monitor. NVENC keeps encoding off the CPU the game
+        # needs; start the run with --video (1080p output) for full speed. Pin BGRx: offered NV12, Gamescope converts
+        # each frame on its compositor thread and the game drops to 30 fps. With a --test runtime the picture is put on
+        # the game's own clock afterwards (av_sync.py): the screencast reaches GStreamer ~73 ms after the Present.
         name, seconds = request["name"], request["seconds"]
         if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", name):
             raise ValueError("video name must be a short filename stem, without slashes")
@@ -1157,20 +1188,78 @@ def perform(root: Path, request: dict) -> dict:
         destination = local_path(root, f"evidence/{name}.mkv")
         if destination.exists():
             raise ValueError(f"video already exists: {destination}")
+        log_path, ended = local_path(root, "game/lipav.log"), 0
+        try:
+            ended = log_path.read_text(errors="replace").count("E probe ended") if log_path.exists() else 0
+            with open(f"/proc/{game_pid()}/mem", "r+b", buffering=0) as memory:
+                # test op 30: lipav.log's Present rows and the corner code, ending by itself after the recording
+                test_command(memory.fileno(), test_block(memory.fileno()), 30, 3 | (int(seconds) + 2) << 16)
+            probe = True
+        except (ValueError, Refused):  # no test mailbox (Xenia) or no probe: stamped on arrival, as before
+            probe = False
+        picture = destination.with_suffix(".raw.mkv") if probe else destination
+        if probe:  # the picture alone; record_sink takes the sound
+            tail = ["!", "matroskamux", "!", "filesink", f"location={picture}"]
+        else:
+            tail = ["!", "queue", "!", "mux.", "pulsesrc", "device=musou_harness.monitor", "do-timestamp=true", "!",
+                    "audioconvert", "!", "opusenc", "bitrate=192000", "!", "queue", "!", "mux.",
+                    "matroskamux", "name=mux", "!", "filesink", f"location={picture}"]
         with local_path(root, f"evidence/{name}.log").open("w") as log:
-            subprocess.Popen(
+            recorder = subprocess.Popen(
                 ["timeout", "-s", "INT", str(seconds), "gst-launch-1.0", "-e",
                  "pipewiresrc", "target-object=gamescope", "do-timestamp=true", "!", "video/x-raw,format=BGRx", "!",
-                 "queue", "!", "nvh264enc", "bitrate=12000", "!", "h264parse", "!", "queue", "!", "mux.",
-                 "pulsesrc", "device=musou_harness.monitor", "do-timestamp=true", "!", "audioconvert", "!",
-                 "opusenc", "bitrate=192000", "!", "queue", "!", "mux.",
-                 "matroskamux", "name=mux", "!", "filesink", f"location={destination}"],
+                 "queue", "!", "nvh264enc", "bitrate=12000", "!", "h264parse", *tail],
                 stdout=log, stderr=subprocess.STDOUT)
         threading.Thread(target=watch_recording, args=(root, name, seconds), daemon=True).start()
-        return {"path": str(destination), "seconds": seconds}
+        if probe:
+            sink, reads = destination.with_suffix(".sink.f32"), []
+            reader = threading.Thread(target=record_sink, args=(sink, seconds, reads), daemon=True)
+            reader.start()
+            finisher = threading.Thread(target=finish_video, args=(recorder, reader, log_path, ended, destination))
+            FINISHING.append(finisher)
+            finisher.start()
+        return {"path": str(destination), "seconds": seconds, "clock": "game" if probe else "arrival"}
     elif action not in ("status", "stop"):
         raise ValueError(f"unknown action: {action}")
     return {"action": action}
+
+
+FINISHING: list[threading.Thread] = []  # videos still being put on the game's clock; the server waits for them
+
+
+def record_sink(path: Path, seconds: float, reads: list[tuple[int, int]]) -> None:
+    """The private sink's monitor, float32 stereo, with CLOCK_MONOTONIC_RAW (the game's QPC) read at each read's return
+    and the bytes so far (av_sync.sink_start); the reads also go to PATH's .json."""
+    reader = subprocess.Popen(["parec", "--device=musou_harness.monitor", "--raw", "--format=float32le", "--rate=48000",
+                               "--channels=2", "--latency-msec=10"], stdout=subprocess.PIPE, bufsize=0)
+    total, end = 0, time.monotonic() + seconds
+    with path.open("wb") as out:
+        while time.monotonic() < end:
+            block = os.read(reader.stdout.fileno(), 1 << 16)
+            now = time.clock_gettime_ns(time.CLOCK_MONOTONIC_RAW)
+            if not block:
+                break
+            out.write(block)
+            total += len(block)
+            reads.append((now, total))
+    reader.terminate()
+    reader.wait()
+    path.with_suffix(".json").write_text(json.dumps(reads))  # with the audio, so a failed retime can be rerun
+
+
+def finish_video(recorder: subprocess.Popen, reader: threading.Thread, log: Path, ended: int, destination: Path) -> None:
+    """Once the picture and the sound are recorded and the probe has written its last rows, the video on the game's
+    clock (av_sync.retime_files); the raw recordings go once it is made, and stay, with the error, if it fails."""
+    recorder.wait()
+    reader.join()
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and log.read_text(errors="replace").count("E probe ended") <= ended:
+        time.sleep(0.25)
+    try:
+        av_sync.retime_files(destination, log)
+    except (OSError, ValueError, subprocess.CalledProcessError) as exc:  # rerun: tools/av_sync.py
+        detail = exc.stderr.decode(errors="replace")[-400:] if getattr(exc, "stderr", None) else ""
+        destination.with_suffix(".timing.json").write_text(json.dumps({"error": str(exc), "stderr": detail}) + "\n")
 
 
 def start_audio(root: Path) -> None:
@@ -1297,6 +1386,8 @@ def hold_for_supervisor(root: Path, code: int) -> None:
     """Report the server's end and wait to be killed. gamescope 3.16 on NVIDIA segfaults in its own
     exit path once its child exits (the CVulkanDevice destructor, or the pipeline-compile thread on
     an early exit), so the compositor's child never exits: the supervisor SIGKILLs the sandbox."""
+    for finisher in FINISHING:  # a video still being retimed: the supervisor kills the sandbox once this is written
+        finisher.join(timeout=300)
     write_json(root / "control/serve-exit.json", {"returncode": code})
     while True:
         time.sleep(1)
@@ -2175,7 +2266,12 @@ ROUTE_EDGES = [
                                          (["Escape"], ROUTE_SCREENS["pre-battle-2p"])]),
     ("pre-battle-2p", "battle", [*[([key], None) for key in ("Up", "Return", "Up", "Return")],  # both on FIGHT
                                  (SKIP, {**slow("battle", 3.0), "every": 3})]),
-    ("battle-camp", "briefing", ["Up", "Return"]),  # NEXT
+    # NEXT. Some scenarios play a movie first (stage 140: movie201, its first caption 17 s in, still running 90 s in;
+    # runs 2026-11-15_2259-fixes-e410, 2026-11-16_0003-dc-camp140): the camp stays drawn under it, so the step waits
+    # for the briefing or the movie's caption, and Escape then skips the movie, as at boot. With no movie the
+    # briefing is up already and the Escape step sends nothing.
+    ("battle-camp", "briefing", [(["Up", "Return"], {"any": [ROUTE_SCREENS["briefing"], {"caller": "0x56a116"}]}),
+                                 (["Escape"], {**ROUTE_SCREENS["briefing"], "every": 3})]),
     ("briefing", "pre-battle", ["Escape"]),
     # FIGHT; the battle's fingerprint shows at its first frame, and the first Escape in the next seconds is lost
     ("pre-battle", "battle", [(["Up", "Return"], None), (SKIP, {**slow("battle", 3.0), "every": 3})]),
@@ -2814,7 +2910,7 @@ class CheckDriver:
         self.unlocked, self.used, self.name, self.shortcuts = False, [], None, {}
 
     def route(self, name: str, fixture: str | None = None, battle: int | None = None,
-              script: int | None = None) -> None:
+              script: int | None = None, movie: int | None = None) -> None:
         if fixture:
             seeded = self.root / "fixtures.json"
             if not seeded.is_file() or fixture not in seeded.read_text():
@@ -2838,8 +2934,10 @@ class CheckDriver:
         self.name = name
         self.used = sorted(used - {"unlock"} | ({"unlock"} if self.unlocked else set())
                            | ({f"script {script}", "keep life no-defeat"} if script is not None else set()))
+        if position == name and ROUTE_SCREENS[name].get("transient"):  # a movie still playing: leave it, then replay
+            legs = [next(d for s, d, _ in ROUTE_EDGES if s == name), *legs]
         for leg in legs:
-            if route(self.root, leg, stage):
+            if route(self.root, leg, stage, movie):
                 raise RuntimeError(f"route to {leg} failed")
             if script is not None and leg in PAUSE_SOURCES:  # the script fires in the battle, before the route goes on
                 try:
@@ -2852,6 +2950,57 @@ class CheckDriver:
 
     def notice(self, text: str) -> None:
         ask(self.root, {"action": "notice", "text": text})
+
+    def lip_test(self, stall: int, event_clock: bool = False) -> None:
+        """Op 16 from now on: each voiced event line stalls the game stall ms once, 1 s into its voice."""
+        ask(self.root, {"action": "lip-test", "stall": stall, "event_clock": int(event_clock)})
+
+    def listen(self, seconds: float, scene: int | None = None, stock: bool = False) -> dict:
+        """Record the game's audio for ``seconds`` from now, polling the screen for event captions meanwhile; with
+        ``scene``, first hold the battle (life, no defeat) and play that sub-scene of the stage's event scene, as the
+        stage's own events would. What voice_checks reads: the WAV, its growth journal, the polls, the bank, the game
+        folder. With ``stock``, the scene plays twice: first with every voice the stock Japanese one (test op 17),
+        whose recording is the result's ``stock``, then as the voice setting picks."""
+        if not stock:
+            return self._listen(seconds, scene)
+        ask(self.root, {"action": "stock-voices", "on": 1})
+        try:
+            first = self._listen(seconds, scene)
+        finally:
+            ask(self.root, {"action": "stock-voices", "on": 0})
+        return self._listen(seconds, scene) | {"stock": first}
+
+    def _listen(self, seconds: float, scene: int | None) -> dict:
+        self.count += 1
+        name = f"heard-{self.count:03d}"
+        if scene is not None:
+            ask(self.root, {"action": "keep", "keep": ["life", "no-defeat"]})
+            self.used = sorted(set(self.used) | {f"scene {scene}", "keep life no-defeat"})
+        if self.used:
+            self.shortcuts[self.name] = self.used
+        wav = Path(ask(self.root, {"action": "record", "name": name, "seconds": seconds})["path"])
+        if scene is not None:
+            ask(self.root, {"action": "scene", "number": scene})
+        polls, end = [], time.time() + seconds
+        while time.time() < end - 0.1:
+            before = time.time()
+            seen = ask(self.root, {"action": "screen"})
+            polls.append([(before + time.time()) / 2, [[t["y"], t["x"], t.get("text", "")] for t in seen["texts"]
+                                                       if t["caller"] in ("0x49dace", "0x49db4c")]])
+            time.sleep(0.02)
+        time.sleep(max(0.0, end - time.time()) + 1.0)  # the recorder ends and closes its file
+        write_json(self.root / f"evidence/{name}.polls.json", polls)
+        at = route_position(self.root)  # a movie that ended by itself left the game where its way back leads
+        if at in ROUTE_SCREENS and ROUTE_SCREENS[at].get("transient"):
+            seen = ask(self.root, {"action": "screen"})
+            back = [d for s, d, _ in ROUTE_EDGES if s == at and shows(seen, ROUTE_SCREENS[d])]
+            if not shows(seen, ROUTE_SCREENS[at]) and len(back) == 1:
+                journal = self.root / "evidence/actions.jsonl"
+                write_json(local_path(self.root, "evidence/route.json"),
+                           {"at": back[0], "journal": len(journal.read_text().splitlines())})
+        return {"wav": str(wav), "growth": str(wav.with_suffix(".growth.json")), "polls": polls, "end": end,
+                "bank": str(self.root / "game/wozmod/voice/Voice.bin"), "game": str(self.root / "game"),
+                "log": (self.root / "game/wozmod/runtime.log").read_text(errors="replace")}
 
     def spawn(self, count: int) -> dict:
         """Enemy troops around the player, in the battle the route reached; the rest of the run keeps them."""
@@ -3017,7 +3166,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="action", required=True)
     for action in ("run", "status", "key", "click", "pad", "plug", "reenumerate", "capture", "record", "video", "peek", "poke",
                    "find", "screen", "wait", "say", "notice", "win", "lose", "scripts", "script", "scene", "spawn", "mount", "switch",
-                   "teleport", "keep", "unlock", "crash", "slow-voice",
+                   "teleport", "keep", "unlock", "crash", "slow-voice", "av-probe", "lip-test", "stock-voices",
                    "reload", "tour", "route", "check", "stop", "_audio", "_serve"):
         command = commands.add_parser(action)
         command.add_argument("--root", required=True, type=Path,
@@ -3099,6 +3248,18 @@ def main(argv: list[str] | None = None) -> int:
         if action == "slow-voice":
             command.add_argument("ms", type=int, help="milliseconds each English voice read takes longer, as on a "
                                  "slow disk (0: none); the archive reader stays busy that much longer per voice load")
+        if action == "lip-test":
+            command.add_argument("stall", type=int, help="milliseconds the game stalls once in each voiced event line, "
+                                 "1 s into its voice, as a slow frame would (0: none)")
+            command.add_argument("--event-clock", action="store_true",
+                                 help="leave mouths to the event clock, as stock; the lip clock only measures them")
+        if action == "stock-voices":
+            command.add_argument("on", type=int, choices=(0, 1),
+                                 help="1: every voice from now on is the stock Japanese one; 0: the voice setting's")
+        if action == "av-probe":
+            command.add_argument("mode", type=lambda x: int(x, 0),
+                                 help="test op 30 (english_runtime.c av_mode): 1 lipav.log rows, 2 corner code, 4 square-wave "
+                                      "mouths (ticks per half in bits 8-15); seconds until it ends in bits 16-31; 0 stops")
         if action == "crash":
             command.add_argument("how", choices=list(CRASHES),
                                  help="fault: a read through NULL in the game's code; cxx: an uncaught C++ exception; "
@@ -3220,6 +3381,12 @@ def main(argv: list[str] | None = None) -> int:
             request["keep"] = args.keep
         if args.action == "slow-voice":
             request["ms"] = args.ms
+        if args.action == "lip-test":
+            request.update(stall=args.stall, event_clock=int(args.event_clock))
+        if args.action == "stock-voices":
+            request["on"] = args.on
+        if args.action == "av-probe":
+            request["mode"] = args.mode
         if args.action == "reload":
             request["table"] = str(args.table.resolve(strict=True))
             timeout += RELOAD_SECONDS

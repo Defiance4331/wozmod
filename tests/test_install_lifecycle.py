@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 import wozmod.install as installer
-from synthetic import fake_step_keys, stock_game
+from synthetic import fake_step_keys, speech_model, stock_game
 from wozmod.install import InstallError, install, stock, uninstall
 from wozmod.runtime import guard_report
 
@@ -31,6 +31,7 @@ def game(tmp_path: Path, monkeypatch) -> Path:
     file each (beside d3d9.dll)."""
     folder = tmp_path / "game"
     record = stock_game(folder)
+    speech_model(tmp_path / "speech", monkeypatch)
     monkeypatch.setattr(stock, "recorded", lambda: record)
     fake_step_keys(monkeypatch)
 
@@ -52,7 +53,7 @@ def game(tmp_path: Path, monkeypatch) -> Path:
 
 def _inputs(tmp_path: Path) -> dict[str, Path]:
     return {name: tmp_path / name for name in
-            ("wo1-x360", "wo2-x360", "wo2-psp", "x360-tool", "psp-tool", "lettering", "dll")}
+            ("wo1-x360", "wo2-x360", "wo2-psp", "x360-tool", "psp-tool", "lettering", "dll", "speech")}
 
 
 def test_every_missing_or_wrong_input_is_named_and_no_right_one(game, tmp_path, monkeypatch):
@@ -82,6 +83,7 @@ def test_a_wrong_download_is_named_before_the_game_folder_is_hashed(game, tmp_pa
     inputs = _inputs(tmp_path)
     (game / "LINKDATA1.BIN").write_bytes(b"patched archive")
     inputs["lettering"].write_bytes(b"other bundle")
+    (inputs["speech"] / "model").unlink()
     monkeypatch.setattr(installer, "DLL", _pin(b"dll"))
     hashed = []
     monkeypatch.setattr(installer, "_sha256", lambda path, real=installer._sha256: hashed.append(path) or real(path))
@@ -91,7 +93,8 @@ def test_a_wrong_download_is_named_before_the_game_folder_is_hashed(game, tmp_pa
 
     assert str(caught.value).splitlines() == [
         "lettering.zip: Not the file that goes with this release. Download wozmod again.",
-        "d3d9.dll: File not found. Download wozmod again."]
+        "d3d9.dll: File not found. Download wozmod again.",
+        "Speech model folder: model is missing. Download wozmod again."]
     assert not [path for path in hashed if path.is_relative_to(game)]
 
 
@@ -347,8 +350,8 @@ def test_the_voice_stage_lowers_its_priority_before_it_starts_ffmpeg(monkeypatch
     monkeypatch.setattr(os, "sched_setscheduler", lambda *args: calls.append(("policy", args[1])), raising=False)
     monkeypatch.setattr(os, "SCHED_BATCH", 3, raising=False)
     monkeypatch.setattr(os, "sched_param", lambda priority: priority, raising=False)
-    monkeypatch.setattr(wozmod.voices, "build_voice_banks", lambda *args: calls.append(("build", args[3])))
-    installer._voice_banks(tmp_path, tmp_path, tmp_path, 7)
+    monkeypatch.setattr(wozmod.voices, "build_voice_banks", lambda *args: calls.append(("build", args[4])))
+    installer._voice_banks(tmp_path, tmp_path, tmp_path, tmp_path, 7)
     assert calls == [("nice", installer.VOICE_NICE), ("policy", 3), ("build", 7)] and installer.VOICE_NICE > 0
 
 

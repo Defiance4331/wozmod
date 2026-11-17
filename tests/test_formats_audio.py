@@ -258,39 +258,86 @@ def test_psp_voice_fills_only_a_line_neither_xbox_360_disc_has_and_leaves_as_48_
     english_voice_bank(clips)  # raises unless every clip is 48 kHz mono
 
 
-def _atrac3plus_riff(frames: int) -> bytes:
-    """A mono 44.1 kHz ATRAC3plus RIFF laid out as the PSP bank's are (192-byte frames of 2048 samples), silent."""
+def _atrac3plus_riff(frames: int, fact: tuple[int, int] | None = None, tag: int = 0xFFFE) -> bytes:
+    """A mono 44.1 kHz ATRAC3plus RIFF laid out as the PSP bank's are (192-byte frames of 2048 samples), silent,
+    with the bank's fact chunk (sample count, samples to skip) when fact is given; tag replaces the format tag."""
     import uuid
     block = 192
     frame = bytes((0b0110_0000,)) + bytes(block - 1)  # a zero start bit, then the channel-unit terminator
     subtype = uuid.UUID("e923aabf-cb58-4471-a119-fffa01e4ce62").bytes_le  # KSDATAFORMAT_SUBTYPE_ATRAC3PLUS
-    fmt = struct.pack("<HHIIHHHHI", 0xFFFE, 1, 44_100, block * 44_100 // 2048, block, 0, 22, 2048, 4) + subtype
+    fmt = struct.pack("<HHIIHHHHI", tag, 1, 44_100, block * 44_100 // 2048, block, 0, 22, 2048, 4) + subtype
     data = frame * frames
-    body = b"WAVEfmt " + struct.pack("<I", len(fmt)) + fmt + b"data" + struct.pack("<I", len(data)) + data
+    facts = b"" if fact is None else b"fact" + struct.pack("<III", 8, *fact)
+    body = b"WAVEfmt " + struct.pack("<I", len(fmt)) + fmt + facts + b"data" + struct.pack("<I", len(data)) + data
     return b"RIFF" + struct.pack("<I", len(body)) + body
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
-def test_psp_atrac3plus_clip_declares_its_whole_length(tmp_path: Path) -> None:
+def test_psp_atrac3plus_clip_declares_the_length_its_fact_chunk_counts(tmp_path: Path) -> None:
     # Bug: ffmpeg stamps each two-frame ATRAC3plus packet with one frame's duration, the Ogg granule positions follow
-    # those timestamps, and the clip declares about half its length: the game stops every PSP line halfway. With 16
-    # frames the last starts at sample 30720, where a timestamp rebuilt as N/SR/TB truncates to one sample short.
-    import subprocess
-
+    # those timestamps, and the clip declares about half its length: the game stops every PSP line halfway. A clip
+    # that keeps the decoder's padding or the encoder's tail declares more than the fact chunk's count.
     from synthetic import write_ps2_archive
 
     from wozmod.formats.audio import donor_voice_clips
     from wozmod.formats.linkdata import ps2_extents
 
-    riff = _atrac3plus_riff(16)
-    bank = write_ps2_archive(tmp_path / "voice_na.bns", {0: riff})
+    count = 30_000  # 16 frames decode to 32768 samples, of which the fact chunk counts these after its skip
+    bank = write_ps2_archive(tmp_path / "voice_na.bns", {0: _atrac3plus_riff(16, (count, 2048))})
     clips, _ = donor_voice_clips([("wo2-psp", {12: 0}, ps2_extents(bank), bank)])
 
-    (tmp_path / "clip.wav").write_bytes(riff)
-    pcm = subprocess.run(["ffmpeg", "-v", "quiet", "-i", str(tmp_path / "clip.wav"), "-ac", "1", "-ar", "48000",
-                          "-f", "s16le", "-"], capture_output=True, check=True).stdout  # ffmpeg's own decode
-    assert parse_kovs_record(clips[12])[2].sample_count == len(pcm) // 2
+    assert abs(parse_kovs_record(clips[12])[2].sample_count - count * 48_000 / 44_100) <= 1  # the resampler rounds
     english_voice_bank(clips)
+
+
+def test_atrac3plus_decode_starts_after_the_fact_skip_and_decoder_delay_and_xma_stays_whole() -> None:
+    # Bug: the trim reads the fact chunk's words the wrong way round, or cuts the start off an XMA clip too.
+    from wozmod.formats.audio import ATRAC3PLUS_DECODER_DELAY, atrac3plus_samples
+
+    first = 2048 + ATRAC3PLUS_DECODER_DELAY
+    assert atrac3plus_samples(_atrac3plus_riff(4, (5000, 2048))) == (first, first + 5000)
+    assert atrac3plus_samples(_atrac3plus_riff(4)) == (ATRAC3PLUS_DECODER_DELAY, None)
+    assert atrac3plus_samples(_atrac3plus_riff(4, (5000, 2048), tag=0x165)) is None  # XMA's tag
+
+
+@pytest.mark.skipif(os.environ.get("WOZMOD_AUDIO") != "1" or not os.environ.get("WOZMOD_DONORS")
+                    or not shutil.which("ffmpeg"),
+                    reason="set WOZMOD_AUDIO=1 and WOZMOD_DONORS, with ffmpeg")
+def test_psp_line_starts_where_its_xbox_360_take_starts() -> None:
+    # Bug: ffmpeg's ATRAC3plus decode starts 2417 samples (110 ms at 22050 Hz) late, so a PSP line starts after its
+    # subtitle; a trim off by a frame misses by 93 ms, and one applied to XMA moves the Xbox 360 take instead.
+    # PSP members 5375, 6305 and 6510 hold the same edit as WO2 X360 records 2116, 6959 and 10218 (voice ids 12880,
+    # 18958 and 22271).
+    import subprocess
+
+    import numpy as np
+
+    from wozmod.formats.audio import donor_voice_clips
+    from wozmod.formats.linkdata import ps2_extents
+
+    donors = Path(os.environ["WOZMOD_DONORS"])
+    psp, x360 = donors / "wo2-psp/PSP_GAME/USRDIR/sound/voice_na.bns", donors / "wo2-x360"
+    pairs = {1: (5375, 2116), 2: (6305, 6959), 3: (6510, 10218)}
+    built, _ = donor_voice_clips([("wo2-psp", {k: p for k, (p, _) in pairs.items()}, ps2_extents(psp), psp),
+                                  ("wo2-x360", {10 * k: x for k, (_, x) in pairs.items()},
+                                   wo2_voice_records((x360 / "linkdata_ans.idx").read_bytes()), x360 / "link_vodat.bdx")])
+
+    def pcm(record: bytes) -> np.ndarray:
+        ogg = bytearray(record[32:])  # the Ogg stream inside the KOVS record, its first 256 bytes XORed by position
+        for position in range(min(256, len(ogg))):
+            ogg[position] ^= position
+        out = subprocess.run(["ffmpeg", "-v", "error", "-i", "-", "-f", "f32le", "-"], input=bytes(ogg),
+                             capture_output=True, check=True).stdout
+        return np.frombuffer(out, "<f4").astype(np.float64)
+
+    for k in pairs:
+        a, b = pcm(built[10 * k]), pcm(built[k])
+        n = min(len(a), len(b))
+        size = 1 << (2 * n).bit_length()
+        c = np.fft.irfft(np.fft.rfft(b[:n], size) * np.conj(np.fft.rfft(a[:n], size)), size)
+        lag = int(np.argmax(np.r_[c[:9600], c[-9600:]]))
+        lag = lag if lag < 9600 else lag - 19_200  # samples at 48 kHz the PSP clip trails the Xbox 360 one
+        assert abs(lag) <= 12, (pairs[k], lag)  # a quarter of a millisecond
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
@@ -325,14 +372,6 @@ def test_stereo_clip_with_the_same_signal_in_both_channels_keeps_its_level(tmp_p
     english_voice_bank(clips)  # and it is a mono clip the bank takes
 
 
-def _atrac_frames(riff: bytes) -> tuple[int, int, int]:
-    """(channels, block align, frame count) of an ATRAC3plus RIFF."""
-    fmt = riff.find(b"fmt ")
-    channels, align = struct.unpack_from("<H", riff, fmt + 10)[0], struct.unpack_from("<H", riff, fmt + 20)[0]
-    data = riff.find(b"data")
-    return channels, align, struct.unpack_from("<I", riff, data + 4)[0] // align
-
-
 @pytest.mark.skipif(os.environ.get("WOZMOD_AUDIO") != "1" or not os.environ.get("WOZMOD_DONORS")
                     or not shutil.which("ffmpeg"),
                     reason="set WOZMOD_AUDIO=1 and WOZMOD_DONORS, with ffmpeg")
@@ -350,10 +389,11 @@ def test_psp_stereo_dialogue_keeps_the_samples_of_a_22050_hz_source(tmp_path: Pa
     clips, _ = donor_voice_clips([("wo2-psp", {1: 0, 2: PSP_CLIP_BASE}, ps2_extents(bank), bank)])
 
     for moz_id, member, rate in ((1, 0, 44_100), (2, PSP_CLIP_BASE, 22_050)):
-        _channels, _align, frames = _atrac_frames(members[member])
+        fact = members[member].find(b"fact")
+        count = struct.unpack_from("<I", members[member], fact + 8)[0]  # the samples the encoder counted
         samples = parse_kovs_record(clips[moz_id])[2].sample_count
-        expect = round(frames * 2048 * 48_000 / rate)
-        assert abs(samples - expect) <= 2048, (moz_id, samples, expect)
+        expect = round(count * 48_000 / rate)
+        assert abs(samples - expect) <= 1, (moz_id, samples, expect)
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")

@@ -839,7 +839,7 @@ def test_check_exits_one_and_reports_a_failed_row(tmp_path, monkeypatch):
     drawn = {"texts": [{"text": "a\nb", "x": 10, "y": 10, "width": 40, "caller": "0x1"}],
              "textures": [], "windows": []}
     monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
-    monkeypatch.setattr(harness, "route", lambda root, name, stage: 0)
+    monkeypatch.setattr(harness, "route", lambda root, name, stage, movie=None: 0)
     monkeypatch.setattr(harness, "ask", lambda root, request: drawn)
     assert harness.check(tmp_path, spec) == 1
     report = json.loads((tmp_path / "evidence/check-report.json").read_text())
@@ -853,7 +853,7 @@ def test_check_driver_holds_the_battle_and_fires_its_script_before_routing_on(tm
     can lose it first (run 2026-11-13_1723-check)."""
     steps = []
     monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
-    monkeypatch.setattr(harness, "route", lambda root, name, stage: steps.append(name) or 0)
+    monkeypatch.setattr(harness, "route", lambda root, name, stage, movie=None: steps.append(name) or 0)
 
     def ask(root, request):
         if request["action"] == "screen":
@@ -873,7 +873,7 @@ def test_check_driver_waits_out_the_opening_dialog_in_game_frames(tmp_path, monk
     """Bugs: a refusal while the opening dialog plays ends the screen's row as unreachable; the wait is counted in wall
     seconds, so a loaded machine that runs the dialog's 2,700 frames in over a minute loses the screen; the wait never
     gives up while the game keeps refusing."""
-    monkeypatch.setattr(harness, "route", lambda root, name, stage: 0)
+    monkeypatch.setattr(harness, "route", lambda root, name, stage, movie=None: 0)
     monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
     clock = iter(range(0, 100000, 100))  # 100 s of wall time per call: a machine running the game at a crawl
     monkeypatch.setattr(harness.time, "monotonic", lambda: next(clock))
@@ -920,7 +920,7 @@ def test_check_driver_forgets_the_battle_when_the_game_says_it_is_ending(tmp_pat
     unknown. A refusal that leaves the battle up keeps the position."""
     monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
 
-    def route(root, name, stage):
+    def route(root, name, stage, movie=None):
         harness.write_json(root / "evidence/route.json", {"at": name, "journal": 0})
         return 0
 
@@ -1301,7 +1301,7 @@ def test_check_driver_goes_back_to_the_scenario_select_for_another_stage(tmp_pat
     (tmp_path / "evidence").mkdir()
     harness.write_json(tmp_path / "evidence/route.json", {"at": "pause", "journal": 0})
     legs = []
-    monkeypatch.setattr(harness, "route", lambda root, name, stage: legs.append((name, stage)) or 0)
+    monkeypatch.setattr(harness, "route", lambda root, name, stage, movie=None: legs.append((name, stage)) or 0)
     monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
     driver = harness.CheckDriver(tmp_path)
     driver.loaded = 40
@@ -1319,7 +1319,7 @@ def test_check_only_runs_the_named_screens_and_refuses_a_misspelt_one(tmp_path, 
                             for n in ("a", "b", "c")))
     visited = []
     monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
-    monkeypatch.setattr(harness, "route", lambda root, name, stage: visited.append(name) or 0)
+    monkeypatch.setattr(harness, "route", lambda root, name, stage, movie=None: visited.append(name) or 0)
     monkeypatch.setattr(harness, "ask", lambda root, request: {"texts": [{"text": "x", "x": 0, "y": 0, "width": 1, "caller": "0x1"}],
                                                                "textures": [], "windows": []})
     assert harness.check(tmp_path, spec, ["c", "a"]) == 0
@@ -1339,7 +1339,7 @@ def test_check_learn_saves_each_screens_stock_relations_under_its_name_and_keeps
                             for n in ("a", "b")))
     shown = iter([{"x": 0, "y": 0, "width": 1, "height": 1}, {"x": 500, "y": 0, "width": 9, "height": 9}])
     monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
-    monkeypatch.setattr(harness, "route", lambda root, name, stage: 0)
+    monkeypatch.setattr(harness, "route", lambda root, name, stage, movie=None: 0)
     monkeypatch.setattr(harness, "ask", lambda root, request: {
         "texts": [{"text": "x", "x": 0, "y": 0, "width": 1, "caller": "0x1"}], "textures": [], "windows": [],
         "boxes": [{**next(shown), "caller": "0x2", "count": 1}]})
@@ -1523,7 +1523,7 @@ def test_check_report_names_the_shortcuts_behind_each_capture(tmp_path, monkeypa
     """Bugs: a results screen reached by `win` (seconds of battle, no KOs), or any screen after `unlock`, is reported
     as plain play, so its capture passes for a typical one; or a later screen keeps a one-off shortcut's label."""
     (tmp_path / "evidence").mkdir()
-    monkeypatch.setattr(harness, "route", lambda root, name, stage: 0)
+    monkeypatch.setattr(harness, "route", lambda root, name, stage, movie=None: 0)
     monkeypatch.setattr(harness, "ask", lambda root, request: {"ok": True})
     driver = harness.CheckDriver(tmp_path)
 

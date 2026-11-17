@@ -386,7 +386,8 @@ def test_every_english_voiced_event_line_ends_with_its_clip(tmp_path):
     from wozmod.voices import build_voice_banks
     from wozmod.voices.events import EVENT_KEY, FOLDER
 
-    build_voice_banks(Path(os.environ["WOZMOD_GAME"]), Path(os.environ["WOZMOD_DONORS"]), tmp_path)
+    build_voice_banks(Path(os.environ["WOZMOD_GAME"]), Path(os.environ["WOZMOD_DONORS"]), Path(os.environ["WOZMOD_SPEECH"]),
+                      tmp_path)
     raw = (tmp_path / "voice/Voice.bin").read_bytes()
     clips = {}
     for i in range(struct.unpack_from("<I", raw)[0]):

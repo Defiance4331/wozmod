@@ -35,21 +35,22 @@ INPUTS = {"wo1-x360": "WOZMOD_WO1_X360_ISO", "wo2-x360": "WOZMOD_WO2_X360_ISO", 
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("WOZMOD_INSTALL_E2E") != "1"
-    or not all(os.environ.get(v) for v in ["WOZMOD_GAME", "WOZMOD_DONORS", *INPUTS.values()]),
-    reason="set WOZMOD_INSTALL_E2E=1, WOZMOD_GAME, WOZMOD_DONORS (the menu words of the lettering) and "
-           + ", ".join(INPUTS.values()),
+    or not all(os.environ.get(v) for v in ["WOZMOD_GAME", "WOZMOD_DONORS", "WOZMOD_SPEECH", *INPUTS.values()]),
+    reason="set WOZMOD_INSTALL_E2E=1, WOZMOD_GAME, WOZMOD_DONORS (the menu words of the lettering), WOZMOD_SPEECH "
+           "(the speech model folder) and " + ", ".join(INPUTS.values()),
 )
 
 
 @pytest.fixture(scope="module")
 def release_files(tmp_path_factory) -> dict[str, Path]:
-    """d3d9.dll and lettering.zip built from this checkout by the release's own build, by installer flag."""
+    """d3d9.dll and lettering.zip built from this checkout by the release's own build, and the speech model folder
+    the release downloads, by installer flag."""
     spec = importlib.util.spec_from_file_location("release_assets", REPO / "packaging/release_assets.py")
     release_assets = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(release_assets)
     dll, lettering = release_assets.build(Path(os.environ["WOZMOD_GAME"]), Path(os.environ["WOZMOD_DONORS"]),
                                           tmp_path_factory.mktemp("release"))
-    return {"dll": dll, "lettering": lettering}
+    return {"dll": dll, "lettering": lettering, "speech": Path(os.environ["WOZMOD_SPEECH"])}
 
 
 @pytest.fixture(scope="module")

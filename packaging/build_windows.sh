@@ -5,7 +5,8 @@
 #
 # ASSETS_DIR holds the release d3d9.dll and lettering.zip (as for packaging/build.py --assets).
 # The zip lands in build/packaging/. Needs: wine (64-bit), uv, rustup with a stable toolchain, curl,
-# and MinGW (Fedora: sudo dnf install mingw64-gcc mingw64-binutils mingw64-winpthreads-static).
+# and MinGW (Fedora: sudo dnf install mingw64-gcc mingw64-binutils mingw64-winpthreads-static), and WOZMOD_SPEECH
+# naming the speech model folder (voices/phones.py MODEL), to check the Windows phones against Linux's.
 # Everything it sets up lives in WOZMOD_WIN_WORK (default work/windows-build) and is reused next time:
 # a Wine prefix, Windows CPython (with Tcl/Tk), the locked Python packages and the cross-built Rust codecs.
 # Downloads are pinned: Python below, ffmpeg in packaging/ffmpeg.json, packages in uv.lock (with hashes).
@@ -59,7 +60,13 @@ rm -f "$WORK"/wheels/*.whl
 (cd "$ROOT/native" && CARGO_TARGET_DIR=$WORK/cargo-target \
   uvx --from "$MATURIN" maturin build --release --target x86_64-pc-windows-gnu -o "$WORK/wheels")
 wine "$PY" -m pip install -q --force-reinstall --no-deps "$(winpath "$(ls "$WORK"/wheels/*.whl)")"
-(cd "$ROOT" && PYTHONPATH=$(winpath "$ROOT/src") wine "$PY" -m pytest -q -p no:cacheprovider tests/test_native_codecs.py)
+(cd "$ROOT" && PYTHONPATH=$(winpath "$ROOT/src") wine "$PY" -m pytest -q -p no:cacheprovider tests/test_native_codecs.py \
+  tests/test_voices_phones.py)
+# The phones the mouths come from must be the same on Windows as on Linux, to the bit (packaging/speech_digest.py).
+SPEECH=${WOZMOD_SPEECH:?set WOZMOD_SPEECH to the speech model folder (voices/phones.py MODEL)}
+linux_digest=$(cd "$ROOT" && uv run --extra native python packaging/speech_digest.py "$SPEECH")
+windows_digest=$(cd "$ROOT" && wine "$PY" "$(winpath "$ROOT/packaging/speech_digest.py")" "$(winpath "$SPEECH")" | tr -d '\r')
+[ "$linux_digest" = "$windows_digest" ] || { echo "the Windows phones differ from Linux's: $windows_digest, $linux_digest" >&2; exit 1; }
 
 # 4. The pinned Windows ffmpeg, downloaded here because the Wine Python cannot rely on Windows certificates
 read -r FFMPEG_URL FFMPEG_SHA256 < <(python3 -c \

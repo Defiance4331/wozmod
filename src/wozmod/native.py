@@ -1,7 +1,9 @@
-"""The optional `wozmod-native` package: fast LZP2 and DXT5 codecs.
+"""The `wozmod-native` package: fast LZP2 and DXT5 codecs, the audio alignment search and the learned mouth shapes.
 
 `module` is None when the package is not installed, or when `WOZMOD_NATIVE=0`
-asks for the Python codecs. Both give the same bytes.
+asks for the Python codecs. Both give the same bytes. The alignment and the
+mouths have no Python twin: the voices step needs the package for the Dream
+movies and scenes and for the event lines' mouths.
 """
 
 from __future__ import annotations

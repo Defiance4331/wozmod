@@ -70,9 +70,7 @@ def _parse_ogg_stream(
     ordinal: int,
     verify_checksums: bool,
 ) -> OggStreamMetadata:
-    stream = bytearray(encoded_stream)
-    for position in range(min(256, len(stream))):
-        stream[position] ^= position
+    stream = _position_transform(encoded_stream)
 
     offset = 0
     page_count = 0
@@ -229,9 +227,7 @@ def _vorbis_decoded_samples(payload: bytes) -> tuple[int, int]:
     A packet decodes to a quarter of its block plus a quarter of the one before it, and the first audio packet
     to none. The final granule position is what the game plays: at most the last packet's samples below this.
     """
-    stream = bytearray(payload[KOVS_HEADER_BYTES:])
-    for position in range(min(256, len(stream))):
-        stream[position] ^= position
+    stream = kovs_ogg(payload)
     headers: list[bytes] = []  # the three header packets whole, then only each audio packet's first byte
     audio: list[int] = []
     packet, started, offset = bytearray(), False, 0
@@ -383,12 +379,23 @@ def slot_voice_map(slots: list[tuple[int, bytes]], record_base: int) -> dict[int
     return {moz_id: clips.pop() for moz_id, clips in found.items() if len(clips) == 1}
 
 
+def _position_transform(stream: bytes) -> bytes:
+    """KOVS's transform of an Ogg stream, its own inverse: each of the first 256 bytes XORed with its position."""
+    out = bytearray(stream)
+    for position in range(min(256, len(out))):
+        out[position] ^= position
+    return bytes(out)
+
+
 def kovs_record(ogg: bytes) -> bytes:
     """Wrap an Ogg stream in a KOVS header and position transform."""
-    stream = bytearray(ogg)
-    for position in range(min(256, len(stream))):
-        stream[position] ^= position
+    stream = _position_transform(ogg)
     return b"KOVS" + struct.pack("<Ii", len(stream), 0) + bytes(20) + stream
+
+
+def kovs_ogg(record: bytes) -> bytes:
+    """The Ogg stream a KOVS record holds."""
+    return _position_transform(record[KOVS_HEADER_BYTES:])
 
 
 # Clips per ffmpeg process: starting ffmpeg costs more than encoding one short clip, but each clip in a process
@@ -430,6 +437,14 @@ def _ffmpeg_each(jobs: list[tuple[list[str], bytes, list[str]]], workers: int | 
         return [out for part in pool.map(batch, range(0, len(jobs), FFMPEG_BATCH)) for out in part]
 
 
+def decoded_clips(clips: dict[int, bytes], rate: int, jobs: int | None = None) -> dict[int, bytes]:
+    """Each KOVS clip as 16-bit little-endian mono samples at rate."""
+    ids = sorted(clips)
+    pcm = _ffmpeg_each([(["-f", "ogg"], kovs_ogg(clips[i]), ["-ac", "1", "-ar", str(rate), "-f", "s16le"]) for i in ids],
+                       jobs, "reading voices for lip sync", (0.85, 0.85))  # short: progress stays put
+    return dict(zip(ids, pcm, strict=True))
+
+
 def donor_voice_choice(banks: list[tuple[str, dict[int, int], list[tuple[int, int]], Path]],
                        ) -> dict[int, tuple[str, int]]:
     """Each stock voice id's (source, donor record) from (source, mapping, clip extents, bank) banks: the earliest
@@ -450,27 +465,25 @@ def donor_voice_choice(banks: list[tuple[str, dict[int, int], list[tuple[int, in
 # frames) is 22050 Hz audio in a header that says 44100: the same line on the Xbox 360 disc is twice as long and
 # an octave lower, and rewriting this rate makes them match, apart from the Xbox clip's trailing padding. Mono
 # clips earlier in the bank are the stock takes at the labeled 44100.
-_ATRAC3PLUS_GUID = bytes.fromhex("bfaa23e958cb7144a119fffa01e4ce62")
+ATRAC3PLUS_GUID = bytes.fromhex("bfaa23e958cb7144a119fffa01e4ce62")
 
 
-def _fmt_body(riff: bytes) -> tuple[int, int] | None:
-    """The fmt chunk's body offset and size, or None when riff is not a WAVE file with one."""
+def _chunk_body(riff: bytes, tag: bytes = b"fmt ") -> tuple[int, int] | None:
+    """A chunk's body offset and size, or None when riff is not a WAVE file with one whole."""
     if len(riff) < 12 or riff[:4] != b"RIFF" or riff[8:12] != b"WAVE":
         return None
     position = 12
     while position + 8 <= len(riff):
         size = struct.unpack_from("<I", riff, position + 4)[0]
-        if riff[position:position + 4] == b"fmt ":
-            return position + 8, size
+        if riff[position:position + 4] == tag:
+            return (position + 8, size) if position + 8 + size <= len(riff) else None
         position += 8 + size + (size & 1)
-        if size > len(riff):
-            return None
     return None
 
 
 def _channels(riff: bytes) -> int | None:
     """The channel count a RIFF's fmt chunk declares, or None without one."""
-    found = _fmt_body(riff)
+    found = _chunk_body(riff)
     return struct.unpack_from("<H", riff, found[0] + 2)[0] if found and 4 <= found[1] and found[0] + 4 <= len(riff) else None
 
 
@@ -480,19 +493,40 @@ def _psp_dialogue_riff(riff: bytes) -> bytes:
     A stereo ATRAC3plus clip labeled 44100 is 22050 Hz dialogue: each frame is 2048 samples of that slower
     waveform, and the header's byte rate was computed from the wrong rate. Mono clips are not that dialogue.
     """
-    found = _fmt_body(riff)
+    found = _chunk_body(riff)
     if found is None:
         return riff
     body, size = found
     if size < 40 or body + size > len(riff):
         return riff
     tag, channels, rate, _average, align = struct.unpack_from("<HHIIH", riff, body)
-    if (tag, channels, rate, align) != (0xFFFE, 2, 44_100, 280) or riff[body + 24:body + 40] != _ATRAC3PLUS_GUID:
+    if (tag, channels, rate, align) != (0xFFFE, 2, 44_100, 280) or riff[body + 24:body + 40] != ATRAC3PLUS_GUID:
         return riff
     out = bytearray(riff)
     struct.pack_into("<I", out, body + 4, 22_050)
     struct.pack_into("<I", out, body + 8, align * 22_050 // 2048)  # one ATRAC3plus frame is 2048 samples
     return bytes(out)
+
+
+# ffmpeg's ATRAC3plus decoder puts out this many samples before the first one the encoder's fact chunk counts from,
+# on top of the skip that chunk declares (2048 in every PSP clip). Measured: 28 PSP dialogue lines whose WO2 X360
+# take is the same edit trail it by 2416.58-2416.88 samples at 22050 Hz (median 2416.77), and the PSP's MEV_201
+# Japanese track trails stock movie200 by the same 2416-2418 samples at 44100 Hz, so the delay is in the decoder's
+# samples, not in either reference.
+ATRAC3PLUS_DECODER_DELAY = 369
+
+
+def atrac3plus_samples(riff: bytes) -> tuple[int, int | None] | None:
+    """The (first, end) samples of ffmpeg's decode of an ATRAC3plus RIFF that hold the recording, end None when
+    no fact chunk counts them; None for any other codec, whose decode is kept whole."""
+    found = _chunk_body(riff)
+    if found is None or found[1] < 40 or riff[found[0]:found[0] + 2] != b"\xfe\xff" \
+            or riff[found[0] + 24:found[0] + 40] != ATRAC3PLUS_GUID:
+        return None
+    fact = _chunk_body(riff, b"fact")
+    count, skip = struct.unpack_from("<II", riff, fact[0]) if fact and fact[1] >= 8 else (None, 0)
+    first = skip + ATRAC3PLUS_DECODER_DELAY
+    return first, None if count is None else first + count
 
 
 def donor_voice_clips(banks: list[tuple[str, dict[int, int], list[tuple[int, int]], Path]],
@@ -507,28 +541,44 @@ def donor_voice_clips(banks: list[tuple[str, dict[int, int], list[tuple[int, int
                 if picked == source:
                     data = _read_at(stream, *records[clip])
                     riffs[moz_id], sources[moz_id] = (_psp_dialogue_riff(data) if source == "wo2-psp" else data), source
+    # The Ogg granule positions, which the game reads as the clip's length, come from the frame timestamps.
+    # ffmpeg's RIFF reader packs two ATRAC3plus frames per packet but stamps one frame's duration, so the PSP
+    # timestamps repeat and advance at half speed: asetpts numbers them by the decoded samples instead, rounded
+    # because it truncates the quotient and N/SR/TB can land a hair under the whole number (one sample short).
+    # A stereo clip (PSP dialogue: the same signal in both channels) becomes mono as the mean of its channels.
+    # -ac 1 is not that: into the encoder's float samples it mixes each channel at 0.707, 3 dB over either one.
+    # An ATRAC3plus clip first loses the decoder's start padding and the encoder's tail (atrac3plus_samples), so
+    # a PSP line starts with its subtitle as an XMA one does, and asetpts numbers what is left from zero.
+    def filters(riff: bytes) -> str:
+        mono = ",pan=mono|c0=0.5*c0+0.5*c1" if _channels(riff) == 2 else ""
+        span = atrac3plus_samples(riff)
+        trim = "" if span is None else f"atrim=start_sample={span[0]}" + (
+            "" if span[1] is None else f":end_sample={span[1]}") + ","
+        return trim + "asetpts=round(N/SR/TB)" + mono
+
+    return vorbis_records({i: (["-threads", "1", "-f", "wav"], riff, filters(riff)) for i, riff in riffs.items()},
+                          jobs, "converting voice clips", (0.1, 0.8)), sources
+
+
+def vorbis_records(sources: dict[int, tuple[list[str], bytes, str]], jobs: int | None = None,
+                   label: str = "converting voice clips", span: tuple[float, float] = (0.0, 1.0)) -> dict[int, bytes]:
+    """Each source, (ffmpeg input options, input bytes, audio filters), as the KOVS record of the 48 kHz mono Vorbis
+    clip the voice bank takes, by voice id; jobs caps the ffmpeg processes, label and span are what the progress
+    view shows (_ffmpeg_each)."""
     def encode(moz_ids: list[int], quality: int, span: tuple[float, float]) -> dict[int, bytes]:
-        # The Ogg granule positions, which the game reads as the clip's length, come from the frame timestamps.
-        # ffmpeg's RIFF reader packs two ATRAC3plus frames per packet but stamps one frame's duration, so the PSP
-        # timestamps repeat and advance at half speed: asetpts numbers them by the decoded samples instead, rounded
-        # because it truncates the quotient and N/SR/TB can land a hair under the whole number (one sample short).
-        # A stereo clip (PSP dialogue: the same signal in both channels) becomes mono as the mean of its channels.
-        # -ac 1 is not that: into the encoder's float samples it mixes each channel at 0.707, 3 dB over either one.
-        def vorbis(riff: bytes) -> list[str]:
-            mono = ",pan=mono|c0=0.5*c0+0.5*c1" if _channels(riff) == 2 else ""
-            return ["-af", "asetpts=round(N/SR/TB)" + mono, "-ar", "48000", "-c:a", "libvorbis", "-threads", "1",
-                    "-q:a", str(quality), "-fflags", "+bitexact", "-flags:a", "+bitexact", "-f", "ogg"]
-        oggs = _ffmpeg_each([(["-threads", "1", "-f", "wav"], riffs[i], vorbis(riffs[i])) for i in moz_ids], jobs,
-                            "converting voice clips", span)
+        def vorbis(audio_filters: str) -> list[str]:
+            return ["-af", audio_filters, "-ar", "48000", "-c:a", "libvorbis", "-threads", "1", "-q:a", str(quality),
+                    "-fflags", "+bitexact", "-flags:a", "+bitexact", "-f", "ogg"]
+        oggs = _ffmpeg_each([(sources[i][0], sources[i][1], vorbis(sources[i][2])) for i in moz_ids], jobs, label, span)
         return dict(zip(moz_ids, map(kovs_record, oggs), strict=True))
 
-    clips = encode(list(riffs), WO2_VORBIS_QUALITY, (0.1, 0.85))
+    clips = encode(list(sources), WO2_VORBIS_QUALITY, span)
     # The game reads a clip whole into a SLOT_BYTES buffer: a clip that does not fit is encoded again, one step lower.
     for quality in range(WO2_VORBIS_QUALITY - 1, -1, -1):
         if not (long := [i for i, clip in clips.items() if len(clip) > SLOT_BYTES]):
             break
-        clips |= encode(long, quality, (0.85, 0.85))  # progress stays put
-    return clips, sources
+        clips |= encode(long, quality, (span[1], span[1]))  # progress stays put
+    return clips
 
 
 def english_voice_clips(wo1_mapping: dict[int, int], wo1_index: bytes, wo1_bank: Path,
@@ -549,10 +599,15 @@ def english_voice_clips(wo1_mapping: dict[int, int], wo1_index: bytes, wo1_bank:
     samples = lambda record: parse_kovs_record(record, verify_checksums=False)[2].sample_count  # noqa: E731
     with stock_bank.open("rb") as stock:
         stock_takes = {moz_id for moz_id, source in sources.items() if source == "wo1-x360" and samples(clips[moz_id])
-                       == samples(_read_at(stock, *struct.unpack_from(">II", stock_index,
-                                                                      8 + 8 * stock_ids.get(moz_id, moz_id))))}
+                       == samples(stock_record(stock, stock_index, stock_ids.get(moz_id, moz_id)))}
     return ({i: clip for i, clip in clips.items() if i not in stock_takes},
             {i: source for i, source in sources.items() if i not in stock_takes})
+
+
+def stock_record(bank: BinaryIO, index: bytes, voice_id: int) -> bytes:
+    """A voice id's KOVS record in the stock Voice.bin (bank), through its index (LINKDATA1 entry 4058 decoded:
+    big-endian (offset, size) pairs from byte 8)."""
+    return _read_at(bank, *struct.unpack_from(">II", index, 8 + 8 * voice_id))
 
 
 def _read_at(stream: BinaryIO, offset: int, size: int) -> bytes:

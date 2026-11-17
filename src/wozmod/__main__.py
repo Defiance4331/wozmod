@@ -13,7 +13,7 @@ from wozmod.interactive import ask_choice, ask_path, ask_yes, interactive
 from wozmod.progress import Cancelled, Progress, TerminalView, duration
 
 ASKED = ("game", *PROGRAMS, *TOOLS)  # the inputs the terminal asks for when they are missing
-SHIPPED = {"lettering": "lettering.zip", "dll": "d3d9.dll"}  # inside the packaged program's resource folder
+SHIPPED = {"lettering": "lettering.zip", "dll": "d3d9.dll", "speech": "speech"}  # inside the packaged program's resource folder
 
 
 def attribute(name: str) -> str:
@@ -52,7 +52,7 @@ def run_install(args: argparse.Namespace) -> int:
     absent = [f"--{name} or " + " and ".join(f"--{FILES[disc]}" for disc in TOOLS[name]) if name in TOOLS else f"--{name}"
               for name in ASKED if missing(name, args)]
     if any(getattr(args, name) is None for name in SHIPPED):
-        print("wozmod: --lettering and --dll are needed outside the release program.", file=sys.stderr)
+        print("wozmod: --lettering, --dll and --speech are needed outside the release program.", file=sys.stderr)
         return 2
     if absent and not interactive():
         print(f"wozmod: missing {', '.join(absent)}. Give each one, or run wozmod in a terminal and it asks.",

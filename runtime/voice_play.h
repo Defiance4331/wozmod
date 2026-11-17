@@ -30,6 +30,7 @@
 #define VOICE_WAITING(m) (*(volatile unsigned int *)((m) + 0xB0))
 #define VOICE_WAITING_ID(m) (*(volatile unsigned int *)((m) + 0xB4))
 #define VOICE_LOADED 0x8u
+#define VOICE_STARTED 0x4u  /* handed to the sound engine; the voice frame clears it, and the id, once its channel is quiet */
 #define VOICE_NONE 2u
 
 /* A voice start's lines: the one it plays and the one it loads next, each at or above the voice mode's end marker for
@@ -70,6 +71,36 @@ static inline void voice_start(struct voice_play *v, unsigned int play, unsigned
     }
     v->wait[v->waits].play = play, v->wait[v->waits].next = next, v->wait[v->waits].since = v->frame;
     v->waits++;
+}
+
+/* The voice id whose play waits on each buffer, or VOICE_NO_ID: the kept play's on its buffer, and a waiting start's
+   line (base + its play) on the buffer it will play. Each start plays the current buffer ([0xC0E594]) and then switches
+   to the other, so the waiting starts, made in turn, play from current alternately. */
+#define VOICE_NO_ID 0xFFFFFFFFu
+static inline void voice_waits(const struct voice_play *v, unsigned int current, unsigned int base, unsigned int end,
+                               unsigned int ids[2])
+{
+    unsigned int i;
+    ids[0] = ids[1] = VOICE_NO_ID;
+    if (v->slot != VOICE_NONE)
+        ids[v->slot] = v->id;
+    for (i = 0; i < v->waits; i++)
+        if (v->wait[i].play < end)
+            ids[(current ^ i) & 1] = base + v->wait[i].play;
+}
+
+/* At play on slot: a loaded clip is about to be started, so a started bit it carries belongs to the clip it replaced.
+   The load (0x5D8160) sets the new id and load bits but keeps that bit, and the voice frame (0x5D8590) ends any buffer
+   whose started bit is set while its channel is quiet by clearing the bit and the id. When the new clip's start is put
+   off a frame (its channel still busy, or the reader busy with the next line's load), that check wipes the id of the
+   clip waiting to start; the clip still plays, but the lip clock (lip_clock.h) can no longer find its voice, and the
+   first line of a scene started over a battle voice kept the event clock (work/handbacks/lip-av-offset.md). The bit is
+   the replaced clip's alone until the voice frame starts this one, so it goes here; play itself starts only a loaded
+   buffer, and the loaded bit keeps the voice frame off the buffer until then. */
+static inline void voice_fresh(unsigned char *m, unsigned int slot)
+{
+    if (slot <= 1 && VOICE_FLAGS(m, slot) & VOICE_LOADED)
+        VOICE_FLAGS(m, slot) &= ~VOICE_STARTED;
 }
 
 /* At play on slot (arguments arg): keep it when its clip still waits to be loaded, or is held back. */

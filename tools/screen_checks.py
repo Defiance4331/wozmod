@@ -646,6 +646,14 @@ def device_matches_mode(log: str, settings: str) -> Check:
     return Check(bool(got) and all(g == want for g in got), {"mode": mode.group(1), "want": want, "windowed": got})
 
 
+def lips_follow_voice(log: str, settings: str) -> Check:
+    """Voiced event lines' mouths kept time with their voices through a stall in each (a --test build's runtime.log,
+    with op 16 set): at least one line stalled, and no line's mouths ended off its voice (lip_clock.h's report)."""
+    stalled = re.findall(r"^lip test: stalled the game 1 s into voice id 0x([0-9a-f]+)\r?$", log, re.M)
+    off = re.findall(r"^lips off their voice: (.*?)\r?$", log, re.M)
+    return Check(bool(stalled) and not off, {"stalled": stalled, "off": off})
+
+
 # kind -> (function, needs the capture)
 ASSERTIONS: dict[str, tuple[Callable[..., Check], bool]] = {
     "text_clear_of_quad": (text_clear_of_quad, False),
@@ -669,12 +677,16 @@ ASSERTIONS: dict[str, tuple[Callable[..., Check], bool]] = {
     "text_stems_even": (text_stems_even, True),
     "text_on_one_line": (text_on_one_line, True),
     "device_matches_mode": (device_matches_mode, False),
+    "lips_follow_voice": (lips_follow_voice, False),
 }
-RUN_FILES = {"device_matches_mode"}  # read the run's runtime.log and settings.ini, not the screen
+RUN_FILES = {"device_matches_mode", "lips_follow_voice"}  # read the run's runtime.log and settings.ini, not the screen
+# read the screen's `listen` recording and settings.ini (tools/voice_checks.py), loaded only when a spec uses one
+HEARD = {"lines_in_english", "movie_voice"}
 # take the capture as `img=`
 INK_WIDTH = {"text_clear_of_quad", "text_clear_of_text", "text_within_edge", "text_within_box", "text_box",
              "text_within_safe_area"}
-SCREEN_KEYS = {"name", "route", "fixture", "battle", "script", "spawn", "keys", "notice", "wait", "assert"}
+SCREEN_KEYS = {"name", "route", "fixture", "battle", "movie", "script", "spawn", "keys", "notice", "wait", "lip_test", "listen",
+               "assert"}
 
 
 # ---- spec and runner -------------------------------------------------------
@@ -686,8 +698,14 @@ def load_spec(path: Path) -> list[dict]:
         extra = set(sc) - SCREEN_KEYS
         if extra or "name" not in sc or "route" not in sc:
             raise ValueError(f"screen {sc.get('name')!r}: needs name and route, unknown keys {sorted(extra)}")
+        if set(sc.get("listen", {})) - {"seconds", "scene", "stock"} or ("listen" in sc and "seconds" not in sc["listen"]):
+            raise ValueError(f"screen {sc['name']!r}: listen takes seconds, an optional scene and stock")
+        if sc.get("listen", {}).get("stock") and "scene" not in sc["listen"]:
+            raise ValueError(f"screen {sc['name']!r}: listen's stock pass replays a scene")
         for a in sc.get("assert", []):
-            if a.get("kind") not in ASSERTIONS:
+            if a.get("kind") in HEARD and "listen" not in sc:
+                raise ValueError(f"screen {sc['name']!r}: {a['kind']} needs the screen's listen recording")
+            if a.get("kind") not in ASSERTIONS and a.get("kind") not in HEARD:
                 raise ValueError(f"screen {sc['name']!r}: unknown assertion kind {a.get('kind')!r}")
             if a["kind"] == "text_box" and a.get("box") not in text_boxes.BOXES:
                 raise ValueError(f"screen {sc['name']!r}: unknown text box {a.get('box')!r}")
@@ -702,13 +720,19 @@ def load_spec(path: Path) -> list[dict]:
 def run_spec(screens: list[dict], driver, seen: dict | None = None) -> list[Row]:
     """Reach each screen through the driver, capture it, run its assertions; `seen` collects each screen's JSON
     and capture by screen name.
-    Driver: route(name, fixture=None, battle=None, script=None), keys(names), notice(text),
+    Driver: route(name, fixture=None, battle=None, script=None[, movie]), lip_test(stall, event_clock=False),
+    listen(seconds, scene=None, stock=False) -> dict (voice_checks reads it), keys(names),
+    notice(text),
     wait(cond: dict) -> bool, screen() -> dict, capture() -> path, spawn(count) -> dict (the harness's spawn reply)."""
     rows: list[Row] = []
     for sc in screens:
         name = sc["name"]
         try:
-            driver.route(sc["route"], fixture=sc.get("fixture"), battle=sc.get("battle"), script=sc.get("script"))
+            if sc.get("lip_test"):  # op 16, before the route: the scenes on the way stall in each voiced line
+                driver.lip_test(**sc["lip_test"])
+            driver.route(sc["route"], fixture=sc.get("fixture"), battle=sc.get("battle"), script=sc.get("script"),
+                         **({"movie": sc["movie"]} if "movie" in sc else {}))
+            heard = driver.listen(**sc["listen"]) if sc.get("listen") else None  # the game's audio, captions polled
             if sc.get("spawn"):  # enemy troops around the player; the row passes when that many more stand near
                 got = driver.spawn(sc["spawn"])
                 rows.append(Row(name, "spawn", got["spawned"] >= got["asked"]
@@ -721,7 +745,8 @@ def run_spec(screens: list[dict], driver, seen: dict | None = None) -> list[Row]
                 rows.append(Row(name, "wait", False, {"wait": sc["wait"]}, None))
                 continue
             data, png = driver.screen(), None
-            if any(ASSERTIONS[a["kind"]][1] or a["kind"] in INK_WIDTH for a in sc.get("assert", [])):
+            if any(a["kind"] not in HEARD and (ASSERTIONS[a["kind"]][1] or a["kind"] in INK_WIDTH)
+                   for a in sc.get("assert", [])):
                 png = str(driver.capture())
         except Exception as e:  # a failed route must not hide the other screens
             rows.append(Row(name, "reach", False, {"error": f"{type(e).__name__}: {e}"}, None))
@@ -731,10 +756,23 @@ def run_spec(screens: list[dict], driver, seen: dict | None = None) -> list[Row]
             seen[name] = (data, img)
         for a in sc.get("assert", []):
             params = {k: v for k, v in a.items() if k != "kind"}
+            if a["kind"] in HEARD:
+                import voice_checks
+
+                settings = Path(driver.root) / "game/wozmod/settings.ini"
+                try:
+                    c = getattr(voice_checks, a["kind"])(heard, settings.read_text() if settings.is_file() else "",
+                                                         **params)
+                except Exception as e:  # one screen's failed analysis must not hide the others
+                    c = Check(False, {"error": f"{type(e).__name__}: {e}"})
+                rows.append(Row(name, a["kind"], c.ok, c.numbers, None))
+                continue
             fn, needs_img = ASSERTIONS[a["kind"]]
             if a["kind"] in RUN_FILES:
                 files = Path(driver.root) / "game/wozmod"
-                c = fn((files / "runtime.log").read_text(errors="replace"), (files / "settings.ini").read_text(), **params)
+                settings = files / "settings.ini"  # absent with the installed defaults: no --setting staged it
+                c = fn((files / "runtime.log").read_text(errors="replace"),
+                       settings.read_text() if settings.is_file() else "", **params)
             else:
                 c = fn(data, img, **params) if needs_img else fn(data, **params, **({"img": img} if a["kind"] in INK_WIDTH else {}))
             rows.append(Row(name, a["kind"], c.ok, c.numbers, png if needs_img or a["kind"] in INK_WIDTH else None))

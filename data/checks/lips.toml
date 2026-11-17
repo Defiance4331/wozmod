@@ -1,0 +1,25 @@
+# Event mouths keep time with their voices (runtime/lip_clock.h): stage 40's opening event (217) plays with a 250 ms
+# stall 1 s into each voiced line, which left mouths on the event clock 2.9 to 5.9 lip frames behind the voice at the
+# lines' ends (run 2026-11-15_1733-check; a 100 ms stall left 0.4 to 1.6, under the report's 1 frame on one line). Run
+# with `tools/run_check.py data/checks/lips.toml` (a --test build). Each line's mouths are measured against the wall
+# clock its voice played for, not the samples the lip time is made from, so the check also goes red when the mouths
+# follow a wrong rate: a build reading twice the clip's rate left them 58 to 86 lip frames behind (run
+# 2026-11-16_0051-rf-lips-broken-rate). The same file with `event_clock = true` in lip_test leaves the mouths to the
+# event clock, as stock, and goes red.
+
+# The stall is armed before FIGHT, so every voiced line of the opening event gets one.
+[[screen]]
+name = "opening-event"
+route = "opening-event"
+battle = 40
+lip_test = { stall = 250 }
+
+# The event plays out to the battle; then runtime.log holds each stalled line and any line whose mouths ended off
+# their voice.
+[[screen]]
+name = "after-opening-event"
+route = "battle"
+battle = 40
+
+  [[screen.assert]]
+  kind = "lips_follow_voice"
