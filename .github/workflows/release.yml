@@ -36,11 +36,6 @@ jobs:
         with:
           workspaces: native
 
-      - uses: actions/cache@v4
-        with:
-          path: build/packaging/cache
-          key: ffmpeg-${{ matrix.os }}-${{ hashFiles('packaging/ffmpeg.json') }}
-
       - name: Fetch d3d9.dll and lettering.zip from the draft release
         shell: bash
         run: gh release download "$GITHUB_REF_NAME" --dir assets --pattern d3d9.dll --pattern lettering.zip

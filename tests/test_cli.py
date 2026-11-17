@@ -161,3 +161,25 @@ def test_the_bundle_carries_the_frame_rate_catalogue_the_game_check_reads():
     repo_sites = true_rate.load(Path(__file__).resolve().parents[1] / "data/true_rate")
     assert repo_sites and true_rate.load() == repo_sites
     assert true_rate.load_slots() == true_rate.load_slots(Path(__file__).resolve().parents[1] / "data/true_rate")
+
+
+@pytest.mark.parametrize("argv, opened", [
+    (["wozmod", cli.SETUP_WINDOW], "window"),
+    (["wozmod"], "command line"),  # the menu, as before
+    (["wozmod", "install", cli.SETUP_WINDOW], "command line"),
+])
+def test_the_release_program_opens_the_window_only_as_wozmod_setup_starts_it(monkeypatch, argv, opened):
+    # Bug: wozmod-setup passes an argument the program does not take, so a double-click ends in a usage error with
+    # no window; or plain `wozmod` opens the window instead of the command line.
+    from wozmod import window
+
+    monkeypatch.setattr(window, "main", lambda: "window")
+    monkeypatch.setattr(cli, "main", lambda: "command line")
+    monkeypatch.setattr(sys, "argv", argv)
+    assert cli.program() == opened
+
+
+def test_the_windows_launcher_starts_the_window_with_the_argument_the_program_takes():
+    # Bug: the launcher (C) and the program disagree on the argument, so wozmod-setup.exe opens nothing.
+    source = (Path(__file__).resolve().parents[1] / "packaging/setup_launcher.c").read_text()
+    assert f'L"\\"%ls\\" {cli.SETUP_WINDOW}"' in source

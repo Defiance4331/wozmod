@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import zipfile
 from contextlib import nullcontext
@@ -40,8 +39,8 @@ def test_bundle_round_trip_cannot_drop_edge_pixels_or_layer_metrics(tmp_path):
     with zipfile.ZipFile(first) as archive:
         assert set(archive.namelist()) == {
             "index.json", "glyph-outlines.json",
-            "layers/" + hashlib.sha256(b"mask/full").hexdigest() + ".png",
-            "layers/" + hashlib.sha256(b"label/squish").hexdigest() + ".png",
+            "layers/" + hashlib.sha256(b"mask/full").hexdigest() + ".raw",
+            "layers/" + hashlib.sha256(b"label/squish").hexdigest() + ".raw",
         }
 
 
@@ -64,7 +63,7 @@ def test_bundle_bytes_cannot_change_with_layer_input_order(tmp_path):
     ("duplicate_logical_key", "duplicate layer key"),
     ("wrong_declared_mode", "mode or size mismatch"),
     ("wrong_declared_size", "mode or size mismatch"),
-    ("non_png_layer", "not a PNG"),
+    ("truncated_layer", "mode or size mismatch"),
     ("missing_index", "missing bundle index"),
     ("duplicate_json_field", "duplicate JSON key"),
     ("boolean_format_version", "format version"),
@@ -83,7 +82,7 @@ def test_bundle_corruption_cannot_silently_ship_a_dropped_or_wrong_layer(tmp_pat
         members = [(name, data) for name, data in members if name != row["path"]]
     elif bug == "misnamed_layer":
         previous = row["path"]
-        row["path"] = "layers/misnamed.png"
+        row["path"] = "layers/misnamed.raw"
         members = [(row["path"] if name == previous else name, data) for name, data in members]
     elif bug == "wrong_layer_hash":
         row["sha256"] = "0" * 64
@@ -92,7 +91,7 @@ def test_bundle_corruption_cannot_silently_ship_a_dropped_or_wrong_layer(tmp_pat
     elif bug == "wrong_recipe_identity":
         index["recipe_sha256"] = "2" * 64
     elif bug == "extra_layer":
-        members.append(("layers/unlisted.png", members[1][1]))
+        members.append(("layers/unlisted.raw", members[1][1]))
     elif bug == "duplicate_zip_member":
         members.append(members[1])
     elif bug == "duplicate_logical_key":
@@ -101,12 +100,9 @@ def test_bundle_corruption_cannot_silently_ship_a_dropped_or_wrong_layer(tmp_pat
         row["mode"] = "RGB"
     elif bug == "wrong_declared_size":
         row["size"][0] += 1
-    elif bug == "non_png_layer":
-        stream = io.BytesIO()
-        Image.new("RGB", (2, 1)).save(stream, format="BMP")
-        data = stream.getvalue()
+    elif bug == "truncated_layer":  # a layer one pixel short, under a hash that matches it
+        data = dict(members)[row["path"]][:-1]
         row["sha256"] = hashlib.sha256(data).hexdigest()
-        row["mode"], row["size"] = "RGB", [2, 1]
         members = [(name, data if name == row["path"] else payload) for name, payload in members]
     elif bug == "missing_index":
         members = members[1:]

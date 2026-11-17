@@ -1,9 +1,10 @@
 """Build wozmod-<version>-<windows|linux>.zip (the wozmod and wozmod-setup programs) for this platform.
 
     uv sync --extra native --group build
-    uv run python packaging/build.py --assets DIR
+    uv run python packaging/build.py --assets DIR --speech SPEECH
 
-DIR holds the release d3d9.dll and lettering.zip (see packaging/release_assets.py).
+DIR holds the release d3d9.dll and lettering.zip (see packaging/release_assets.py). SPEECH is the speech model folder
+(voices/phones.py MODEL, PocketSphinx's US English model); the zip carries it, so an install needs nothing more.
 Run it on the platform you build for: PyInstaller cannot cross-build.
 """
 
@@ -15,9 +16,7 @@ import json
 import shutil
 import subprocess
 import sys
-import tarfile
 import tomllib
-import urllib.request
 import zipfile
 from pathlib import Path
 
@@ -36,51 +35,47 @@ def sha256(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def pinned_download(pin: dict) -> Path:
-    """Download pin['url'] into the cache unless a file with pin['sha256'] is already there."""
-    cached = OUT / "cache" / pin["url"].rsplit("/", 1)[1]
-    if not cached.is_file() or sha256(cached) != pin["sha256"]:
-        cached.parent.mkdir(parents=True, exist_ok=True)
-        print(f"downloading {pin['url']}", flush=True)
-        with urllib.request.urlopen(pin["url"]) as reply, cached.open("wb") as stream:
-            shutil.copyfileobj(reply, stream)
-        if sha256(cached) != pin["sha256"]:
-            raise SystemExit(f"{cached.name} does not match its pinned SHA-256; update packaging/ffmpeg.json")
-    return cached
-
-
 def prepare_ffmpeg() -> Path:
-    """Unpack the pinned LGPL ffmpeg into BUILD/ffmpeg as bin/ (program and DLLs, or program) and lib/."""
-    archive = pinned_download(json.loads((ROOT / "packaging/ffmpeg.json").read_text())[PLATFORM])
-    target, unpacked = BUILD / "ffmpeg", BUILD / "ffmpeg-unpacked"
-    shutil.rmtree(target, ignore_errors=True)
-    shutil.rmtree(unpacked, ignore_errors=True)
-    if archive.suffix == ".zip":
-        with zipfile.ZipFile(archive) as bundle:
-            bundle.extractall(unpacked)
-    else:
-        with tarfile.open(archive) as bundle:
-            bundle.extractall(unpacked, filter="data")
-    (source,) = unpacked.iterdir()
-    (target / "bin").mkdir(parents=True)
+    """Our own static ffmpeg (packaging/ffmpeg/), as packaging/ffmpeg.json pins it. On Linux this builds it when it is
+    not there yet; for Windows, packaging/build_windows.sh builds it on the Linux host, because the build cannot run
+    under Wine."""
+    pin = json.loads((ROOT / "packaging/ffmpeg.json").read_text())[PLATFORM]
+    program = OUT / "ffmpeg" / PLATFORM / pin["file"]
+    if not WINDOWS and (not program.is_file() or sha256(program) != pin["sha256"]):
+        subprocess.run(["bash", str(ROOT / "packaging/ffmpeg/build.sh"), PLATFORM, str(program.parent)], check=True)
+    if not program.is_file() or sha256(program) != pin["sha256"]:
+        raise SystemExit(f"{program} is missing or is not the build packaging/ffmpeg.json pins: packaging/ffmpeg/"
+                         "build.sh builds it on Fedora; a new compiler needs a new pin (packaging/ffmpeg/README.md)")
+    return program
+
+
+def add_setup_launcher(stage: Path) -> None:
+    """wozmod-setup beside wozmod, which it starts in window mode: on Windows the small windowed launcher
+    packaging/build_windows.sh builds (packaging/setup_launcher.c), on Linux a script."""
+    sys.path.insert(0, str(ROOT / "src"))
+    from wozmod.__main__ import SETUP_WINDOW
+
     if WINDOWS:
-        for path in (source / "bin").iterdir():
-            if path.name == "ffmpeg.exe" or path.suffix == ".dll":
-                shutil.copy2(path, target / "bin" / path.name)
+        launcher = OUT / "launcher/wozmod-setup.exe"
+        if not launcher.is_file():
+            raise SystemExit(f"{launcher} is missing: packaging/build_windows.sh builds it")
+        shutil.copy2(launcher, stage / SETUP)
     else:
-        shutil.copy2(source / "bin/ffmpeg", target / "bin/ffmpeg")
-        (target / "lib").mkdir()
-        for path in (source / "lib").glob("lib*.so.[0-9]*"):  # the soname links; copy2 follows them
-            if path.name.count(".") == 2:
-                shutil.copy2(path, target / "lib" / path.name)
-    shutil.copy2(source / "LICENSE.txt", BUILD / "ffmpeg-LICENSE.txt")
-    shutil.rmtree(unpacked)
-    program = target / "bin" / ("ffmpeg.exe" if WINDOWS else "ffmpeg")
-    for flag, wanted in (("-decoders", " xma2 "), ("-encoders", " libvorbis ")):
-        listing = subprocess.run([program, "-hide_banner", flag], capture_output=True, text=True, check=True).stdout
-        if wanted not in listing:
-            raise SystemExit(f"the pinned ffmpeg lacks{wanted}({flag[1:]}); pick another build")
-    return target
+        (stage / SETUP).write_text(f'#!/bin/sh\nexec "$(dirname "$0")/wozmod" {SETUP_WINDOW}\n')
+        (stage / SETUP).chmod(0o755)
+
+
+def add_speech_model(source: Path, stage: Path) -> None:
+    """The pinned speech model files, and only those, at _internal/speech/ (where the release looks for them)."""
+    sys.path.insert(0, str(ROOT / "src"))
+    from wozmod.voices.phones import MODEL, model_problem
+
+    if problem := model_problem(source):
+        raise SystemExit(f"{source}: {problem}")
+    for name in MODEL:
+        target = stage / "_internal/speech" / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source / name, target)
 
 
 def check_assets(assets: Path) -> None:
@@ -109,6 +104,7 @@ def write_step_keys(folder: Path) -> Path:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--assets", type=Path, required=True, help="folder with d3d9.dll and lettering.zip")
+    parser.add_argument("--speech", type=Path, required=True, help="the speech model folder (voices/phones.py MODEL)")
     parser.add_argument("--tag", help="the release tag (for example v0.1.0); it must match the version in pyproject.toml")
     args = parser.parse_args()
     version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
@@ -117,7 +113,7 @@ def main() -> int:
     check_assets(args.assets)
     import wozmod_native  # noqa: F401  the release must carry the Rust codecs (uv sync --extra native)
 
-    prepare_ffmpeg()
+    ffmpeg = prepare_ffmpeg()
     subprocess.run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--distpath", str(BUILD / "dist"),
                     "--workpath", str(BUILD / "work"), str(ROOT / "packaging/wozmod.spec")], check=True)
 
@@ -125,14 +121,18 @@ def main() -> int:
     stage = BUILD / "stage" / name
     shutil.rmtree(BUILD / "stage", ignore_errors=True)
     shutil.copytree(BUILD / "dist/wozmod", stage, symlinks=True)
-    shutil.copytree(BUILD / "ffmpeg", stage / "_internal/ffmpeg")
+    (stage / "_internal/ffmpeg/bin").mkdir(parents=True)
+    shutil.copy2(ffmpeg, stage / "_internal/ffmpeg/bin" / ("ffmpeg.exe" if WINDOWS else "ffmpeg"))  # resources.ffmpeg()
     for file in (args.assets / "d3d9.dll", args.assets / "lettering.zip"):
         shutil.copy2(file, stage / "_internal")  # players see only the programs and the licences
     write_step_keys(stage / "_internal")
+    add_speech_model(args.speech, stage)
+    add_setup_launcher(stage)
     shutil.copy2(ROOT / "LICENSE", stage)
     (stage / "licenses").mkdir()
-    shutil.copy2(BUILD / "ffmpeg-LICENSE.txt", stage / "licenses")
     shutil.copy2(ROOT / "packaging/FFMPEG-NOTICE.txt", stage / "licenses")
+    for licence in sorted((ROOT / "packaging/ffmpeg/licenses").iterdir()):  # FFmpeg's, libogg's and libvorbis's
+        shutil.copy2(licence, stage / "licenses")
     shutil.copy2(ROOT / "packaging/POCKETSPHINX-NOTICE.txt", stage / "licenses")
 
     codecs = list((stage / "_internal").rglob("wozmod_native*"))

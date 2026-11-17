@@ -141,6 +141,14 @@ def _members(archive: zipfile.ZipFile, prefix: str = ""):
             yield prefix + name, data
 
 
+def _pinned_speech_file(name: str, data: bytes) -> bool:
+    """True for a release member under _internal/speech/ that is exactly the model file voices/phones.py pins."""
+    from wozmod.voices.phones import MODEL
+
+    _, _, inside = name.partition("/_internal/speech/")
+    return bool(inside) and MODEL.get(inside) == (len(data), hashlib.sha256(data).hexdigest())
+
+
 @pytest.mark.skipif(not os.environ.get("WOZMOD_RELEASE"), reason="set WOZMOD_RELEASE to release zips (os.pathsep list)")
 def test_release_zips_carry_no_game_files_or_game_text() -> None:
     # Bug: a build output with game content (a texture, voice bank or archive entry, or a data file holding
@@ -150,6 +158,8 @@ def test_release_zips_carry_no_game_files_or_game_text() -> None:
         with zipfile.ZipFile(release) as archive:
             for name, data in _members(archive):
                 suffix = Path(name).suffix.lower()
+                if _pinned_speech_file(name, data):
+                    continue  # PocketSphinx's own model, byte for byte as voices/phones.py pins it
                 if suffix in PAYLOAD_SUFFIXES - {".dll", ".exe", ".png", ".zip"}:
                     offending.append(f"{release}!{name}")
                 elif suffix in (".json", ".md", ".txt", ".ini"):  # our data; third-party .msg/.enc may hold Japanese

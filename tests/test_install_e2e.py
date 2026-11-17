@@ -44,7 +44,7 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture(scope="module")
 def release_files(tmp_path_factory) -> dict[str, Path]:
     """d3d9.dll and lettering.zip built from this checkout by the release's own build, and the speech model folder
-    the release downloads, by installer flag."""
+    the release carries, by installer flag."""
     spec = importlib.util.spec_from_file_location("release_assets", REPO / "packaging/release_assets.py")
     release_assets = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(release_assets)
@@ -54,7 +54,20 @@ def release_files(tmp_path_factory) -> dict[str, Path]:
 
 
 @pytest.fixture(scope="module")
-def installed(release_files):
+def release_ffmpeg(tmp_path_factory) -> Path:
+    """A folder whose ffmpeg is the one the release carries (packaging/ffmpeg.json), built when it is missing.
+    Bug: the install runs this machine's ffmpeg, so its time is not a player's (Fedora's, with 287 shared libraries
+    loaded at every start, made the full install 410 s instead of 280)."""
+    spec = importlib.util.spec_from_file_location("build", REPO / "packaging/build.py")
+    build = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(build)
+    folder = tmp_path_factory.mktemp("ffmpeg")
+    (folder / "ffmpeg").symlink_to(build.prepare_ffmpeg())
+    return folder
+
+
+@pytest.fixture(scope="module")
+def installed(release_files, release_ffmpeg):
     """One install into a copy of the stock game: (game copy, install command, seconds, log lines, _snapshot)."""
     # Bug: the checkout builds another d3d9.dll or lettering.zip than the one its pin names (the runtime or the
     # lettering changed and the pin did not), so a release from it refuses its own files. The installer would say
@@ -70,10 +83,13 @@ def installed(release_files):
         shutil.rmtree(folder, ignore_errors=True)
         folder.mkdir()
         stopped = signal.signal(signal.SIGTERM, signal.default_int_handler)  # a stopped run cleans up too
+        path = os.environ["PATH"]
+        os.environ["PATH"] = f"{release_ffmpeg}{os.pathsep}{path}"  # every install here runs the release's ffmpeg
         try:
             game, command, seconds, log = _install(folder / "game", release_files)
             yield game, command, seconds, log, _snapshot(game)
         finally:
+            os.environ["PATH"] = path
             signal.signal(signal.SIGTERM, stopped)
             shutil.rmtree(folder)
 

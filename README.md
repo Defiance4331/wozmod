@@ -256,7 +256,7 @@ Python code, and builds the same files.
 
 To build the release zip for your system, run
 `uv sync --extra native --group build`, then
-`uv run python packaging/build.py --assets <folder with d3d9.dll and lettering.zip>`.
+`uv run python packaging/build.py --assets <folder with d3d9.dll and lettering.zip> --speech <speech model folder>`.
 `packaging/release_assets.py` makes those two files and puts them on a draft
 GitHub release for the tag. Make that draft first: pushing a `v*` tag runs
 the release workflow in `.github/workflows/`, which takes the two files from

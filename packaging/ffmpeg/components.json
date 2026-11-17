@@ -1,0 +1,48 @@
+{
+ "demuxer": [
+  "asf",
+  "f32le",
+  "ogg",
+  "vag",
+  "wav"
+ ],
+ "muxer": [
+  "asf",
+  "f32le",
+  "ogg",
+  "s16le"
+ ],
+ "decoder": [
+  "adpcm_psx",
+  "atrac3plus",
+  "pcm_f32le",
+  "vorbis",
+  "wmapro",
+  "wmav2",
+  "xma1",
+  "xma2"
+ ],
+ "encoder": [
+  "libvorbis",
+  "pcm_f32le",
+  "pcm_s16le",
+  "wmav2"
+ ],
+ "filter": [
+  "aformat",
+  "anull",
+  "aresample",
+  "asetpts",
+  "atrim",
+  "pan",
+  "volume"
+ ],
+ "protocol": [
+  "file",
+  "pipe"
+ ],
+ "library": [
+  "libsoxr",
+  "libvorbis"
+ ]
+}

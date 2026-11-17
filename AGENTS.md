@@ -38,6 +38,8 @@ copies.
 
 ## Inputs and the game
 
+- Outside pieces ship inside the zip: an install downloads nothing
+  (`tests/test_no_downloads.py`).
 - Stock and donor files are read-only inputs. Extract and build only under
   `work/`.
 - Donor priority, per item: menu art and cinematics use WO2 X360, then

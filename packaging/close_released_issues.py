@@ -20,6 +20,9 @@ import subprocess
 import sys
 
 REPORTED = re.compile(r"^Reported in (#\d+.*)$", re.MULTILINE)
+# A wozmod release's tag. Any other release on the page (a test build, a tool) holds no wozmod fix, so publishing it
+# closes nothing.
+VERSION_TAG = re.compile(r"v\d+\.\d+\.\d+")
 
 
 def reported_issues(messages: str) -> list[int]:
@@ -46,6 +49,9 @@ def main(argv: list[str]) -> int:
     if len(argv) != 2:
         sys.exit("usage: close_released_issues.py TAG RELEASE_URL")
     tag, url = argv
+    if not VERSION_TAG.fullmatch(tag):
+        print(f"{tag} is not a wozmod version, so its release fixes no issue.")
+        return 0
     repo = os.environ.get("GITHUB_REPOSITORY") or sys.exit("GITHUB_REPOSITORY is not set (OWNER/REPO).")
     failed = False
     for number in reported_issues(release_messages(tag)):

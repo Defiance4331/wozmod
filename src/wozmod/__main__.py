@@ -146,6 +146,19 @@ def main(argv=None) -> int:
         return 1
 
 
-if __name__ == "__main__":
+# How wozmod-setup opens the setup window in the release: it starts this program with only this argument
+# (packaging/setup_launcher.c on Windows, the wozmod-setup script on Linux), so one copy of the code serves both.
+SETUP_WINDOW = "--setup-window"
+
+
+def program() -> int:
+    """The release's wozmod program: the command line, or the setup window when wozmod-setup starts it."""
     multiprocessing.freeze_support()  # a packaged program starts its spawned workers through here
-    raise SystemExit(main())
+    if sys.argv[1:] == [SETUP_WINDOW]:
+        from wozmod import window
+        return window.main()
+    return main()
+
+
+if __name__ == "__main__":
+    raise SystemExit(program())

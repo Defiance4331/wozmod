@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "packaging/close_released_issues.py"
-URL = "https://example.invalid/releases/tag/v2"
+URL = "https://example.invalid/releases/tag/v2.0.0"
 
 # A stand-in for gh: answers `gh api repos/R/issues/N` from issues.json, and records `gh issue close` in it.
 FAKE_GH = """\
@@ -46,16 +46,18 @@ def _commit(repo: Path, message: str) -> None:
 def test_publishing_closes_each_open_issue_the_release_fixes_once(tmp_path: Path) -> None:
     # Bug: the commit range starts at the wrong tag (so #5, fixed in v1 and reopened, is closed again, or this
     # release's issues are missed), a bare mention or a pull request gets closed, one unreadable number stops the
-    # rest, or a rerun comments twice.
+    # rest, or a rerun comments twice; or publishing a release that is not a version closes the fixes still
+    # waiting for the next version, linking the wrong release.
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-q", "-b", "main")
     _commit(repo, "Fix the first crash\n\nReported in #5")
-    _git(repo, "tag", "v1")
+    _git(repo, "tag", "v1.0.0")
     _commit(repo, "Fix two crashes\n\nSee #9 for the history.\n\nReported in #3 and #4")
     _commit(repo, "Fix a slowdown\n\nReported in #7, #8, #6")
-    _git(repo, "tag", "v2")
+    _git(repo, "tag", "v2.0.0")
     _commit(repo, "Fix after the release\n\nReported in #10")
+    _git(repo, "tag", "tools")  # another release on the page, published before the next version
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -69,11 +71,14 @@ def test_publishing_closes_each_open_issue_the_release_fixes_once(tmp_path: Path
     (bin_dir / "issues.json").write_text(json.dumps(issues))
 
     run_env = {**GIT_ENV, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "GITHUB_REPOSITORY": "o/r"}
-    runs = [subprocess.run([sys.executable, str(SCRIPT), "v2", URL], cwd=repo, env=run_env,
+    other = subprocess.run([sys.executable, str(SCRIPT), "tools", URL.replace("v2.0.0", "tools")], cwd=repo,
+                             env=run_env, capture_output=True, text=True)
+    assert other.returncode == 0 and json.loads((bin_dir / "issues.json").read_text()) == issues
+    runs = [subprocess.run([sys.executable, str(SCRIPT), "v2.0.0", URL], cwd=repo, env=run_env,
                            capture_output=True, text=True) for _ in range(2)]
 
     after = json.loads((bin_dir / "issues.json").read_text())
     closed = {n: issue.get("comments") for n, issue in after.items() if issue["state"] == "closed"}
-    assert closed == {"3": [f"Fixed in v2: {URL}"], "4": [f"Fixed in v2: {URL}"], "8": None}
+    assert closed == {"3": [f"Fixed in v2.0.0: {URL}"], "4": [f"Fixed in v2.0.0: {URL}"], "8": None}
     # The missing #6 fails the run, so a mistyped number is seen, after the other issues are closed.
     assert [run.returncode for run in runs] == [1, 1]

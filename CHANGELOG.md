@@ -13,6 +13,11 @@ All notable changes to wozmod are listed here, newest first. The format follows
 - The two Dream Mode movies play the English voices of Warriors Orochi 2 for PSP over the PC's own high-resolution
   picture and music.
 
+### Changed
+
+- The download is about three times smaller: 40 MB instead of 133 MB on Windows, and 46 MB instead of 161 MB on
+  Linux. It still holds everything the install needs, so an install downloads nothing.
+
 ### Fixed
 
 - Each English attack shout now plays at the volume its own game gave it. Before, it kept the volume set for the
