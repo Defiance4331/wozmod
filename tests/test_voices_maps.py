@@ -319,7 +319,7 @@ def test_only_the_reviewed_lines_keep_their_japanese_voice(stock_maps):
 
     _, one, two, three, moz, _ = stock_maps
     listed = {(row["line"], row["voice"]) for row in json.loads(
-        (Path(__file__).resolve().parents[1] / "data/text/japanese_voices.json").read_text())["lines"]}
+        (Path(__file__).resolve().parents[1] / "data/text/japanese_voices.json").read_text(encoding="utf-8"))["lines"]}
     japanese = {(f"{o}.{i}", voice) for o, script in moz.items() for i, ids in stage_line_voices(o, script).items()
                 for voice in ids if voice not in one and voice not in two and voice not in three}
     differing = sorted(f"{line} voice {voice}: " + ("lost its English clip" if (line, voice) in japanese

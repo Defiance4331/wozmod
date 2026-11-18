@@ -20,16 +20,15 @@ from pathlib import Path
 
 from wozmod import resources
 from wozmod.formats import pe
+from wozmod.game_files import ARCHIVES, EXE, VOICE, VOICE_INDEX, clip_span
 from wozmod.formats.linkdata import LZP2_MAGIC, Archive, ArchiveError, align, decoded_member, parse_index, parse_lzp2
 from wozmod.install import step_keys
+from wozmod.install.steps import STEPS as _REGISTRY
 
 PIECES = resources.root() / "data/stock_pieces.json"
-STEPS = ("text", "voices", "art")  # the installer's build steps (install._build), in the order messages name them
+STEPS = tuple(_REGISTRY)  # the installer's build steps, in the order messages name them
 PURPOSE = {"text": "text", "voices": "voices", "art": "menu art"}
-EXE, VOICE = "OROCHI_Z.exe", "data/Sound/Voice/Voice.bin"
-ARCHIVES = ("LINKDATA1", "LINKDATA2")
 NEEDED = (EXE, "LINKDATA1.IDX", "LINKDATA1.BIN", "LINKDATA2.IDX", "LINKDATA2.BIN", VOICE)
-VOICE_INDEX = 4058  # LINKDATA1: (u32 offset, u32 size) big-endian at 8 + 8 * clip, for each Voice.bin clip
 # The OROCHI_Z.exe of the 1.01 update, told by its PE header: linked 2010-01-26 07:28:39 UTC, SizeOfImage 0x1194000
 # (1.00's is in the pieces file). The update's LINKDATA4 beside a 1.00 exe changes nothing wozmod reads.
 UPDATE_101 = (0x4B5E99A7, 0x1194000)
@@ -276,10 +275,10 @@ def _changed_clips(game: Path, index, pieces: list[Piece]) -> list[Piece]:
     changed = []
     with (game / VOICE).open("rb") as stream:
         for piece in sorted(pieces, key=lambda p: p.at):
-            if 8 + 8 * piece.at + 8 > len(table):
+            if (span := clip_span(table, piece.at)) is None:
                 changed.append(piece)
                 continue
-            offset, size = struct.unpack_from(">II", table, 8 + 8 * piece.at)
+            offset, size = span
             stream.seek(offset)
             if step_keys.digest(stream.read(size)) != piece.sha256:
                 changed.append(piece)

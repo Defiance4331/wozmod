@@ -10,7 +10,6 @@ from __future__ import annotations
 import hashlib
 import io
 import itertools
-import os
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -25,7 +24,6 @@ from wozmod.donors import ProgramIdentity
 from synthetic import speech_model
 from test_donors_programs import ENCRYPTED, PAYLOAD as DECRYPTED, fake
 
-pytestmark = pytest.mark.skipif(os.name == "nt", reason="the fake programs are scripts with a #! line")
 
 NEITHER = "Pick a decryption program, or a decrypted file under Advanced."
 IMAGE_FIRST = "Pick the right disc image first."

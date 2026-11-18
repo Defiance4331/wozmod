@@ -505,7 +505,7 @@ def stock_layout(screen: dict, img: Image.Image, stock: str, allow: list[list[st
     import json
     import layout_rules  # imports this module, so not at the top
 
-    relations = json.loads(Path(structure).read_text()).get(stock) if Path(structure).is_file() else None
+    relations = json.loads(Path(structure).read_text(encoding="utf-8")).get(stock) if Path(structure).is_file() else None
     if not relations:
         return Check(False, {"error": f"no stock relations for {stock!r}; learn them on the stock game"})
     broken = layout_rules.check(screen, relations, img, {tuple(a) for a in allow})
@@ -761,7 +761,7 @@ def run_spec(screens: list[dict], driver, seen: dict | None = None) -> list[Row]
 
                 settings = Path(driver.root) / "game/wozmod/settings.ini"
                 try:
-                    c = getattr(voice_checks, a["kind"])(heard, settings.read_text() if settings.is_file() else "",
+                    c = getattr(voice_checks, a["kind"])(heard, settings.read_text(encoding="utf-8") if settings.is_file() else "",
                                                          **params)
                 except Exception as e:  # one screen's failed analysis must not hide the others
                     c = Check(False, {"error": f"{type(e).__name__}: {e}"})
@@ -771,8 +771,8 @@ def run_spec(screens: list[dict], driver, seen: dict | None = None) -> list[Row]
             if a["kind"] in RUN_FILES:
                 files = Path(driver.root) / "game/wozmod"
                 settings = files / "settings.ini"  # absent with the installed defaults: no --setting staged it
-                c = fn((files / "runtime.log").read_text(errors="replace"),
-                       settings.read_text() if settings.is_file() else "", **params)
+                c = fn((files / "runtime.log").read_text(errors="replace", encoding="utf-8"),
+                       settings.read_text(encoding="utf-8") if settings.is_file() else "", **params)
             else:
                 c = fn(data, img, **params) if needs_img else fn(data, **params, **({"img": img} if a["kind"] in INK_WIDTH else {}))
             rows.append(Row(name, a["kind"], c.ok, c.numbers, png if needs_img or a["kind"] in INK_WIDTH else None))

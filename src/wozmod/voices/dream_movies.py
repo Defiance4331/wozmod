@@ -21,7 +21,7 @@ from collections import Counter
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
-from wozmod import native, process, resources
+from wozmod import game_files, native, platform, resources
 from wozmod.formats.pmf import audio_tracks
 from wozmod.progress import report
 
@@ -86,7 +86,7 @@ def placed(english: bytes, lag: int, frames: int) -> bytes:
 
 def _ffmpeg(*arguments: str) -> bytes:
     command = [resources.ffmpeg() or "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", *arguments]
-    return process.run(command, capture_output=True, check=True, stdin=subprocess.DEVNULL).stdout
+    return platform.run_hidden(command, capture_output=True, check=True, stdin=subprocess.DEVNULL).stdout
 
 
 def decoded(source: Path, channels: int, before: tuple[str, ...] = (), skip: int = 0) -> bytes:
@@ -202,6 +202,6 @@ def build_dream_movies(stock: Path, psp: Path, output_dir: Path) -> dict[str, fl
     folder and the extracted WO2 PSP disc; return each movie's English gain."""
     if not hasattr(native.module, "xcorr_lag"):
         raise DreamMovieError("the Dream movies need the wozmod-native package (uv sync --extra native)")
-    return {name: build_dream_movie(name, (stock / "movie" / f"{name}.wmv").read_bytes(), (psp / source).read_bytes(),
+    return {name: build_dream_movie(name, game_files.whole(stock / "movie" / f"{name}.wmv"), (psp / source).read_bytes(),
                                     output_dir / "movie/voice" / f"{name}.wmv")
             for name, source in DREAM_MOVIES.items()}

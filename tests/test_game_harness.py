@@ -10,6 +10,7 @@ from itertools import pairwise
 import json
 import os
 import struct
+import sys
 import threading
 import time
 from pathlib import Path
@@ -21,11 +22,13 @@ import pytest
 from synthetic import pe_image
 
 
-SPEC = importlib.util.spec_from_file_location(
-    "game_harness", Path(__file__).resolve().parents[1] / "tools/game_harness.py",
-)
-harness = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(harness)
+pytestmark = pytest.mark.linux_only("the harness drives the game through gamescope, uinput and fcntl locks")
+if sys.platform == "linux":  # the harness imports fcntl, so elsewhere it cannot load
+    SPEC = importlib.util.spec_from_file_location(
+        "game_harness", Path(__file__).resolve().parents[1] / "tools/game_harness.py",
+    )
+    harness = importlib.util.module_from_spec(SPEC)
+    SPEC.loader.exec_module(harness)
 
 
 def _staged(game: Path) -> Path:
@@ -42,7 +45,7 @@ def test_control_round_trip(tmp_path, monkeypatch):
     The key defaults and a taken capture name have their own tests."""
     (tmp_path / "control").mkdir()
     (tmp_path / "evidence").mkdir()
-    (tmp_path / "launch.sh").write_text("exec sleep 60\n")
+    (tmp_path / "launch.sh").write_text("exec sleep 60\n", encoding="utf-8")
     monkeypatch.setenv("MUSOU_HARNESS_ROOT", str(tmp_path))
     monkeypatch.setenv("GAMESCOPE_WAYLAND_DISPLAY", "synthetic-test-only")
     monkeypatch.setattr(harness, "start_audio", lambda root: None)
@@ -87,7 +90,7 @@ def test_control_round_trip(tmp_path, monkeypatch):
     assert not (tmp_path / "control/ready.json").exists()
     records = [
         json.loads(line)
-        for line in (tmp_path / "evidence/actions.jsonl").read_text().splitlines()
+        for line in (tmp_path / "evidence/actions.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     assert records[-1]["request"]["action"] == "stop"
     assert harness.exit_record(tmp_path, 139, False)["reason"] == "stopped"
@@ -98,7 +101,7 @@ def _slot_runtime(tmp_path: Path, monkeypatch) -> Path:
     monkeypatch.setattr(checkout, "REPO", tmp_path)
     steamrt = tmp_path / "work/runtime-tests/_template/steamrt"
     steamrt.mkdir(parents=True)
-    (steamrt / "run").write_text("")
+    (steamrt / "run").write_text("", encoding="utf-8")
     return steamrt
 
 
@@ -107,7 +110,7 @@ def test_launch_boundaries_and_isolation(tmp_path, monkeypatch):
     root = tmp_path / "run"
     root.mkdir()
     game = _staged(root / "game")
-    (root / "launch.sh").write_text("exit 0\n")
+    (root / "launch.sh").write_text("exit 0\n", encoding="utf-8")
     args = argparse.Namespace(game=tmp_path, target=harness.TARGET, timeout=30, pad=False)
     with pytest.raises(ValueError, match="disposable"):
         harness.run(root, args)
@@ -137,7 +140,7 @@ def test_launch_boundaries_and_isolation(tmp_path, monkeypatch):
     assert binds == [[str(root), str(root)], [str(root / "tmp"), "/tmp"],
                      [str(root / "runtime"), f"/run/user/{harness.os.getuid()}"], [str(steamrt), str(steamrt)]]
     assert "PROTON_USE_XALIA" in command
-    assert json.loads((root / "evidence/session.json").read_text())["game"] == str(game)
+    assert json.loads((root / "evidence/session.json").read_text(encoding="utf-8"))["game"] == str(game)
     with pytest.raises(FileExistsError):
         harness.run(root, args)
 
@@ -147,7 +150,7 @@ def test_size_renders_and_outputs_unscaled(tmp_path, monkeypatch):
     _slot_runtime(tmp_path, monkeypatch)
     root = tmp_path / "work/runtime-tests/wide"
     game = _staged(root / "game")
-    (root / "launch.sh").write_text("exit 0\n")
+    (root / "launch.sh").write_text("exit 0\n", encoding="utf-8")
     calls = []
     monkeypatch.setattr(harness.subprocess, "Popen", lambda command, **kwargs: calls.append(command)
                         or SimpleNamespace(wait=lambda: 0, poll=lambda: 0, returncode=0))
@@ -157,7 +160,7 @@ def test_size_renders_and_outputs_unscaled(tmp_path, monkeypatch):
     for flag, value in (("-W", "3440"), ("-H", "1440"), ("-w", "3440"), ("-h", "1440")):
         assert command[command.index(flag) + 1] == value
     assert "-F" not in command
-    session = json.loads((root / "evidence/session.json").read_text())
+    session = json.loads((root / "evidence/session.json").read_text(encoding="utf-8"))
     assert session["render_size"] == session["output_size"] == [3440, 1440] and not session["fsr"]
 
 
@@ -172,8 +175,8 @@ def test_screen_refreshes_at_the_frame_rate_the_game_setting_asks_for(tmp_path, 
         game = _staged(root / "game")
         if ini:
             (game / "wozmod").mkdir(exist_ok=True)
-            (game / "wozmod/settings.ini").write_text(ini)
-        (root / "launch.sh").write_text("exit 0\n")
+            (game / "wozmod/settings.ini").write_text(ini, encoding="utf-8")
+        (root / "launch.sh").write_text("exit 0\n", encoding="utf-8")
         calls = []
         monkeypatch.setattr(harness.subprocess, "Popen", lambda command, **kwargs: calls.append(command)
                             or SimpleNamespace(wait=lambda: 0, poll=lambda: 0, returncode=0))
@@ -203,7 +206,7 @@ def test_xenia_launch_keeps_native_frame_and_save_inside_its_storage(tmp_path, m
     root = tmp_path / "work/xenia/runs/reference"
     game = root / "game"
     game.mkdir(parents=True)
-    (root / "launch.sh").write_text("exit 0\n")
+    (root / "launch.sh").write_text("exit 0\n", encoding="utf-8")
     calls = []
 
     def launch(command, **kwargs):
@@ -219,7 +222,7 @@ def test_xenia_launch_keeps_native_frame_and_save_inside_its_storage(tmp_path, m
     assert "-F" not in command
     for flag in ("--unshare-net", "--unshare-pid", "--unshare-ipc", "--die-with-parent"):
         assert flag in command
-    session = json.loads((root / "evidence/session.json").read_text())
+    session = json.loads((root / "evidence/session.json").read_text(encoding="utf-8"))
     assert session["render_size"] == session["output_size"] == [1280, 720]
     assert not session["fsr"]
     monkeypatch.setattr(harness, "send", lambda root, request, timeout: {"ok": True})
@@ -302,7 +305,7 @@ def test_pad_request_reaches_supervisor_and_reports_its_failure(tmp_path):
         request = tmp_path / "control/pad.json"
         while not request.exists():
             time.sleep(0.01)
-        taken.append(json.loads(request.read_text())["names"])
+        taken.append(json.loads(request.read_text(encoding="utf-8"))["names"])
         harness.write_json(tmp_path / "control/pad-done.json", {"error": error} if error else {})
         request.unlink()
 
@@ -525,7 +528,7 @@ def test_tour_checks_screens_and_diff(tmp_path):
         Image.new("L", (8, 8), shade).save(root / "evidence/tour-00-options.png")
         stop = {"name": "options", "png": "evidence/tour-00-options.png",
                 "screen": {"texts": [{"text": t} for t in texts]}, "checks": {}}
-        (root / "evidence/tour-report.json").write_text(json.dumps({"stops": [stop]}))
+        (root / "evidence/tour-report.json").write_text(json.dumps({"stops": [stop]}), encoding="utf-8")
         runs.append(root)
     same, = harness.tour_diff(runs[0], runs[0])
     assert not same["changed"] and same["image_change"] == 0
@@ -540,7 +543,7 @@ def test_ended_run_tells_a_crash_from_a_quit(tmp_path, monkeypatch, script, reas
     _slot_runtime(tmp_path, monkeypatch)
     root = tmp_path / "run"
     _staged(root / "game")
-    (root / "launch.sh").write_text(script)
+    (root / "launch.sh").write_text(script, encoding="utf-8")
     monkeypatch.setenv("MUSOU_HARNESS_ROOT", str(root))
     monkeypatch.setenv("GAMESCOPE_WAYLAND_DISPLAY", "synthetic-test-only")
     monkeypatch.setattr(harness, "start_audio", lambda root: None)
@@ -580,7 +583,7 @@ def test_server_reports_its_end_and_never_exits_into_gamescope(tmp_path, monkeyp
     monkeypatch.setattr(harness.time, "sleep", sleep)
     with pytest.raises(Held):
         harness.main(["_serve", "--root", str(root)])
-    assert json.loads((root / "control/serve-exit.json").read_text()) == {"returncode": 1}
+    assert json.loads((root / "control/serve-exit.json").read_text(encoding="utf-8")) == {"returncode": 1}
 
 
 def test_run_kills_the_sandbox_once_the_server_ends(tmp_path, monkeypatch):
@@ -588,7 +591,7 @@ def test_run_kills_the_sandbox_once_the_server_ends(tmp_path, monkeypatch):
     _slot_runtime(tmp_path, monkeypatch)
     root = tmp_path / "run"
     _staged(root / "game")
-    (root / "launch.sh").write_text("exit 0\n")
+    (root / "launch.sh").write_text("exit 0\n", encoding="utf-8")
     killed, polls = [], []
 
     def poll():
@@ -688,7 +691,7 @@ def test_route_resumes_where_it_left_and_stops_after_outside_input(tmp_path, mon
         sent.append(request)
         keys = request.get("keys") or [request.get("key")]
         at[0] = moves.get((at[0], tuple(keys)), at[0])
-        with journal.open("a") as stream:
+        with journal.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps({"request": request, "response": {"ok": True}}) + "\n")
         texture = (harness.ROUTE_SCREENS[at[0]] or {"texture": "none"})["texture"].split("|")[0]
         return {"ok": True, "texts": [], "windows": [], "textures": [{"texture": texture}]}
@@ -698,8 +701,8 @@ def test_route_resumes_where_it_left_and_stops_after_outside_input(tmp_path, mon
     monkeypatch.setattr(harness, "send", game)
     assert harness.route(tmp_path, "options") == 0 and at[0] == "options"
     assert harness.route(tmp_path, "game-settings") == 0 and at[0] == "game-settings"
-    assert json.loads((tmp_path / "evidence/route.json").read_text())["at"] == "game-settings"
-    with journal.open("a") as stream:  # someone presses Down by hand
+    assert json.loads((tmp_path / "evidence/route.json").read_text(encoding="utf-8"))["at"] == "game-settings"
+    with journal.open("a", encoding="utf-8") as stream:  # someone presses Down by hand
         stream.write(json.dumps({"request": {"action": "key", "key": "Down"}, "response": {"ok": True}}) + "\n")
     before = len(sent)
     assert harness.route(tmp_path, "options") == 1
@@ -835,14 +838,14 @@ def test_check_exits_one_and_reports_a_failed_row(tmp_path, monkeypatch):
     (tmp_path / "evidence").mkdir()
     spec = tmp_path / "spec.toml"
     spec.write_text('[[screen]]\nname = "two-lines"\nroute = "menu"\n'
-                    '[[screen.assert]]\nkind = "line_count"\nmax = 1\n')
+                    '[[screen.assert]]\nkind = "line_count"\nmax = 1\n', encoding="utf-8")
     drawn = {"texts": [{"text": "a\nb", "x": 10, "y": 10, "width": 40, "caller": "0x1"}],
              "textures": [], "windows": []}
     monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
     monkeypatch.setattr(harness, "route", lambda root, name, stage, movie=None: 0)
     monkeypatch.setattr(harness, "ask", lambda root, request: drawn)
     assert harness.check(tmp_path, spec) == 1
-    report = json.loads((tmp_path / "evidence/check-report.json").read_text())
+    report = json.loads((tmp_path / "evidence/check-report.json").read_text(encoding="utf-8"))
     assert [(row["screen"], row["assertion"], row["ok"]) for row in report["rows"]] == [
         ("two-lines", "line_count", False)]
 
@@ -965,7 +968,7 @@ def test_check_driver_keys_keep_the_route_position_only_while_its_screen_shows(t
         def ask(root, request):
             if request["action"] == "screen":
                 return {"texts": [], "textures": [{"texture": drawn, "caller": "0x1"}], "boxes": []}
-            with (root / "evidence/actions.jsonl").open("a") as journal:
+            with (root / "evidence/actions.jsonl").open("a", encoding="utf-8") as journal:
                 journal.write(json.dumps({"request": request}) + "\n")
             return {}
 
@@ -979,7 +982,7 @@ def test_every_committed_check_names_a_route_screen():
     import tomllib
 
     for spec in (Path(__file__).resolve().parents[1] / "data/checks").glob("*.toml"):
-        for screen in tomllib.loads(spec.read_text())["screen"]:
+        for screen in tomllib.loads(spec.read_text(encoding="utf-8"))["screen"]:
             assert screen["route"] in harness.ROUTE_SCREENS or screen["route"] == "menu", (spec.name, screen["name"])
 
 
@@ -1096,10 +1099,10 @@ def test_a_recording_made_while_the_game_ran_slow_is_flagged_and_a_full_speed_on
     for second in range(16):  # 60 fps for 10 s, then 40 fps for 5 s
         rows.append({"time": 1000.0 + second, "frames": frames})
         frames += 60 if second < 10 else 40
-    (tmp_path / "evidence/fps.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    (tmp_path / "evidence/fps.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
     actions = [{"time": 1001.0, "request": {"action": "video", "name": "fast", "seconds": 5}, "response": {"ok": True}},
                {"time": 1010.0, "request": {"action": "video", "name": "slow", "seconds": 5}, "response": {"ok": True}}]
-    (tmp_path / "evidence/actions.jsonl").write_text("".join(json.dumps(a) + "\n" for a in actions))
+    (tmp_path / "evidence/actions.jsonl").write_text("".join(json.dumps(a) + "\n" for a in actions), encoding="utf-8")
     assert harness.recordings_slow(tmp_path, 60) == ["slow"]
     assert harness.fps_summary(tmp_path, 60) == {"target": 60, "median": 60.0, "lowest": 40.0, "slow_seconds": 5,
                                                  "loading_seconds": 0, "seconds": 15}
@@ -1110,8 +1113,8 @@ def test_a_game_nobody_commands_stops_after_its_idle_limit(tmp_path, monkeypatch
     times out."""
     for folder in ("control", "evidence"):
         (tmp_path / folder).mkdir()
-    (tmp_path / "launch.sh").write_text("exec sleep 60\n")
-    (tmp_path / "evidence/session.json").write_text(json.dumps({"idle_seconds": 0.3}))
+    (tmp_path / "launch.sh").write_text("exec sleep 60\n", encoding="utf-8")
+    (tmp_path / "evidence/session.json").write_text(json.dumps({"idle_seconds": 0.3}), encoding="utf-8")
     monkeypatch.setenv("MUSOU_HARNESS_ROOT", str(tmp_path))
     monkeypatch.setenv("GAMESCOPE_WAYLAND_DISPLAY", "synthetic-test-only")
     began = time.monotonic()
@@ -1316,14 +1319,14 @@ def test_check_only_runs_the_named_screens_and_refuses_a_misspelt_one(tmp_path, 
     (tmp_path / "evidence").mkdir()
     spec = tmp_path / "spec.toml"
     spec.write_text("".join(f'[[screen]]\nname = "{n}"\nroute = "menu"\n[[screen.assert]]\nkind = "no_cjk"\n'
-                            for n in ("a", "b", "c")))
+                            for n in ("a", "b", "c")), encoding="utf-8")
     visited = []
     monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
     monkeypatch.setattr(harness, "route", lambda root, name, stage, movie=None: visited.append(name) or 0)
     monkeypatch.setattr(harness, "ask", lambda root, request: {"texts": [{"text": "x", "x": 0, "y": 0, "width": 1, "caller": "0x1"}],
                                                                "textures": [], "windows": []})
     assert harness.check(tmp_path, spec, ["c", "a"]) == 0
-    report = json.loads((tmp_path / "evidence/check-report.json").read_text())
+    report = json.loads((tmp_path / "evidence/check-report.json").read_text(encoding="utf-8"))
     assert report["order"] == ["a", "c"] and [r["screen"] for r in report["rows"]] == ["a", "c"]
     with pytest.raises(ValueError, match="no screen zz"):
         harness.check(tmp_path, spec, ["a", "zz"])
@@ -1336,7 +1339,7 @@ def test_check_learn_saves_each_screens_stock_relations_under_its_name_and_keeps
     (tmp_path / "evidence").mkdir()
     spec = tmp_path / "spec.toml"
     spec.write_text("".join(f'[[screen]]\nname = "{n}"\nroute = "menu"\n[[screen.assert]]\nkind = "no_cjk"\n'
-                            for n in ("a", "b")))
+                            for n in ("a", "b")), encoding="utf-8")
     shown = iter([{"x": 0, "y": 0, "width": 1, "height": 1}, {"x": 500, "y": 0, "width": 9, "height": 9}])
     monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
     monkeypatch.setattr(harness, "route", lambda root, name, stage, movie=None: 0)
@@ -1344,9 +1347,9 @@ def test_check_learn_saves_each_screens_stock_relations_under_its_name_and_keeps
         "texts": [{"text": "x", "x": 0, "y": 0, "width": 1, "caller": "0x1"}], "textures": [], "windows": [],
         "boxes": [{**next(shown), "caller": "0x2", "count": 1}]})
     structure = tmp_path / "structure.json"
-    structure.write_text(json.dumps({"z": [{"rule": "on_screen", "el": "box@0x9#0"}]}))
+    structure.write_text(json.dumps({"z": [{"rule": "on_screen", "el": "box@0x9#0"}]}), encoding="utf-8")
     harness.check(tmp_path, spec, learn=structure)
-    learned = json.loads(structure.read_text())
+    learned = json.loads(structure.read_text(encoding="utf-8"))
     place = {name: [r["rect"] for r in rels if r["rule"] == "place" and r["el"] == "box@0x2#0"]
              for name, rels in learned.items()}
     assert place == {"a": [[0, 0, 1, 1]], "b": [[500, 0, 509, 9]], "z": []}
@@ -1458,7 +1461,7 @@ def test_route_leaves_a_gallery_movie_between_two_captions_and_keeps_its_place_a
     monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
     assert harness.route(tmp_path, "gallery-movies") == 0 and "key" in sent
     journal = tmp_path / "evidence/actions.jsonl"
-    journal.write_text(json.dumps({"request": {"action": "unlock"}, "response": {"ok": True}}) + "\n")
+    journal.write_text(json.dumps({"request": {"action": "unlock"}, "response": {"ok": True}}) + "\n", encoding="utf-8")
     assert harness.route_position(tmp_path) == "gallery-movies"
 
 
@@ -1500,12 +1503,12 @@ def test_staged_run_sees_the_template_prefix_through_an_overlay_on_its_own_folde
     monkeypatch.setattr(checkout, "REPO", tmp_path)
     root = tmp_path / "work/runtime-tests/overlay"
     _staged(root / "game")
-    (root / "launch.sh").write_text("exit 0\n")
+    (root / "launch.sh").write_text("exit 0\n", encoding="utf-8")
     template = tmp_path / "work/runtime-tests/_template"
     (template / "steamrt").mkdir(parents=True)
-    (template / "steamrt/run").write_text("")
+    (template / "steamrt/run").write_text("", encoding="utf-8")
     overlays = {"prefix": str(template / "prefix")}
-    (root / "fixtures.json").write_text(json.dumps({**json.loads((root / "fixtures.json").read_text()), "overlays": overlays}))
+    (root / "fixtures.json").write_text(json.dumps({**json.loads((root / "fixtures.json").read_text(encoding="utf-8")), "overlays": overlays}), encoding="utf-8")
     calls = []
     monkeypatch.setattr(harness.subprocess, "Popen", lambda command, **kwargs: calls.append(command) or
                         SimpleNamespace(wait=lambda: 0, poll=lambda: 0, returncode=0))
@@ -1564,7 +1567,7 @@ def test_two_games_at_once_each_run_their_own_writable_steam_runtime(tmp_path, m
     template = tmp_path / "work/runtime-tests/_template"
     for runtime in harness.RUNTIMES:
         (template / runtime).mkdir(parents=True)
-        (template / runtime / "run").write_text("")
+        (template / runtime / "run").write_text("", encoding="utf-8")
     calls = []
     monkeypatch.setattr(harness.subprocess, "Popen", lambda command, **kwargs: calls.append(command) or
                         SimpleNamespace(wait=lambda: 0, poll=lambda: 0, returncode=0))
@@ -1573,7 +1576,7 @@ def test_two_games_at_once_each_run_their_own_writable_steam_runtime(tmp_path, m
     for name in ("first", "second"):  # the first game still holds slot 0 when the second launches
         root = tmp_path / "work/runtime-tests" / name
         _staged(root / "game")
-        (root / "launch.sh").write_text("exit 0\n")
+        (root / "launch.sh").write_text("exit 0\n", encoding="utf-8")
         harness.main(["run", "--root", str(root), "--game", str(root / "game"),
                       "--target", harness.TARGET])
         held = held or harness.take_slot("first")[0]
@@ -1720,9 +1723,9 @@ def test_reenumerate_unlinks_one_identity_and_links_the_other(tmp_path):
     assert got == {"pad": "8bitdo", "index": 1}
     assert not first.exists()
     assert second.is_symlink() and second.readlink() == hide_b
-    session = json.loads((tmp_path / "evidence/session.json").read_text())
+    session = json.loads((tmp_path / "evidence/session.json").read_text(encoding="utf-8"))
     assert session["pad"] == str(second) and session["pad_active"] == 1
-    assert json.loads((tmp_path / "control/pad-active.json").read_text()) == {"index": 1}
+    assert json.loads((tmp_path / "control/pad-active.json").read_text(encoding="utf-8")) == {"index": 1}
     harness.plug_pad(tmp_path, False)
     assert not second.exists()
     harness.plug_pad(tmp_path, True)

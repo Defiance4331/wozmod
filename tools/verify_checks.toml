@@ -1,0 +1,89 @@
+# The slow checks a change needs, for tools/verify.py, which reads this file from the merge base with main (a change
+# cannot edit the list that judges it).
+#
+# Each row: when the diff from the merge base touches a path matching one of `paths` (fnmatch: `*` also matches `/`),
+# tools/verify.py prints the row, and `tools/verify.py --triggered` runs it under the machine lock: `run` is pytest
+# paths or node ids (strict, every slow switch on), or `ref STEP` (a reference build and its readers). `alone` runs
+# the row by itself, on one worker, after the others (a time budget). `from` cites the incident or commit behind it;
+# a row with nothing to cite does not belong here. Prune a row whose check has not gone red in a long while.
+
+[[row]]
+name = "DLL pin and runtime builds"
+paths = ["runtime/*", "src/wozmod/runtime/*", "data/true_rate/*"]
+run = ["tests/test_install_pins.py", "tests/test_runtime_build.py", "tests/test_runtime_guards.py",
+       "tests/test_runtime_crash_log.py", "tests/test_install_stock.py", "tests/test_text_contexts.py"]
+from = """AGENTS.md Testing (the DLL pin in tests/test_install_pins.py after a runtime change). #11 (88e0639), #12
+(e4fed46) and #18 (bf81034) changed runtime/ and src/wozmod/runtime/guards.py; #20 (4bbb7f9) changed data/true_rate/,
+which the DLL build reads (src/wozmod/runtime/true_rate.py). e348400: the crash-log tests timed out in the release
+run. fffde95: a compiler update changes the pin too, which no path shows: run this row after one."""
+
+[[row]]
+name = "the install end to end, timed"
+paths = ["src/wozmod/install/*", "src/wozmod/donors/*", "src/wozmod/discs/*", "src/wozmod/platform/*",
+         "src/wozmod/__main__.py", "src/wozmod/window.py", "packaging/*"]
+run = ["tests/test_install_e2e.py"]
+alone = true
+from = """tools/verify.sh ran it last and alone, for its 300 s budget. 25b6ae9 (file access on Windows) and 8f20076 (the
+smaller download) changed install/, donors/ and packaging/; units 4a and 4b proved the read gate on it."""
+
+[[row]]
+name = "step keys and stock pieces"
+paths = ["src/wozmod/install/*", "src/wozmod/game_files.py", "tools/stock_pieces.py", "data/stock_pieces.json"]
+run = ["ref text", "ref voices", "ref art"]
+from = """The stale stock-pieces call: tools/stock_pieces.py called _voice_banks with 4 of its 5 arguments and nothing ran
+it (work/handbacks/slow-survey.md); the references' readers hold the record to what the builds read. 9259ead changed
+tests/test_step_keys.py and tests/test_stock_pieces.py."""
+
+[[row]]
+name = "worker-count independence"
+paths = ["src/wozmod/*", "native/*", "tests/step_run.py", "tests/test_step_keys.py"]
+run = ["ref text", "ref voices", "ref art",
+       "tests/test_step_keys.py::test_a_step_writes_the_same_bytes_with_any_worker_count_and_environment"]
+from = """Unit 6 (work/handbacks/unit-6-delete.md, left open 2): the check triggered only on install/*, while a step's
+worker-count bugs come from its own code (a worker that changes what the donors hold, per-worker state) or the native
+module's threads. ordered_map and tests/test_workers.py rule out the finishing-order join, not those
+(work/handbacks/unit-6b-ordered-map.md)."""
+
+[[row]]
+name = "reference builds and their readers"
+paths = ["src/*", "data/*", "native/*", "uv.lock", "pyproject.toml"]
+run = ["ref text", "ref voices", "ref art"]
+from = """The hybrid plan, unit 5: one build per step key, its trace, and its byte diff against main's. Unit 2 (D6) needs
+the voices output byte-identical to main's. A build is reused while its step key holds, so an edit outside a step's
+closure costs only the key."""
+
+[[row]]
+name = "menu art and lettering"
+paths = ["src/wozmod/art/*", "src/wozmod/fonts/*", "data/art/*"]
+run = ["tests/test_art_build.py", "tests/test_fonts_rendering.py", "tests/test_fonts_face_source.py",
+       "tests/test_repository_hygiene.py"]
+from = """e348400: the release run failed in test_fonts_face_source after the Latin font cells changed, and in the
+official-English check after an art build's state leaked. 487f927 and 2c360a0 changed the menu art build."""
+
+[[row]]
+name = "voices, effects and Dream movies"
+paths = ["src/wozmod/voices/*", "src/wozmod/formats/audio.py", "src/wozmod/formats/pmf.py", "native/*"]
+run = ["tests/test_voices_lips.py", "tests/test_dream_events.py", "tests/test_dream_movies.py",
+       "tests/test_formats_audio.py", "tests/test_shout_banks.py", "tests/test_runtime_edits.py"]
+from = """9259ead (the Dream cutscenes in English) changed test_voices_lips and test_dream_movies. #11 (88e0639) changed
+the effect banks and tests/test_runtime_edits.py (the sound pool test). f19a297 changed test_shout_banks."""
+
+[[row]]
+name = "text room and subtitle contexts"
+paths = ["src/wozmod/text/*", "data/text/*", "src/wozmod/runtime/text_table.py", "src/wozmod/runtime/camp_plate.py"]
+run = ["tests/test_text_room.py", "tests/test_text_boxes.py", "tests/test_camp_plate.py",
+       "tests/test_subtitle_contexts.py"]
+from = """79ae6c0 (long English text crashed the game) and 56af5a5 changed test_text_room; 02611ef changed the battle
+text boxes; 963fc58 changed test_subtitle_contexts."""
+
+# The slow tests that read a step's reference build (tests/conftest.py, the built fixture) instead of building the
+# step themselves. tools/verify.py ref runs them against the build it made, and so does a row's `ref`, with the row's
+# tests. A reader of several steps is listed under one of them; alone, `ref` of that step builds the others in it.
+[readers]
+text = ["tests/test_text_movie_captions.py"]
+voices = ["tests/test_voices_events.py::test_every_english_voiced_event_line_ends_with_its_clip",
+          "tests/test_runtime_edits.py::test_sound_pool_holds_every_english_effect_bank_on_top_of_the_stock_ones",
+          "tests/test_dream_movies.py::test_the_built_movie200_keeps_the_stock_lip_sync",
+          "tests/test_stock_pieces.py::test_the_steps_read_exactly_the_committed_pieces"]
+art = ["tests/test_art_compose.py::test_the_install_art_build_writes_only_the_player_files",
+       "tests/test_art_build.py::test_a_partial_build_writes_the_entries_the_install_build_writes"]

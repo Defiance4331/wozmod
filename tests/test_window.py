@@ -57,7 +57,7 @@ def test_settings_survive_a_restart_and_a_broken_file_is_ignored():
     # Bug: the chosen paths are lost, or a half-written settings file stops the window from opening.
     remembered.save_settings({"game": "/some/folder"})
     assert remembered.load_settings() == {"game": "/some/folder"}
-    remembered.settings_path().write_text("{not json")
+    remembered.settings_path().write_text("{not json", encoding="utf-8")
     assert remembered.load_settings() == {}
 
 
@@ -82,7 +82,7 @@ def screen():
     xvfb = subprocess.Popen(["Xvfb", "-displayfd", str(write), "-screen", "0", "1920x1080x24", "-nolisten", "tcp"],
                             pass_fds=(write,), stderr=subprocess.DEVNULL)
     os.close(write)
-    with os.fdopen(read) as ready:
+    with os.fdopen(read, encoding="utf-8") as ready:
         number = ready.readline().strip()  # Xvfb writes its display number once it accepts clients
     try:
         if not number:
@@ -317,7 +317,7 @@ def test_the_main_button_names_what_will_happen_and_reinstall_or_going_back_asks
     win, root = shown
     (tmp_path / "wozmod").mkdir()
     if record is not None:
-        (tmp_path / "wozmod/install.json").write_text(json.dumps({"format": 1, "files": {}, **record}))
+        (tmp_path / "wozmod/install.json").write_text(json.dumps({"format": 1, "files": {}, **record}), encoding="utf-8")
     asked = []
     monkeypatch.setattr(win, "ask_yes", lambda *a, **k: asked.append(a) or False)
     installed = []

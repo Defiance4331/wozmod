@@ -39,11 +39,11 @@ def current() -> bool:
 def patch_proton() -> None:
     """Write keep_identical's script over the pinned Proton, by rename so a launch never reads half of it."""
     script = TEMPLATE / "proton/proton"
-    text = script.read_text()
+    text = script.read_text(encoding="utf-8")
     patched = keep_identical(text)
     if patched != text:
         staged = script.with_name("proton.wozmod-new")
-        staged.write_text(patched)
+        staged.write_text(patched, encoding="utf-8")
         staged.chmod(script.stat().st_mode)
         staged.replace(script)
         print(f"patched {script}")

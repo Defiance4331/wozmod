@@ -16,10 +16,9 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ASSETS=$(cd "${1:?usage: packaging/build_windows.sh ASSETS_DIR}" && pwd)
 WORK=${WOZMOD_WIN_WORK:-$ROOT/work/windows-build}
-PYTHON_VERSION=3.14.8   # keep equal to the CPython that uv uses (.python-version is 3.14)
-PYTHON_URL=https://www.python.org/ftp/python/$PYTHON_VERSION/python-$PYTHON_VERSION-amd64.exe
-PYTHON_SHA256=759be887b96e736a3ca886daf8d575f18fcae1a09efab6902f42d59e8999f8ef
-MATURIN=maturin==1.15.0
+# The Windows CPython and maturin, pinned in packaging/windows-build.json (tools/windows_suite.py tests with the same)
+read -r PYTHON_URL PYTHON_SHA256 MATURIN < <(python3 -c "import json; p = json.load(open('$ROOT/packaging/windows-build.json', \
+  encoding='utf-8')); print(p['python']['url'], p['python']['sha256'], 'maturin==' + p['maturin'])")
 
 for tool in wine uv curl x86_64-w64-mingw32-gcc x86_64-w64-mingw32-dlltool x86_64-w64-mingw32-windres; do
   command -v "$tool" >/dev/null || { echo "missing $tool (see the header of this script)" >&2; exit 1; }

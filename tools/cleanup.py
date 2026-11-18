@@ -15,6 +15,10 @@ Kinds:
   lettering-cache  work/lettering-cache/ renderer folders, except the newest
   install-e2e      work/install-e2e* copies the install test left behind
   packages         work/package/ rounds (NAME, NAME-r2, NAME-r3...), except each name's newest round
+  verify           tools/verify.py's reference builds (work/verify/builds/STEP/KEY) whose step key is not the key of
+                   main or of any checkout (the main one or a worktree, as it is now, or its merge base with main), the
+                   Python environments (work/verify/venvs/) none of those uses, and what a stopped run left; all of it
+                   is kept while a heavy run holds work/.machine.lock
 
 It never touches a path work/harness.toml or work/winvm/compose.yml names, work/install, work/donors, the VM storage,
 the run template, work/handbacks, work/archive, or anything outside the checkout, and it keeps anything a running
@@ -32,14 +36,16 @@ import stat
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 import checkout
+import verify
 
-KINDS = ("runs", "worktrees", "lettering-cache", "install-e2e", "packages")
+KINDS = ("runs", "worktrees", "lettering-cache", "install-e2e", "packages", "verify")
 DAY = 86400
 CHUNK = 2000  # entries removed between two looks at the disk
 DISK = "nvme0n1"  # the drive work/ is on; btrfs reports no device per file, so it is named here
@@ -104,7 +110,7 @@ def held(lock: Path) -> bool:
 def busy(disk: str = DISK, seconds: float = 2.0) -> float:
     """Percent of the next `seconds` the drive spends on I/O (/proc/diskstats io_ticks); 0 without that drive."""
     def ticks() -> int:
-        for line in Path("/proc/diskstats").read_text().splitlines():
+        for line in Path("/proc/diskstats").read_text(encoding="utf-8").splitlines():
             fields = line.split()
             if fields[2] == disk:
                 return int(fields[12])
@@ -119,7 +125,7 @@ def stalled() -> bool:
     terminal io_uring waits read as nearly 100% pressure."""
     for wchan in Path("/proc").glob("[0-9]*/wchan"):
         try:
-            if wchan.read_text().strip() in STALLS:
+            if wchan.read_text(encoding="utf-8").strip() in STALLS:
                 return True
         except OSError:
             continue
@@ -284,6 +290,73 @@ def packages(repo: Path, now: float) -> list[Item]:
     return items
 
 
+def checkouts(repo: Path) -> list[Path]:
+    """The main checkout and every linked worktree whose folder exists."""
+    listing = git("worktree", "list", "--porcelain", cwd=repo).stdout.decode()
+    found = [Path(line.split(" ", 1)[1]) for line in listing.splitlines() if line.startswith("worktree ")]
+    return [path for path in found if path.is_dir()]
+
+
+def live_keys(repo: Path) -> tuple[set[tuple[str, str]], set[Path], list[str]]:
+    """((step, key) of each reference build a live tree has, the environments those trees use, what could not be
+    worked out). The live trees: main's, and each checkout's as it is now and its merge base with main."""
+    trees = {verify.git(repo, "rev-parse", f"{verify.MAIN}^{{tree}}")}
+    for path in checkouts(repo):
+        trees.add(verify.tree_id(path))
+        if base := verify.git(path, "merge-base", "HEAD", verify.MAIN, check=False):
+            trees.add(verify.git(path, "rev-parse", f"{base}^{{tree}}"))
+    keys, environments, unknown = set(), set(), []
+    for tree in sorted(trees):
+        environment = verify.venv_folder(repo, tree)
+        environments.add(environment)
+        if not (environment / "bin/python").exists():
+            continue  # never built from: no build has this tree's packages
+        with tempfile.TemporaryDirectory(prefix="cleanup-keys-") as scratch:
+            folder = verify.export(repo, tree, Path(scratch) / "tree")
+            try:
+                found = verify.step_keys([str(environment / "bin/python")], folder, verify.side_environment(repo, folder))
+            except SystemExit as error:
+                unknown.append(f"the step keys of tree {tree[:12]}: {str(error).strip().splitlines()[-1]}")
+                continue
+        keys |= set(found.items())
+    return keys, environments, unknown
+
+
+def verify_state(repo: Path, keep_days: float, now: float) -> list[Item]:
+    """work/verify/: the builds no live tree's step key names, the environments no live tree uses, and leftovers."""
+    root = verify.work(repo) / "verify"
+    found = [p for step in folders(root / "builds") for p in folders(step)] + folders(root / "venvs") \
+        + folders(root / "trees")
+    if not found:
+        return []
+    keys, environments, unknown = live_keys(repo)
+    for line in unknown:
+        print(f"cleanup: could not work out {line}; its builds are listed as no tree's", file=sys.stderr)
+    lock = held(verify.work(repo) / ".machine.lock")
+    items = []
+    for path in found:
+        age = now - changed(path)
+        if path.parent.name == "trees":
+            item = Item("verify", path, "a tree a stopped verify run exported", age)
+        elif path.parent.parent.name == "builds" and "." not in path.name:
+            live = (path.parent.name, path.name) in keys
+            item = Item("verify", path, f"a {path.parent.name} build no live tree's step key names", age,
+                        "the step key of a live tree" if live else "", live)
+        elif path.parent.name == "venvs" and "." not in path.name:
+            live = path in environments
+            item = Item("verify", path, "an environment no live tree uses", age, "a live tree's" if live else "", live)
+        elif path.suffix == ".failed":
+            item = Item("verify", path, f"a failed build older than {keep_days:g} days", age)
+            if age < keep_days * DAY:
+                item.kept, item.quiet = f"failed in the last {keep_days:g} days", True
+        else:
+            item = Item("verify", path, "what a stopped verify run or cleanup left", age)
+        if lock and not item.kept:
+            item.kept = "a heavy run holds work/.machine.lock"
+        items.append(item)
+    return items
+
+
 def plan(repo: Path, kinds: set[str], keep_days: float, keep_runs: int,
          table: list[tuple[int, list[str]]] | None = None, now: float | None = None) -> list[Item]:
     """Every item of the chosen kinds, each a candidate or kept with its reason."""
@@ -300,6 +373,8 @@ def plan(repo: Path, kinds: set[str], keep_days: float, keep_runs: int,
         items += install_e2e(repo, now)
     if "packages" in kinds:
         items += packages(repo, now)
+    if "verify" in kinds:
+        items += verify_state(repo, keep_days, now)
     guarded = protected(repo)
     for item in items:
         if not item.kept:
@@ -372,7 +447,7 @@ def archive(worktree: Path, folder: Path) -> None:
     folder.mkdir(parents=True)
     head = git("rev-parse", "HEAD", cwd=worktree).stdout.decode().strip()
     branch = git("branch", "--show-current", cwd=worktree).stdout.decode().strip()
-    (folder / "HEAD").write_text(f"{head}\n{branch}\n" if branch else f"{head}\n")
+    (folder / "HEAD").write_text(f"{head}\n{branch}\n" if branch else f"{head}\n", encoding="utf-8")
     (folder / "status.txt").write_bytes(git("status", "--short", cwd=worktree).stdout)
     (folder / "changes.patch").write_bytes(git("diff", "--binary", "HEAD", cwd=worktree).stdout)
     names = [os.fsdecode(n) for n in
@@ -406,6 +481,8 @@ def delete(item: Item, repo: Path, archives: Path) -> str:
         remove_tree(item.path, keep=frozenset({".git"}))
         git("worktree", "remove", "--force", str(item.path), cwd=repo)
         return f"archived to {folder}, removed"
+    if item.kind == "verify":  # out of verify's sight first: a build or environment it finds is whole
+        item.path = item.path.rename(item.path.with_name(item.path.name + ".deleting"))
     remove_tree(item.path)
     return "deleted"
 
@@ -475,7 +552,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     lock_path = repo / "work/.cleanup.lock"
     lock_path.parent.mkdir(exist_ok=True)
-    with lock_path.open("a") as lock:
+    with lock_path.open("a", encoding="utf-8") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:

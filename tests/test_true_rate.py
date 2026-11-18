@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import ctypes
 import os
-import shutil
+import re
 import struct
 from pathlib import Path
 
@@ -196,7 +196,7 @@ def test_the_catalogue_loads_with_known_kinds_and_classes():
         assert s.what, f"{s.va:#x} says nothing about what it steps"
 
 
-@pytest.mark.skipif(shutil.which(true_rate.ASSEMBLER) is None, reason="no MinGW assembler")
+@pytest.mark.linux_only("the DLL is assembled with Fedora's MinGW cross tools, on the Linux machine that builds a release")
 def test_catalogue_code_assembles_without_stray_branches():
     """Literal bytes branch only within themselves: a branch out of a thunk must be {call:VA} or {jmp:VA}."""
     capstone = pytest.importorskip("capstone")
@@ -220,8 +220,10 @@ def test_catalogue_code_assembles_without_stray_branches():
 
 @pytest.mark.skipif(not os.environ.get("WOZMOD_GAME"), reason="WOZMOD_GAME unset")
 def test_each_rewritten_span_is_whole_instructions_that_nothing_jumps_into():
-    """A patch or gate replaces whole instructions, and no branch in the code around it lands inside its span (only at
-    its start), or the jump into its thunk would cut an instruction in two."""
+    """A patch or gate replaces whole instructions, and no direct branch anywhere in the code lands inside its span
+    (only at its start), or the jump into its thunk would cut an instruction in two."""
+    import bisect
+
     capstone = pytest.importorskip("capstone")
     from wozmod.formats import pe
     exe = Path(os.environ["WOZMOD_GAME"], "OROCHI_Z.exe")
@@ -230,25 +232,22 @@ def test_each_rewritten_span_is_whole_instructions_that_nothing_jumps_into():
     data = exe.read_bytes()
     layout = pe.layout(data)
     md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
-    md.skipdata = True
-    md.detail = True
-    text = data[pe.file_offset(layout, 0x401000):pe.file_offset(layout, 0x401000) + 0x2CB000]
-    for s in true_rate.load():
-        if s.kind == "operand":
-            continue
+    md.skipdata = True  # data between functions decodes as .byte and the sweep goes on
+    start = pe.file_offset(layout, 0x401000)
+    # One linear sweep of .text: each direct jump's, branch's or call's target, with a branch that goes there.
+    targets = {}
+    for address, _, mnemonic, operand in md.disasm_lite(data[start:start + 0x2CB000], 0x401000):
+        if (mnemonic.startswith(("j", "loop")) or mnemonic == "call") and operand.startswith("0x"):
+            targets.setdefault(int(operand, 16), address)
+    ordered = sorted(targets)
+    spans = [s for s in true_rate.load() if s.kind != "operand"]
+    assert spans and len(ordered) > 10_000  # the sweep decoded the code, not a stretch of data
+    for s in spans:
         at = pe.file_offset(layout, s.va)
-        ends = [i.address + i.size for i in md.disasm(data[at:at + len(s.stock) + 15], s.va)]
+        ends = [address + size for address, size, *_ in md.disasm_lite(data[at:at + len(s.stock) + 15], s.va)]
         assert s.va + len(s.stock) in ends, f"{s.va:#x}: the span ends inside an instruction"
-        lo = s.va - 0x3000
-        window = text[lo - 0x401000:s.va + 0x3000 - 0x401000]
-        for insn in md.disasm(window, lo):
-            if insn.id == 0:  # data skipped between functions
-                continue
-            if insn.group(capstone.CS_GRP_JUMP) or insn.group(capstone.CS_GRP_CALL):
-                op = insn.operands[0] if insn.operands else None
-                if op is not None and op.type == capstone.x86.X86_OP_IMM:
-                    assert not s.va < op.imm < s.va + len(s.stock), (
-                        f"{s.va:#x}: {insn.address:#x} branches into the span")
+        inside = ordered[bisect.bisect_right(ordered, s.va):bisect.bisect_left(ordered, s.va + len(s.stock))]
+        assert inside == [], f"{s.va:#x}: {targets[inside[0]]:#x} branches into the span"
 
 
 def test_catalogue_sites_stay_clear_of_the_runtimes_hooks_and_edits():
@@ -365,3 +364,91 @@ def test_no_step_that_ticks_the_clock_runs_inside_another(stock_code):
     runs = {va: reach(va) for va in steps}
     assert [(hex(outer), hex(inner)) for outer in steps for inner in steps
             if inner != outer and inner in runs[outer]] == []
+
+
+CHARACTER_STEP = 0x412280  # the character step's entry (character.toml): it runs its input 0x40FEE0 (call at 0x412472)
+# Counters the scan below finds that need no site, each with why it keeps its meaning at any rate.
+SAFE_COUNTERS = {
+    0x42F6E3: "0x42F6B0's result buffer length +0x500: an entry found is stored at it while it is under 0x13F slots",
+    0x576427: "0x5763F0's ring index +0x1C926 wraps at its 10 slots: it counts the entries queued, not ticks",
+}
+_UNIT_FIELD = re.compile(r"(?:byte|word|dword) ptr \[(?!esp)(e[a-z]{2}(?: \+ e[a-z]{2}(?:\*[248])?)?)"
+                         r"(?: \+ (0x[0-9a-f]+|\d+))?\]")  # off a pointer register: not a local, not a global
+_FAMILY = {name: family for family, names in (("a", "eax ax al ah"), ("b", "ebx bx bl bh"), ("c", "ecx cx cl ch"),
+                                                ("d", "edx dx dl dh"), ("si", "esi si"), ("di", "edi di"),
+                                                ("bp", "ebp bp")) for name in names.split()}
+_WINDOW = 8  # instructions before and after a count's add in which its compare is looked for
+
+
+def _unit_field(operand: str):
+    found = _UNIT_FIELD.fullmatch(operand)
+    return found and (found[1], int(found[2] or "0", 0))
+
+
+def _counts(run: list[tuple[int, int, str, str]]):
+    """((the VAs of its add, its store and its compare), the field) for each count in a straight run of instructions:
+    a unit field +1 in memory (add [field], 1 or inc [field]: 0x4433C6, 0x468534) or through a register (load it, +1,
+    store it back: 0x467D49, 0x46346D, 0x4BC66E) that the run compares, within _WINDOW instructions either side, with
+    an immediate or a register just set to one (0x4433D8 compares with eax, set to 80 at 0x4433C1)."""
+    adds, held = [], {}  # held: register family -> (field, VA of its +1 or None) for a register holding a field
+    for k, (va, _, mnemonic, operands) in enumerate(run):
+        parts = [part.strip() for part in operands.split(",")] if operands else []
+        target, family = (_unit_field(parts[0]), _FAMILY.get(parts[0])) if parts else (None, None)
+        one = mnemonic == "inc" or (mnemonic == "add" and parts[1:] == ["1"])
+        if one and target:
+            adds.append((va, va, target, k))
+        elif one and family in held and held[family][1] is None:
+            held[family] = (held[family][0], va)
+        elif mnemonic == "mov" and target and _FAMILY.get(parts[1]) in held \
+                and held[_FAMILY[parts[1]]][0] == target and held[_FAMILY[parts[1]]][1]:
+            adds.append((held[_FAMILY[parts[1]]][1], va, target, k))
+        elif mnemonic in ("mov", "movzx", "movsx") and family and (field := _unit_field(parts[1])):
+            held[family] = (field, None)
+        elif family and mnemonic not in ("cmp", "test", "push"):
+            held.pop(family, None)
+    for va, store, field, k in adds:
+        value = {}  # register family -> "count" (holds the field) or "constant" (set to an immediate)
+
+        def side(operand: str) -> str | None:
+            if _unit_field(operand) == field:
+                return "count"
+            return "constant" if re.fullmatch(r"-?(0x[0-9a-f]+|\d+)", operand) else value.get(_FAMILY.get(operand))
+
+        for at, _, mnemonic, operands in run[max(k - _WINDOW, 0):k + _WINDOW + 1]:
+            parts = [part.strip() for part in operands.split(",")] if operands else []
+            if mnemonic in ("ret", "jmp"):
+                if at > va:
+                    break
+                value = {}
+            elif mnemonic == "cmp" and {side(part) for part in parts} == {"constant", "count"}:
+                yield (va, store, at), field
+                break
+            elif parts and (family := _FAMILY.get(parts[0])) and mnemonic not in ("cmp", "test", "push") and at != va:
+                if mnemonic in ("mov", "movzx", "movsx") and side(parts[1]) in ("count", "constant"):
+                    value[family] = side(parts[1])
+                else:
+                    value.pop(family, None)
+
+
+def test_every_count_the_character_step_compares_with_a_constant_steps_once_a_period(stock_code):
+    """Bug: a count the character step (0x412280, from its input 0x40FEE0 on) adds 1 to a unit field each call and
+    compares with a fixed period has no true-rate site, so at N ticks a second it fires N/60 times as often: the
+    burning area count unit+0xCC at 0x4433C6 took life four times as fast at 240 (issue 20). Each such count must be a
+    catalogue site (its add, its store or its compare inside one), or be in SAFE_COUNTERS with why it needs none."""
+    import capstone
+    from wozmod.formats import pe
+    reach, image, _ = stock_code
+    x86, where = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32), pe.layout(image)
+    code = [next(x86.disasm_lite(image[pe.file_offset(where, va):pe.file_offset(where, va) + 16], va))
+            for va in sorted(reach(CHARACTER_STEP))]
+    runs = [[]]
+    for instruction in code:
+        if runs[-1] and runs[-1][-1][0] + runs[-1][-1][1] != instruction[0]:
+            runs.append([])
+        runs[-1].append(instruction)
+    sites = [range(site.va, site.va + len(site.stock)) for site in true_rate.load()]
+    found = [count for run in runs for count in _counts(run)]
+    assert 0x4433C6 in {add for (add, _, _), _ in found}  # the scan sees issue 20's count, site or not
+    ungated = [f"{add:#x} [{field[0]} + {field[1]:#x}] compared at {compare:#x}" for (add, store, compare), field in found
+               if add not in SAFE_COUNTERS and not any(at in span for span in sites for at in (add, store, compare))]
+    assert ungated == [], "\n".join(ungated)

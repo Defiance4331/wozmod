@@ -8,22 +8,25 @@ from `PRODUCER`: a `FontProcess` (the font Python with FontForge and Cairo), or 
 `outlines(folder)`.
 
 Under the font Python, `python -m wozmod.art.lettering REQUEST_JSON OUT.png` draws a button or pause request.
-This module imports nothing beyond Pillow and wozmod.process at the top, so both Pythons load it.
+This module imports nothing beyond Pillow and wozmod.platform at the top, so both Pythons load it.
 """
 from __future__ import annotations
 
 from contextlib import contextmanager
+from contextvars import ContextVar
 import hashlib
+import io
 import json
 import math
 import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
 
 from PIL import Image
 
-from wozmod import process
+from wozmod import platform
 
 FONT_PYTHON = os.environ.get("WOZMOD_FONT_PYTHON", "/usr/bin/python3")
 MENU_BATCH = "wozmod.fonts.menu_batch"
@@ -31,7 +34,7 @@ BUTTON_CAP = 25.0
 ACTIVE = None
 OUTLINES = None  # the active bundle's glyph outlines
 TRACE = os.environ.get("WOZMOD_ART_TRACE")
-_UNTRACKED = 0
+_UNTRACKED = ContextVar("untracked", default=0)  # this thread's: a squish on one worker leaves the others' reads tracked
 
 
 def key(request: dict) -> str:
@@ -54,7 +57,7 @@ class FontProcess:
 
     def run(self, module: str, *args: str) -> str:
         """`python -m module args` under the font Python; its stdout."""
-        run = process.run([self.python or FONT_PYTHON, "-m", module, *args], capture_output=True,
+        run = platform.run_hidden([self.python or FONT_PYTHON, "-m", module, *args], capture_output=True,
                           text=True, encoding="utf-8", env=font_environment())
         if run.returncode:
             sys.stderr.write(run.stderr)
@@ -114,7 +117,7 @@ class _Traced(Image.Image):
     _marker: Path
 
     def load(self):
-        if not _UNTRACKED:
+        if not _UNTRACKED.get():
             self._marker.touch()
         return super().load()
 
@@ -123,6 +126,13 @@ def _traced(image: Image.Image, folder: Path, identity: str) -> Image.Image:
     image.__class__ = _Traced
     image._marker = folder / f"{identity}.pixels"
     return image
+
+
+def _whole(path: Path, data: bytes) -> None:
+    """Write path whole: another worker drawing the same request never reads it half written."""
+    partial = path.with_name(f"{path.name}.{os.getpid()}-{threading.get_ident()}")
+    partial.write_bytes(data)
+    partial.replace(path)
 
 
 def _get(request: dict, draw) -> tuple[Image.Image, dict]:
@@ -137,7 +147,7 @@ def _get(request: dict, draw) -> tuple[Image.Image, dict]:
         folder = Path(TRACE)
         folder.mkdir(parents=True, exist_ok=True)
         record = folder / f"{identity}.json"
-        record.write_text(json.dumps(request, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        _whole(record, json.dumps(request, ensure_ascii=False, sort_keys=True).encode("utf-8"))
         cached = folder / f"{identity}.png"
         metadata = folder / f"{identity}.metrics"
         if cached.exists() and metadata.exists():
@@ -150,8 +160,10 @@ def _get(request: dict, draw) -> tuple[Image.Image, dict]:
         image, metrics = draw()
     metrics = dict(metrics)
     if TRACE:
-        image.save(cached)
-        metadata.write_text(json.dumps(metrics, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        png = io.BytesIO()
+        image.save(png, format="PNG")
+        _whole(cached, png.getvalue())
+        _whole(metadata, json.dumps(metrics, ensure_ascii=False, sort_keys=True).encode("utf-8"))
         image = _traced(image, folder, identity)
     return image, dict(metrics, _lettering=identity)
 
@@ -255,12 +267,11 @@ def squeezed(label: Image.Image, metrics: dict, geometry, scale: int,
 @contextmanager
 def untracked():
     """Pixel reads here (squish sources, developer reports) do not ship a layer."""
-    global _UNTRACKED
-    _UNTRACKED += 1
+    token = _UNTRACKED.set(_UNTRACKED.get() + 1)
     try:
         yield
     finally:
-        _UNTRACKED -= 1
+        _UNTRACKED.reset(token)
 
 
 @contextmanager

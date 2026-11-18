@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
+from wozmod import native
+
 
 def rgba(texture) -> Image.Image:
     return Image.frombytes("RGBA", (texture.width, texture.height), texture.decode_rgba())
@@ -130,16 +132,11 @@ def glow(image: Image.Image, radius: float, strength: float) -> Image.Image:
 
 def unglowed(image: Image.Image, radius: float, strength: float) -> Image.Image:
 
-    out, halo = image.copy(), glow(image, radius, strength).load()
-    near = image.getchannel("A").point(lambda v: 255 if v > 200 else 0).filter(ImageFilter.MaxFilter(7)).load()
-    px = out.load()
-    for y in range(out.height):
-        for x in range(out.width):
-            r, g, b, a = px[x, y]
-            if a <= 200:
-                h = halo[x, y]
-                px[x, y] = (r, g, b, round(max(0, a - h) * 255 / (255 - h)) if near[x, y] and h < 255 else 0)
-    return out
+    """The RGBA image without its glow: a pixel of alpha 200 or less within 3 pixels of an opaque one loses the
+    halo's share of its alpha (all of it under a full halo); one further out loses all of it."""
+    halo = glow(image, radius, strength)
+    return Image.frombytes("RGBA", image.size,
+                           native.module.unglowed(image.tobytes(), halo.tobytes(), image.width, image.height))
 
 def glowed(image: Image.Image, radius: float, strength: float, colour=(255, 255, 255)) -> Image.Image:
 

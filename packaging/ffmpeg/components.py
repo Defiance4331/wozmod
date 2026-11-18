@@ -56,7 +56,7 @@ def shim(folder: Path, real: Path, log: Path, keep: Path | None = None) -> Path:
     program = folder / "ffmpeg"
     corpus = f" --keep {keep.resolve()}" if keep else ""
     program.write_text(f"#!/bin/sh\nexec {sys.executable} -I {Path(__file__).resolve()} run "
-                       f"--real {real.resolve()} --log {log.resolve()}{corpus} -- \"$@\"\n")
+                       f"--real {real.resolve()} --log {log.resolve()}{corpus} -- \"$@\"\n", encoding="utf-8")
     program.chmod(0o755)
     return program
 
@@ -131,7 +131,7 @@ def replay(log: Path, corpus: Path, program: list[str], jobs: int | None = None
            ) -> tuple[list[list[str] | None], list[str]]:
     """Run every kept run of log again with program, its inputs from corpus: (the SHA-256 of each run's outputs,
     None for a run that failed; the runs whose outputs are not the recorded ones)."""
-    records = [r for r in map(json.loads, log.read_text().splitlines()) if "outputs" in r]
+    records = [r for r in map(json.loads, log.read_text(encoding="utf-8").splitlines()) if "outputs" in r]
 
     wine = Path(program[0]).name.startswith("wine")  # a Windows ffmpeg under Wine finds / as drive Z:
 
@@ -197,7 +197,7 @@ def used(records: list[dict]) -> dict[str, list[str]]:
 
 
 def summarize(log: Path) -> dict:
-    records = [json.loads(line) for line in log.read_text().splitlines() if line]
+    records = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines() if line]
     unparsed = sorted({m for r in records for m in re.findall(r"parser not found for codec (\w+)", r["log"])})
     return {"runs": len(records), "used": used(records), "codecs without a parser": unparsed}
 
@@ -208,7 +208,7 @@ def summarize(log: Path) -> dict:
 def _listed(source: Path, kind: str) -> set[str]:
     """The components of a kind that this FFmpeg source's configure knows."""
     listing = subprocess.run(["./configure", f"--list-{kind}s"], cwd=source, capture_output=True, text=True,
-                             check=True).stdout
+                             check=True, encoding="utf-8").stdout
     return set(listing.split())
 
 
@@ -219,7 +219,7 @@ def components(names: dict[str, list[str]], source: Path) -> dict[str, list[str]
     defined = {kind: {} for kind in kinds}
     for kind in kinds:
         for path in (source / SOURCES[kind]).glob("*.c"):
-            for component, found_kind, body in DEFINITION.findall(path.read_text(errors="replace")):
+            for component, found_kind, body in DEFINITION.findall(path.read_text(errors="replace", encoding="utf-8")):
                 if found_kind == kind and (name := NAME.search(body)):
                     defined[kind].setdefault(name.group(1), set()).add(component)
     result = {}
@@ -246,11 +246,11 @@ def missing(names: dict[str, list[str]], program: list[str]) -> list[str]:
     for kind, wanted in names.items():
         if kind == "library":  # the configure line the program keeps names each library it was built with
             built = subprocess.run([*program, "-hide_banner", "-buildconf"], capture_output=True, text=True,
-                                   check=True).stdout
+                                   check=True, encoding="utf-8").stdout
             absent += [f"library {name}" for name in wanted if f"--enable-{name}" not in built]
             continue
         listing = subprocess.run([*program, "-hide_banner", f"-{kind}s"], capture_output=True, text=True,
-                                 check=True).stdout
+                                 check=True, encoding="utf-8").stdout
         words = set(re.findall(r"[\w.]+", listing))
         absent += [f"{kind} {name}" for name in wanted if name not in words]
     return absent
@@ -290,19 +290,19 @@ def main() -> int:
     elif args.command == "replay":
         hashes, wrong = replay(args.log, args.corpus, [*filter(None, [args.runner]), str(args.program)], args.jobs)
         if args.write:
-            args.write.write_text(json.dumps(hashes) + "\n")
+            args.write.write_text(json.dumps(hashes) + "\n", encoding="utf-8")
         print(f"{len(hashes)} runs replayed, {len(wrong)} with other outputs than recorded")
         print("\n".join(wrong[:30]))
         return 1 if wrong else 0
     elif args.command == "summarize":
         summary = summarize(args.log)
         if args.write:
-            args.write.write_text(json.dumps(summary["used"], indent=1) + "\n")
+            args.write.write_text(json.dumps(summary["used"], indent=1) + "\n", encoding="utf-8")
         print(json.dumps(summary, indent=1))
     elif args.command == "configure":
-        print("\n".join(configure_flags(json.loads(args.names.read_text()), args.path)))
+        print("\n".join(configure_flags(json.loads(args.names.read_text(encoding="utf-8")), args.path)))
     else:
-        if absent := missing(json.loads(args.names.read_text()), [*filter(None, [args.runner]), str(args.path)]):
+        if absent := missing(json.loads(args.names.read_text(encoding="utf-8")), [*filter(None, [args.runner]), str(args.path)]):
             raise SystemExit(f"{args.path} lacks: {', '.join(absent)}")
     return 0
 

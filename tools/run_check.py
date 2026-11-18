@@ -58,7 +58,7 @@ def launch(root: Path, pad: str | None = None, size: str | None = None, video: b
                *(["--spare", spare] if pad and spare else []),
                *(["--unplugged"] if pad and unplugged else []), *(["--size", size] if size else []),
                *(["--video"] if video else []), *(["--idle", str(idle)] if idle else [])]
-    with (root / "run.log").open("w") as log:
+    with (root / "run.log").open("w", encoding="utf-8") as log:
         return subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                                 start_new_session=True)
 

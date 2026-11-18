@@ -63,7 +63,7 @@ def test_each_catalog_row_gets_its_own_official_reference_or_none():
 def test_catalog_row_lookup_cannot_treat_explicit_keys_as_ordinals(tmp_path, monkeypatch):
     catalog = tmp_path / "catalog.json"
     catalog.write_text(json.dumps({"schema": "moz-menu-visual-references-v1", "textures": {
-        "3.2": {"rows": {"7": {"role_variant": "blue"}}}}}))
+        "3.2": {"rows": {"7": {"role_variant": "blue"}}}}}), encoding="utf-8")
     references.load_catalog.cache_clear()
     monkeypatch.setattr(references, "CATALOG", catalog)
     try:
@@ -107,7 +107,7 @@ def test_the_catalog_refuses_each_field_no_reader_takes_or_reads_wrongly(tmp_pat
     loaded = []
     try:
         for name, change in {"good": {}, **WRONG_CATALOGS}.items():
-            catalog.write_text(json.dumps({**good, **change}))
+            catalog.write_text(json.dumps({**good, **change}), encoding="utf-8")
             references.load_catalog.cache_clear()
             try:
                 references.load_catalog()

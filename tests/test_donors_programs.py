@@ -3,21 +3,15 @@
 from __future__ import annotations
 
 import hashlib
-import os
-import stat
-import sys
 import tempfile
 import time
 from pathlib import Path
 
-import pytest
-
+import fake_program
 from wozmod.donors.programs import ProgramIdentity, run_tool
 
 PAYLOAD = b"an authored test program"
 ENCRYPTED = b"an authored encrypted input"
-
-pytestmark = pytest.mark.skipif(os.name == "nt", reason="the fake programs are scripts with a #! line")
 
 SHAPES = {  # how each known program is called, written out from the real command lines
     "psp": "args[0] == '-o' and len(args) == 3", "xex2ool": "args[0] == 'basefile' and args[2] == '-o' and len(args) == 4",
@@ -33,22 +27,18 @@ def _identity(platform: str = "x360") -> ProgramIdentity:
 
 def fake(path: Path, shape: str, *, produces: bytes = PAYLOAD, zeros: int = 0, body: str = "") -> Path:
     """A program that behaves like `shape` and only works when its input is ENCRYPTED."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"#!{sys.executable}\nimport sys, time\nfrom pathlib import Path\nargs = sys.argv[1:]\n{body}\n"
-                    f"if not ({SHAPES[shape]}):\n    print('usage: wrong arguments'); sys.exit(2)\n"
-                    f"if Path({INPUT_AT[shape]}).read_bytes() != {ENCRYPTED!r}:\n    sys.exit(3)\n"
-                    f"print('working...')\nPath({OUTPUT_AT[shape]}).write_bytes({produces!r} + bytes({zeros}))\n",
-                    encoding="utf-8")
-    path.chmod(path.stat().st_mode | stat.S_IXUSR)
-    return path
+    return fake_program.program(path, f"import sys, time\nfrom pathlib import Path\nargs = sys.argv[1:]\n{body}\n"
+                                      f"if not ({SHAPES[shape]}):\n    print('usage: wrong arguments'); sys.exit(2)\n"
+                                      f"if Path({INPUT_AT[shape]}).read_bytes() != {ENCRYPTED!r}:\n    sys.exit(3)\n"
+                                      f"print('working...')\nPath({OUTPUT_AT[shape]}).write_bytes({produces!r} + bytes({zeros}))\n")
 
 
 def test_a_program_given_by_a_relative_path_still_runs(tmp_path, monkeypatch):
     # Bug: the program runs in a temporary folder, so a path typed relative to where the player is
     # (`--x360-tool ./xex2ool`) names nothing there and every install fails.
-    fake(tmp_path / "tools/xex2ool", "xex2ool")
+    relative = fake(tmp_path / "tools/xex2ool", "xex2ool").relative_to(tmp_path)
     monkeypatch.chdir(tmp_path)
-    program, transcript = run_tool(Path("tools/xex2ool"), _identity("x360"), ENCRYPTED)
+    program, transcript = run_tool(relative, _identity("x360"), ENCRYPTED)
     assert program == PAYLOAD, transcript
 
 
@@ -78,5 +68,5 @@ def test_paths_with_spaces_and_shell_characters_are_run_as_given_with_no_shell(t
 def test_a_program_that_cannot_start_gives_a_plain_failure(tmp_path):
     # Bug: a file that is not executable raises and the window shows a traceback.
     tool = tmp_path / "not a program"
-    tool.write_text("text")
+    tool.write_text("text", encoding="utf-8")
     assert run_tool(tool, _identity(), ENCRYPTED)[0] is None

@@ -1,11 +1,14 @@
 //! Fast LZP2 and DXT5 codecs, each giving the same bytes as the Python codec in wozmod, and the audio alignment
 //! (align.rs), the mouth shapes learned from speech (lips.rs) and the phones of speech (speech.rs, PocketSphinx),
-//! which have no Python twin.
+//! and the optimal alignments of two stage scripts' command streams (streams.rs), which have no Python twin, and the
+//! per-pixel loops of reading the lettering faces (pixels.rs).
 
 mod align;
 mod lips;
+mod pixels;
 mod scenes;
 mod speech;
+mod streams;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -607,5 +610,9 @@ fn wozmod_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(lips::lip_shapes, module)?)?;
     module.add_function(wrap_pyfunction!(speech::aligned_phones, module)?)?;
     module.add_function(wrap_pyfunction!(speech::heard_phones, module)?)?;
+    module.add_function(wrap_pyfunction!(streams::stream_alignments, module)?)?;
+    module.add_function(wrap_pyfunction!(pixels::strokes, module)?)?;
+    module.add_function(wrap_pyfunction!(pixels::nearest_cuts, module)?)?;
+    module.add_function(wrap_pyfunction!(pixels::unglowed, module)?)?;
     Ok(())
 }

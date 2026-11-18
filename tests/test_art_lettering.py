@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-import subprocess
 
 import pytest
 from PIL import Image
@@ -12,22 +11,11 @@ from PIL import Image
 from wozmod.art import build, lettering
 
 
-def _font_python() -> lettering.FontProcess:
-    python = os.environ.get("WOZMOD_FONT_PYTHON", "/usr/bin/python3")
-    if not Path(python).is_file():
-        pytest.skip("font Python absent")
-    probe = subprocess.run([python, "-c", "import importlib.util; print([m for m in ('fontforge', 'cairo', 'numpy') "
-                                          "if importlib.util.find_spec(m) is None])"], capture_output=True, text=True)
-    if probe.stdout.strip() != "[]":
-        pytest.skip(f"font libraries absent: {probe.stdout.strip()}")
-    return lettering.FontProcess(python)
-
-
 def test_each_builder_asks_the_bundle_for_the_request_the_recipe_names():
     """Bug: a builder renames, adds or drops a request field, or passes a value of another type (a float scale), so its
     requests no longer hash to the recipe's and an install misses every layer of that kind."""
     rows = {}
-    for request in json.loads((build.REPO / "data/art/lettering.json").read_text())["requests"].values():
+    for request in json.loads((build.REPO / "data/art/lettering.json").read_text(encoding="utf-8"))["requests"].values():
         rows.setdefault(request["kind"], {name: "Alder" if isinstance(value, dict) else value  # hashed words
                                           for name, value in request.items()})
     asks = {
@@ -52,7 +40,7 @@ def test_each_builder_asks_the_bundle_for_the_request_the_recipe_names():
 
 
 @pytest.mark.slow_first
-def test_the_font_process_draws_the_release_lettering_layers(monkeypatch):
+def test_the_font_process_draws_the_release_lettering_layers(monkeypatch, font_python):
     """Bug: the font side draws a button or pause another way than the release did (the sub-pixel phase on the wrong
     branch, another cap, another fill rule), so a developer build no longer matches lettering.zip."""
     from wozmod.art import render, words
@@ -61,7 +49,7 @@ def test_the_font_process_draws_the_release_lettering_layers(monkeypatch):
     release, donors = (Path(os.environ.get(name, "")) for name in ("WOZMOD_LETTERING", "WOZMOD_DONORS"))
     if not release.is_file() or not (donors / "wo2-x360").is_dir():
         pytest.skip("set WOZMOD_LETTERING and WOZMOD_DONORS")
-    font = _font_python()
+    font = lettering.FontProcess(font_python)
     monkeypatch.setattr(words, "DONORS", words.DONORS)
     words.use(donors)
     requests, _, _ = render._load_requests()

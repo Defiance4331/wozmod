@@ -36,7 +36,7 @@ def test_only_a_crashed_runs_log_is_kept(tmp_path: Path, wine: dict[str, str]) -
     if not (shutil.which("i686-w64-mingw32-gcc") and shutil.which("wine")):
         pytest.skip("i686-w64-mingw32-gcc or wine absent")
     (tmp_path / "keep.c").write_text('#include "crash_log.h"\n'
-                                     'int main(void) { keep_crash_log(L"runtime.log", L"runtime.crash.log"); return 0; }\n')
+                                     'int main(void) { keep_crash_log(L"runtime.log", L"runtime.crash.log"); return 0; }\n', encoding="utf-8")
     subprocess.run(["i686-w64-mingw32-gcc", "-std=c11", "-O2", "-Wall", "-Werror", "-I", str(RUNTIME),
                     str(tmp_path / "keep.c"), "-o", str(tmp_path / "keep.exe")], check=True)
     # (last run's log, an older crash log) -> (runtime.log, runtime.crash.log) after the launch; None: no file
@@ -98,19 +98,19 @@ def _crash(tmp_path: Path, wine: dict[str, str], *args: str) -> tuple[int, list[
     for tool in ("i686-w64-mingw32-gcc", "i686-w64-mingw32-nm", "wine"):
         if not shutil.which(tool):
             pytest.skip(f"{tool} absent")
-    (tmp_path / "boom.c").write_text(CRASHER)
+    (tmp_path / "boom.c").write_text(CRASHER, encoding="utf-8")
     exe = tmp_path / "boom.exe"
     subprocess.run(["i686-w64-mingw32-gcc", "-std=c11", "-O1", "-Wall", "-Werror", "-I", str(RUNTIME),
                     str(tmp_path / "boom.c"), "-o", str(exe)], check=True)
     symbols = [s.split() for s in subprocess.run(["i686-w64-mingw32-nm", "-n", str(exe)], check=True,
-                                                 capture_output=True, text=True).stdout.splitlines()]
+                                                 capture_output=True, text=True, encoding="utf-8").stdout.splitlines()]
     text = [(int(a, 16), n) for a, kind, n in (s for s in symbols if len(s) == 3) if kind in "Tt"]
     base = next(int(a, 16) for a, _, n in (s for s in symbols if len(s) == 3) if n == "___ImageBase")
     # each function ends at the next symbol past its start (a section symbol can share its address)
     spans = {n: range(a - base, next(b for b, _ in text if b > a) - base) for a, n in text if a < text[-1][0]}
     run = subprocess.run(["wine", str(exe), *args], cwd=tmp_path, env=wine, capture_output=True, timeout=60)  # Wine waits on a crash dialog
     crash = tmp_path / "runtime.crash.log"
-    return (run.returncode, (tmp_path / "runtime.log").read_text().splitlines(),
+    return (run.returncode, (tmp_path / "runtime.log").read_text(encoding="utf-8").splitlines(),
             crash.read_bytes() if crash.exists() else None, spans)
 
 

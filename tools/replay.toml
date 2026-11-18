@@ -1,0 +1,53 @@
+# The past fixes tools/replay.py replays, beside the ones it finds in git log by itself (each commit on main whose
+# message ends "Reported in #N", and each revert commit). Each row says why it is here.
+#
+# A row with `commit` narrows what the replay reverts of that commit: `revert` lists paths, a path#N,M naming only
+# those hunks of the commit's diff of it (numbered from 1). Without a row, everything outside tests/ is reverted.
+# A row's `edit`s change today's tree by hand (`old` must occur once): a commit's port that is mechanical but that the
+# line rule cannot find, or, in a row with `name`, a bug no single commit holds, made again.
+
+[[fix]]
+commit = "4bbb7f9"
+revert = ["data/true_rate/character.toml"]
+why = "kept: the DLL pin in install/__init__.py, which names the d3d9.dll a release ships, not the fix"
+
+[[fix]]
+commit = "88e0639"
+revert = ["src/wozmod/runtime/runtime_edits.py", "src/wozmod/runtime/guards.py#1"]
+why = """kept: the test build's sound trace the commit also adds (runtime/sound_trace.h, its hooks 128-134 in
+english_runtime.c, english_runtime.py and guards.py hunk 2), and the DLL pin; reverted: the SOUND_3D edits that fix
+the issue. build.py is ported by hand: lists added to its import and its edit lists since, so only SOUND_3D's own
+entries are taken out."""
+
+[[fix.edit]]
+path = "src/wozmod/runtime/build.py"
+old = "SE_PRECISION, SOUND_3D, STAGE_DUCK"
+new = "SE_PRECISION, STAGE_DUCK"
+
+[[fix.edit]]
+path = "src/wozmod/runtime/build.py"
+old = '("V101_FIXES", V101_FIXES), ("SOUND_3D", SOUND_3D), ("PATH_CELLS", PATH_CELLS),'
+new = '("V101_FIXES", V101_FIXES), ("PATH_CELLS", PATH_CELLS),'
+
+[[fix]]
+commit = "bf81034"
+revert = ["runtime/english_runtime.c", "runtime/weapon_slots.h", "src/wozmod/runtime/guards.py",
+          "src/wozmod/runtime/layout.py"]
+why = "kept: the DLL pin"
+
+[[fix]]
+commit = "e4fed46"
+revert = ["runtime/english_runtime.c", "src/wozmod/runtime/english_runtime.py", "src/wozmod/runtime/guards.py"]
+why = "kept: the DLL pin"
+
+[[fix]]
+name = "stale-stock-pieces-call"
+reason = "the stale stock-pieces call"
+why = """work/handbacks/slow-survey.md and design-brief.md: tools/stock_pieces.py called the voices step without the
+speech argument it had gained, and nothing that runs by default ran the tool. Made again: the inputs it hands the
+steps leave out speech."""
+
+[[fix.edit]]
+path = "tools/stock_pieces.py"
+old = 'donors=given("donors"), speech=given("speech"),'
+new = 'donors=given("donors"),'

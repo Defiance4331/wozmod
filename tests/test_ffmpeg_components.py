@@ -60,6 +60,7 @@ def test_a_run_whose_format_neither_its_log_nor_its_arguments_name_is_refused():
         components.used([{"args": args, "code": 0, "log": ""}])
 
 
+@pytest.mark.linux_only("ffmpeg is configured and built for both systems on Linux (packaging/ffmpeg/build.sh)")
 def test_each_name_becomes_the_component_configure_enables(tmp_path):
     # Bugs: the decoder ffmpeg calls atrac3plus is enabled as atrac3plus, or the format s16le as muxer s16le; configure
     # skips an unknown name without a word, and the built ffmpeg cannot read the PSP clips or write raw PCM.
@@ -68,11 +69,11 @@ def test_each_name_becomes_the_component_configure_enables(tmp_path):
         (source / folder).mkdir(parents=True)
     (source / "libavcodec/atrac3plusdec.c").write_text(
         'const FFCodec ff_atrac3p_decoder = {\n    .p.name         = "atrac3plus",\n    .p.type = 1,\n};\n'
-        'const FFCodec ff_atrac3pal_decoder = {\n    .p.name         = "atrac3plusal",\n};\n')
+        'const FFCodec ff_atrac3pal_decoder = {\n    .p.name         = "atrac3plusal",\n};\n', encoding="utf-8")
     lists = {"decoders": "atrac3p atrac3pal xma2", "muxers": "ogg pcm_s16le pcm_s16be", "demuxers": "wav",
              "encoders": "", "filters": "pan", "protocols": "file"}
     (source / "configure").write_text("#!/bin/sh\ncase $1 in\n" + "".join(
-        f"  --list-{kind}) echo '{names}' ;;\n" for kind, names in lists.items()) + "esac\n")
+        f"  --list-{kind}) echo '{names}' ;;\n" for kind, names in lists.items()) + "esac\n", encoding="utf-8")
     (source / "configure").chmod(0o755)
     names = {"decoder": ["atrac3plus", "xma2"], "muxer": ["ogg", "s16le"], "demuxer": ["wav"], "filter": ["pan"],
              "protocol": ["file"]}

@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import ctypes
 import importlib.util
+import sys
 from itertools import combinations
 from pathlib import Path
 
-SPEC = importlib.util.spec_from_file_location("game_harness", Path(__file__).resolve().parents[1] / "tools/game_harness.py")
-harness = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(harness)
+if sys.platform == "linux":  # the harness imports fcntl; every test here uses c_library, so is linux_only anyway
+    SPEC = importlib.util.spec_from_file_location("game_harness",
+                                                  Path(__file__).resolve().parents[1] / "tools/game_harness.py")
+    harness = importlib.util.module_from_spec(SPEC)
+    SPEC.loader.exec_module(harness)
 
 
 def test_every_troop_stands_on_its_own_spot_within_the_reach_the_harness_counts(c_library):

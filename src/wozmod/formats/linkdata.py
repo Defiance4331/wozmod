@@ -482,18 +482,24 @@ class Archive(Mapping):
     def read(self, ordinals, unpack: bool = True) -> dict[int, bytes]:
         """Several entries with one open, in the order asked; with unpack False, as stored (LZP2 left packed)."""
         found = {}
-        with self.path.open("rb") as stream:
+        with self._stream() as stream:
             for ordinal in ordinals:
-                if ordinal not in self:
-                    raise KeyError(ordinal)
-                offset, sizes = self._entries[ordinal]
-                parts = []
-                for size in sizes:
-                    stream.seek(offset)
-                    parts.append(unpacked(stream.read(size)) if unpack else stream.read(size))
-                    offset += align(size)
-                found[ordinal] = b"".join(parts)
+                found[ordinal] = b"".join(self._parts(stream, ordinal, unpack))
         return found
+
+    def _stream(self):
+        return self.path.open("rb")
+
+    def _parts(self, stream, ordinal: int, unpack: bool) -> list[bytes]:
+        if ordinal not in self:
+            raise KeyError(ordinal)
+        offset, sizes = self._entries[ordinal]
+        parts = []
+        for size in sizes:
+            stream.seek(offset)
+            parts.append(unpacked(stream.read(size)) if unpack else stream.read(size))
+            offset += align(size)
+        return parts
 
 
 def archive(stem: Path) -> Archive:

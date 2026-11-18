@@ -8,29 +8,23 @@ import subprocess
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-SYSTEM_PYTHON = "/usr/bin/python3"
 
 
-def system_python(code, tmp_path, *args):
-    if not Path(SYSTEM_PYTHON).exists():
-        pytest.skip("system Python absent")
-    environment = dict(os.environ)
-    environment["PYTHONPATH"] = os.pathsep.join(
-        filter(None, (environment.get("PYTHONPATH", ""), str(REPO / "src"))))
-    probe = subprocess.run(
-        [SYSTEM_PYTHON, "-c", "import importlib.util,json; print(json.dumps([m for m in ('fontforge','cairo','numpy','PIL','psMat') if importlib.util.find_spec(m) is None]))"],
-        capture_output=True, text=True, env=environment, check=True,
-    )
-    missing = json.loads(probe.stdout)
-    if missing:
-        pytest.skip("optional font libraries absent: " + ", ".join(missing))
-    result = subprocess.run([SYSTEM_PYTHON, "-c", code, *map(str,args)],
-                            cwd=tmp_path, env=environment, capture_output=True, text=True)
-    assert result.returncode == 0, result.stdout + result.stderr
-    return json.loads(result.stdout)
+@pytest.fixture
+def system_python(font_python):
+    """run(code, tmp_path, *args): what code prints (JSON) under the font Python, in tmp_path, with src/ importable."""
+    def run(code, tmp_path, *args):
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = os.pathsep.join(
+            filter(None, (environment.get("PYTHONPATH", ""), str(REPO / "src"))))
+        result = subprocess.run([font_python, "-c", code, *map(str, args)],
+                                cwd=tmp_path, env=environment, capture_output=True, text=True, encoding="utf-8")
+        assert result.returncode == 0, result.stdout + result.stderr
+        return json.loads(result.stdout)
+    return run
 
 
-def test_shadow_translation_cannot_wrap_pixels_onto_the_opposite_edge(tmp_path):
+def test_shadow_translation_cannot_wrap_pixels_onto_the_opposite_edge(system_python, tmp_path):
     actual = system_python("""
 import json
 import numpy as np
@@ -48,7 +42,7 @@ print(json.dumps(image.tolist()))
     ]
 
 
-def test_latin_cli_cannot_change_the_drawn_cells_or_drop_a_slot(tmp_path):
+def test_latin_cli_cannot_change_the_drawn_cells_or_drop_a_slot(system_python, tmp_path):
     result = system_python("""
 import hashlib,json,sys
 from pathlib import Path
@@ -62,7 +56,7 @@ print(json.dumps([list(image.size),hashlib.sha256(image.tobytes()).hexdigest()])
     assert result == [[2376, 24], "87858af86a1c382624913442dcddfb7c3ff1826739bb065cf6dd876b5986784b"]
 
 
-def test_menu_batch_cli_cannot_drop_a_request_or_overwrite_its_neighbours(tmp_path):
+def test_menu_batch_cli_cannot_drop_a_request_or_overwrite_its_neighbours(system_python, tmp_path):
     result = system_python("""
 import hashlib,json,sys
 from pathlib import Path
@@ -89,7 +83,7 @@ print(json.dumps(rows))
     assert result[0][5] != result[1][5]
 
 
-def test_unknown_style_cannot_silently_render_the_default_menu_face(tmp_path):
+def test_unknown_style_cannot_silently_render_the_default_menu_face(system_python, tmp_path):
     result = system_python("""
 import json, sys
 from wozmod.fonts import menu
@@ -105,7 +99,7 @@ else:
 
 @pytest.mark.skipif(os.environ.get("WOZMOD_FONT_GEOMETRY") != "1",
                     reason="set WOZMOD_FONT_GEOMETRY=1 for outline geometry checks")
-def test_stage_short_descender_does_not_leak_into_banner_or_wo1(tmp_path):
+def test_stage_short_descender_does_not_leak_into_banner_or_wo1(system_python, tmp_path):
     result = system_python("""
 import json, sys
 import numpy as np
@@ -141,7 +135,7 @@ print(json.dumps(dict(wo1_unchanged=original==signature(),
     assert result["full"] == result["again"]
 
 
-def test_long_menu_label_widens_its_box_without_condensing_each_letter(tmp_path):
+def test_long_menu_label_widens_its_box_without_condensing_each_letter(system_python, tmp_path):
     result = system_python("""
 import json, sys
 import numpy as np
@@ -168,7 +162,7 @@ print(json.dumps(dict(one=widths(one).tolist(), many=widths(many).tolist(),
 
 @pytest.mark.skipif(os.environ.get("WOZMOD_FONT_GEOMETRY") != "1",
                     reason="set WOZMOD_FONT_GEOMETRY=1 for outline geometry checks")
-def test_light_menu_i_cannot_keep_a_medium_weight_rectangular_dot(tmp_path):
+def test_light_menu_i_cannot_keep_a_medium_weight_rectangular_dot(system_python, tmp_path):
     result = system_python("""
 import json, sys
 import numpy as np
@@ -186,7 +180,7 @@ print(json.dumps({'ratio': mass(.65)/mass(1.)}))
 
 @pytest.mark.skipif(os.environ.get("WOZMOD_FONT_GEOMETRY") != "1",
                     reason="set WOZMOD_FONT_GEOMETRY=1 for outline geometry checks")
-def test_lowercase_w_width_axis_cannot_widen_capital_W(tmp_path):
+def test_lowercase_w_width_axis_cannot_widen_capital_W(system_python, tmp_path):
     result = system_python("""
 import json, sys
 import numpy as np
@@ -202,7 +196,7 @@ print(json.dumps(dict(capital_same=bool(np.array_equal(image('W',1),image('W',1.
     assert result["small_widths"][1] > result["small_widths"][0]
 
 
-def test_narrow_figure_one_cannot_change_the_digit_pitch(tmp_path):
+def test_narrow_figure_one_cannot_change_the_digit_pitch(system_python, tmp_path):
     result = system_python("""
 import json, sys
 import numpy as np
@@ -224,7 +218,7 @@ print(json.dumps({'one':pitch('11'),'two':pitch('22')}))
     assert abs(result["two"] - 18) < 0.02
 
 
-def test_figures_double_quote_cannot_collapse_its_blank_display_cell_before_plus(tmp_path):
+def test_figures_double_quote_cannot_collapse_its_blank_display_cell_before_plus(system_python, tmp_path):
     result = system_python("""
 import json, sys
 import numpy as np
@@ -247,7 +241,7 @@ print(json.dumps({'quote_to_plus':centres[2]-(centres[0]+centres[1])/2}))
 
 @pytest.mark.skipif(os.environ.get("WOZMOD_FONT_GEOMETRY") != "1",
                     reason="set WOZMOD_FONT_GEOMETRY=1 for outline geometry checks")
-def test_italic_Y_overhang_cannot_push_the_following_u_away_at_the_baseline(tmp_path):
+def test_italic_Y_overhang_cannot_push_the_following_u_away_at_the_baseline(system_python, tmp_path):
     result = system_python("""
 import json, sys
 import numpy as np
@@ -271,7 +265,7 @@ print(json.dumps({'upright':gap(0),'italic':gap(.2)}))
 
 @pytest.mark.skipif(os.environ.get("WOZMOD_FONT_GEOMETRY") != "1",
                     reason="set WOZMOD_FONT_GEOMETRY=1 for outline geometry checks")
-def test_banner_outline_does_not_draw_dark_pixels_inside_neighboring_glyph_fill(tmp_path):
+def test_banner_outline_does_not_draw_dark_pixels_inside_neighboring_glyph_fill(system_python, tmp_path):
     """Closely set names retain their fill colours when the renderer paints purple edges."""
     result = system_python("""
 import json, sys
@@ -301,7 +295,7 @@ print(json.dumps(rows))
     assert all(row["core"] > 0 and row["dark"] == 0 for row in result), result
 
 
-def test_the_games_width_table_is_the_spacing_of_the_current_font(tmp_path):
+def test_the_games_width_table_is_the_spacing_of_the_current_font(system_python, tmp_path):
     # Catches a font edit that leaves the stored width table (latin_font.ADVANCES) stale, so the game steps by
     # widths spaced for the old letter shapes.
     result = system_python("""

@@ -118,8 +118,8 @@ def test_install_over_the_same_version_rebuilds_and_a_newer_one_asks_first(game,
     install(game, _inputs(tmp_path), log=lambda _: None)
     assert (game / "wozmod/settings.ini").read_bytes() == b"player settings"
 
-    record = json.loads((game / "wozmod/install.json").read_text())
-    (game / "wozmod/install.json").write_text(json.dumps({**record, "version": "99.0.0"}))
+    record = json.loads((game / "wozmod/install.json").read_text(encoding="utf-8"))
+    (game / "wozmod/install.json").write_text(json.dumps({**record, "version": "99.0.0"}), encoding="utf-8")
     before = _tree(game)
     with pytest.raises(InstallError, match="--force"):
         install(game, _inputs(tmp_path), log=lambda _: None)
@@ -165,7 +165,7 @@ def test_a_record_from_the_first_release_is_still_updated(game, tmp_path, monkey
     (game / "d3d9.dll").write_bytes(b"old dll")
     (game / "wozmod/table.bin").write_bytes(b"old table")
     (game / "wozmod/settings.ini").write_bytes(b"player settings")
-    (game / "wozmod/install.json").write_text(FROZEN_FIRST_RECORD)
+    (game / "wozmod/install.json").write_text(FROZEN_FIRST_RECORD, encoding="utf-8")
     assert installer.install_state(game) == ("update", None)
     assert installer.existing_install(game) == "0"  # a record without a version reads as version 0
 
@@ -187,7 +187,7 @@ def test_a_record_from_the_first_release_is_still_uninstalled(game):
     (game / "wozmod").mkdir()
     (game / "d3d9.dll").write_bytes(b"old dll")
     (game / "wozmod/table.bin").write_bytes(b"old table")
-    (game / "wozmod/install.json").write_text(FROZEN_FIRST_RECORD)
+    (game / "wozmod/install.json").write_text(FROZEN_FIRST_RECORD, encoding="utf-8")
     assert uninstall(game, log=lambda _: None, keep_settings=False) == {}
     assert _tree(game) == stock_tree
 
@@ -202,7 +202,7 @@ def test_uninstall_leaves_the_stock_folder_and_only_the_files_the_game_wrote_whe
     monkeypatch.setattr(installer, "check_inputs", lambda game, inputs, log=None, rebuilt=None: [])
     before = _tree(game)
     files = install(game, _inputs(tmp_path), log=lambda _: None)
-    assert json.loads((game / "wozmod/install.json").read_text())["files"] == {
+    assert json.loads((game / "wozmod/install.json").read_text(encoding="utf-8"))["files"] == {
         "d3d9.dll": hashlib.sha256(b"dll").hexdigest(),
         "wozmod/entries/4059.bin": hashlib.sha256(b"entry").hexdigest(),
         "wozmod/table.bin": hashlib.sha256(b"table").hexdigest(),
@@ -222,7 +222,7 @@ def test_the_version_in_the_code_is_the_version_of_the_release():
     import tomllib
     from wozmod.version import __version__
     root = Path(__file__).resolve().parents[1]
-    assert tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"] == __version__
+    assert tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"] == __version__
 
 
 def test_a_d3d9_dll_the_installer_did_not_write_is_refused_even_with_force(game, tmp_path, monkeypatch):
@@ -260,7 +260,7 @@ def test_uninstall_leaves_changed_files_and_keeps_listing_them(game, tmp_path, m
     assert changed == {"wozmod/table.bin": files["wozmod/table.bin"]}
     assert sorted(_tree(game / "wozmod")) == ["install.json", "settings.ini", "table.bin"]
     assert (game / "wozmod/table.bin").read_bytes() == b"player edit"
-    assert json.loads((game / "wozmod/install.json").read_text())["files"] == changed
+    assert json.loads((game / "wozmod/install.json").read_text(encoding="utf-8"))["files"] == changed
     assert not (game / "d3d9.dll").exists()
 
 
@@ -269,7 +269,7 @@ def test_uninstall_refuses_an_install_json_that_lists_a_stock_file(game):
     exe = (game / "OROCHI_Z.exe").read_bytes()
     (game / "wozmod").mkdir()
     (game / "wozmod/install.json").write_text(json.dumps({"files": {
-        "OROCHI_Z.exe": hashlib.sha256(exe).hexdigest()}}))
+        "OROCHI_Z.exe": hashlib.sha256(exe).hexdigest()}}), encoding="utf-8")
 
     with pytest.raises(InstallError, match="OROCHI_Z.exe"):
         uninstall(game, log=lambda _: None)
@@ -342,17 +342,15 @@ def test_a_wrong_input_stops_the_disc_read_as_soon_as_the_checks_find_it(game, t
 def test_the_voice_stage_lowers_its_priority_before_it_starts_ffmpeg(monkeypatch, tmp_path):
     # Bug: the voice stage runs at the art stage's priority, so the art stage's long serial steps wait for
     # ffmpeg processes that could fill any gap, and the install takes longer.
-    import os
+    # (What a lower priority is on each system: tests/test_platform_contract.py.)
     import wozmod.voices
+    from wozmod import platform
 
     calls = []
-    monkeypatch.setattr(os, "nice", lambda increment: calls.append(("nice", increment)), raising=False)
-    monkeypatch.setattr(os, "sched_setscheduler", lambda *args: calls.append(("policy", args[1])), raising=False)
-    monkeypatch.setattr(os, "SCHED_BATCH", 3, raising=False)
-    monkeypatch.setattr(os, "sched_param", lambda priority: priority, raising=False)
+    monkeypatch.setattr(platform, "lower_priority", lambda: calls.append("lower"))
     monkeypatch.setattr(wozmod.voices, "build_voice_banks", lambda *args: calls.append(("build", args[4])))
     installer._voice_banks(tmp_path, tmp_path, tmp_path, tmp_path, 7)
-    assert calls == [("nice", installer.VOICE_NICE), ("policy", 3), ("build", 7)] and installer.VOICE_NICE > 0
+    assert calls == ["lower", ("build", 7)]
 
 
 def test_the_art_stage_places_every_file_the_art_build_writes(tmp_path, monkeypatch):

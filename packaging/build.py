@@ -39,7 +39,7 @@ def prepare_ffmpeg() -> Path:
     """Our own static ffmpeg (packaging/ffmpeg/), as packaging/ffmpeg.json pins it. On Linux this builds it when it is
     not there yet; for Windows, packaging/build_windows.sh builds it on the Linux host, because the build cannot run
     under Wine."""
-    pin = json.loads((ROOT / "packaging/ffmpeg.json").read_text())[PLATFORM]
+    pin = json.loads((ROOT / "packaging/ffmpeg.json").read_text(encoding="utf-8"))[PLATFORM]
     program = OUT / "ffmpeg" / PLATFORM / pin["file"]
     if not WINDOWS and (not program.is_file() or sha256(program) != pin["sha256"]):
         subprocess.run(["bash", str(ROOT / "packaging/ffmpeg/build.sh"), PLATFORM, str(program.parent)], check=True)
@@ -61,7 +61,7 @@ def add_setup_launcher(stage: Path) -> None:
             raise SystemExit(f"{launcher} is missing: packaging/build_windows.sh builds it")
         shutil.copy2(launcher, stage / SETUP)
     else:
-        (stage / SETUP).write_text(f'#!/bin/sh\nexec "$(dirname "$0")/wozmod" {SETUP_WINDOW}\n')
+        (stage / SETUP).write_text(f'#!/bin/sh\nexec "$(dirname "$0")/wozmod" {SETUP_WINDOW}\n', encoding="utf-8")
         (stage / SETUP).chmod(0o755)
 
 
@@ -89,13 +89,13 @@ def check_assets(assets: Path) -> None:
 
 
 def write_step_keys(folder: Path) -> Path:
-    """Ship the mod's part of each install step's key, made from this source tree, where the frozen installer finds
-    it (resources.root()): an update keeps the steps whose key did not change, and players have no source to make
-    them from."""
+    """Ship the mod's part of each install step's key and the source parts of its manifest, made from this source
+    tree, where the frozen installer finds them (resources.root()): an update keeps the steps whose key did not change,
+    the read gate holds each step to its manifest, and players have no source to make either from."""
     sys.path.insert(0, str(ROOT / "src"))
-    from wozmod.install import step_keys
+    from wozmod.install import manifest, step_keys
 
-    path = folder / step_keys.SHIPPED
+    path = folder / manifest.SHIPPED
     path.write_text(json.dumps(step_keys.shipped_document(ROOT, PLATFORM), indent=1, sort_keys=True) + "\n",
                     encoding="utf-8")
     return path
@@ -107,7 +107,7 @@ def main() -> int:
     parser.add_argument("--speech", type=Path, required=True, help="the speech model folder (voices/phones.py MODEL)")
     parser.add_argument("--tag", help="the release tag (for example v0.1.0); it must match the version in pyproject.toml")
     args = parser.parse_args()
-    version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
     if args.tag and args.tag != f"v{version}":
         raise SystemExit(f"tag {args.tag} does not match version {version} in pyproject.toml")
     check_assets(args.assets)
@@ -143,7 +143,7 @@ def main() -> int:
         list(internal.glob(f"libt{name}*.zip")) for name in ("cl", "k"))  # Tcl 9 on Windows ships zips
     if not (stage / SETUP).is_file() or not tk_data:
         raise SystemExit("the packaged setup window is missing or lacks the Tcl and Tk files")
-    smoke = subprocess.run([stage / EXE, "--help"], capture_output=True, text=True)
+    smoke = subprocess.run([stage / EXE, "--help"], capture_output=True, text=True, encoding="utf-8")
     if smoke.returncode or "install" not in smoke.stdout:
         raise SystemExit(f"the packaged program does not start:\n{smoke.stdout}{smoke.stderr}")
 

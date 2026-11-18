@@ -1,12 +1,12 @@
 """wozmod command line: install, update and uninstall. With nothing to go on, it asks."""
 
 import argparse
-import multiprocessing
 import sys
 from pathlib import Path
 
 from wozmod import remembered, resources
 from wozmod.version import __version__
+from wozmod.install import steps
 from wozmod.install import (FILES, IMAGE_FIRST, INPUTS, PROGRAMS, REINSTALL_QUESTION, TOOLS, InstallError, check_input,
                             existing_install, install, install_state, program_status, uninstall)
 from wozmod.interactive import ask_choice, ask_path, ask_yes, interactive
@@ -113,7 +113,7 @@ def main(argv=None) -> int:
     commands = parser.add_subparsers(dest="command")
     add = commands.add_parser(
         "install", help="build the mod into a Musou Orochi Z folder (also updates an older install)",
-        epilog="environment: WOZMOD_JOBS=N runs each build stage on at most N worker processes "
+        epilog="environment: WOZMOD_JOBS=N runs each build stage on at most N workers "
                "(default: one fewer than the CPUs, fewer if RAM is short). In a terminal, a path left out is asked for.")
     packaged = getattr(sys, "frozen", False)
     for name, each in INPUTS.items():
@@ -152,8 +152,11 @@ SETUP_WINDOW = "--setup-window"
 
 
 def program() -> int:
-    """The release's wozmod program: the command line, or the setup window when wozmod-setup starts it."""
-    multiprocessing.freeze_support()  # a packaged program starts its spawned workers through here
+    """The release's wozmod program: the command line, the setup window when wozmod-setup starts it, or a build
+    step's worker when an install starts one."""
+    if sys.argv[1:] == [steps.WORKER]:
+        steps.worker()
+        return 0
     if sys.argv[1:] == [SETUP_WINDOW]:
         from wozmod import window
         return window.main()

@@ -127,7 +127,9 @@ def test_every_subtitle_window_covers_its_voice(world, contexts) -> None:
     # ends no later than 0.5 s and one tick after it.
     from wozmod.formats.linkdata import archive
     from wozmod.formats.scripts import caption_cues
-    from wozmod.text.contexts import EVENT_TICKS, audible_ends, movie_schedule, movie_slot_entry
+    from wozmod.formats.events import EVENT_TICKS
+    from wozmod.text.contexts import audible_ends
+    from wozmod.text.movie_captions import movie_schedule, movie_slot_entry
 
     failing, checked = {}, 0
     voiced = {row["slot"]: row for row in world.movies if row["language"] == "voice"}

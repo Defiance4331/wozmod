@@ -105,7 +105,7 @@ def strip_rows(video: Path) -> tuple[list[bytes], int]:
 def retime(video: Path, sink: Path, reads: list[tuple[int, int]], log: Path, out: Path) -> dict:
     """Write `out`: `video`'s frames at their Presents' times, the corner code blanked, and the sink recording (float32
     stereo, kept lossless: FLAC has no encoder delay to shift it) at its sink time, both on one origin. Returns the timing summary also written beside `out`."""
-    presents = present_log(log.read_text(errors="replace"))
+    presents = present_log(log.read_text(errors="replace", encoding="utf-8"))
     rows, width = strip_rows(video)
     numbers = frame_presents([corner_code(r, width) for r in rows], presents)
     times, filled = frame_times(numbers, presents)
@@ -119,7 +119,7 @@ def retime(video: Path, sink: Path, reads: list[tuple[int, int]], log: Path, out
     with tempfile.TemporaryDirectory(dir=out.parent) as tmp:
         work = Path(tmp)
         stamps = work / "stamps.txt"
-        stamps.write_text("# timestamp format v4\n" + "".join(f"{(t - origin) / 1e6:.3f}\n" for t in times))
+        stamps.write_text("# timestamp format v4\n" + "".join(f"{(t - origin) / 1e6:.3f}\n" for t in times), encoding="utf-8")
         subprocess.run(["ffmpeg", "-v", "error", "-i", str(video), "-map", "0:v:0", "-fps_mode", "passthrough", "-vf",
                         f"drawbox=x=0:y=0:w={width}:h={CELL}:color=black:t=fill", "-c:v", "h264_nvenc", "-b:v", "12M",
                         "-bf", "0", str(work / "v.mkv")], check=True, capture_output=True)
@@ -129,14 +129,14 @@ def retime(video: Path, sink: Path, reads: list[tuple[int, int]], log: Path, out
                         "--sync", f"0:{round((start - origin) / 1e6)}", str(work / "a.mka")], check=True,
                        capture_output=True)
         shutil.move(work / "out.mkv", out)
-    out.with_suffix(".timing.json").write_text(json.dumps(summary, indent=1) + "\n")
+    out.with_suffix(".timing.json").write_text(json.dumps(summary, indent=1) + "\n", encoding="utf-8")
     return summary
 
 
 def retime_files(stem: Path, log: Path) -> dict:
     """retime() from the files a harness `video` leaves when it could not finish: STEM.raw.mkv, STEM.sink.f32 and
     STEM.sink.json (its reads), into STEM.mkv; the three go once it is made."""
-    reads = [tuple(r) for r in json.loads(stem.with_suffix(".sink.json").read_text())]
+    reads = [tuple(r) for r in json.loads(stem.with_suffix(".sink.json").read_text(encoding="utf-8"))]
     summary = retime(stem.with_suffix(".raw.mkv"), stem.with_suffix(".sink.f32"), reads, log, stem.with_suffix(".mkv"))
     for suffix in (".raw.mkv", ".sink.f32", ".sink.json"):
         stem.with_suffix(suffix).unlink()

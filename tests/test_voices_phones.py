@@ -79,7 +79,7 @@ def test_a_dream_clip_says_what_the_game_shows_under_it(tmp_path, monkeypatch):
             {"key": key(b"same"), "source": "authored", "en": "Plain"},
             {"key": key(b"other"), "source": "authored", "en": "Other"}]
     (tmp_path / "data/text").mkdir(parents=True)
-    (tmp_path / "data/text/table.json").write_text(json.dumps({"rows": rows}))
+    (tmp_path / "data/text/table.json").write_text(json.dumps({"rows": rows}), encoding="utf-8")
     monkeypatch.setattr(phones.resources, "root", lambda: tmp_path)
 
     class Resolver:

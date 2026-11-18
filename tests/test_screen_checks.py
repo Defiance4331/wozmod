@@ -329,7 +329,7 @@ def test_spec_loader_rejects_unknown_kinds_and_keys_and_accepts_every_committed_
                  '[[screen]]\nname="a"\nroute="r"\nrout="x"\n',
                  '[[screen]]\nname="a"\nroute="r"\npress=["Return"]\n'):
         p = tmp_path / "bad.toml"
-        p.write_text(body)
+        p.write_text(body, encoding="utf-8")
         with pytest.raises(ValueError):
             sc.load_spec(p)
     for p in (REPO / "data" / "checks").glob("*.toml"):
@@ -341,7 +341,7 @@ def test_spec_loader_refuses_a_caller_inside_the_runtime_dll(tmp_path):
     check matches nothing on the next build instead of measuring the screen."""
     p = tmp_path / "dll.toml"
     p.write_text('[[screen]]\nname="a"\nroute="r"\n[[screen.assert]]\nkind="line_count"\nmax=1\n'
-                 'text={caller="0x680051e3"}\n')
+                 'text={caller="0x680051e3"}\n', encoding="utf-8")
     with pytest.raises(ValueError, match="inside the runtime DLL"):
         sc.load_spec(p)
 

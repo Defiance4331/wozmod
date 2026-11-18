@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import multiprocessing
 import os
 import queue
 import sys
@@ -536,7 +535,6 @@ def main() -> int:
     for name in ("stdout", "stderr"):  # a windowed Windows program has none; libraries still write to them
         if getattr(sys, name) is None:
             setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
-    multiprocessing.freeze_support()  # the install starts its build workers through here
     root = tkinter.Tk()
     SetupWindow(root)
     root.mainloop()

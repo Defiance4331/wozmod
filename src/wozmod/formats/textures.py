@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import struct
-from dataclasses import dataclass, field
-from functools import lru_cache
+from dataclasses import dataclass, field, replace
+from functools import cached_property, lru_cache
 from itertools import pairwise
 from typing import Iterator
 
@@ -186,12 +186,18 @@ class TexturePackageItem:
 
 @dataclass(frozen=True)
 class TexturePackage:
-    """A standalone G1T, aligned package or G1T run."""
+    """A standalone G1T, aligned package or G1T run: its head (an aligned package's header and record table with
+    their padding; empty for the others) and its items, each followed by its padding."""
 
-    source: bytes = field(repr=False)
+    head: bytes = field(repr=False)
     standalone: bool
     items: tuple[TexturePackageItem, ...]
     run: bool = False
+
+    @cached_property
+    def source(self) -> bytes:
+        """The package's bytes, joined once: with_g1t copies only the item it replaces."""
+        return b"".join((self.head, *(part for item in self.items for part in (item.source, item.padding))))
 
     def encode(self) -> bytes:
         """Return the original bytes."""
@@ -199,7 +205,8 @@ class TexturePackage:
         return self.source
 
     def with_g1t(self, item_index: int, g1t: G1tFile) -> TexturePackage:
-        """Replace an item and repack offsets when its size changes."""
+        """Replace an item and repack offsets when its size changes: the package parse_texture_package reads from
+        the changed bytes, without copying or parsing the items that stay."""
 
         if item_index < 0 or item_index >= len(self.items):
             raise TextureCodecError(f"texture package item is out of range: {item_index}")
@@ -211,25 +218,33 @@ class TexturePackage:
             return self
         if self.standalone:
             return parse_texture_package(encoded)
+        changed = parse_g1t(encoded)
         if self.run:
-            return parse_texture_package(b"".join(
-                data + bytes(_align(len(data), G1T_RUN_ALIGNMENT) - len(data))
-                for data in (encoded if other.ordinal == item_index else other.source for other in self.items)
-            ))
+            if len(self.items) == 1 and len(encoded) % G1T_RUN_ALIGNMENT == 0:
+                return parse_texture_package(encoded)  # a run of one G1T with no padding is that G1T alone
+            items, position = [], 0
+            for other in self.items:
+                data, parsed = (encoded, changed) if other.ordinal == item_index else (other.source, other.g1t)
+                items.append(replace(other, offset=position, source=data, g1t=parsed,
+                                     padding=bytes(_align(len(data), G1T_RUN_ALIGNMENT) - len(data))))
+                position += _align(len(data), G1T_RUN_ALIGNMENT)
+            return TexturePackage(head=b"", standalone=False, items=tuple(items), run=True)
         if len(encoded) != len(item.source):
             # A record's first word is its item's offset in 16-byte units, so every
             # later record moves with the resized item.
-            head, body = bytearray(self.source[: TEXTURE_PACKAGE_HEADER.size]), bytearray()
+            head, items = bytearray(self.head[: TEXTURE_PACKAGE_HEADER.size]), []
             position = _align(TEXTURE_PACKAGE_HEADER.size + len(self.items) * TEXTURE_PACKAGE_RECORD.size)
             for other in self.items:
-                data = encoded if other.ordinal == item_index else other.source
+                data, parsed = (encoded, changed) if other.ordinal == item_index else (other.source, other.g1t)
                 head += TEXTURE_PACKAGE_RECORD.pack(position // TEXTURE_PACKAGE_ALIGNMENT, len(data))
-                body += data + bytes(_align(len(data)) - len(data))
+                items.append(replace(other, identifier=position // TEXTURE_PACKAGE_ALIGNMENT, offset=position,
+                                     source=data, padding=bytes(_align(len(data)) - len(data)), g1t=parsed))
                 position += _align(len(data))
-            return parse_texture_package(bytes(head + bytes(_align(len(head)) - len(head)) + body))
-        changed = bytearray(self.source)
-        changed[item.offset : item.offset + len(encoded)] = encoded
-        return parse_texture_package(bytes(changed))
+            return TexturePackage(head=bytes(head + bytes(_align(len(head)) - len(head))), standalone=False,
+                                  items=tuple(items))
+        items = list(self.items)
+        items[item_index] = replace(item, source=encoded, g1t=changed)
+        return TexturePackage(head=self.head, standalone=False, items=tuple(items))
 
 
 def parse_g1t(data: bytes) -> G1tFile:
@@ -320,7 +335,7 @@ def parse_texture_package(data: bytes) -> TexturePackage:
     if source.startswith(G1T_MAGIC):
         g1t = parse_g1t(source)
         return TexturePackage(
-            source=source,
+            head=b"",
             standalone=True,
             items=(
                 TexturePackageItem(
@@ -375,7 +390,7 @@ def parse_texture_package(data: bytes) -> TexturePackage:
         position = padded_end
     if position != len(source):
         raise TextureCodecError("texture package has unreferenced trailing bytes")
-    return TexturePackage(source=source, standalone=False, items=tuple(items))
+    return TexturePackage(head=source[:_align(table_end)], standalone=False, items=tuple(items))
 
 
 def _parse_g1t_run(source: bytes) -> TexturePackage:
@@ -395,7 +410,7 @@ def _parse_g1t_run(source: bytes) -> TexturePackage:
             padding=source[end:padded_end], g1t=parse_g1t(source[position:end]),
         ))
         position = padded_end
-    return TexturePackage(source=source, standalone=False, items=tuple(items), run=True)
+    return TexturePackage(head=b"", standalone=False, items=tuple(items), run=True)
 
 
 def _swap_red_blue(pixels: bytes) -> bytes:

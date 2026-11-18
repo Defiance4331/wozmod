@@ -59,10 +59,10 @@ def stack_table(exe: bytes, va: int, first: int, count: int) -> list[int]:
         elif exe[at:at + 3] == b"\xc7\x44\x24":
             disp, at = exe[at + 3], at + 4
         elif exe[at:at + 3] == b"\xc7\x84\x24":
-            disp, at = struct.unpack_from("<I", exe, at + 3)[0], at + 7
+            disp, at = struct.unpack("<I", exe[at + 3:at + 7])[0], at + 7
         else:
             break
-        stored[disp] = struct.unpack_from("<I", exe, at)[0]
+        stored[disp] = struct.unpack("<I", exe[at:at + 4])[0]
         at += 4
     wanted = [first + 4 * i for i in range(count)]
     if any(d not in stored for d in wanted):

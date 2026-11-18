@@ -348,7 +348,7 @@ def run_stand_in(dll: bytes, folder: Path, test: str = "return 0;") -> Path:
     game = folder / "game"
     (game / "wozmod").mkdir(parents=True, exist_ok=True)
     (game / "d3d9.dll").write_bytes(dll)
-    (folder / "game.c").write_text(STAND_IN % test)
+    (folder / "game.c").write_text(STAND_IN % test, encoding="utf-8")
     subprocess.run(["i686-w64-mingw32-gcc", "-O2", "-Wl,--disable-dynamicbase", "-Wl,--image-base,0x400000",
                     str(folder / "game.c"), "-o", str(folder / "game.exe")], check=True)
     image = bytearray((folder / "game.exe").read_bytes())

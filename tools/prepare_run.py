@@ -68,7 +68,7 @@ def cached_sha256s(paths: list[Path], cache_file: Path = HASH_CACHE) -> list[str
     threads and the cache is written once.
     Shortcut: a file edited in place with its size and mtime restored is not noticed; keep the stock backup and
     installs read-only."""
-    cache = json.loads(cache_file.read_text()) if cache_file.is_file() else {}
+    cache = json.loads(cache_file.read_text(encoding="utf-8")) if cache_file.is_file() else {}
     keys = [(str(path.resolve()), file_stamp(path)) for path in paths]
     missing = [(key, stamp) for key, stamp in keys if (cache.get(key) or {}).get("stamp") != stamp]
     if missing:
@@ -77,7 +77,7 @@ def cached_sha256s(paths: list[Path], cache_file: Path = HASH_CACHE) -> list[str
                 cache[key] = {"stamp": stamp, "sha256": digest}
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         # a temporary file of its own: two checks staging at once must not rename each other's
-        with tempfile.NamedTemporaryFile("w", dir=cache_file.parent, suffix=".next", delete=False) as temporary:
+        with tempfile.NamedTemporaryFile("w", dir=cache_file.parent, suffix=".next", delete=False, encoding="utf-8") as temporary:
             temporary.write(json.dumps(cache, indent=1) + "\n")
         Path(temporary.name).replace(cache_file)
     return [cache[key]["sha256"] for key, _ in keys]
@@ -90,7 +90,7 @@ def reflink(source: Path, target: Path) -> None:
 def stock_backup() -> Path:
     if not CONFIG.is_file():
         raise ValueError(f"no {CONFIG}; write stock_backup = \"/path/to/stock/game\" there")
-    stock = Path(tomllib.loads(CONFIG.read_text())["stock_backup"])
+    stock = Path(tomllib.loads(CONFIG.read_text(encoding="utf-8"))["stock_backup"])
     if not (stock / "OROCHI_Z.exe").is_file():
         raise ValueError(f"no stock game at stock_backup: {stock}")
     return stock
@@ -117,14 +117,14 @@ def installed_files(install: Path, cache_file: Path = HASH_CACHE) -> dict[str, s
 def write_record(root: Path, files: dict[str, str], fixtures: dict) -> None:
     """Record the staged copy root/game: game.sha256 lists each checked file's SHA-256 by its name in game/, and
     fixtures.json keeps the fixtures with each file's stamp as staged, so verify_copy rehashes only a file that moved."""
-    (root / "game.sha256").write_text("".join(f"{files[f]}  {f}\n" for f in sorted(files)))
+    (root / "game.sha256").write_text("".join(f"{files[f]}  {f}\n" for f in sorted(files)), encoding="utf-8")
     (root / "fixtures.json").write_text(json.dumps(
-        fixtures | {"stamps": {f: file_stamp(root / "game" / f) for f in sorted(files)}}, indent=2) + "\n")
+        fixtures | {"stamps": {f: file_stamp(root / "game" / f) for f in sorted(files)}}, indent=2) + "\n", encoding="utf-8")
 
 
 def recorded(root: Path) -> dict[str, str]:
     """game.sha256 of a staged run: each checked file's SHA-256 by its name in game/."""
-    lines = local_path(root, "game.sha256").read_text().splitlines()
+    lines = local_path(root, "game.sha256").read_text(encoding="utf-8").splitlines()
     return {name: digest for digest, name in (line.split("  ", 1) for line in lines)}
 
 
@@ -132,7 +132,7 @@ def verify_copy(root: Path, game: Path) -> None:
     """Refuse a game copy whose mod files differ from the record write_record left, so a run never tests a changed
     build. A file with the stamp it was staged with is its unchanged reflink and is trusted unread; any other is hashed.
     Shortcut: a file rewritten in place with its size and mtime restored passes, as in cached_sha256s."""
-    stamps = json.loads(local_path(root, "fixtures.json").read_text())["stamps"]
+    stamps = json.loads(local_path(root, "fixtures.json").read_text(encoding="utf-8"))["stamps"]
     for name, digest in recorded(root).items():
         path = game / name
         if not path.is_file():
@@ -218,14 +218,14 @@ def check_template(template: Path) -> None:
     In a run those writes land in its own overlay, about 300 MB of unshared data per launch. So launch.sh runs a pinned
     copy of Proton in the template, and the prefix must have been set up by that copy since Steam last updated."""
     proton = template / "proton"
-    if f'PROTON="{proton}/proton"' not in (template / "launch.sh").read_text():
+    if f'PROTON="{proton}/proton"' not in (template / "launch.sh").read_text(encoding="utf-8"):
         raise ValueError(f"{template}/launch.sh must run the pinned Proton {proton}/proton, not a copy that updates "
                          "itself (copy it there with cp -a --reflink=always)")
-    if KEEP_IDENTICAL not in (proton / "proton").read_text():
+    if KEEP_IDENTICAL not in (proton / "proton").read_text(encoding="utf-8"):
         raise ValueError(f"{proton}/proton recopies unchanged DLLs into every run; patch it once with: "
                          "uv run python tools/refresh_template.py")
-    stamp = (template / "prefix/pfx/.update-timestamp").read_text().strip()
-    info = (template / "prefix/config_info").read_text().split("\n")
+    stamp = (template / "prefix/pfx/.update-timestamp").read_text(encoding="utf-8").strip()
+    info = (template / "prefix/config_info").read_text(encoding="utf-8").split("\n")
     steam, files = Path(info[3] if len(info) > 3 else ""), f"{proton}/files/"
     key = [f"{files}share/fonts/", f"{files}lib/", str(steam),
            *(proton_mtime(steam / "legacycompat" / name) for name in ("steamclient.dll", "steamclient64.dll", "Steam.dll")),
@@ -239,7 +239,7 @@ def key_configs(save: str) -> dict[str, bytes]:
     """The Key Config files (inputmap1.dat, inputmap2.dat) a save fixture brings, checked against its meta.json; a run
     without them keeps the template prefix's, whose maps name no pad."""
     fixture = WORK / "saves" / save
-    hashes = json.loads((fixture / "meta.json").read_text()).get("inputmap_sha256", {}) if fixture.is_dir() else {}
+    hashes = json.loads((fixture / "meta.json").read_text(encoding="utf-8")).get("inputmap_sha256", {}) if fixture.is_dir() else {}
     files = {name: (fixture / name).read_bytes() for name in hashes}
     for name, data in files.items():
         if hashlib.sha256(data).hexdigest() != hashes[name]:
@@ -259,7 +259,7 @@ def save_data(save: str, template: Path) -> tuple[bytes | None, str]:
     if not fixture.is_dir():
         path = Path(save).resolve(strict=True)
         return path.read_bytes(), str(path)
-    meta = json.loads((fixture / "meta.json").read_text())
+    meta = json.loads((fixture / "meta.json").read_text(encoding="utf-8"))
     data = (fixture / "save.dat").read_bytes()
     if hashlib.sha256(data).hexdigest() != meta["save_sha256"]:
         raise ValueError(f"{fixture}/save.dat changed since export")
@@ -323,7 +323,7 @@ def prepare(name: str, install: Path, dll: Path | None, save: str, cache_file: P
         (game / listed).unlink(missing_ok=True)  # never write through the install's shared extent
         reflink(source, game / listed)
     if ini:  # the game rewrites it, so game.sha256 leaves it out
-        (game / "wozmod/settings.ini").write_text(ini, newline="")
+        (game / "wozmod/settings.ini").write_text(ini, newline="", encoding="utf-8")
     files |= dict(zip(["d3d9.dll", MANIFEST, *replaced], cached_sha256s([dll, install / MANIFEST, *replaced.values()],
                                                                        cache_file), strict=True))
     # The prefix is the template's seen through an overlay (game_harness.py run): the run's prefix/ holds only what the

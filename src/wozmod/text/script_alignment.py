@@ -8,10 +8,10 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from difflib import SequenceMatcher
 from functools import cached_property, partial
-from itertools import accumulate
 from pathlib import Path
 from typing import Callable
 
+from wozmod import game_files, native
 from wozmod.donors import WO1_X360, WO2_PSP, WO2_X360
 from wozmod.formats.linkdata import (
     archive, decoded_member,
@@ -22,6 +22,7 @@ from wozmod.formats.scripts import (
 )
 from wozmod.movies import movie_rows
 
+from .movie_captions import x360_schedules
 from .narration_voices import container
 
 # WO1 X360 ENS ordinals, as are the other WO1 X360 entries below. Its loader 0x822A28C0 reads ENS k as archive id 0xA53 + k;
@@ -132,7 +133,7 @@ def _parse(data: bytes) -> Script | None:
 def moz_scripts(stem: Path) -> dict[int, Script]:
     """Read every single-member four-section stock stage script. Only the stage scripts are read: the build reads
     nothing else of LINKDATA2 that it does not need, so another mod's change there does not stop the install."""
-    entries = archive(stem)
+    entries = game_files.archive(stem)
     single = entries.read(o for o in MOZ_SCRIPTS if o in entries and entries.parts(o) == 1)
     return {o: parsed for o, data in single.items() if data[:4] == b"\x04\0\0\0" and (parsed := _parse(data))}
 
@@ -415,51 +416,26 @@ def _alignment(stock: Script, donor: Script, persons: dict[int, int], pairs: dic
             likeness[e][f] += min(count, their_count)
     for e, row in enumerate(likeness):
         row[:] = [k * 1000 // max(sizes[e], their_size) for k, their_size in zip(row, their_sizes, strict=True)]
-    n, m = len(ours), len(theirs)
-    heavy = 2000 * (n + m) + 1
+    # The table and its traces are native (streams.rs): each row as (token number, what a pair of it scores before
+    # likeness), their rows as (token number, event).
+    heavy = 2000 * (len(ours) + len(theirs)) + 1
+    numbers: dict[tuple, int] = {}
+    our_rows = [(numbers.setdefault(token, len(numbers)), heavy if c and c[0] in (NOTICE, SPEAK) else 1000, e)
+                for (token, _, c), e in zip(ours, oe, strict=True)]
+    their_rows = [(numbers.setdefault(token, len(numbers)), f) for (token, _, _), f in zip(theirs, te, strict=True)]
+    if not hasattr(native.module, "stream_alignments"):
+        raise RuntimeError("the stage joins need the wozmod-native package (uv sync --extra native)")
 
-    def gain(i: int, j: int) -> int:
-        """What pairing our row i with their row j scores: 0 unless their tokens agree."""
-        if ours[i][0] != theirs[j][0]:
-            return 0
-        c = ours[i][2]
-        return (heavy if c is not None and c[0] in (NOTICE, SPEAK) else 1000) + likeness[oe[i]][te[j]]
-
-    places = defaultdict(list)
-    for j, (token, _, _) in enumerate(theirs):
-        places[token].append(j)
-    pairs_at: dict[tuple, list[tuple[int, int]]] = {}  # (j, gain) for each place a row's token pairs, by row kind
-    score = [[0] * (m + 1)]
-    for i in range(n):
-        # Rows rise along j, so a place where the tokens differ adds nothing to the row above: start from it, raise
-        # each place j + 1 a pair at j reaches, then carry each maximum on along the row.
-        if (kind := (ours[i][0], oe[i], ours[i][2] and ours[i][2][0])) not in pairs_at:
-            pairs_at[kind] = [(j, gain(i, j)) for j in places[ours[i][0]]]
-        above, row = score[-1], score[-1].copy()
-        for j, g in pairs_at[kind]:
-            if (value := above[j] + g) > row[j + 1]:
-                row[j + 1] = value
-        score.append(list(accumulate(row, max)))
-
-    def traced(earliest: bool) -> dict[int, set[int]]:
-        found, i, j = defaultdict(set), n, m
-        while i and j:
-            g = gain(i - 1, j - 1)
-            here = score[i][j]
-            pair = g > 0 and here == score[i - 1][j - 1] + g
-            up, left = here == score[i - 1][j], here == score[i][j - 1]
-            if pair and not (earliest and (up or left)):
-                c = ours[i - 1][2]
-                if c is not None and c[0] == opcode:
-                    found[c[1 if opcode == NOTICE else 2]].add(theirs[j - 1][2][1 if opcode == NOTICE else 2])
-                i, j = i - 1, j - 1
-            elif up:
-                i -= 1
-            else:
-                j -= 1
+    def found(traced: list[tuple[int, int]]) -> dict[int, set[int]]:
+        word = 1 if opcode == NOTICE else 2
+        found = defaultdict(set)
+        for i, j in traced:
+            if (c := ours[i][2]) is not None and c[0] == opcode:
+                found[c[word]].add(theirs[j][2][word])
         return found
 
-    return traced(True), traced(False)
+    earliest, latest = native.module.stream_alignments(our_rows, their_rows, likeness)
+    return found(earliest), found(latest)
 
 
 def notice_join(join: StageJoin) -> dict[int, int]:
@@ -585,7 +561,7 @@ def quote_pairs(moz: bytes, donor: bytes, officers: bool = True, order: str = "<
 
 def official_pairs(stock: Path, wo1: Path, wo2_donor: Wo2Donor) -> dict[bytes, tuple[str, str]]:
     """Re-derive stock bytes to (English, source), preserving baseline votes and suffixes."""
-    linkdata1, linkdata2 = archive(stock / "LINKDATA1"), archive(stock / "LINKDATA2")
+    linkdata1, linkdata2 = game_files.archive(stock / "LINKDATA1"), game_files.archive(stock / "LINKDATA2")
     moz = moz_scripts(stock / "LINKDATA2")
     wo1_by_ordinal, wo2 = wo1_scripts(wo1), wo2_donor.scripts()
     # A spoken line, story or Dream, pairs with the donor line its speak command's counterpart speaks.
@@ -615,7 +591,6 @@ def official_pairs(stock: Path, wo1: Path, wo2_donor: Wo2Donor) -> dict[bytes, t
     found += [(event_pairs(scenes[o], lines[s]), s) for o, s, _ in events]
     # WO1 X360 holds German, not English, at many of its caption sites, so only the WO2 X360 captions pair.
     found += [(event_caption_pairs(scenes[o], donor[s, d], wo2_donor.order), s) for o, s, d in events if s == WO2_X360.name]
-    from .contexts import x360_schedules  # contexts imports this module
     member = {ens: m for m, ens in X360_ENS.items()}
     schedules = {o: member[ens] for o, ens in x360_schedules(movie_rows()).items()}  # stock entry -> PS2 member
     movies, captions = linkdata2.read(list(schedules)), wo2_donor.members(list(schedules.values()))

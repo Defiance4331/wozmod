@@ -7,10 +7,11 @@ import pytest
 
 from wozmod.formats.linkdata import archive, decoded_member, ps2_members
 from wozmod.formats.scripts import caption_cues
-from wozmod.text.contexts import (
-    CUE_TICKS, EVENT_TICKS, PSP_EVENT_CAPTIONS, PSP_MOVIE_CAPTIONS, event_scenes, psp_line_cues,
+from wozmod.formats.events import EVENT_TICKS, event_scenes
+from wozmod.text.movie_captions import CUE_TICKS
+from wozmod.text.psp_alignment import (
+    PSP_EVENT_CAPTIONS, PSP_MOVIE_CAPTIONS, PspPair, paired_psp_rows, psp_line_cues, psp_quote_text,
 )
-from wozmod.text.psp_alignment import PspPair, paired_psp_rows, psp_quote_text
 from wozmod.text.keys import stock_key
 from synthetic import mesc, script, spans, strings, timed_event, write_stock_archive
 
@@ -123,7 +124,7 @@ def psp_inputs() -> tuple[Path, Path]:
 
 def test_each_psp_scene_is_the_stock_scene_its_cues_are_timed_to(psp_inputs):
     # Bug: a stock event or movie given another scene's PSP schedule (PSP_EVENT_CAPTIONS, PSP_MOVIE_CAPTIONS: no
-    # number links them, see contexts.py), or the PSP movie's clock started at the wrong stock sub-scene. Expected:
+    # number links them, see psp_alignment.py), or the PSP movie's clock started at the wrong stock sub-scene. Expected:
     # every PSP cue starts where a stock line's window (or the stock movie's cue) starts, within 0.1 s (3 PSP
     # frames; the 92 cues measured differ by 0.06 s at most), when both clocks start at the speaking sub-scene.
     game, fns = psp_inputs

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import tomllib
 from pathlib import Path
 
@@ -12,7 +13,7 @@ REPO = Path(__file__).resolve().parents[1]
 def main_checkout() -> Path:
     """The main checkout; a linked worktree's .git file names its folder in the main checkout's .git/worktrees/."""
     git = REPO / ".git"
-    return Path(git.read_text().removeprefix("gitdir:").strip()).parents[2] if git.is_file() else REPO
+    return Path(git.read_text(encoding="utf-8").removeprefix("gitdir:").strip()).parents[2] if git.is_file() else REPO
 
 
 def work() -> Path:
@@ -27,7 +28,9 @@ def config() -> Path:
 
 
 def inputs() -> dict[str, str]:
-    """The machine's input paths: the [tests] table of config(), under any WOZMOD_ variable the environment sets."""
+    """The machine's input paths: the [tests] table of config(), with its [tests-windows] table over it under Windows
+    (a decryption program there is a Windows build of it), under any WOZMOD_ variable the environment sets."""
     found = config()
-    table = tomllib.loads(found.read_text(encoding="utf-8")).get("tests", {}) if found.is_file() else {}
+    tables = tomllib.loads(found.read_text(encoding="utf-8")) if found.is_file() else {}
+    table = tables.get("tests", {}) | (tables.get("tests-windows", {}) if sys.platform == "win32" else {})
     return {name: os.environ.get(name, str(value)) for name, value in table.items()}

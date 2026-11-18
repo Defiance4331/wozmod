@@ -1,7 +1,7 @@
 """The Z Dream scenes (stock events 402-413) under the English voice: each spoken line's English, cut from the WO2
 PSP movie of the same scene.
 
-The WO2 PSP plays these scenes as movies, GEV_201 to GEV_212 (text.contexts.PSP_EVENT_CAPTIONS pairs them), each
+The WO2 PSP plays these scenes as movies, GEV_201 to GEV_212 (text.psp_alignment.PSP_EVENT_CAPTIONS pairs them), each
 with two soundtracks over one music bed: English (PMF substream 0) and Japanese (1). The Japanese track holds the
 stock Japanese clips, mixed in at one gain per scene (measured 0.746-0.765). Per scene:
 
@@ -36,20 +36,25 @@ from __future__ import annotations
 import math
 import os
 import tempfile
-import threading
 from array import array
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from wozmod import native
-from wozmod.formats.audio import _ffmpeg_each, kovs_ogg, stock_record, vorbis_records
+from wozmod.formats.audio import _ffmpeg_each, event_voice, kovs_ogg, vorbis_records
+from wozmod.formats.events import EVENT_TICKS, event_scenes
 from wozmod.formats.pmf import START_PADDING, audio_tracks
 from wozmod.progress import report
-from wozmod.text.contexts import CUE_TICKS, EVENT_TICKS, PSP_EVENT_CAPTIONS, event_scenes, event_voice
+from wozmod.workers import ordered_map
+from wozmod.text.movie_captions import CUE_TICKS
+from wozmod.text.psp_alignment import PSP_EVENT_CAPTIONS
 
 from .dream_movies import ENGLISH, JAPANESE, RATE, decoded, under_full_scale
 from .events import AUDIBLE_FLOOR_DB, audible_length
+
+if TYPE_CHECKING:
+    from wozmod.game_files import StockVoices
 
 # Each Z Dream scene's PSP movie: GEV n loads the caption schedule FNS member n - 0x2B.
 DREAM_EVENTS = {o: f"PSP_GAME/USRDIR/movie/event/GEV_{member + 0x2B}.pmf" for o, member in PSP_EVENT_CAPTIONS.items()}
@@ -302,40 +307,41 @@ def _track(riff: bytes) -> array:
     return samples
 
 
-def build_dream_events(stock: Path, psp: Path, voice_index: bytes, events: dict[int, bytes],
+def build_dream_events(stock: StockVoices, psp: Path, events: dict[int, bytes],
                        jobs: int | None = None) -> tuple[dict[int, bytes], dict[int, SceneVoices]]:
     """The English take of each Z Dream line as a voice bank record (KOVS) by voice id, and what each scene gave,
-    from the stock game folder, the extracted WO2 PSP disc, the stock voice index (LINKDATA1 entry 4058 decoded)
-    and the stock event files 402-413; jobs caps the ffmpeg processes."""
+    from the stock game's clips, the extracted WO2 PSP disc and the stock event files 402-413; jobs caps the ffmpeg
+    processes."""
     if not hasattr(native.module, "splice_drops"):
         raise DreamEventError("the Dream scenes need the wozmod-native package (uv sync --extra native)")
     lines = {o: scene_lines(o, events[o]) for o in DREAM_EVENTS}
     voices = sorted({line.voice for found in lines.values() for line in found})
-    with (stock / "data/Sound/Voice/Voice.bin").open("rb") as bank:
-        oggs = [kovs_ogg(stock_record(bank, voice_index, v)) for v in voices]
+    takes = stock.clips(voices)
+    oggs = [kovs_ogg(takes[v]) for v in voices]
     clips = {}
     for v, pcm in zip(voices, _ffmpeg_each([(["-f", "ogg"], ogg, ["-ac", "1", "-ar", str(RATE), "-f", "f32le"])
                                             for ogg in oggs], jobs, "cutting the Dream scenes", (0.8, 0.81)), strict=True):
         clips[v] = array("f")
         clips[v].frombytes(pcm)
-    finished, lock = [0], threading.Lock()
+    finished = [0]
 
-    def cut(o: int, kept: frozenset[int] = frozenset()) -> SceneVoices:
+    def cut(scene: tuple[int, frozenset[int]]) -> SceneVoices:
+        o, kept = scene
         tracks = audio_tracks((psp / DREAM_EVENTS[o]).read_bytes())
-        scene = scene_voices(_track(tracks[ENGLISH]), _track(tracks[JAPANESE]), lines[o], clips, kept)
-        with lock:  # report() raises Cancelled when the player cancelled, which stops the other scenes too
-            finished[0] += 1
-            report("voices", "cutting the Dream scenes", 0.81 + 0.03 * min(finished[0], len(DREAM_EVENTS)) / len(DREAM_EVENTS),
-                   (min(finished[0], len(DREAM_EVENTS)), len(DREAM_EVENTS)))
-        return scene
+        return scene_voices(_track(tracks[ENGLISH]), _track(tracks[JAPANESE]), lines[o], clips, kept)
 
-    # The scenes are independent: each its own thread, at most jobs at once (each runs one ffmpeg at a time, and the
-    # sample loops in the native module let go of the GIL). A scene comes out the same on any thread.
-    with ThreadPoolExecutor(jobs or os.process_cpu_count()) as pool:
-        order = sorted(DREAM_EVENTS)
-        scenes = dict(zip(order, pool.map(cut, order), strict=True))
-        again = failed_splices(scenes)
-        scenes |= dict(zip(again, pool.map(cut, again, again.values()), strict=True))
+    def progress(_) -> None:  # report() raises Cancelled when the player cancelled, which stops the other scenes too
+        finished[0] += 1
+        report("voices", "cutting the Dream scenes", 0.81 + 0.03 * min(finished[0], len(DREAM_EVENTS)) / len(DREAM_EVENTS),
+               (min(finished[0], len(DREAM_EVENTS)), len(DREAM_EVENTS)))
+
+    # The scenes are independent: at most jobs at once (each runs one ffmpeg at a time, and the sample loops in the
+    # native module let go of the GIL).
+    jobs = jobs or os.process_cpu_count()
+    order = sorted(DREAM_EVENTS)
+    scenes = dict(zip(order, ordered_map(cut, [(o, frozenset()) for o in order], jobs, progress), strict=True))
+    again = failed_splices(scenes)
+    scenes |= dict(zip(again, ordered_map(cut, list(again.items()), jobs, progress), strict=True))
     takes = {}
     for scene in scenes.values():
         for v, take in scene.takes.items():

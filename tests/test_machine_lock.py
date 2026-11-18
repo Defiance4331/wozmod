@@ -11,6 +11,9 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.linux_only("tools/machine_lock.py locks with fcntl and runs its commands through sh")
 TOOLS = Path(__file__).resolve().parents[1] / "tools"
 
 
@@ -42,7 +45,7 @@ def test_a_heavy_run_waits_for_another_worktrees_and_keeps_its_exit_status(linke
     finally:
         first.kill()
         if (tmp_path / "orphan").exists():
-            os.kill(int((tmp_path / "orphan").read_text()), signal.SIGKILL)
+            os.kill(int((tmp_path / "orphan").read_text(encoding="utf-8")), signal.SIGKILL)
 
 
 def _start(target) -> threading.Event:

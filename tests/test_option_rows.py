@@ -28,7 +28,7 @@ def test_option_sheet_bands_follow_the_order_the_runtime_draws_them() -> None:
 def test_every_option_text_is_in_the_label_face() -> None:
     """Bug: a character the label face lacks (the digits of the frame rates) fails the render or leaves the
     value blank; the face is read from its source, so no font tool is needed."""
-    source = ast.parse((Path(__file__).resolve().parents[1] / "data/art/faces/buttonvec.py").read_text())
+    source = ast.parse((Path(__file__).resolve().parents[1] / "data/art/faces/buttonvec.py").read_text(encoding="utf-8"))
     params = next(node.value for node in source.body if isinstance(node, ast.Assign)
                   and getattr(node.targets[0], "id", "") == "PARAMS")
     have = {key.value for key in params.keys}

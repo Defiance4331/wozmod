@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+import fake_program
 from wozmod.art import build, lettering, vector
 from wozmod.art.bundle import MetricsOnly, read_bundle
 
@@ -23,7 +24,7 @@ def _digest(text):
 
 def _recipe(tmp_path, monkeypatch):
     source = tmp_path / "text.json"
-    source.write_text(json.dumps({"ALPHA": 1}))
+    source.write_text(json.dumps({"ALPHA": 1}), encoding="utf-8")
     monkeypatch.setattr(renderer, "TEXT_SOURCES", (source,))
     recipe = tmp_path / "recipe.json"
     monkeypatch.setattr(renderer, "RECIPE", recipe)
@@ -43,7 +44,7 @@ def test_render_cannot_drop_recipe_key_text_or_squish_with_raw_ink_instead_of_me
     plain = {"kind": "squish", "base": identity, "width": 3, "fill": None}
     document["requests"][lettering.key(plain)] = plain
     document["metrics_only"] = [identity]
-    recipe.write_text(json.dumps(document))
+    recipe.write_text(json.dumps(document), encoding="utf-8")
     observed = []
 
     def synthetic(request):
@@ -105,7 +106,7 @@ def test_render_cannot_ship_a_changed_or_unresolvable_recipe(tmp_path, monkeypat
     if bug == "duplicate_request_key":
         encoded = json.dumps(document["requests"][identity])
         payload = '{"format_version":2,"metrics_only":[],"requests":{' + json.dumps(identity) + ':' + encoded + ',' + json.dumps(identity) + ':' + encoded + '}}'
-    recipe.write_text(payload)
+    recipe.write_text(payload, encoding="utf-8")
     path = tmp_path / "letters.zip"
     with pytest.raises(ValueError, match=message):
         renderer.render(path)
@@ -116,7 +117,7 @@ def test_recipe_from_trace_cannot_keep_raw_label_text_or_change_a_request(tmp_pa
     # Bug: the traced label text is written verbatim into the tracked recipe, or the
     # encoded request no longer decodes to the request the build asked for.
     source = tmp_path / "text.json"
-    source.write_text(json.dumps({"rows": ["QUIT GAME", "RESUME"]}))
+    source.write_text(json.dumps({"rows": ["QUIT GAME", "RESUME"]}), encoding="utf-8")
     monkeypatch.setattr(renderer, "TEXT_SOURCES", (source,))
     monkeypatch.setattr(renderer, "RECIPE", tmp_path / "recipe.json")
     pause = {"kind": "pause", "text": "QUIT GAME", "scale": 2, "target": 61.5, "counterpart": "RESUME"}
@@ -124,10 +125,10 @@ def test_recipe_from_trace_cannot_keep_raw_label_text_or_change_a_request(tmp_pa
     trace = tmp_path / "trace"
     trace.mkdir()
     for request in (pause, squish):
-        (trace / f"{lettering.key(request)}.json").write_text(json.dumps(request))
+        (trace / f"{lettering.key(request)}.json").write_text(json.dumps(request), encoding="utf-8")
     (trace / f"{lettering.key(squish)}.pixels").touch()
     assert renderer.write_recipe([trace]) == 2
-    written = (tmp_path / "recipe.json").read_text()
+    written = (tmp_path / "recipe.json").read_text(encoding="utf-8")
     assert "QUIT GAME" not in written and "RESUME" not in written
     requests, _, metrics_only = renderer._load_requests()
     assert requests == {lettering.key(pause): pause, lettering.key(squish): squish}
@@ -138,7 +139,7 @@ def test_traced_build_cannot_ship_a_full_width_label_it_draws_without_pixels(tmp
     # Bug: a label drawn at full width is recorded as measured only (compose then fails),
     # or reading a base inside its squish keeps that base's pixels in the release bundle.
     source = tmp_path / "text.json"
-    source.write_text(json.dumps(["FITS", "OVERFLOWS"]))
+    source.write_text(json.dumps(["FITS", "OVERFLOWS"]), encoding="utf-8")
     monkeypatch.setattr(renderer, "TEXT_SOURCES", (source,))
     monkeypatch.setattr(renderer, "RECIPE", tmp_path / "recipe.json")
     monkeypatch.setattr(lettering, "TRACE", str(tmp_path / "trace"))
@@ -164,7 +165,7 @@ def _cached_recipe(tmp_path, monkeypatch):
     """A recipe of two headers, three native labels and a squish, and a producer whose layers differ by request."""
     texts = ["ALPHA", "BETA", "GAMMA", "DELTA", "EPSILON"]
     source = tmp_path / "text.json"
-    source.write_text(json.dumps(texts))
+    source.write_text(json.dumps(texts), encoding="utf-8")
     monkeypatch.setattr(renderer, "TEXT_SOURCES", (source,))
     recipe = tmp_path / "recipe.json"
     monkeypatch.setattr(renderer, "RECIPE", recipe)
@@ -174,7 +175,7 @@ def _cached_recipe(tmp_path, monkeypatch):
     plain.append({"kind": "squish", "base": lettering.key(plain[0]), "width": 3, "fill": None})
     recipe.write_text(json.dumps({"format_version": 2, "metrics_only": [], "requests": {
         lettering.key(request): {name: {"text_sha256": _digest(value)} if name == "text" else value
-                                 for name, value in request.items()} for request in plain}}))
+                                 for name, value in request.items()} for request in plain}}), encoding="utf-8")
 
     def layer(text, scale):
         image = Image.new("RGBA", (len(text) + scale, 3))
@@ -225,18 +226,17 @@ def test_the_layer_cache_key_changes_with_each_renderer_input(tmp_path, monkeypa
              repo / "src/wozmod/runtime/latin_font.py", repo / "data/art/faces/menusans.py"]
     for path in [*paths, packages]:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("a")
-    python.write_text("#!/bin/sh\necho fontforge 20251009\n")
-    python.chmod(0o755)
+        path.write_text("a", encoding="utf-8")
+    python = fake_program.program(python, "print('fontforge 20251009')\n")
     monkeypatch.setattr(renderer.build, "REPO", repo)
     monkeypatch.setattr(renderer, "SYSTEM_PACKAGES", (packages,))
 
     def later(path):
         os.utime(path, ns=(path.stat().st_atime_ns, path.stat().st_mtime_ns + 10**9))
 
-    edits = {**{path.relative_to(repo).as_posix(): lambda path=path: path.write_text("b") for path in paths},
-             "a new font module": lambda: (repo / "src/wozmod/fonts/new.py").write_text("a"),
-             "font Python libraries": lambda: python.write_text("#!/bin/sh\necho fontforge 20260101\n"),
+    edits = {**{path.relative_to(repo).as_posix(): lambda path=path: path.write_text("b", encoding="utf-8") for path in paths},
+             "a new font module": lambda: (repo / "src/wozmod/fonts/new.py").write_text("a", encoding="utf-8"),
+             "font Python libraries": lambda: fake_program.program(python, "print('fontforge 20260101')\n"),
              "system package update": lambda: later(packages)}
     unchanged = []
     for name, edit in edits.items():
@@ -247,14 +247,10 @@ def test_the_layer_cache_key_changes_with_each_renderer_input(tmp_path, monkeypa
     assert unchanged == []
 
 
-def test_everything_the_font_python_imports_is_in_the_layer_cache_key():
+def test_everything_the_font_python_imports_is_in_the_layer_cache_key(font_python):
     """Bug: a font module imports a module outside RENDERER_SOURCES, so an edit to that module leaves cached layers
     drawn by the old code."""
-    python = lettering.FONT_PYTHON
-    probe = subprocess.run([python, "-c", "import cairo, fontforge, numpy"], capture_output=True) \
-        if Path(python).is_file() else None
-    if probe is None or probe.returncode:
-        pytest.skip("font Python with FontForge, Cairo and NumPy absent")
+    python = font_python
     # every font module but menu_references, which the art build reads donor textures with and the font Python never runs
     fonts = sorted(p.stem for p in (build.REPO / "src/wozmod/fonts").glob("*.py")
                    if p.stem not in {"__init__", "menu_references"})
@@ -262,7 +258,7 @@ def test_everything_the_font_python_imports_is_in_the_layer_cache_key():
               f"for name in {['wozmod.art.lettering', *(f'wozmod.fonts.{stem}' for stem in fonts)]!r}:\n"
               "    importlib.import_module(name)\n"
               "print('\\n'.join(sorted(m.__file__ for m in list(sys.modules.values()) if getattr(m, '__file__', None))))")
-    run = subprocess.run([python, "-c", script], capture_output=True, text=True, env=lettering.font_environment())
+    run = subprocess.run([python, "-c", script], capture_output=True, text=True, env=lettering.font_environment(), encoding="utf-8")
     assert run.returncode == 0, run.stderr[-2000:]
     roots = [build.REPO / root for root in renderer.RENDERER_SOURCES]
     ours = [Path(f) for f in run.stdout.split() if Path(f).is_relative_to(build.REPO / "src")]

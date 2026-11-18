@@ -75,9 +75,9 @@ def sheet(report: dict, title: str) -> str:
 
 
 def write(evidence: Path) -> Path:
-    report = json.loads((evidence / "check-report.json").read_text())
+    report = json.loads((evidence / "check-report.json").read_text(encoding="utf-8"))
     out = evidence / "contact-sheet.html"
-    out.write_text(sheet(report, f"{evidence.parent.name}: {Path(report['spec']).name}"))
+    out.write_text(sheet(report, f"{evidence.parent.name}: {Path(report['spec']).name}"), encoding="utf-8")
     return out
 
 

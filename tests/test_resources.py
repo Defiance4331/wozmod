@@ -1,22 +1,17 @@
 """Where wozmod finds data/, runtime/ and ffmpeg, in the source tree and in a PyInstaller bundle."""
 
-import os
-import stat
 import sys
 
 import pytest
 
+import fake_program
 from wozmod import resources
 from wozmod.formats.audio import _ffmpeg_each
-
-POSIX = pytest.mark.skipif(os.name == "nt", reason="the fake ffmpeg is a shell script")
 
 
 def fake_ffmpeg(path, text):
     """A program that writes `text` to the last file named on its command line, as ffmpeg writes its output."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f'#!/bin/sh\nfor last; do :; done\necho {text} > "$last"\n')
-    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return fake_program.program(path, f"import sys\nfrom pathlib import Path\nPath(sys.argv[-1]).write_bytes({text!r}.encode() + b'\\n')\n")
 
 
 def test_source_tree_root_holds_the_files_the_install_reads():
@@ -26,25 +21,25 @@ def test_source_tree_root_holds_the_files_the_install_reads():
         assert (resources.root() / name).is_file(), name
 
 
-@pytest.mark.parametrize("bundled, on_path, found, output", [
-    pytest.param(True, True, "bundle/ffmpeg/bin/ffmpeg", b"bundled\n", marks=POSIX, id="bundled-over-path"),
-    pytest.param(False, True, "path/ffmpeg", b"path\n", marks=POSIX, id="path-without-bundle"),
-    pytest.param(False, False, None, None, id="neither"),
+@pytest.mark.parametrize("bundled, on_path, found", [
+    pytest.param(True, True, "bundled", id="bundled-over-path"),
+    pytest.param(False, True, "path", id="path-without-bundle"),
+    pytest.param(False, False, None, id="neither"),
 ])
-def test_ffmpeg_is_the_bundled_one_else_the_one_on_path_else_none(tmp_path, monkeypatch, bundled, on_path, found,
-                                                                  output):
+def test_ffmpeg_is_the_bundled_one_else_the_one_on_path_else_none(tmp_path, monkeypatch, bundled, on_path, found):
     # Bugs: shutil.which("ffmpeg") or a bare "ffmpeg" in the command finds the player's own ffmpeg before the bundled
     # one; developers (no bundle) lose their PATH ffmpeg; or a fallback name instead of None, so check_inputs never
     # says that ffmpeg is missing. The fakes write their own name, so the output says which one ran.
+    fakes = {}
     if bundled:
-        fake_ffmpeg(tmp_path / "bundle/ffmpeg/bin/ffmpeg", "bundled")
+        fakes["bundled"] = fake_ffmpeg(tmp_path / "bundle/ffmpeg/bin/ffmpeg", "bundled")
         monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path / "bundle"), raising=False)
     if on_path:
-        fake_ffmpeg(tmp_path / "path/ffmpeg", "path")
+        fakes["path"] = fake_ffmpeg(tmp_path / "path/ffmpeg", "path")
     monkeypatch.setenv("PATH", str(tmp_path / "path"))
-    assert resources.ffmpeg() == (found and str(tmp_path / found))
-    if output:
-        assert _ffmpeg_each([([], b"clip", [])]) == [output]
+    assert resources.ffmpeg() == (found and str(fakes[found]))
+    if found:
+        assert _ffmpeg_each([([], b"clip", [])]) == [f"{found}\n".encode()]
 
 
 def test_lzp2_cache_key_needs_no_source_file(monkeypatch):

@@ -1,9 +1,10 @@
 """The install step keys (wozmod.install.step_keys): a step's key changes with exactly what its output depends on.
 
-The fast tests build a small repository in tmp_path. The slow ones (WOZMOD_STEP_KEYS=1, about 18 minutes) run the
-three steps on the real inputs to settle what the keys assume: the worker count and every environment variable but
-the WOZMOD_* ones leave the output alone, a step opens no bundled file and no disc member its key leaves out, and the
-art step runs no font Python.
+The fast tests build a small repository in tmp_path. The slow one (WOZMOD_STEP_KEYS=1, about 20 minutes) builds the
+three steps on the real inputs again with other worker counts and in another environment, to settle what the keys
+assume: the worker count and every environment variable but the WOZMOD_* ones leave the output alone. What a step
+reads (bundled files, disc members, modules, programs) the read gate holds to the key's manifest in every build from
+source (install/gate.py, tests/test_gate.py).
 """
 
 from __future__ import annotations
@@ -19,9 +20,10 @@ from pathlib import Path
 
 import pytest
 
-from wozmod.install import step_keys
+import fake_program
+from wozmod.install import manifest, step_keys, steps
 
-STEPS = set(step_keys.STEPS)
+STEPS = set(steps.STEPS)
 ROWS = [{"key": "a1", "ref": ["wo1-x360", "ens", 3, "dialog", 1], "en": "Donor wording"},
         {"key": "b2", "en": "Our wording"}]
 REPO = {
@@ -54,9 +56,9 @@ REPO = {
     "src/wozmod/text.py": 'from wozmod import shared\nTEXT = "data/text"\nMOVIES = "data/movies.json"\ndef build(out): pass\n',
     "src/wozmod/shared.py": 'SHARED_H = "runtime/shared.h"\n',
     "src/wozmod/voices/__init__.py": "from .build import run\n",
-    "src/wozmod/voices/build.py": 'TABLE = "data/text/table.json"\ndef run(nice):\n    from wozmod import deep, text\n',
+    "src/wozmod/voices/build.py": 'TABLE = "data/text/table.json"\ndef run(nice):\n    from wozmod import deep\n',
     "src/wozmod/deep.py": 'import os\nKNOB = os.environ.get("WOZMOD_VOICE_KNOB")\n',
-    "src/wozmod/art.py": 'from wozmod import shared, text\nMAPPING = "data/art/map.json"\nFACES = "data/art/faces"\n'
+    "src/wozmod/art.py": 'from wozmod import shared\nMAPPING = "data/art/map.json"\nFACES = "data/art/faces"\n'
                          'def compose(): pass\n',
     "src/wozmod/lib.py": "def helper(): pass\n",
     "data/stock_pieces.json": json.dumps({"format": 1, "stamp": [1, 2], "pieces": {
@@ -79,14 +81,14 @@ REPO = {
 def _repo(tmp_path: Path) -> Path:
     for name, text in REPO.items():
         (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
-        (tmp_path / name).write_text(textwrap.dedent(text))
+        (tmp_path / name).write_text(textwrap.dedent(text), encoding="utf-8")
     return tmp_path
 
 
 def _edit(path: Path, old: str, new: str) -> None:
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     assert old in text
-    path.write_text(text.replace(old, new))
+    path.write_text(text.replace(old, new), encoding="utf-8")
 
 
 def _repin_member(monkeypatch, disc: str, member: str) -> None:
@@ -131,28 +133,30 @@ def test_each_step_key_changes_with_exactly_the_inputs_its_output_depends_on(tmp
         "the lettering bundle": ({"art"}, lambda: monkeypatch.setattr(installer, "LETTERING", (1, "other bundle"))),
         "the speech model": ({"voices"}, lambda: monkeypatch.setattr(phones, "MODEL", {"en-us/mdef": (1, "other")})),
         # The voices read the translation for the words a Dream scene line's mouth says (voices.phones.shown_lines).
-        "a translation's English": ({"text", "voices"}, lambda: table.write_text(_table([ROWS[0], {**ROWS[1], "en": "Other"}]))),
+        "a translation's English": ({"text", "voices"}, lambda: table.write_text(_table([ROWS[0], {**ROWS[1], "en": "Other"}]), encoding="utf-8")),
         "a translation's donor pointer": ({"text", "voices"},
-                                          lambda: table.write_text(_table([{**ROWS[0], "ref": ["x"]}, ROWS[1]]))),
-        "a caption file of the text": ({"text"}, lambda: (root / "data/text/movie_captions.json").write_text('{"a": 1}')),
-        "an art recipe": ({"art"}, lambda: (root / "data/art/map.json").write_text('{"row": 1}')),
-        "the faces, which only draw lettering.zip": (set(), lambda: (root / "data/art/faces/face.py").write_text("x = 1")),
-        "the movie list": ({"text"}, lambda: (root / "data/movies.json").write_text("[1]")),
-        "a define the steps read": (STEPS, lambda: (root / "runtime/shared.h").write_text("#define SITE 0x11\n")),
-        "the runtime's own C (a DLL-only release)": (set(), lambda: (root / "runtime/english_runtime.c").write_text("")),
+                                          lambda: table.write_text(_table([{**ROWS[0], "ref": ["x"]}, ROWS[1]]), encoding="utf-8")),
+        "a caption file of the text": ({"text"}, lambda: (root / "data/text/movie_captions.json").write_text('{"a": 1}', encoding="utf-8")),
+        "an art recipe": ({"art"}, lambda: (root / "data/art/map.json").write_text('{"row": 1}', encoding="utf-8")),
+        "the faces, which only draw lettering.zip": (set(), lambda: (root / "data/art/faces/face.py").write_text("x = 1", encoding="utf-8")),
+        "the movie list": ({"text"}, lambda: (root / "data/movies.json").write_text("[1]", encoding="utf-8")),
+        "a define the text and the art read": ({"text", "art"}, lambda: (root / "runtime/shared.h").write_text("#define SITE 0x11\n", encoding="utf-8")),
+        "the runtime's own C (a DLL-only release)": (set(), lambda: (root / "runtime/english_runtime.c").write_text("", encoding="utf-8")),
         "the DLL pin": (set(), lambda: _edit(install, '"dll pin"', '"new dll pin"')),
         "the version": (set(), lambda: _edit(root / "src/wozmod/version.py", "1", "2")),
         "a module imported inside a function": ({"voices"}, lambda: _edit(root / "src/wozmod/deep.py", "import os", "import os  # x")),
         "a package's __init__": ({"voices"}, lambda: _edit(root / "src/wozmod/voices/__init__.py", "run", "run  # x")),
         "the step function": ({"voices"}, lambda: _edit(install, "run(NICE)", "run(NICE + 1)")),
         "an installer value the step names": ({"voices"}, lambda: _edit(install, "NICE = 10", "NICE = 11")),
-        "an environment variable the code names": ({"voices"}, lambda: monkeypatch.setenv("WOZMOD_VOICE_KNOB", "1")),
+        "a setting only the art reads": ({"art"}, lambda: monkeypatch.setenv("WOZMOD_ART_TRACE", "1")),
+        # Named in the code but declared by no step: a step that reads it is stopped by the read gate.
+        "a setting no step declares": (set(), lambda: monkeypatch.setenv("WOZMOD_VOICE_KNOB", "1")),
         "the worker count": (set(), lambda: monkeypatch.setenv("WOZMOD_JOBS", "3")),
         "another environment variable": (set(), lambda: monkeypatch.setenv("LANG", "ja_JP.SJIS")),
         "the toolchain": (STEPS, lambda: toolchain.update(ffmpeg="8.2")),
         "a module only the rest of the installer loads": (set(), lambda: _edit(root / "src/wozmod/lib.py", "pass", "return")),
         "installer code outside the steps": (set(), lambda: _edit(install, "helper()", "helper(); helper()")),
-        "data the release does not bundle": (set(), lambda: (root / "data/checks/route.toml").write_text("x = 1")),
+        "data the release does not bundle": (set(), lambda: (root / "data/checks/route.toml").write_text("x = 1", encoding="utf-8")),
     }
 
     def keys():
@@ -169,6 +173,49 @@ def test_each_step_key_changes_with_exactly_the_inputs_its_output_depends_on(tmp
     assert wrong == []
 
 
+def test_every_part_of_a_manifest_is_in_its_steps_key(tmp_path, monkeypatch):
+    """Bug: the key leaves out a part of the manifest the read gate admits (the programs a step starts, a setting, a
+    disc's program, the record's stamp), so the gate lets a step read what its key does not cover and a stale step
+    stays installed. A new Manifest field fails here until it has a change below and the key hashes it."""
+    from wozmod.donors import DISCS
+
+    root = _repo(tmp_path)
+    found = manifest.manifests(root)["voices"]
+    changes = {
+        "step": None,  # the step itself: its key is its own
+        "inputs": found.inputs[:-1],
+        "installer": {**found.installer, "_other": "0" * 64},
+        "modules": (*found.modules, "wozmod.other"),
+        "bundled": (*found.bundled, "data/text/other.json"),
+        "donors": {disc: names[:-1] for disc, names in found.donors.items()},
+        "programs": tuple(DISCS) if not found.programs else (),
+        "stock_stamp": (0, 0),
+        "stock": found.stock[:-1],
+        "environment": (*found.environment, "WOZMOD_OTHER"),
+        "starts": (*found.starts, "other"),
+    }
+
+    def key(each: manifest.Manifest) -> str:
+        monkeypatch.setattr(manifest, "manifests", lambda root=None: {"voices": each})
+        return step_keys.keys(root, {})["voices"]["key"]
+
+    before = key(found)
+    unchanged = [f.name for f in dataclasses.fields(found) if changes[f.name] is not None
+                 and key(dataclasses.replace(found, **{f.name: changes[f.name]})) == before]
+    assert (unchanged, before == key(dataclasses.replace(found))) == ([], True)
+
+
+def test_a_module_edited_between_two_manifests_is_read_again(tmp_path):
+    """Bug: the parsed-module cache is keyed by the module's name or path rather than its bytes, so after an edit
+    that adds an import the manifest keeps the old closure, and the gate refuses the step's new module (or the key
+    misses it) until the process restarts."""
+    root = _repo(tmp_path)
+    before = {step: "wozmod.lib" in found.modules for step, found in manifest.manifests(root).items()}
+    _edit(root / "src/wozmod/shared.py", 'SHARED_H', 'from wozmod import lib\nSHARED_H')
+    after = {step: "wozmod.lib" in found.modules for step, found in manifest.manifests(root).items()}
+    assert (before, after) == ({"text": False, "voices": False, "art": False}, {"text": True, "voices": False, "art": True})
+
+
 def test_a_step_function_that_takes_an_unkeyed_input_is_refused(tmp_path):
     """Bug: _build starts passing a step a new input; the key leaves it out and the old output is kept."""
     root = _repo(tmp_path)
@@ -178,23 +225,25 @@ def test_a_step_function_that_takes_an_unkeyed_input_is_refused(tmp_path):
 
 
 def test_the_shipped_keys_are_the_ones_the_release_source_gives_and_follow_the_players_pins(tmp_path, monkeypatch):
-    """Bug: step_keys.json leaves out part of a key (a step's inputs or the variables its code names), so a release
-    whose piece record or lettering.zip changed keeps the steps built from the old ones."""
+    """Bug: step_keys.json leaves out part of a key or of a manifest (a step's inputs, modules or bundled files), so a
+    release whose piece record or lettering.zip changed keeps the steps built from the old ones, or its read gate holds
+    a step to another manifest than its key hashes."""
     import wozmod.install as installer
 
     root = _repo(tmp_path)
     live = step_keys.keys(root, step_keys.release_toolchain(root, "linux"))
-    (root / step_keys.SHIPPED).write_text(json.dumps(step_keys.shipped_document(root, "linux")))
+    live_manifests = manifest.manifests(root)
+    (root / manifest.SHIPPED).write_text(json.dumps(step_keys.shipped_document(root, "linux")), encoding="utf-8")
     (root / "src").rename(root / "no-source")  # a release has no source tree
     assert step_keys.keys(root) == live
+    assert manifest.manifests(root) == live_manifests
     monkeypatch.setattr(installer, "LETTERING", (1, "other bundle"))
-    monkeypatch.setenv("WOZMOD_VOICE_KNOB", "1")
+    monkeypatch.setenv("WOZMOD_NATIVE", "0")
     _edit(root / "data/stock_pieces.json", '"aa"', '"ab"')
     changed = step_keys.keys(root)
     assert {step for step in STEPS if changed[step]["key"] != live[step]["key"]} == STEPS
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the stand-in compiler is a shell script")
 def test_a_release_built_with_another_rust_compiler_keeps_no_step(tmp_path, monkeypatch):
     """Bug: the release's keys leave out the Rust compiler that built its codecs (native/), so a release built with
     another compiler keeps the text, voices and art that the earlier codecs wrote, which it cannot vouch for."""
@@ -202,11 +251,11 @@ def test_a_release_built_with_another_rust_compiler_keeps_no_step(tmp_path, monk
     tools.mkdir()
     compiler = tools / "rustc"
     monkeypatch.delenv("RUSTC", raising=False)
+    monkeypatch.delenv("WOZMOD_RUSTC_VERSION", raising=False)  # a cross build's declared compiler wins over rustc
     monkeypatch.setenv("PATH", f"{tools}{os.pathsep}{os.environ['PATH']}")
 
     def shipped(version: str) -> dict[str, str]:
-        compiler.write_text(f"#!/bin/sh\necho 'rustc {version}'\n")
-        compiler.chmod(0o755)
+        fake_program.program(compiler, f"print('rustc {version}')\n")
         return {step: part["mod"] for step, part in step_keys.shipped_document(root, "linux")["steps"].items()}
 
     first, again, other = shipped("1.99.0 (b940084d7 2026-09-28)"), shipped("1.99.0 (b940084d7 2026-09-28)"), \
@@ -229,49 +278,50 @@ def test_a_cross_build_names_the_compiler_it_declares_without_running_one(tmp_pa
     first, other = shipped("rustc 1.99.0 (b940084d7 2026-09-28)"), shipped("rustc 1.100.0 (0a1b2c3d4 2026-11-09)")
     assert {step for step in STEPS if other[step] != first[step]} == STEPS
 
-# Slow: the three steps on the real inputs (WOZMOD_STEP_KEYS=1).
+
+def test_the_text_and_art_keys_hold_no_voices_module():
+    """Bug: a text or art module imports from wozmod.voices (at its top or inside a function), so every voice-only
+    update changes the text and art keys and every player rebuilds those steps with it."""
+    found = manifest.manifests()
+    voices = {step: [m for m in found[step].modules if m.split(".")[:2] == ["wozmod", "voices"]] for step in ("text", "art")}
+    assert voices == {"text": [], "art": []}
+
+
+# Slow: each step built once more on the real inputs, with other worker counts and in another environment, against
+# its reference build (WOZMOD_STEP_KEYS=1).
 
 REAL = pytest.mark.skipif(
     os.environ.get("WOZMOD_STEP_KEYS") != "1"
-    or not all(os.environ.get(v) for v in ("WOZMOD_GAME", "WOZMOD_DONORS", "WOZMOD_LETTERING")),
-    reason="set WOZMOD_STEP_KEYS=1, WOZMOD_GAME, WOZMOD_DONORS and WOZMOD_LETTERING (about 18 minutes)")
-REPO_ROOT = Path(__file__).resolve().parents[1]
+    or not all(os.environ.get(v) for v in ("WOZMOD_GAME", "WOZMOD_DONORS", "WOZMOD_LETTERING", "WOZMOD_SPEECH")),
+    reason="set WOZMOD_STEP_KEYS=1, WOZMOD_GAME, WOZMOD_DONORS, WOZMOD_LETTERING and WOZMOD_SPEECH (about 20 minutes)")
 RUN = Path(__file__).with_name("step_run.py")
-# The few-worker build's worker count per step: one, but two for the voices. The art has code only one worker runs
-# (a player with one core to spare runs it), while the voices' workers are threads with no such code, and two are
-# the fewest whose finishing order can differ from the order the work was handed out. One voice worker took 18 of
-# the fixture's 21 minutes.
+# The other build's worker count per step: one, but two for the voices (one voice worker took 18 of the fixture's
+# 21 minutes; two are the fewest whose finishing order can differ from the order the work was handed out). The
+# reference build runs the installer's default count. ordered_map joins in hand-out order (tests/test_workers.py);
+# this catches what it cannot: a worker that changes what the others read, or the native module's own threads.
 FEW = {"text": 1, "voices": 2, "art": 1}
 
 
-def _start(step: str, out: Path, jobs: int, env: dict, cwd: Path) -> subprocess.Popen:
-    """Start one step in a fresh Python, as the installer's worker runs it; what it prints goes to OUT/run.log."""
-    out.mkdir(parents=True)
-    with (out / "run.log").open("w") as log:
-        return subprocess.Popen([sys.executable, str(RUN), step, str(out), str(jobs)], cwd=cwd, env=env,
-                                stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
-
-
 @pytest.fixture(scope="module")
-def two_builds(tmp_path_factory):
-    """Each step built twice: once with few workers, the audit log on and this environment; once with the default
-    workers in another locale, time zone, hash seed and working folder."""
+def other_builds(tmp_path_factory, built):
+    """(each step's reference build, the same step built in a fresh Python with FEW workers in another locale, time
+    zone, hash seed and working folder). A frozen release ignores PYTHONHASHSEED (PyInstaller starts Python isolated),
+    so packaging/wozmod.spec pins its seed as a run-time option."""
     base = tmp_path_factory.mktemp("step-keys")
-    plain = {k: v for k, v in os.environ.items()}
-    other = {**plain, "LC_ALL": "C", "LANG": "C", "TZ": "Pacific/Kiritimati", "PYTHONHASHSEED": "4242",
+    other = {**os.environ, "LC_ALL": "C", "LANG": "C", "TZ": "Pacific/Kiritimati", "PYTHONHASHSEED": "4242",
              "PYTHONUTF8": "0", "TMPDIR": str(base)}
     other.pop("WOZMOD_JOBS", None)
-    # All six builds at once: the few-worker ones hold a core or two for minutes, and one after another the six
-    # took half an hour; the default-worker builds fill the other cores meanwhile.
-    audited = {**plain, "WOZMOD_STEP_AUDIT": "1"}
-    runs = {(step, side): _start(step, base / side / step, jobs, env, cwd)
-            for step in step_keys.STEPS
-            for side, jobs, env, cwd in (("few", FEW[step], audited, REPO_ROOT),
-                                         ("many", 0, other, base))}
-    failed = {f"{side}/{step}": (base / side / step / "run.log").read_text(errors="replace")[-4000:]
-              for (step, side), run in runs.items() if run.wait() != 0}
+    runs = {}
+    for step in steps.STEPS:
+        (base / step).mkdir()
+        with (base / step / "run.log").open("w", encoding="utf-8") as log:
+            runs[step] = subprocess.Popen([sys.executable, str(RUN), step, str(base / step), str(FEW[step])], cwd=base,
+                                          env=other, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
+    references = {step: built(step, tmp_path_factory.mktemp(f"reference-{step}")) for step in steps.STEPS}
+    failed = {step: (base / step / "run.log").read_text(errors="replace", encoding="utf-8")[-4000:]
+              for step, run in runs.items() if run.wait() != 0}
     assert failed == {}
-    return {step: (base / "few" / step, base / "many" / step) for step in step_keys.STEPS}
+    return {step: (references[step], base / step) for step in steps.STEPS}
 
 
 def _tree(folder: Path) -> dict[str, str]:
@@ -282,78 +332,14 @@ def _tree(folder: Path) -> dict[str, str]:
 
 @REAL
 @pytest.mark.slow_first
-def test_a_step_writes_the_same_bytes_with_any_worker_count_and_environment(two_builds):
+def test_a_step_writes_the_same_bytes_with_any_worker_count_and_environment(other_builds):
     """Bug: a step's output depends on the worker count (results joined in finishing order) or on something outside
     its key (the locale's code page, the time zone, set or dict order under another hash seed, the working folder),
     so two players with the same key hold different files, and a kept step is not what this release builds."""
     differ = {}
-    for step, (few, many) in two_builds.items():
-        first, second = _tree(few), _tree(many)
+    for step, (reference, other) in other_builds.items():
+        first, second = _tree(reference), _tree(other)
         assert first, f"{step} wrote nothing"
         if first != second:
             differ[step] = sorted(name for name in first.keys() | second.keys() if first.get(name) != second.get(name))[:6]
     assert differ == {}
-
-
-def _module(path: Path) -> str:
-    """wozmod/a/b.py or wozmod/a/__pycache__/b.cpython-314.pyc -> wozmod.a.b (a package's __init__ -> the package)."""
-    parts = [p for p in path.parts[:-1] if p != "__pycache__"] + [path.name.split(".")[0]]
-    return ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
-
-
-def _opens(folder: Path) -> list[tuple[str, str]]:
-    return [tuple(line.split("\t", 1)) for line in (folder / "audit.log").read_text(encoding="utf-8").splitlines()]
-
-
-@REAL
-@pytest.mark.slow_first
-def test_a_step_opens_no_module_bundled_file_or_disc_member_its_key_leaves_out(two_builds):
-    """Bug: a step loads a module its key leaves out (an import by name the source does not show), reads a bundled
-    file its key leaves out (a NOT_READ folder it does read, or a projected file read past its reader), or a
-    disc member disc_reads does not list, so a change to it keeps a stale step (and the disc read for an update
-    leaves the member out)."""
-    from wozmod import resources
-    from wozmod.donors import DISCS
-
-    root = resources.root()
-    donors = Path(os.environ["WOZMOD_DONORS"]).resolve()
-    unkeyed = {}
-    for step, (few, _) in two_builds.items():
-        reads = step_keys.bundled_reads(step, root)
-        keyed = set(reads["keyed"]) | set(reads["projected"])  # a projected file: its reader is checked below
-        members = {f"{disc}/{name}" for disc, names in step_keys.disc_reads(step).items() for name in names}
-        if step in step_keys.PROGRAMS:
-            members |= {f"{disc}/{each.program.staged}" for disc, each in DISCS.items()}
-        modules = set(reads["modules"])
-        found = set()
-        for kind, path in _opens(few):
-            path = Path(path)
-            if kind == "open" and path.is_relative_to(root / "src/wozmod") and path.suffix in (".py", ".pyc"):
-                if (module := _module(path.relative_to(root / "src"))) not in modules:
-                    found.add(f"module {module}")
-            elif kind == "open" and path.is_relative_to(root) and path.relative_to(root).parts[0] in ("data", "runtime"):
-                name = path.relative_to(root).as_posix()
-                if name not in keyed:
-                    found.add(name)
-            elif kind == "open" and path.is_relative_to(donors) and path.is_file():
-                name = path.relative_to(donors).as_posix()
-                if name not in members:
-                    found.add(f"donors/{name}")
-            elif kind == "projected-elsewhere":
-                found.add(f"{path} read outside its projection")
-        if found:
-            unkeyed[step] = sorted(found)
-    assert unkeyed == {}
-
-
-@REAL
-@pytest.mark.slow_first
-def test_the_install_steps_start_no_program_but_ffmpeg(two_builds):
-    """Bug: the art step falls back to the font Python (FontForge through the system Python) on a machine that has
-    one, so its output there depends on a program no key covers, and players without it get other bytes."""
-    started = {}
-    for step, (few, _) in two_builds.items():
-        programs = sorted({Path(path).name for kind, path in _opens(few) if kind == "start"} - {"ffmpeg", "ffmpeg.exe"})
-        if programs:
-            started[step] = programs
-    assert started == {}

@@ -65,13 +65,14 @@ def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_unde
 
     table = bytearray(struct.pack("<I", 22665) + bytes(181324))
     struct.pack_into("<II", table, 4 + 8 * (0xAF3 + 241), len(table), len(take))
-    assert {str(p.relative_to(output)): p.read_bytes() for p in output.rglob("*") if p.is_file()} == {
+    assert {p.relative_to(output).as_posix(): p.read_bytes() for p in output.rglob("*") if p.is_file()} == {
         "voice/Voice.bin": bytes(table) + take,
         "voice/Slots.bin": struct.pack("<I", 0),  # no two lines share a voice id here
         "voice/SE.bin": struct.pack("<I", 122) + bytes(1964),
         "voice/Lips.bin": struct.pack("<I", 22665) + bytes(8 * 22665),
     }
     assert movies == [(stock, donors / "wo2-psp", output)]
-    assert [given[:3] for given in scenes] == [(stock, donors / "wo2-psp", voiceidx)]
-    assert sorted(scenes[0][3]) == list(range(402, 414))  # the stock event files of the scenes
+    assert [(given[0].table, given[0].bank, given[1]) for given in scenes] == [
+        (voiceidx, stock / "data/Sound/Voice/Voice.bin", donors / "wo2-psp")]  # the stock clips, through 4058
+    assert sorted(scenes[0][2]) == list(range(402, 414))  # the stock event files of the scenes
     assert all(hashlib.sha256(p.read_bytes()).digest() == digest for p, digest in before.items())

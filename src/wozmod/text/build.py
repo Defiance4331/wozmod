@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from wozmod import resources
+from wozmod import game_files, resources
 from wozmod.donors import DISCS, check_disc_names
 from wozmod.formats.pe import pointer_strings
 from wozmod.progress import report
@@ -231,10 +231,12 @@ def resolved_text(stock: Path, donors: DonorResolver, data: Path) -> tuple[list[
         rows.append({**row, "ja": stock_bytes.decode("cp932"), "en": donors.resolve_row(row)})
     overrides = [{**row, "en": donors.resolve_row(row)} for row in payload["parts"]]
     pairs = table_pairs(rows)
-    return rows, pairs, table_parts((stock / "OROCHI_Z.exe").read_bytes(), pairs, overrides)
+    return rows, pairs, table_parts(game_files.exe(stock), pairs, overrides)
 
 
-TEXT_DATA = resources.root() / "data/text"
+# The files of data/text the text step reads, each named whole: its step key holds these and no other file there.
+TABLE, MOVIE_CAPTIONS, DUB_CAPTIONS = (resources.root() / name for name in (
+    "data/text/table.json", "data/text/movie_captions.json", "data/text/dub_captions.json"))
 
 
 def text_step(stock: Path, donors: Path, out: Path) -> None:
@@ -244,7 +246,6 @@ def text_step(stock: Path, donors: Path, out: Path) -> None:
     from .resolver import DonorResolver
 
     resolver = DonorResolver(donors)
-    _, pairs, names = resolved_text(stock, resolver, TEXT_DATA / "table.json")
+    _, pairs, names = resolved_text(stock, resolver, TABLE)
     write_table(pairs, names, out / "wozmod/table.bin")
-    build_movie_schedules(stock, resolver, pairs, TEXT_DATA / "movie_captions.json", TEXT_DATA / "dub_captions.json",
-                          out)
+    build_movie_schedules(stock, resolver, pairs, MOVIE_CAPTIONS, DUB_CAPTIONS, out)

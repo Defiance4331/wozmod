@@ -1,0 +1,670 @@
+#!/usr/bin/env python3
+"""One command for the checks: what a change needs, bound to the exact tree it ran on.
+
+    tools/verify.py [--triggered] [--wait] [--rerun] [--plan]
+    tools/verify.py ref STEP...
+    tools/verify.py release [-- PYTEST_ARG...]
+
+With no mode: names the tree (git write-tree of the checkout with its untracked files, ignored ones left out), runs
+the fast suite on Linux and prints its verdict, and starts the same suite under Windows Python (tools/windows_suite.py)
+on an export of that tree in the background; a later call prints that verdict once it has landed (--wait waits for
+it). A verdict already recorded for this tree is shown, not run again (--rerun runs it again; both stay recorded).
+It also prints the rows of tools/verify_checks.toml that the diff from the merge base with main triggers;
+--triggered runs them. --plan prints the tree, the judge and those rows, and runs nothing.
+
+ref STEP...: per step (text, voices, art), the reference build of this tree's step key in work/verify/builds/STEP/KEY/
+(out/, staging/, the read gate's trace.jsonl and unread.json, build.log, build.json), reused while the key exists,
+made with the read gate enforcing; its diff.txt against the merge base's build of the same step; then the slow tests
+that read it (the checklist's [readers]). A row whose run has `ref STEP` items runs its tests with those readers.
+
+release: everything, strict (a missing input fails): the slow suite, the reference builds and their readers, the
+timed install alone, and the Windows run. It fails when a run skipped a test for a reason other than a system mark
+(linux_only, real_windows), or left out a test a full collection finds: a narrowed test set.
+
+Verdicts are local git notes (refs/notes/verify) on the tree object, one JSON line per run; logs and junit files are
+in the main checkout's work/verify/runs/TREE/. The judge (this file and tools/verify_checks.toml) runs from the merge
+base with main, so a change cannot edit the check that judges it: when the tree edits either, it is said, and every
+checklist row counts as triggered. ref, release and --triggered hold the machine lock (tools/machine_lock.py).
+"""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import fnmatch
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import tomllib
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+JUDGE = ("tools/verify.py", "tools/verify_checks.toml")
+JUDGED = "WOZMOD_VERIFY_JUDGE"  # set once the merge base's judge runs: the commit it came from, or "tree"
+MAIN = "main"
+STEPS = ("text", "voices", "art")
+# The slow switches (tests/*.py skipif). A switch a tree adds and this list lacks makes release fail as narrowed.
+SWITCHES = ("ART_COMPOSE", "ART_WORDS", "ASR", "AUDIO", "CONTEXTS", "EVENT_TIMING", "FONT_FACE_SOURCE",
+            "FONT_GEOMETRY", "INSTALL_E2E", "LIPS", "MOVIE_CAPTIONS", "RUNTIME_COMPILE", "SHOUT_BANKS", "STEP_KEYS",
+            "STOCK_PIECES", "TEXT_ROOM")
+ELSEWHERE = ("Linux only", "Windows only")  # how a system mark's skip starts (tests/conftest.py SYSTEM_MARKS)
+E2E = "tests/test_install_e2e.py"
+PYTEST = ("-q", "-p", "no:cacheprovider", "-rs")
+KEYS = ("import json; from wozmod.install import step_keys; "
+        "print(json.dumps({step: each['key'] for step, each in step_keys.keys().items()}))")
+# A step's build, as an install builds it: its own worker, the read gate enforcing, every item read in the trace.
+BUILD = """
+import json, sys
+from pathlib import Path
+from wozmod import install
+from wozmod.install import gate, manifest, steps
+from wozmod.progress import Progress
+step, folder = sys.argv[1], Path(sys.argv[2])
+for name in ("staging", "out"):
+    (folder / name).mkdir()
+steps.run({step: steps.Inputs.environment(install.worker_count()).arguments(folder / "staging", folder / "out")},
+          Progress(), folder / "build.log", mode=gate.ENFORCE, trace=folder / "trace.jsonl")
+unread = gate.unread(manifest.manifest(step), gate.records(folder / "trace.jsonl"))
+(folder / "unread.json").write_text(json.dumps(unread, indent=1) + "\\n", encoding="utf-8")
+"""
+
+
+# The tree and its records
+
+
+def git(repo: Path, *arguments: str, env: dict | None = None, check: bool = True) -> str:
+    run = subprocess.run(["git", *arguments], cwd=repo, env=env, capture_output=True, encoding="utf-8")
+    if check and run.returncode:
+        raise SystemExit(f"verify: git {' '.join(arguments)}: {run.stderr.strip()}")
+    return run.stdout.strip()
+
+
+def work(repo: Path) -> Path:
+    """The main checkout's work/, from it or any linked worktree."""
+    return Path(git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")).parent / "work"
+
+
+def tree_id(repo: Path) -> str:
+    """The tree the checkout holds now, untracked files included and ignored ones left out: git write-tree of a copy
+    of its index after `git add -A`. The checkout's own index is not touched."""
+    index = Path(git(repo, "rev-parse", "--path-format=absolute", "--git-path", "index"))
+    with tempfile.TemporaryDirectory() as folder:
+        copy = Path(folder) / "index"
+        if index.is_file():
+            shutil.copyfile(index, copy)  # its file stats spare hashing every file again
+        env = {**os.environ, "GIT_INDEX_FILE": str(copy)}
+        git(repo, "add", "-A", env=env)
+        return git(repo, "write-tree", env=env)
+
+
+def records(repo: Path, tree: str) -> list[dict]:
+    """Every run recorded for tree, oldest first."""
+    note = git(repo, "notes", "--ref=verify", "show", tree, check=False)
+    return [json.loads(line) for line in note.splitlines() if line.startswith("{")]
+
+
+def recorded(repo: Path, tree: str, check: str) -> dict | None:
+    """The latest record of check on tree. Notes are keyed by the tree object, so another tree's never counts."""
+    return next((r for r in reversed(records(repo, tree)) if r["check"] == check), None)
+
+
+def record(repo: Path, tree: str, entry: dict) -> None:
+    """Add entry to tree's note: one line per run, under a lock, as the Windows run may land at the same moment."""
+    (work(repo) / "verify").mkdir(parents=True, exist_ok=True)
+    with (work(repo) / "verify/notes.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        git(repo, "notes", "--ref=verify", "append", "-m", json.dumps(entry, sort_keys=True), tree)
+
+
+def runs(repo: Path, tree: str) -> Path:
+    return work(repo) / "verify/runs" / tree
+
+
+def export(repo: Path, tree: str, folder: Path) -> Path:
+    """tree's files in folder (no .git): what a background or reference run reads, whatever the checkout does next."""
+    shutil.rmtree(folder, ignore_errors=True)
+    folder.mkdir(parents=True)
+    archive = subprocess.Popen(["git", "archive", tree], cwd=repo, stdout=subprocess.PIPE)
+    subprocess.run(["tar", "-x", "-C", folder], stdin=archive.stdout, check=True)
+    if archive.wait():
+        raise SystemExit(f"verify: git archive {tree} failed")
+    return folder
+
+
+# The judge
+
+
+def merge_base(repo: Path) -> str:
+    base = git(repo, "merge-base", "HEAD", MAIN, check=False)
+    if not base:
+        raise SystemExit(f"verify: no merge base of HEAD and {MAIN}")
+    return base
+
+
+def delegate(repo: Path, argv: list[str]) -> None:
+    """Run the merge base's tools/verify.py in place of this one (it returns only when the base has none)."""
+    if os.environ.get(JUDGED):
+        return
+    base = merge_base(repo)
+    blob = git(repo, "rev-parse", "--verify", "-q", f"{base}:{JUDGE[0]}", check=False)
+    if not blob:
+        os.environ[JUDGED] = "tree"
+        return
+    copy = work(repo) / "verify/judge" / f"{blob}.py"
+    if not copy.is_file():
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        partial = copy.with_suffix(f".{os.getpid()}")
+        partial.write_bytes(subprocess.run(["git", "cat-file", "blob", blob], cwd=repo, capture_output=True,
+                                           check=True).stdout)
+        partial.replace(copy)
+    os.execve(sys.executable, [sys.executable, str(copy), *argv], {**os.environ, JUDGED: base})
+
+
+def checklist(repo: Path) -> dict:
+    """The checklist the judge reads: the merge base's, or the tree's when the judge is the tree's own."""
+    judge = os.environ[JUDGED]
+    if judge == "tree":
+        return tomllib.loads((repo / JUDGE[1]).read_text(encoding="utf-8"))
+    text = git(repo, "show", f"{judge}:{JUDGE[1]}", check=False)
+    return tomllib.loads(text) if text else {}
+
+
+def judge_edits(repo: Path, base: str, tree: str) -> list[str]:
+    """The judge files tree changes from the merge base (all of them when the base has no judge)."""
+    if os.environ[JUDGED] == "tree":
+        return list(JUDGE)
+    return git(repo, "diff", "--name-only", base, tree, "--", *JUDGE).splitlines()
+
+
+def triggered(rows: list[dict], paths: list[str]) -> list[dict]:
+    """The rows one of paths matches."""
+    return [row for row in rows if any(fnmatch.fnmatchcase(path, pattern) for path in paths for pattern in row["paths"])]
+
+
+def removed_tests(repo: Path, base: str, tree: str) -> list[str]:
+    """Test functions the tree deletes from the merge base's tests/ (renames show as removed and added)."""
+    diff = git(repo, "diff", "-U0", base, tree, "--", "tests/")
+    named = lambda sign: set(re.findall(rf"^{re.escape(sign)}\s*(?:async\s+)?def (test_\w+)", diff, re.M))
+    return sorted(named("-") - named("+"))
+
+
+# Test runs and what they show
+
+
+def junit_id(nodeid: str) -> str:
+    """A pytest node id in junit's form, classname::name: tests/test_a.py::Case::test_b[1] is tests.test_a.Case::test_b[1]."""
+    path, *parts = nodeid.split("::")
+    return "::".join([".".join([path.removesuffix(".py").replace("/", "."), *parts[:-1]]), parts[-1]])
+
+
+def within(node: str, name: str) -> bool:
+    """Whether name (junit's form) is a test of node, a pytest path or a test's node id."""
+    if "::" not in node:
+        module = node.removesuffix(".py").replace("/", ".")
+        return name.startswith((f"{module}::", f"{module}."))
+    return name == junit_id(node) or name.startswith(f"{junit_id(node)}[")
+
+
+def outcome(junit: Path, code: int) -> dict:
+    """What a pytest run did, from its junit file and exit code: its verdict, counts, test ids, skips and failures."""
+    found = {"verdict": "fail", "code": code, "ran": [], "skips": {}, "broken": [], "counts": {}}
+    if not junit.is_file():
+        found["summary"] = f"pytest wrote no results (exit {code})"
+        return found
+    counts = dict.fromkeys(("passed", "failed", "errors", "skipped"), 0)
+    for case in ET.parse(junit).getroot().iter("testcase"):
+        test, at, group = case.get("name").rpartition("@")
+        # xdist's loadgroup names a grouped test test@group (tests/conftest.py groups those sharing a module fixture)
+        name = f"{case.get('classname')}::{test if at and ']' not in group else case.get('name')}"
+        found["ran"].append(name)
+        kind = next((child.tag for child in case if child.tag in ("failure", "error", "skipped")), "passed")
+        counts[{"failure": "failed", "error": "errors"}.get(kind, kind)] += 1
+        if kind == "skipped":
+            found["skips"][name] = (case.find("skipped").get("message") or "").removeprefix("Skipped: ")
+        elif kind != "passed":
+            found["broken"].append(name)
+    found["counts"] = counts
+    found["verdict"] = "pass" if code == 0 and counts["passed"] and not found["broken"] else "fail"
+    found["summary"] = ", ".join(f"{n} {kind}" for kind, n in counts.items() if n) + f" (exit {code})"
+    return found
+
+
+def stopped(code: int, what: str) -> None:
+    """A run a signal ended is no verdict: stop before anything records it as a fail."""
+    if code < 0:
+        raise SystemExit(f"verify: {what} was stopped by signal {-code}; nothing is recorded")
+
+
+def pytest(cwd: Path, out: Path, arguments: list[str], env: dict, python: list[str]) -> dict:
+    """Run pytest in cwd with python, its log and junit file in out."""
+    out.mkdir(parents=True, exist_ok=True)
+    junit = out / "junit.xml"
+    junit.unlink(missing_ok=True)
+    started = time.monotonic()
+    with (out / "pytest.log").open("w", encoding="utf-8") as log:
+        code = subprocess.run([*python, "-m", "pytest", *PYTEST, f"--junitxml={junit}", *arguments], cwd=cwd, env=env,
+                              stdout=log, stderr=subprocess.STDOUT).returncode
+    stopped(code, "pytest")
+    found = outcome(junit, code)
+    found["summary"] += f" in {time.monotonic() - started:.0f} s, log {out / 'pytest.log'}"
+    return found
+
+
+def collected(cwd: Path, env: dict, python: list[str]) -> list[str]:
+    """Every test id a full run in cwd collects, in junit's form."""
+    run = subprocess.run([*python, "-m", "pytest", "--collect-only", "-q", "-n0", "-p", "no:cacheprovider"], cwd=cwd,
+                         env=env, capture_output=True, encoding="utf-8")
+    if run.returncode:
+        raise SystemExit(f"verify: collecting the tests failed:\n{run.stdout[-2000:]}{run.stderr[-2000:]}")
+    return [junit_id(line) for line in run.stdout.splitlines() if "::" in line]
+
+
+def narrowed(expected: list[str], found: dict, allowed: tuple[str, ...] = ELSEWHERE) -> list[str]:
+    """Why a run's test set is narrower than expected: a test it left out, or one it skipped for a reason that does
+    not start with one of allowed (by default, a system mark's)."""
+    ran = set(found["ran"])
+    problems = [f"not run: {name}" for name in expected if name not in ran]
+    problems += [f"skipped: {name}: {why}" for name, why in found["skips"].items() if not why.startswith(allowed)]
+    return problems
+
+
+def environment(repo: Path, switches: bool, exported: bool = False) -> dict:
+    """The environment of a run: strict (a missing input fails), and every slow switch on, or none. Nothing else is
+    set, but for a run on an export the machine's harness.toml, which it has no .git to find (tools/checkout.py): a
+    variable that says where work/ is overrides the folders tests set up for the tools they run."""
+    env = {name: value for name, value in os.environ.items()
+           if name.removeprefix("WOZMOD_") not in SWITCHES}
+    env["WOZMOD_REQUIRE_INPUTS"] = "1"
+    if exported:
+        env["WOZMOD_HARNESS_CONFIG"] = str(work(repo) / "harness.toml")
+    if switches:
+        env |= {f"WOZMOD_{name}": "1" for name in SWITCHES}
+    return env
+
+
+def harness_inputs(repo: Path) -> dict:
+    config = work(repo) / "harness.toml"
+    table = tomllib.loads(config.read_text(encoding="utf-8")).get("tests", {}) if config.is_file() else {}
+    return {name: os.environ.get(name, str(value)) for name, value in table.items()}
+
+
+LIVE = ["uv", "run", "--extra", "native", "python"]  # the checkout's own environment
+
+
+# Default mode
+
+
+def linux(repo: Path, tree: str, rerun: bool) -> dict:
+    """The fast suite on Linux, in the checkout: recorded only when the tree is still the one it named after."""
+    if not rerun and (found := recorded(repo, tree, "linux")):
+        return found | {"reused": True}
+    found = pytest(repo, runs(repo, tree) / "linux", [], environment(repo, False), LIVE)
+    entry = {"check": "linux", "verdict": found["verdict"], "summary": found["summary"], "judge": os.environ[JUDGED],
+             "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    if (now := tree_id(repo)) != tree:
+        return entry | {"verdict": "fail", "summary": f"{found['summary']}; not recorded: the checkout changed to tree "
+                                                      f"{now[:12]} during the run"}
+    record(repo, tree, entry)
+    return entry
+
+
+def windows_lock(repo: Path, tree: str):
+    runs(repo, tree).mkdir(parents=True, exist_ok=True)
+    return (runs(repo, tree) / "windows.lock").open("a")
+
+
+def windows_run(repo: Path, tree: str, arguments: list[str], held: int | None = None) -> dict:
+    """The fast suite under Windows Python on an export of tree (tools/windows_suite.py), strict, holding tree's
+    Windows lock (held: the descriptor of it the caller locked); recorded."""
+    with windows_lock(repo, tree) if held is None else os.fdopen(held, "a") as lock:
+        if held is None:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        folder = export(repo, tree, work(repo) / "verify/trees" / f"{tree}.{os.getpid()}")
+        out = runs(repo, tree) / "windows"
+        out.mkdir(parents=True, exist_ok=True)
+        try:
+            with (out / "windows_suite.log").open("w", encoding="utf-8") as log:
+                # The checkout's runner, which finds the main checkout's Windows environments; the tree's files.
+                code = subprocess.run([sys.executable, repo / "tools/windows_suite.py", "--tree", folder, "--out",
+                                       out, *arguments], cwd=folder, env=environment(repo, False, True), stdout=log,
+                                      stderr=subprocess.STDOUT).returncode
+            stopped(code, "the Windows run")
+            found = outcome(out / "junit.xml", code)
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+        found["summary"] += f", log {out / 'pytest.log'}"
+        record(repo, tree, {"check": "windows", "verdict": found["verdict"], "summary": found["summary"],
+                            "judge": os.environ[JUDGED], "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+        return found
+
+
+def windows(repo: Path, tree: str, rerun: bool, wait: bool) -> str:
+    """The Windows verdict for tree, or start the run in the background and say so."""
+    lock = windows_lock(repo, tree)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        state = "running"
+    else:
+        if not rerun and (found := recorded(repo, tree, "windows")):
+            lock.close()
+            return f"{found['verdict']} (recorded {found['at']}): {found['summary']}"
+        # The run inherits the locked descriptor, so the lock passes to it with no moment free between.
+        with (runs(repo, tree) / "windows-background.log").open("w", encoding="utf-8") as out:
+            subprocess.Popen([sys.executable, __file__, "_windows", tree, str(lock.fileno())], cwd=repo,
+                             start_new_session=True, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+                             pass_fds=(lock.fileno(),))
+        state = "started"
+    lock.close()
+    if not wait:
+        return f"{state} in the background; its verdict lands in about 2 minutes (tools/verify.py shows it)"
+    with windows_lock(repo, tree) as lock:
+        fcntl.flock(lock, fcntl.LOCK_SH)
+    found = recorded(repo, tree, "windows")
+    return f"{found['verdict']}: {found['summary']}" if found else "the run ended without a verdict (see its log)"
+
+
+# Reference builds
+
+
+def venv_folder(repo: Path, tree: str) -> Path:
+    """Where tree's Python environment is: work/verify/venvs/KEY/, where KEY hashes the files it is made from."""
+    listing = git(repo, "ls-tree", "-r", tree, "--", "uv.lock", "pyproject.toml", "native")
+    return work(repo) / "verify/venvs" / hashlib.sha256(listing.encode()).hexdigest()[:16]
+
+
+def venv(repo: Path, tree: str, folder: Path) -> list[str]:
+    """A Python environment with tree's locked packages and its native codecs, in venv_folder; made in KEY.partial
+    and renamed into place, so a crash leaves nothing taken for finished. Callers hold the machine lock."""
+    made = venv_folder(repo, tree)
+    if not (made / "bin/python").exists():
+        partial = made.with_suffix(".partial")
+        shutil.rmtree(partial, ignore_errors=True)
+        env = {**os.environ, "UV_PROJECT_ENVIRONMENT": str(partial),
+               "CARGO_TARGET_DIR": str(work(repo) / "verify/cargo-target")}
+        subprocess.run(["uv", "sync", "--frozen", "--extra", "native", "--no-install-project", "-q"], cwd=folder,
+                       env=env, check=True)
+        partial.rename(made)
+    return [str(made / "bin/python")]
+
+
+def side_environment(repo: Path, folder: Path) -> dict:
+    """The environment the step keys and the builds of the export in folder run in: the caller's, but no WOZMOD_*
+    name other than the machine's inputs."""
+    inputs = harness_inputs(repo) | {"WOZMOD_HARNESS_CONFIG": str(work(repo) / "harness.toml")}
+    env = {name: value for name, value in os.environ.items() if not name.startswith("WOZMOD_")} | inputs
+    return env | {"PYTHONPATH": os.pathsep.join([str(folder / "src"), str(folder / "tools")])}
+
+
+def step_keys(python: list[str], folder: Path, env: dict) -> dict[str, str]:
+    run = subprocess.run([*python, "-c", KEYS], cwd=folder, env=env, capture_output=True, encoding="utf-8")
+    if run.returncode:
+        raise SystemExit(f"verify: the step keys of {folder} failed:\n{run.stderr[-2000:]}")
+    return json.loads(run.stdout)
+
+
+def build(python: list[str], folder: Path, step: str, key: str, tree: str, env: dict, builds: Path) -> tuple[Path, str]:
+    """The build of step at key (made in KEY.partial, renamed into place; a failed one is kept as KEY.failed)."""
+    made = builds / step / key
+    if (made / "build.json").is_file():
+        return made, "reused"
+    partial, failed = made.with_suffix(".partial"), made.with_suffix(".failed")
+    for stale in (partial, failed):
+        shutil.rmtree(stale, ignore_errors=True)
+    partial.mkdir(parents=True)
+    started = time.monotonic()
+    if (folder / "src/wozmod/install/steps.py").is_file():
+        command = [*python, "-c", BUILD, step, partial]
+    else:  # a tree from before the step runner and the read gate (main up to 8f20076): its own one-step driver
+        command = [*python, "tests/step_run.py", step, partial, "0"]
+    with (partial / "driver.log").open("w", encoding="utf-8") as log:
+        code = subprocess.run(command, cwd=folder, env=env, stdout=log, stderr=subprocess.STDOUT).returncode
+    if (partial / "art-staging").is_dir():
+        (partial / "art-staging").rename(partial / "staging")
+    if code:
+        partial.rename(failed)
+        tail = (failed / "driver.log").read_text(encoding="utf-8", errors="replace")[-1500:]
+        raise SystemExit(f"verify: the {step} build of tree {tree[:12]} failed (exit {code}), in {failed}:\n{tail}")
+    seconds = round(time.monotonic() - started)
+    (partial / "build.json").write_text(json.dumps({"step": step, "key": key, "tree": tree, "seconds": seconds,
+                                                    "gate": (partial / "trace.jsonl").is_file()}, indent=1) + "\n",
+                                        encoding="utf-8")
+    partial.rename(made)
+    return made, f"built in {seconds} s"
+
+
+def first_difference(a: Path, b: Path) -> int | None:
+    with a.open("rb") as left, b.open("rb") as right:
+        at = 0
+        while True:
+            x, y = left.read(1 << 20), right.read(1 << 20)
+            if x != y:
+                return at + next((i for i, (p, q) in enumerate(zip(x, y, strict=False)) if p != q), min(len(x), len(y)))
+            if not x:
+                return None
+            at += len(x)
+
+
+def diff(new: Path, old: Path) -> str:
+    """new's out/ against old's, file by file: a summary line, then each file added, removed or changed."""
+    files = lambda root: {p.relative_to(root).as_posix(): p for p in (root / "out").rglob("*") if p.is_file()}
+    a, b = files(old), files(new)
+    lines, same = [], 0
+    for name in sorted(a.keys() | b.keys()):
+        if name not in b:
+            lines.append(f"removed {name} ({a[name].stat().st_size} bytes)")
+        elif name not in a:
+            lines.append(f"added   {name} ({b[name].stat().st_size} bytes)")
+        elif (at := first_difference(a[name], b[name])) is None:
+            same += 1
+        else:
+            lines.append(f"changed {name}: {a[name].stat().st_size} -> {b[name].stat().st_size} bytes, first "
+                         f"difference at 0x{at:x}")
+    kinds = {kind: sum(line.startswith(kind) for line in lines) for kind in ("changed", "added", "removed")}
+    head = (f"{new} against {old}: {same} files the same, " + ", ".join(f"{n} {k}" for k, n in kinds.items()))
+    return "\n".join([head, *lines]) + "\n"
+
+
+def trace_summary(made: Path) -> str:
+    if not (made / "trace.jsonl").is_file():
+        return "no trace (built before the read gate)"
+    read = [json.loads(line) for line in (made / "trace.jsonl").read_text(encoding="utf-8").splitlines() if line]
+    kinds: dict[str, int] = {}
+    for each in read:
+        kinds[each["kind"]] = kinds.get(each["kind"], 0) + 1
+    unread = json.loads((made / "unread.json").read_text(encoding="utf-8"))
+    return (f"read {', '.join(f'{n} {k}' for k, n in sorted(kinds.items()))}; declared but unread: "
+            f"{', '.join(f'{len(v)} {k}' for k, v in unread.items() if v) or 'none'}")
+
+
+def references(repo: Path, tree: str, base: str, steps: list[str], tests: list[str] = (),
+               extra: list[str] = ()) -> list[dict]:
+    """ref: each step's build of tree and of the merge base, the diff, then the readers and tests (which read the
+    builds too), each with pytest's arguments extra. Returns their run."""
+    builds = work(repo) / "verify/builds"
+    base_tree = git(repo, "rev-parse", f"{base}^{{tree}}")
+    inputs = harness_inputs(repo) | {"WOZMOD_HARNESS_CONFIG": str(work(repo) / "harness.toml")}
+    sides, made = {}, {}
+    try:
+        for side in dict.fromkeys([tree, base_tree]):
+            folder = export(repo, side, work(repo) / "verify/trees" / side)
+            python = venv(repo, side, folder)
+            env = side_environment(repo, folder)
+            sides[side] = (folder, python, env)
+            keys = step_keys(python, folder, env)
+            for step in steps:
+                made[side, step], how = build(python, folder, step, keys[step], side, env, builds)
+                print(f"ref {step} of {'this tree' if side == tree else 'the merge base'} ({side[:12]}): key "
+                      f"{keys[step][:12]}, {how}: {made[side, step]}", flush=True)
+        for step in steps:
+            if base_tree == tree:
+                text = "this is the merge base's tree: nothing to diff\n"
+            else:
+                text = diff(made[tree, step], made[base_tree, step])
+            (made[tree, step] / "diff.txt").write_text(text, encoding="utf-8")
+            print(f"ref {step}: {trace_summary(made[tree, step])}\nref {step}: {text.splitlines()[0]}", flush=True)
+            record(repo, tree, {"check": f"ref {step}", "verdict": "pass", "summary": str(made[tree, step]),
+                                "judge": os.environ[JUDGED], "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+        readers = [node for step in steps for node in checklist(repo).get("readers", {}).get(step, [])]
+        if not readers and not tests:
+            return []
+        folder, python, env = sides[tree]
+        env = environment(repo, True) | {"PYTHONPATH": env["PYTHONPATH"]} | inputs
+        env |= {f"WOZMOD_REFERENCE_{step.upper()}": str(made[tree, step]) for step in steps}
+        found = pytest(folder, runs(repo, tree) / "readers", [*readers, *tests, *extra], env, python)
+        expected = [name for name in collected(folder, env, python)
+                    if any(within(node, name) for node in (*readers, *tests))]
+        problems = narrowed(expected, found)
+        verdict = "fail" if problems or found["verdict"] == "fail" else "pass"
+        print(f"readers of {', '.join(steps)}: {verdict}: {found['summary']}", *problems, sep="\n  ", flush=True)
+        record(repo, tree, {"check": f"readers {' '.join(steps)}", "verdict": verdict, "summary": found["summary"],
+                            "judge": os.environ[JUDGED], "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+        return [found | {"verdict": verdict, "problems": problems}]
+    finally:
+        for folder, _, _ in sides.values():
+            shutil.rmtree(folder, ignore_errors=True)
+
+
+# Checklist rows
+
+
+def run_rows(repo: Path, tree: str, base: str, rows: list[dict], rerun: bool) -> bool:
+    ok = True
+    for row in sorted(rows, key=lambda row: row.get("alone", False)):
+        check = f"row {row['name']}"
+        if not rerun and (found := recorded(repo, tree, check)):
+            print(f"{row['name']}: {found['verdict']} (recorded {found['at']}): {found['summary']}")
+            ok &= found["verdict"] == "pass"
+            continue
+        steps = [word for item in row["run"] if item.startswith("ref ") for word in item.split()[1:]]
+        tests = [item for item in row["run"] if not item.startswith("ref ")]
+        verdict, summary = "pass", []
+        if steps:  # the row's tests run with the readers, against the reference builds
+            for found in references(repo, tree, base, steps, tests):
+                verdict = found["verdict"] if verdict == "pass" else verdict
+                summary.append(found["summary"])
+        elif tests:
+            found = pytest(repo, runs(repo, tree) / "rows" / re.sub(r"\W+", "-", row["name"]),
+                           [*(["-n0"] if row.get("alone") else []), *tests], environment(repo, True), LIVE)
+            verdict = found["verdict"] if verdict == "pass" else verdict
+            summary.append(found["summary"])
+        print(f"{row['name']}: {verdict}: {'; '.join(summary)}", flush=True)
+        record(repo, tree, {"check": check, "verdict": verdict, "summary": "; ".join(summary),
+                            "judge": os.environ[JUDGED], "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+        ok &= verdict == "pass"
+    return ok
+
+
+# Release
+
+
+def release(repo: Path, tree: str, base: str, extra: list[str]) -> bool:
+    """Everything, strict, each run held to the tests a full collection finds; stops at the first red run."""
+    env = environment(repo, True)
+    every = collected(repo, env, LIVE)
+    # the readers, and the tests of the rows that run with the reference builds (they read them too)
+    bound = list(dict.fromkeys(item for row in checklist(repo).get("row", []) if any(i.startswith("ref ") for i in row["run"])
+                               for item in row["run"] if not item.startswith("ref ")))
+    readers = [node for nodes in checklist(repo).get("readers", {}).values() for node in nodes] + bound
+    reads = lambda name: any(within(node, name) for node in readers)
+    e2e = lambda name: within(E2E, name)
+
+    def judged(label: str, found: dict, expected: list[str], allowed: tuple[str, ...] = ELSEWHERE) -> bool:
+        problems = narrowed(expected, found, allowed)
+        verdict = "fail" if problems or found["verdict"] == "fail" else "pass"
+        print(f"release, {label}: {verdict}: {found['summary']}", *problems[:40], sep="\n  ", flush=True)
+        if len(problems) > 40:
+            print(f"  ... and {len(problems) - 40} more")
+        return verdict == "pass"
+
+    out = runs(repo, tree) / "release"
+    slow = pytest(repo, out / "linux", [f"--ignore={E2E}", *(f"--deselect={n}" for n in readers), *extra], env, LIVE)
+    if not judged("the slow suite on Linux", slow, [n for n in every if not reads(n) and not e2e(n)]):
+        return False
+    for found in references(repo, tree, base, list(STEPS), bound, extra):
+        if found["verdict"] != "pass":
+            return False
+    alone = pytest(repo, out / "e2e", ["-n0", E2E, *extra], env, LIVE)
+    if not judged("the timed install, alone", alone, [n for n in every if e2e(n)]):
+        return False
+    # The Windows run is the fast suite: its slow tests skip, saying which switch they need.
+    return judged("Windows", windows_run(repo, tree, extra), every, (*ELSEWHERE, "set WOZMOD_"))
+
+
+# The command
+
+
+def main(argv: list[str]) -> int:
+    repo = Path(git(Path.cwd(), "rev-parse", "--show-toplevel"))
+    delegate(repo, argv)
+    if argv[:1] == ["_windows"]:  # the background half of the default mode
+        found = windows_run(repo, argv[1], [], int(argv[2]))
+        return 0 if found["verdict"] == "pass" else 1
+    mode = argv[0] if argv[:1] and argv[0] in ("ref", "release") else None
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    if mode is None:
+        for flag, about in (("--triggered", "also run the checklist rows the diff triggers"),
+                            ("--wait", "wait for the Windows verdict"), ("--rerun", "run again what is recorded"),
+                            ("--plan", "print the tree, the judge and the triggered rows; run nothing")):
+            parser.add_argument(flag, action="store_true", help=about)
+        options = parser.parse_args(argv)
+    heavy = mode is not None or options.triggered
+    if heavy and not os.environ.get("WOZMOD_MACHINE_LOCK"):
+        os.execvp(sys.executable, [sys.executable, str(repo / "tools/machine_lock.py"), sys.executable, __file__,
+                                   *argv])
+    base, tree = merge_base(repo), tree_id(repo)
+    head = git(repo, "rev-parse", "HEAD")
+    clean = git(repo, "rev-parse", "HEAD^{tree}") == tree
+    print(f"tree {tree} (HEAD {head[:12]}{'' if clean else ' with changes'}); merge base with {MAIN} {base[:12]}")
+    judge = os.environ[JUDGED]
+    print(f"judge: {'the tree' if judge == 'tree' else 'the merge base'}'s {', '.join(JUDGE)}")
+    edits = judge_edits(repo, base, tree)
+    if edits:
+        why = ("the merge base has none, so the tree's own judges it" if judge == "tree" else
+               "they run from the merge base, not from the tree")
+        print(f"the tree changes the judge ({', '.join(edits)}): {why}; every checklist row counts as triggered")
+    paths = git(repo, "diff", "--name-only", base, tree).splitlines()
+    rows = checklist(repo).get("row", [])
+    rows = rows if edits else triggered(rows, paths)
+    if gone := removed_tests(repo, base, tree):
+        print(f"tests removed since the merge base: {', '.join(gone)}")
+    if mode == "ref":
+        steps = argv[1:]
+        if not steps or set(steps) - set(STEPS):
+            parser.error(f"ref takes steps of {', '.join(STEPS)}")
+        return 0 if all(found["verdict"] == "pass" for found in references(repo, tree, base, steps, [])) else 1
+    if mode == "release":
+        extra = argv[argv.index("--") + 1:] if "--" in argv else []
+        verdict = "pass" if release(repo, tree, base, extra) else "fail"
+        record(repo, tree, {"check": "release", "verdict": verdict, "judge": judge, "summary": " ".join(extra),
+                            "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+        print(f"release: {verdict}")
+        return 0 if verdict == "pass" else 1
+    print("checklist rows the diff triggers" + (" (run with --triggered):" if not options.triggered else ":")
+          if rows else "checklist rows the diff triggers: none")
+    for row in rows:
+        print(f"  {row['name']}: {', '.join(row['run'])}")
+    if options.plan:
+        return 0
+    found = linux(repo, tree, options.rerun)
+    print(f"Linux: {found['verdict']}{' (recorded ' + found['at'] + ')' if found.get('reused') else ''}: "
+          f"{found['summary']}", flush=True)
+    flaky = {r["verdict"] for r in records(repo, tree) if r["check"] == "linux"}
+    if len(flaky) > 1:
+        print("Linux: this tree has both a pass and a fail recorded: a flaky test, to root-cause or delete")
+    state = windows(repo, tree, options.rerun, options.wait)
+    print(f"Windows: {state}", flush=True)
+    ok = found["verdict"] == "pass" and not state.startswith("fail")
+    if options.triggered:
+        ok &= run_rows(repo, tree, base, rows, options.rerun)
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

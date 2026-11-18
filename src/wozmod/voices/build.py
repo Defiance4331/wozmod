@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from wozmod import game_files
 from wozmod.donors import WO1_X360, WO2_PSP, WO2_X360, DonorsFolder
 from wozmod.formats.audio import (
     WO1_EVENT_VOICES, WO2_EVENT_VOICES, VoiceBankError, decoded_clips, english_se_bank, english_voice_bank,
@@ -67,7 +68,8 @@ def build_voice_banks(stock: Path, donors: Path, speech: Path, output_dir: Path,
     wo1, wo2, psp = folders.folder("wo1-x360"), folders.folder("wo2-x360"), folders.folder("wo2-psp")
     moz = moz_scripts(stock / "LINKDATA2")
     wo2_donor = wo2_x360(wo2 / "linkdata_ens")
-    linkdata1, linkdata2, wo1_ens = archive(stock / "LINKDATA1"), archive(stock / "LINKDATA2"), archive(wo1 / "linkdata_ens")
+    linkdata1, linkdata2 = game_files.archive(stock / "LINKDATA1"), game_files.archive(stock / "LINKDATA2")
+    wo1_ens = archive(wo1 / "linkdata_ens")
     quotes_entry, wo1_quotes, wo2_quotes = QUOTES
     quotes = linkdata1[quotes_entry]
     wo1_tables = paired_quote_tables(quotes, wo1_ens[wo1_quotes], ">", insert=WO1_QUOTE_INSERT)
@@ -79,16 +81,16 @@ def build_voice_banks(stock: Path, donors: Path, speech: Path, output_dir: Path,
     slots = voice_slots(stage_triggers(moz, joins), one, two)
     one, two = one | slot_records(slots, WO1_X360.name), two | slot_records(slots, WO2_X360.name)
     three = psp_text_voice_map(moz, quotes, psp / PSP_TEXT)
-    voiceidx = decoded_member(linkdata1[4058])
+    stock_clips = game_files.voices(stock)
     clips, sources = english_voice_clips(
         one, (wo1 / "linkdata_ans.idx").read_bytes(), wo1 / "link_vodat.bdx",
         two, (wo2 / "linkdata_ans.idx").read_bytes(), wo2 / "link_vodat.bdx",
-        voiceidx, stock / "data/Sound/Voice/Voice.bin", jobs, psp=(three, psp / PSP_VOICES),
+        stock_clips, jobs, psp=(three, psp / PSP_VOICES),
         stock_ids={s.slot: s.voices[0] for s in slots.values()},
     )
     # The Z Dream scenes have no donor clip: their lines are cut from the PSP's movies of them, at the stock ids.
     dream_events = linkdata2.read(list(DREAM_EVENTS))
-    for voice, record in build_dream_events(stock, psp, voiceidx, dream_events, jobs)[0].items():
+    for voice, record in build_dream_events(stock_clips, psp, dream_events, jobs)[0].items():
         if voice in clips:
             raise VoiceBankError(f"voice id {voice} has both a {sources[voice]} clip and a Z Dream scene's take")
         clips[voice], sources[voice] = record, WO2_PSP.name
@@ -103,7 +105,7 @@ def build_voice_banks(stock: Path, donors: Path, speech: Path, output_dir: Path,
     build_event_schedules(stock_events, clips, output_dir, jobs,
                           {WO1_X360.name: (wo1_events, ">"), WO2_X360.name: (wo2_events, wo2_donor.order)})
     # A line with no donor block gets its stock block stretched to the English clip: the Z Dream ones too (0xAF3 +
-    # index, text.contexts.event_voice).
+    # index, formats.audio.event_voice).
     stock_bases = ([(WO2_EVENT_VOICES[0] if source == WO2_X360.name else WO1_EVENT_VOICES[0], stock_events[o])
                     for ordinals, source, _ in EVENTS for o in ordinals]
                    + [(WO2_EVENT_VOICES[0], data) for _, data in sorted(dream_events.items())])

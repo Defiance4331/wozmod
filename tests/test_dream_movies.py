@@ -125,32 +125,31 @@ def _decode(path: Path, before: tuple[str, ...], timing: str) -> np.ndarray:
 def _video_start(path: Path) -> float:
     """Seconds from the start of the file to its first video frame."""
     run = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,start_time:format=start_time",
-                          "-of", "json", str(path)], capture_output=True, check=True, text=True)
+                          "-of", "json", str(path)], capture_output=True, check=True, text=True, encoding="utf-8")
     found = json.loads(run.stdout)
     video = [float(s["start_time"]) for s in found["streams"] if s["codec_type"] == "video"]
     return video[0] - float(found["format"]["start_time"])
 
 
 @SLOW
-def test_the_built_movie200_keeps_the_stock_lip_sync(tmp_path):
+def test_the_built_movie200_keeps_the_stock_lip_sync(tmp_path, built):
     # Bug: the English track is moved the wrong way, by the lag in 44.1 kHz samples (4.5 ms short), or not at all,
     # or the video is shifted against the audio when the two are joined; the substreams are swapped, so the movie
     # plays the Japanese track again.
     from wozmod.formats.pmf import audio_tracks
-    from wozmod.voices.dream_movies import DREAM_MOVIES, ENGLISH, JAPANESE, build_dream_movie
+    from wozmod.voices.dream_movies import DREAM_MOVIES, ENGLISH, JAPANESE
 
     movies, psp = _inputs()
     pmf = (psp / DREAM_MOVIES["movie200"]).read_bytes()
-    built = tmp_path / "movie200.wmv"
-    build_dream_movie("movie200", (movies / "movie200.wmv").read_bytes(), pmf, built)
+    movie = built("voices", tmp_path / "voices") / "out/wozmod/movie/voice/movie200.wmv"
 
     # Where the stock audio's shared music bed sits in the built audio, against where each file's video starts.
-    stock, english = _mono(movies / "movie200.wmv"), _mono(built)
+    stock, english = _mono(movies / "movie200.wmv"), _mono(movie)
     reference = stock[5 * RATE:len(stock) - 5 * RATE]
     lag, peak, _ = native.xcorr_lag(reference.tobytes(), english[5 * RATE - SEARCH:len(stock) - 5 * RATE + SEARCH].tobytes())
     moved = (lag - SEARCH) / RATE
     # The muxer moves both streams later by the WMA encoder's lead-in, so the audio stays with the frames.
-    expected = _video_start(built) - _video_start(movies / "movie200.wmv")
+    expected = _video_start(movie) - _video_start(movies / "movie200.wmv")
     assert abs(moved - expected) <= 0.001, (moved, expected)
     assert peak > 0.3
 

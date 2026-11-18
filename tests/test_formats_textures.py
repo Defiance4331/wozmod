@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import random
 import struct
 
@@ -211,6 +212,53 @@ def test_package_resize_recomputes_every_later_record_offset() -> None:
     changed = package.with_g1t(0, resized)
     assert [(item.identifier, item.offset, len(item.source)) for item in changed.items] == [(3, 48, 108), (10, 160, 0), (10, 160, 48)]
     assert changed.items[2].source == later
+
+
+def _px(v: int) -> bytes:
+    return bytes((v, v + 1, v + 2, 255))
+
+
+# Six 1-mip BGRA textures, 2044 bytes in all: making the last 2x1 makes the G1T exactly 0x800 bytes long.
+_SIX = _g1t((1, 4, 4, bytes(1024)), (1, 4, 3, bytes(512)), (1, 3, 3, bytes(256)), (1, 3, 2, bytes(128)),
+            (1, 1, 1, bytes(16)), (1, 0, 0, _px(5)))
+_SAME = lambda v: lambda g: g.with_texture_rgba(0, _px(v))  # noqa: E731  (same size, other bytes)
+_GROW = lambda v: lambda g: g.with_texture_resized(0, 4, 4, _px(v) * 16)  # noqa: E731
+_BACK = lambda v: lambda g: g.with_texture_resized(0, 1, 1, _px(v))  # noqa: E731
+# Each case's state after each edit, from with_g1t as it was when it parsed the whole changed package again
+# (standalone, run, the bytes' sha256 prefix, (identifier, offset, size, empty) per item).
+_EDIT_CHAINS = {
+    "aligned": (struct.pack("<4I6I", 0x33B59, 3, 16, 0, 7, 48, 1, 0, 9, 48) + bytes(8) + _g1t((1, 0, 0, _px(1)))
+                + _g1t((1, 0, 0, _px(2))), [(0, _SAME(10)), (2, _GROW(20)), (2, _BACK(30)), (0, _SAME(40))], [
+        (False, False, "e84016eee7f35537", [(7, 48, 48, False), (1, 96, 0, True), (9, 96, 48, False)]),
+        (False, False, "3a8f09a84a3e865d", [(3, 48, 48, False), (6, 96, 0, True), (6, 96, 108, False)]),
+        (False, False, "6b03853cdc111bba", [(3, 48, 48, False), (6, 96, 0, True), (6, 96, 48, False)]),
+        (False, False, "250836025aa304da", [(3, 48, 48, False), (6, 96, 0, True), (6, 96, 48, False)])]),
+    "run": (_g1t((1, 0, 0, _px(1))) + bytes(2000) + _g1t((1, 0, 0, _px(2))) + bytes(2000),
+            [(1, _GROW(50)), (0, _SAME(60)), (1, _BACK(70))], [
+        (False, True, "382a0d7de193f003", [(0, 0, 48, False), (0, 2048, 108, False)]),
+        (False, True, "558347f820b8829a", [(0, 0, 48, False), (0, 2048, 108, False)]),
+        (False, True, "781239e1aa26c449", [(0, 0, 48, False), (0, 2048, 48, False)])]),
+    "run of one": (_SIX + bytes(4), [(0, lambda g: g.with_texture_resized(5, 2, 1, _px(80) * 2))], [
+        (True, False, "8ea21064a2da282b", [(0, 0, 2048, False)])]),
+    "standalone": (_g1t((1, 0, 0, _px(4))), [(0, _GROW(90)), (0, _BACK(100))], [
+        (True, False, "b5c6e8e7fe740bd7", [(0, 0, 108, False)]),
+        (True, False, "af42eb74911b67eb", [(0, 0, 48, False)])]),
+}
+
+
+@pytest.mark.parametrize("case", _EDIT_CHAINS)
+def test_a_chain_of_replacements_gives_the_package_its_bytes_parse_to(case: str) -> None:
+    # Bug: with_g1t keeps the items it does not replace instead of reading the package again, and an offset,
+    # record word or padding goes stale: a size change that later edits undo keeps the canonical records, a run
+    # of one unpadded G1T stays a run, or a same-size edit loses the stock record words.
+    source, edits, expected = _EDIT_CHAINS[case]
+    package, found = parse_texture_package(source), []
+    for index, edit in edits:
+        package = package.with_g1t(index, edit(package.items[index].g1t))
+        assert package == parse_texture_package(package.encode())
+        found.append((package.standalone, package.run, hashlib.sha256(package.encode()).hexdigest()[:16],
+                      [(i.identifier, i.offset, len(i.source), i.g1t is None) for i in package.items]))
+    assert found == expected
 
 
 def test_g1t_run_replacement_keeps_sector_alignment_instead_of_package_alignment() -> None:

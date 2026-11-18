@@ -76,7 +76,7 @@ def test_it_asks_for_each_missing_path_checks_the_answer_and_strips_quotes(monke
         ("x360-tool", Path("/tools/x"), Path("/remembered/wo2-x360.iso")),
         ("psp-tool", Path("/my tools/p"), Path("/remembered/wo2-x360.iso"))]  # each answer is checked with the discs given
     assert "Not a folder." in capsys.readouterr().out
-    assert remembered.load_settings()["wo1-x360"] == "/discs/wo1-x360.iso"  # the window offers it next time
+    assert Path(remembered.load_settings()["wo1-x360"]) == Path("/discs/wo1-x360.iso")  # the window offers it next time
 
 
 def test_no_arguments_in_a_terminal_shows_the_menu(monkeypatch, tmp_path):
@@ -181,5 +181,5 @@ def test_the_release_program_opens_the_window_only_as_wozmod_setup_starts_it(mon
 
 def test_the_windows_launcher_starts_the_window_with_the_argument_the_program_takes():
     # Bug: the launcher (C) and the program disagree on the argument, so wozmod-setup.exe opens nothing.
-    source = (Path(__file__).resolve().parents[1] / "packaging/setup_launcher.c").read_text()
+    source = (Path(__file__).resolve().parents[1] / "packaging/setup_launcher.c").read_text(encoding="utf-8")
     assert f'L"\\"%ls\\" {cli.SETUP_WINDOW}"' in source

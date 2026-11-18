@@ -13,6 +13,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = pytest.mark.linux_only("run_check drives the game through the Linux game harness")
+
 
 @pytest.fixture
 def tools():
@@ -64,8 +66,8 @@ def staging(tools, tmp_path, monkeypatch) -> SimpleNamespace:
     pinned(template)
     fixture.mkdir(parents=True)
     (fixture / "save.dat").write_bytes(b"save")
-    (fixture / "meta.json").write_text(json.dumps({"save_sha256": digest(b"save")}))
-    (tmp_path / "harness.toml").write_text(f'stock_backup = "{stock}"\n')
+    (fixture / "meta.json").write_text(json.dumps({"save_sha256": digest(b"save")}), encoding="utf-8")
+    (tmp_path / "harness.toml").write_text(f'stock_backup = "{stock}"\n', encoding="utf-8")
     monkeypatch.setattr(prep, "WORK", work)
     monkeypatch.setattr(prep, "CONFIG", tmp_path / "harness.toml")
     monkeypatch.setattr(prep, "reflink", lambda source, target: shutil.copytree(source, target, symlinks=True)
@@ -97,7 +99,7 @@ def test_staged_game_sha256_covers_every_file_launch_checks_and_follows_a_new_dl
     assert written == ["prefix/pfx/drive_c/Games/Musou Orochi Z", prep.SAVE]
     assert (root / "prefix/pfx/drive_c/Games/Musou Orochi Z").resolve() == game
     assert (root / prep.SAVE).read_bytes() == b"save"
-    assert json.loads((root / "fixtures.json").read_text())["overlays"] == {
+    assert json.loads((root / "fixtures.json").read_text(encoding="utf-8"))["overlays"] == {
         part: str(template / part) for part in prep.OVERLAID}
     (install / "d3d9.dll").write_bytes(b"dll two")
     (install / "wozmod/table.bin").write_bytes(b"table 2")
@@ -109,7 +111,7 @@ def test_staged_game_sha256_covers_every_file_launch_checks_and_follows_a_new_dl
     root = prep.prepare("three", install, None, "s", cache, replace=[f"wozmod/table.bin={tmp_path / 'work.bin'}"])
     assert prep.recorded(root)["wozmod/table.bin"] == digest(b"working table") == digest((root / "game/wozmod/table.bin").read_bytes())
     assert (install / "wozmod/table.bin").read_bytes() == b"table 2"
-    assert json.loads((root / "fixtures.json").read_text())["replaced"] == {"wozmod/table.bin": str(tmp_path / "work.bin")}
+    assert json.loads((root / "fixtures.json").read_text(encoding="utf-8"))["replaced"] == {"wozmod/table.bin": str(tmp_path / "work.bin")}
     with pytest.raises(ValueError, match="install record"):
         prep.prepare("four", install, None, "s", cache, replace=[f"wozmod/new.bin={tmp_path / 'work.bin'}"])
     # an entry the install lacks (an art change that edits one more stock entry) is added, listed and hashed
@@ -179,21 +181,21 @@ def pinned(template: Path) -> None:
     import prepare_run
     proton, steam = template / "proton", template.parents[2] / "steam"
     (proton / "files/share/wine").mkdir(parents=True)
-    (proton / "files/share/wine/wine.inf").write_text("[Version]\n")
+    (proton / "files/share/wine/wine.inf").write_text("[Version]\n", encoding="utf-8")
     (proton / "files/share/default_pfx").mkdir()
-    (proton / "files/share/default_pfx/system.reg").write_text("WINE REGISTRY Version 2\n")
+    (proton / "files/share/default_pfx/system.reg").write_text("WINE REGISTRY Version 2\n", encoding="utf-8")
     (steam / "legacycompat").mkdir(parents=True)
     for name in ("steamclient.dll", "steamclient64.dll", "Steam.dll"):
         (steam / "legacycompat" / name).write_bytes(b"MZ")
-    (template / "launch.sh").write_text(f'PROTON="{proton}/proton"\nexit 0\n')
-    (proton / "proton").write_text(prepare_run.keep_identical(PROTON))
+    (template / "launch.sh").write_text(f'PROTON="{proton}/proton"\nexit 0\n', encoding="utf-8")
+    (proton / "proton").write_text(prepare_run.keep_identical(PROTON), encoding="utf-8")
     (template / "prefix/pfx").mkdir(parents=True, exist_ok=True)
-    (template / "prefix/pfx/.update-timestamp").write_text(str(int((proton / "files/share/wine/wine.inf").stat().st_mtime)))
+    (template / "prefix/pfx/.update-timestamp").write_text(str(int((proton / "files/share/wine/wine.inf").stat().st_mtime)), encoding="utf-8")
     mtime = lambda path: str(os.path.getmtime(path))  # noqa: E731  Proton's getmtimestr
     (template / "prefix/config_info").write_text("\n".join([
         "CachyOS-11.0-100", f"{proton}/files/share/fonts/", f"{proton}/files/lib/", str(steam),
         *(mtime(steam / "legacycompat" / n) for n in ("steamclient.dll", "steamclient64.dll", "Steam.dll")),
-        f"{proton}/files/share/default_pfx/", mtime(proton / "files/share/default_pfx/system.reg"), "False", "True"]))
+        f"{proton}/files/share/default_pfx/", mtime(proton / "files/share/default_pfx/system.reg"), "False", "True"]), encoding="utf-8")
 
 
 @pytest.mark.parametrize("drift", ["self-updating launcher", "proton updated", "set up by another proton",
@@ -207,18 +209,18 @@ def test_template_a_launch_would_rebuild_is_refused(tools, tmp_path, monkeypatch
     pinned(template)
     monkeypatch.setattr(prep, "WORK", work)
     if drift == "self-updating launcher":
-        (template / "launch.sh").write_text('PROTON="$STEAM_ROOT/compatibilitytools.d/Proton-CachyOS Latest/proton"\n')
+        (template / "launch.sh").write_text('PROTON="$STEAM_ROOT/compatibilitytools.d/Proton-CachyOS Latest/proton"\n', encoding="utf-8")
     elif drift == "proton updated":  # the pinned copy replaced in place by a newer build
         inf = template / "proton/files/share/wine/wine.inf"
         os.utime(inf, (inf.stat().st_atime, inf.stat().st_mtime + 86400))
     elif drift == "set up by another proton":
         info = template / "prefix/config_info"
-        info.write_text(info.read_text().replace(str(template / "proton"), "/elsewhere/Proton-CachyOS Latest"))
+        info.write_text(info.read_text(encoding="utf-8").replace(str(template / "proton"), "/elsewhere/Proton-CachyOS Latest"), encoding="utf-8")
     elif drift == "steam updated":  # Steam's client update replaces steamclient.dll, whose mtime Proton keys on
         dll = tmp_path / "steam/legacycompat/steamclient.dll"
         os.utime(dll, (dll.stat().st_atime, dll.stat().st_mtime + 86400))
     else:  # a new pinned copy, not yet patched to keep identical DLLs
-        (template / "proton/proton").write_text(PROTON)
+        (template / "proton/proton").write_text(PROTON, encoding="utf-8")
     with pytest.raises(ValueError, match="pinned Proton|another Proton build|recopies unchanged"):
         prep.prepare("run", tmp_path / "install", None, "s")
     assert not (work / "runtime-tests/run").exists()
@@ -255,7 +257,7 @@ def record(install: Path) -> None:
     """The installer's record of every file under install, as `wozmod install` writes it."""
     files = {p.relative_to(install).as_posix(): digest(p.read_bytes())
              for p in [install / "d3d9.dll", *(install / "wozmod").rglob("*")] if p.is_file() and p.name != "install.json"}
-    (install / "wozmod/install.json").write_text(json.dumps({"format": 1, "files": files}))
+    (install / "wozmod/install.json").write_text(json.dumps({"format": 1, "files": files}), encoding="utf-8")
 
 
 ART = ("wozmod/entries/4059.bin", "wozmod/entries/4060.bin", "wozmod/glyphs.bin", "wozmod/hires.bin",
@@ -297,11 +299,11 @@ def test_run_starts_from_a_fixture_a_save_file_or_no_save(tools, tmp_path, monke
     (tmp_path / "edited.dat").write_bytes(b"edited save")
     root = prep.prepare("file", staged.install, None, str(tmp_path / "edited.dat"), staged.cache)
     assert (root / prep.SAVE).read_bytes() == b"edited save"
-    assert json.loads((root / "fixtures.json").read_text())["save"] == {
+    assert json.loads((root / "fixtures.json").read_text(encoding="utf-8"))["save"] == {
         "name": str(tmp_path / "edited.dat"), "sha256": digest(b"edited save"), "key_configs": []}
     root = prep.prepare("fresh", staged.install, None, "none", staged.cache)
     assert not (root / prep.SAVE).exists() and (root / prep.SAVE).parent.is_dir()
-    assert json.loads((root / "fixtures.json").read_text())["save"] == {"name": "none", "sha256": None,
+    assert json.loads((root / "fixtures.json").read_text(encoding="utf-8"))["save"] == {"name": "none", "sha256": None,
                                                                         "key_configs": []}
     (staged.template / prep.SAVE).parent.mkdir(parents=True)
     (staged.template / prep.SAVE).write_bytes(b"template save")
@@ -315,12 +317,12 @@ def test_fixture_key_config_lands_where_the_game_reads_it(tools, tmp_path, monke
     prep, staged = tools.prepare_run, staging(tools, tmp_path, monkeypatch)
     fixture = prep.WORK / "saves/s"
     (fixture / "inputmap1.dat").write_bytes(b"pad map")
-    meta = json.loads((fixture / "meta.json").read_text())
-    (fixture / "meta.json").write_text(json.dumps({**meta, "inputmap_sha256": {"inputmap1.dat": digest(b"pad map")}}))
+    meta = json.loads((fixture / "meta.json").read_text(encoding="utf-8"))
+    (fixture / "meta.json").write_text(json.dumps({**meta, "inputmap_sha256": {"inputmap1.dat": digest(b"pad map")}}), encoding="utf-8")
     root = prep.prepare("mapped", staged.install, None, "s", staged.cache)
     profile = root / "prefix/pfx/drive_c/users/steamuser/Documents/KOEI/Musou OROCHI Z"
     assert (profile / "inputmap1.dat").read_bytes() == b"pad map"
-    assert json.loads((root / "fixtures.json").read_text())["save"]["key_configs"] == ["inputmap1.dat"]
+    assert json.loads((root / "fixtures.json").read_text(encoding="utf-8"))["save"]["key_configs"] == ["inputmap1.dat"]
     (fixture / "inputmap1.dat").write_bytes(b"edited map")
     with pytest.raises(ValueError, match="changed since export"):
         prep.prepare("edited-map", staged.install, None, "s", staged.cache)
@@ -337,7 +339,7 @@ def test_install_that_differs_from_its_installer_record_is_refused(tools, tmp_pa
     record(install)
     assert set(tools.prepare_run.installed_files(install, tmp_path / "cache.json")) == {"d3d9.dll", "wozmod/table.bin"}
     if change == "leftover":
-        (install / "wozmod/settings.ini").write_text("[display]\nfps=120\n")
+        (install / "wozmod/settings.ini").write_text("[display]\nfps=120\n", encoding="utf-8")
     elif change == "edited":
         (install / "wozmod/table.bin").write_bytes(b"other")
     else:
@@ -348,11 +350,11 @@ def test_install_that_differs_from_its_installer_record_is_refused(tools, tmp_pa
 
 class FakeSupervisor:
     def __init__(self, root: Path, reason: str, game_exit: bool = False):
-        (root / "slot.json").write_text("{}")  # the supervisor took a game slot
+        (root / "slot.json").write_text("{}", encoding="utf-8")  # the supervisor took a game slot
         (root / "evidence").mkdir(parents=True)
-        (root / "evidence/exit.json").write_text(json.dumps({"reason": reason}))
+        (root / "evidence/exit.json").write_text(json.dumps({"reason": reason}), encoding="utf-8")
         if game_exit:  # the game's own status, written after the harness recorded its end
-            (root / "evidence/game-exit.json").write_text(json.dumps({"returncode": 0}))
+            (root / "evidence/game-exit.json").write_text(json.dumps({"returncode": 0}), encoding="utf-8")
 
 
 def args(tmp_path, spec, only=None):
@@ -365,7 +367,7 @@ def args(tmp_path, spec, only=None):
 @pytest.fixture
 def spec(tmp_path):
     path = tmp_path / "spec.toml"
-    path.write_text('[[screen]]\nname = "a"\nroute = "menu"\n[[screen.assert]]\nkind = "no_cjk"\n')
+    path.write_text('[[screen]]\nname = "a"\nroute = "menu"\n[[screen.assert]]\nkind = "no_cjk"\n', encoding="utf-8")
     return path
 
 
@@ -486,7 +488,7 @@ def test_settings_land_where_the_runtime_reads_them(tools):
     import re
     prep = tools.prepare_run
     read = set(re.findall(r'GetPrivateProfile(?:String|Int)W\(L"(\w+)", L"(\w+)"',
-                          (prep.REPO / "runtime/english_runtime.c").read_text()))
+                          (prep.REPO / "runtime/english_runtime.c").read_text(encoding="utf-8")))
     ini = configparser.ConfigParser()
     ini.read_string(prep.settings_ini([f"{key}={(allowed or ('70',))[0]}" for key, allowed in prep.SETTINGS.items()]))
     assert {(section, key) for section in ini.sections() for key in ini[section]} == read
@@ -504,8 +506,8 @@ def test_contact_sheet_shows_each_screens_capture_beside_its_own_rows(tmp_path, 
         {"screen": "b", "assertion": "fits", "ok": False, "numbers": {"over": 3}, "capture": None},
         {"screen": "a", "assertion": "ink", "ok": True, "numbers": {}, "capture": str(tmp_path / "a.png")},
     ]}
-    (tmp_path / "check-report.json").write_text(json.dumps(report))
-    page = contact_sheet.write(tmp_path).read_text()
+    (tmp_path / "check-report.json").write_text(json.dumps(report), encoding="utf-8")
+    page = contact_sheet.write(tmp_path).read_text(encoding="utf-8")
 
     a, b = page.split("<section>")[1:]
     assert "<h2>a</h2><img" in a and a.count("<li class=PASS>") == 2 and "FAIL" not in a
@@ -518,7 +520,7 @@ def test_wait_up_keeps_waiting_while_the_run_starts_but_fails_at_once_on_a_symli
     running = SimpleNamespace(poll=lambda: None)
     root = tmp_path / "run"
     (root / "control").mkdir(parents=True)
-    (root / "slot.json").write_text("{}")
+    (root / "slot.json").write_text("{}", encoding="utf-8")
     began = time.monotonic()
     assert tools.run_check.wait_up(root, running, 1) is False
     assert time.monotonic() - began >= 1
@@ -557,7 +559,7 @@ def test_boot_clock_starts_once_the_run_holds_a_slot_and_the_wait_names_the_hold
     assert tools.run_check.harness.slot_holders() == ["their-run (0 min)"]
     root = tmp_path / "work/runtime-tests/r1"
     (root / "control").mkdir(parents=True)
-    threading.Timer(1.2, lambda: (root / "slot.json").write_text("{}")).start()
+    threading.Timer(1.2, lambda: (root / "slot.json").write_text("{}", encoding="utf-8")).start()
     began = time.monotonic()
     assert tools.run_check.wait_up(root, SimpleNamespace(poll=lambda: None), 0.5) is False
     os.close(held)

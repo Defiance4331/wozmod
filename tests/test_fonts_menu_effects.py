@@ -26,21 +26,19 @@ class Layer(list):
 """
 
 
-def _run(code: str):
-    python = os.environ.get("WOZMOD_FONT_PYTHON", "/usr/bin/python3")
-    if not Path(python).is_file():
-        pytest.skip("font Python absent")
-    probe = subprocess.run([python, "-c", "import importlib.util; print([m for m in ('fontforge', 'cairo', 'numpy') "
-                                          "if importlib.util.find_spec(m) is None])"], capture_output=True, text=True)
-    if probe.stdout.strip() != "[]":
-        pytest.skip(f"font libraries absent: {probe.stdout.strip()}")
-    run = subprocess.run([python, "-c", FACE + textwrap.dedent(code)], capture_output=True, text=True,
-                         env=dict(os.environ, PYTHONPATH=str(REPO / "src"), PYTHONDONTWRITEBYTECODE="1"))
-    assert run.returncode == 0, run.stderr
-    return json.loads(run.stdout)
+@pytest.fixture
+def _run(font_python):
+    """run(code): what code prints (JSON) under the font Python, after FACE."""
+    def run(code: str):
+        done = subprocess.run([font_python, "-c", FACE + textwrap.dedent(code)], capture_output=True, text=True,
+                              env=dict(os.environ, PYTHONPATH=str(REPO / "src"), PYTHONDONTWRITEBYTECODE="1"),
+                              encoding="utf-8")
+        assert done.returncode == 0, done.stderr
+        return json.loads(done.stdout)
+    return run
 
 
-def test_a_face_table_holds_each_outline_in_cap_units_measured_down_from_the_cap_line():
+def test_a_face_table_holds_each_outline_in_cap_units_measured_down_from_the_cap_line(_run):
     """Bug: the shared table drops the /U or the CAP - y flip (every face then draws its letters scaled or upside
     down), loses the first curve of a contour that starts off-curve, or spaces a slanted face by its slanted ink."""
     table = _run("""
@@ -60,7 +58,7 @@ def test_a_face_table_holds_each_outline_in_cap_units_measured_down_from_the_cap
     assert slanted["a"][2] == [-1, 4] and slanted["a"][:2] == plain["a"][:2]
 
 
-def test_letters_without_a_fitted_row_are_spaced_by_their_bearings_and_a_fitted_row_by_its_ink():
+def test_letters_without_a_fitted_row_are_spaced_by_their_bearings_and_a_fitted_row_by_its_ink(_run):
     """Bug: the shared ink layout adds a bearing on the wrong side, drops a space, or ignores the fitted row's
     ink, so header, value and main lettering would all shift letters in one go."""
     placed = _run("""
@@ -74,7 +72,7 @@ def test_letters_without_a_fitted_row_are_spaced_by_their_bearings_and_a_fitted_
                       [[["A", -9.0], ["B", -11.5]], 1.0 + 7.5 + 10.0 + 6.0]]
 
 
-def test_a_pen_tracks_after_every_character_and_sets_a_row_s_own_space():
+def test_a_pen_tracks_after_every_character_and_sets_a_row_s_own_space(_run):
     """Bug: the shared pen layout tracks before the first letter, skips the track at a space, or ignores the row's
     space, so tracked label rows and every button shift their letters."""
     placed = _run("""

@@ -34,16 +34,16 @@ def test_every_data_loader_refuses_a_disc_name_that_is_not_a_disc_key(tmp_path, 
     key = "0" * 64
 
     def text(row):
-        (tmp_path / "table.json").write_text(json.dumps({"version": 1, "rows": [{"key": key, **row}], "parts": []}))
+        (tmp_path / "table.json").write_text(json.dumps({"version": 1, "rows": [{"key": key, **row}], "parts": []}), encoding="utf-8")
         _load_data(tmp_path / "table.json")
 
     def art(value):
-        (tmp_path / "art.json").write_text(json.dumps({"faces": {}, "textures": [value]}))
+        (tmp_path / "art.json").write_text(json.dumps({"faces": {}, "textures": [value]}), encoding="utf-8")
         words.load(tmp_path / "art.json")
 
     def catalog(row):
         (tmp_path / "catalog.json").write_text(json.dumps({"schema": "moz-menu-visual-references-v1",
-                                                           "textures": {"3.2": {"rows": {"7": row}}}}))
+                                                           "textures": {"3.2": {"rows": {"7": row}}}}), encoding="utf-8")
         monkeypatch.setattr(menu_references, "CATALOG", tmp_path / "catalog.json")
         menu_references.load_catalog.cache_clear()
         try:

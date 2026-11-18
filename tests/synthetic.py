@@ -277,9 +277,9 @@ def speech_model(folder: Path, monkeypatch) -> Path:
 def fake_step_keys(monkeypatch, keys: dict | None = None) -> dict:
     """Give the installer fixed step keys (and no movies), so a synthetic install neither parses the source for them
     nor reads data/movies.json; change the returned dict's keys to make a step look changed."""
-    from wozmod.install import step_keys
+    from wozmod.install import step_keys, steps
 
-    keys = keys if keys is not None else {step: {"key": f"{step} key", "parts": {"mod": step}} for step in step_keys.STEPS}
+    keys = keys if keys is not None else {step: {"key": f"{step} key", "parts": {"mod": step}} for step in steps.STEPS}
     monkeypatch.setattr(step_keys, "keys", lambda root=None, toolchain=None: {s: dict(k) for s, k in keys.items()})
     monkeypatch.setattr(step_keys, "movie_keys", lambda: {})
     return keys

@@ -66,7 +66,7 @@ def _pass(tmp_path, name, plays, captions, last_caption_showing=False):
     wav = tmp_path / f"{name}.wav"
     wav.write_bytes(head + name.encode())
     growth = tmp_path / f"{name}.growth.json"
-    growth.write_text(f"[[{1000 + seconds}, {len(head) + seconds * 48_000 * 8}]]")
+    growth.write_text(f"[[{1000 + seconds}, {len(head) + seconds * 48_000 * 8}]]", encoding="utf-8")
     polls = [[1000 + t / 100, [[600, 100, f"caption {k}"] for k, at in enumerate(captions)
                                if at <= t / 100 < (captions + [seconds])[k + 1]]] for t in range(seconds * 100)]
     if not last_caption_showing:

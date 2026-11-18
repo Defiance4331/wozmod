@@ -23,24 +23,78 @@ from pathlib import Path
 
 from typing import TYPE_CHECKING
 
-from wozmod.formats.linkdata import LINKDATA2_FIRST, archive
+from wozmod import game_files
+from wozmod.formats.linkdata import LINKDATA2_FIRST
 from wozmod.formats.scripts import caption_cues
 from wozmod.runtime.text_table import encode_english
 
 from wozmod.movies import movie_rows
 
-from .contexts import x360_schedules
 from .keys import stock_key
 
 if TYPE_CHECKING:
     from .resolver import DonorResolver
 
 PAL_TICKS = 25  # a French or German schedule counts 25 ticks a second
-STOCK_TICKS = 29.97  # the stock schedule counts 29.97, as do the WO2 X360 ones
+CUE_TICKS = 29.97  # a movie caption schedule counts 29.97 a second (MovieTelop counter 0x5E91F0): the stock ones,
+# the WO2 X360 ones and the WO2 PSP ones
 SCHEDULES = range(146, 177)  # the captioned movies; entry 145 has no cue
 FNS_ENTRIES = range(369, 373)
 DUB_SCHEDULE_FILES = tuple(f"linkdata_fns/{entry}.bin" for entry in FNS_ENTRIES)
 FOLDER, VOICE_FOLDER = "wozmod/captions", "wozmod/captions/voice"
+
+
+# The donors' movie caption loaders (VA = 0x82000000 + default.pe offset; tests/test_text_movie_schedules.py reads
+# the immediates). WO2 X360 0x822B9EB0, gated at 0x822B9FA8/0x822B9FB0 to movies 1-25 (from the movie start
+# 0x821A072C), loads archive id nn + 0xFDF (0x822B9EEC); its archive loader 0x822F3F70 numbers ENS k as id 0xEEA + k
+# (0x822B9EF0, 0x821871B4-0x821871C4). WO1 X360 0x822754A0, gated at 0x822754B4/0x822754B8 to mev02-05, loads id
+# nn + 0xBC2 (0x822754F8) with ENS k at id 0xA53 + k (0x822754FC; loader 0x822A28C0), and reads it from FNS or GNS
+# on French or German consoles (0x82174744). (movies, caption id, first ENS id) per donor:
+MOVIE_CAPTION_LOADERS = {"wo2-x360": (range(1, 26), 0xFDF, 0xEEA, "ens"), "wo1-x360": (range(2, 6), 0xBC2, 0xA53, "fns")}
+
+
+def movie_schedule(row: dict) -> tuple[str, str, int] | None:
+    """The donor caption schedule timed to the movie file a data/movies.json row plays, by the donor's own loader
+    (MOVIE_CAPTION_LOADERS) for the number in its file name: WO2 X360 MEVnn's English captions; WO1 X360 mev02 to
+    mev05 have none in English, so their French ones (timed to the same dub)."""
+    number = re.fullmatch(r"(?i)mev([0-9]+)", Path(row["source"]).stem)
+    if not number or row["donor"] not in MOVIE_CAPTION_LOADERS:
+        return None
+    movies, caption_id, first_id, archive_name = MOVIE_CAPTION_LOADERS[row["donor"]]
+    nn = int(number.group(1))
+    return (row["donor"], archive_name, nn + caption_id - first_id) if nn in movies else None
+
+
+def x360_schedules(movies: list[dict]) -> dict[int, int]:
+    """Stock schedule entry -> the WO2 X360 ENS schedule of the movie data/movies.json plays in that slot."""
+    found = {}
+    for row in movies:
+        entry, source = movie_slot_entry(row["slot"]), movie_schedule(row)
+        if entry is not None and source is not None and source[:2] == ("wo2-x360", "ens"):
+            found[entry] = source[2]
+    return found
+
+
+MOZ_CAPTION_KEY = 0x112C  # the stock loader 0x56A2C0 reads key index + 0x112C (0x56A319)
+
+
+def movie_slot_entry(slot: str) -> int | None:
+    """The LINKDATA2 entry of a movie slot's caption schedule (loader 0x56A2C0), or None when the slot loads none."""
+    number = int(slot[5:])
+    index = number if number < 36 else 36 + number - 100 if number < 200 else 46 + number - 200
+    if index == 0 or 26 <= index <= 37 or 42 <= index <= 45 or index >= 48:
+        return None
+    return MOZ_CAPTION_KEY - LINKDATA2_FIRST + (index - 12 if 38 <= index <= 41 else index - 16 if index >= 46 else index)
+
+
+def overlapping_cues(cues: list[tuple], donor: list[tuple]) -> list[list[int]]:
+    """For each cue, the donor cues whose greatest positive time overlap is with it, in order."""
+    joined: list[list[int]] = [[] for _ in cues]
+    for k, (start, end, _) in enumerate(donor):
+        overlap, at = max(((min(end, e) - max(start, s), i) for i, (s, e, _) in enumerate(cues)), default=(0, 0))
+        if overlap > 0:
+            joined[at].append(k)
+    return joined
 
 
 class MovieCaptionError(ValueError):
@@ -56,7 +110,7 @@ def slot(entry: int) -> str:
 
 def stock_ticks(pal: int) -> int:
     """The stock schedule's count for a moment a French or German schedule counts as pal."""
-    return int(pal / PAL_TICKS * STOCK_TICKS + 0.5)
+    return int(pal / PAL_TICKS * CUE_TICKS + 0.5)
 
 
 def schedule(times: list[tuple[int, int]], texts: list[bytes]) -> bytes:
@@ -103,7 +157,7 @@ def build_movie_schedules(stock: Path, resolver: DonorResolver, pairs: dict[byte
     folder, voice_folder = out / FOLDER, out / VOICE_FOLDER
     voice_folder.mkdir(parents=True, exist_ok=True)
     shown: dict[int, list[bytes]] = {}
-    for entry, raw in archive(stock / "LINKDATA2").read(SCHEDULES).items():
+    for entry, raw in game_files.archive(stock / "LINKDATA2").read(SCHEDULES).items():
         if not (cues := caption_cues(raw)):
             continue
         texts = []

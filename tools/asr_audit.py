@@ -157,7 +157,7 @@ def main() -> int:
     results = {where: {"voice_id": by_id[where].voice_id, "clip_sha256": digests[by_id[where].voice], "verdict": kind,
                        "best": best, "scores": scores}
                for where, (kind, best, scores) in verdicts(found, heard).items()}
-    (out / "verdicts.json").write_text(json.dumps({"settings": SETTINGS, "verdicts": results}, indent=1))
+    (out / "verdicts.json").write_text(json.dumps({"settings": SETTINGS, "verdicts": results}, indent=1), encoding="utf-8")
     print(f"{len(results)} verdicts ({new} new transcripts) in {out / 'verdicts.json'}")
     return 0
 

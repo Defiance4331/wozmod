@@ -35,7 +35,7 @@ def _build(tmp_path, cues: list[str]):
     (donors / "wo1-x360/linkdata_fns/370.bin").write_bytes(_french([(50, 90), (250, 312)]))
     data = tmp_path / "dub_captions.json"
     data.write_text(json.dumps({"movies": [
-        {"slot": "movie103", "entry": 172, "timing": ["wo1-x360", "fns", 370], "cues": cues}]}))
+        {"slot": "movie103", "entry": 172, "timing": ["wo1-x360", "fns", 370], "cues": cues}]}), encoding="utf-8")
     build_dub_schedules(DonorResolver(donors), data, tmp_path / "out")
     return tmp_path / "out/wozmod/captions/voice"
 
@@ -76,8 +76,8 @@ def _movies(tmp_path, cues: list[dict], voice_cues: list[dict]):
     write_ens(donors / "wo2-x360", {**dict.fromkeys(range(246, 271), empty),
                                     266: _schedule(X360_266), 262: _schedule(X360_262)}, count=271)
     data, dub = tmp_path / "movie_captions.json", tmp_path / "dub_captions.json"
-    data.write_text(json.dumps({"version": 1, "cues": cues, "voice_cues": voice_cues}))
-    dub.write_text(json.dumps({"movies": []}))
+    data.write_text(json.dumps({"version": 1, "cues": cues, "voice_cues": voice_cues}), encoding="utf-8")
+    dub.write_text(json.dumps({"movies": []}), encoding="utf-8")
     table = {SHARED: b"Table row", OTHER: b"Other row"}
     build_movie_schedules(stock, DonorResolver(donors), table, data, dub, out)
     return out / "wozmod/captions"
@@ -132,16 +132,14 @@ WO1_SHARED = {(171, 11): ["wo1-x360", "ens", 159, "event", 31]}
 
 
 @pytest.fixture(scope="module")
-def real_movies(tmp_path_factory):
+def real_movies(tmp_path_factory, built):
     """The installer's text stage on the real inputs: (stock schedules, built folder, resolver, table rows)."""
     from wozmod.formats.linkdata import archive
-    from wozmod.install import _text_table
 
     game, donors = Path(os.environ["WOZMOD_GAME"]), Path(os.environ["WOZMOD_DONORS"])
-    out = tmp_path_factory.mktemp("movie-captions")
-    _text_table(game, donors, out)
+    out = built("text", tmp_path_factory.mktemp("movie-captions")) / "out"
     stock = {entry: caption_cues(data) for entry, data in archive(game / "LINKDATA2").read(range(146, 177)).items()}
-    rows = {row["key"]: row for row in json.loads((REPO / "data/text/table.json").read_text())["rows"]}
+    rows = {row["key"]: row for row in json.loads((REPO / "data/text/table.json").read_text(encoding="utf-8"))["rows"]}
     return stock, out / "wozmod/captions", DonorResolver(donors), rows
 
 
@@ -171,9 +169,9 @@ def test_with_english_voices_each_movie_shows_the_captions_of_the_english_movie(
 
     stock, folder, resolver, _ = real_movies
     ens = archive(resolver.donors.folder("wo2-x360") / "linkdata_ens")
-    movies = json.loads((REPO / "data/movies.json").read_text())["movies"]
+    movies = json.loads((REPO / "data/movies.json").read_text(encoding="utf-8"))["movies"]
     voiced = {ENTRIES[m["slot"]]: m["donor"] for m in movies if m["language"] == "voice" and m["slot"] in ENTRIES}
-    dub = {m["entry"]: m for m in json.loads((REPO / "data/text/dub_captions.json").read_text())["movies"]}
+    dub = {m["entry"]: m for m in json.loads((REPO / "data/text/dub_captions.json").read_text(encoding="utf-8"))["movies"]}
     problems = []
     if (found := sorted(int(p.stem) - 4251 for p in (folder / "voice").iterdir())) != sorted(voiced):
         problems.append(f"English-voice schedules for entries {found}, the English movies are {sorted(voiced)}")
@@ -207,7 +205,7 @@ def test_with_japanese_voices_each_movie_cue_shows_its_own_english_on_the_stock_
     from wozmod.formats.linkdata import archive
     from wozmod.formats.scripts import event_texts
     from wozmod.text.inventory import inventory
-    from wozmod.text.psp_exe import EXE_STRING
+    from wozmod.game_files import STRING as EXE_STRING
     from wozmod.text.keys import stock_key
 
     stock, folder, resolver, rows = real_movies
@@ -244,7 +242,7 @@ def test_with_japanese_voices_each_movie_cue_shows_its_own_english_on_the_stock_
         elsewhere |= set(event_texts(data))
     places = [(entry, cue, text) for entry, cues in stock.items() for cue, (_, _, text) in enumerate(cues)]
     counts = Counter(text for _, _, text in places)
-    own = {(row["entry"], row["cue"]) for row in json.loads((REPO / "data/text/movie_captions.json").read_text())["cues"]}
+    own = {(row["entry"], row["cue"]) for row in json.loads((REPO / "data/text/movie_captions.json").read_text(encoding="utf-8"))["cues"]}
     shared = {(entry, cue) for entry, cue, text in places
               if text.strip(b" \n\x81\x40") and (counts[text] > 1 or text in elsewhere)}
     if shared != own:  # a row the cue does not need would hide the next shared cue among the reviewed ones

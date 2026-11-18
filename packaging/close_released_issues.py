@@ -32,7 +32,7 @@ def reported_issues(messages: str) -> list[int]:
 
 
 def _git(*args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", *args], capture_output=True, text=True)
+    return subprocess.run(["git", *args], capture_output=True, text=True, encoding="utf-8")
 
 
 def release_messages(tag: str) -> str:
@@ -55,7 +55,7 @@ def main(argv: list[str]) -> int:
     repo = os.environ.get("GITHUB_REPOSITORY") or sys.exit("GITHUB_REPOSITORY is not set (OWNER/REPO).")
     failed = False
     for number in reported_issues(release_messages(tag)):
-        view = subprocess.run(["gh", "api", f"repos/{repo}/issues/{number}"], capture_output=True, text=True)
+        view = subprocess.run(["gh", "api", f"repos/{repo}/issues/{number}"], capture_output=True, text=True, encoding="utf-8")
         if view.returncode != 0:
             print(f"::warning::#{number} is named in a commit but could not be read: {view.stderr.strip()}")
             failed = True

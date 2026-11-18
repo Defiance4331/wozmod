@@ -1,14 +1,8 @@
-"""Install progress: the overall percent and time left, events from worker processes, the terminal view, Cancel."""
+"""Install progress: the overall percent and time left, the terminal view, Cancel (the workers: tests/test_steps.py)."""
 
 from __future__ import annotations
 
 import io
-import os
-import threading
-import time
-from concurrent.futures import ProcessPoolExecutor
-from multiprocessing import get_context
-from pathlib import Path
 
 import pytest
 
@@ -59,66 +53,6 @@ def test_time_left_follows_the_rate_so_far(monkeypatch):
     clock.now = 100.0
     done = progress.percent()
     assert progress.seconds_left() == pytest.approx(100.0 * (1 - done) / done)
-
-
-def _report_until_seen(stage: str, seen: Path) -> None:
-    # The stage stays open until the parent shows its event: a finished stage drops later events by design.
-    reporting.report(stage, "converting voice clips", 0.5, (2, 4))
-    deadline = time.monotonic() + 10
-    while not seen.exists() and time.monotonic() < deadline:
-        time.sleep(0.01)
-
-
-def _until_cancelled(stage: str) -> None:
-    while True:
-        reporting.report(stage, "working", 0.1)
-        time.sleep(0.02)
-
-
-def _pool(worker, stages, *args):
-    context = get_context("spawn")
-    events, stop = context.Queue(), context.Event()
-    pool = ProcessPoolExecutor(len(stages), mp_context=context, initializer=installer._worker_start,
-                               initargs=(events, stop, None))
-    return pool, {pool.submit(worker, stage, *args): stage for stage in stages}, events, stop
-
-
-def test_events_from_worker_processes_reach_the_progress(tmp_path):
-    # Bug: the worker's events stay in the worker (no queue attached), so the voices line never moves.
-    seen = tmp_path / "seen"
-
-    def show(progress):
-        if progress.stages["voices"].text == "converting voice clips, 2 of 4":
-            seen.touch()
-
-    progress = Progress(show)
-    pool, futures, events, stop = _pool(_report_until_seen, ["voices", "art"], seen)
-    with pool:
-        installer._run_stages(pool, futures, events, stop, progress)
-    assert seen.exists()
-    assert progress.stages["art"].finished is not None
-
-
-def test_cancel_stops_the_worker_processes_and_raises(monkeypatch):
-    # Bug: Cancel sets a flag the workers never see, so the install keeps building until it ends.
-    progress = Progress()
-    pool, futures, events, stop = _pool(_until_cancelled, ["voices", "art"])
-    processes = []
-    with pool:
-        started = time.monotonic()
-        threading.Timer(0.5, progress.cancel.set).start()
-        try:
-            installer._run_stages(pool, futures, events, stop, progress)
-        except Cancelled:
-            pass
-        else:
-            pytest.fail("cancel did not raise")
-        processes = list(pool._processes.values())
-        installer._stop_workers(pool, futures, stop)
-    assert time.monotonic() - started < 8  # the grace period before a kill is 10
-    for process in processes:
-        process.join(10)
-    assert all(not process.is_alive() for process in processes)
 
 
 def test_terminal_plain_output_has_one_line_per_step_and_one_per_ten_percent():
@@ -203,45 +137,3 @@ def test_cancel_at_any_stage_leaves_the_game_folder_as_it_was(game, stage):
         with pytest.raises(Cancelled):
             installer.install(game, {}, log=lambda _: None, progress=progress)
         assert _tree(game) == before
-
-
-def _start_a_child_and_hang(stage: str) -> None:
-    import subprocess
-    child = subprocess.Popen(["sleep", "60"])
-    reporting.report(stage, "working", 0.1, (child.pid, 0))  # tells the parent which process to look for
-    time.sleep(60)  # never looks at the cancel flag again
-
-
-@pytest.mark.skipif(os.name == "nt", reason="uses sleep and process groups")
-@pytest.mark.slow_first
-def test_a_worker_that_does_not_stop_is_killed_together_with_what_it_started(monkeypatch):
-    # Bug: only the worker is killed, so its ffmpeg (or its own pool) keeps running after Cancel.
-    monkeypatch.setattr(installer, "GRACE", 1)
-    # Cancel once the worker has reported its child: a timer could fire before a slow worker starts one.
-    progress = Progress(lambda progress: progress.stages["voices"].text and progress.cancel.set())
-    pool, futures, events, stop = _pool(_start_a_child_and_hang, ["voices"])
-    with pool:
-        with pytest.raises(Cancelled):
-            installer._run_stages(pool, futures, events, stop, progress)
-        child = progress.stages["voices"].text.split(" ")[-3].strip(",")
-        installer._stop_workers(pool, futures, stop)
-    pid = int(child)
-    time.sleep(0.5)
-    with pytest.raises(ProcessLookupError):
-        os.kill(pid, 0)
-
-
-def _chatter(stage: str) -> None:
-    print("entry 4117: 1 textures, 2017488 -> 1850400 bytes", flush=True)
-    os.write(1, b"written below Python\n")
-
-
-def test_what_the_build_prints_goes_to_the_log_not_to_the_terminal(tmp_path, capfd):
-    # Bug: the build's progress prints ("entry 4117: ...") land in the terminal view or the window.
-    context = get_context("spawn")
-    events, stop, log = context.Queue(), context.Event(), tmp_path / "install.log"
-    with ProcessPoolExecutor(1, mp_context=context, initializer=installer._worker_start,
-                             initargs=(events, stop, log)) as pool:
-        pool.submit(_chatter, "art").result()
-    assert capfd.readouterr().out == ""
-    assert log.read_text().splitlines() == ["entry 4117: 1 textures, 2017488 -> 1850400 bytes", "written below Python"]

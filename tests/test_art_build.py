@@ -13,7 +13,7 @@ import struct
 import pytest
 from PIL import Image
 
-from wozmod.art import build, faces, imaging, lettering, packing, vector
+from wozmod.art import build, faces, imaging, lettering, vector
 from wozmod.fonts.word_key import word_key
 
 FILL, OUTLINE = (220, 180, 40, 255), (8, 4, 0, 255)
@@ -484,12 +484,12 @@ def test_font_environment_does_not_drop_package_or_inherited_import_paths(monkey
 
     inherited = tmp_path / "inherited"
     inherited.mkdir()
-    (inherited / "authored_marker.py").write_text("VALUE = 'marker'\n")
+    (inherited / "authored_marker.py").write_text("VALUE = 'marker'\n", encoding="utf-8")
     monkeypatch.setenv("PYTHONPATH", str(inherited))
     result = subprocess.run([
         sys.executable, "-S", "-c",
         "from wozmod.art.hires import hires_bank; import authored_marker; print(authored_marker.VALUE)",
-    ], cwd=tmp_path, env=lettering.font_environment(), check=True, capture_output=True, text=True)
+    ], cwd=tmp_path, env=lettering.font_environment(), check=True, capture_output=True, text=True, encoding="utf-8")
     assert result.stdout == "marker\n"
 
 
@@ -699,16 +699,6 @@ def test_a_hint_wider_than_its_room_condenses_to_it_at_both_sizes(letters):
     assert box[2] - box[0] == pytest.approx(2 * 588, abs=2)
 
 
-def test_worker_pool_falls_back_to_threads_where_fork_does_not_exist(monkeypatch):
-    # Bug: get_context("fork") raises ValueError on Windows, so the art stage (and the install) cannot start there.
-    from concurrent.futures import ThreadPoolExecutor
-
-    monkeypatch.setattr(packing, "get_all_start_methods", lambda: ["spawn"])
-    with packing.worker_pool(2) as pool:
-        assert isinstance(pool, ThreadPoolExecutor)
-        assert pool.submit(sum, [1, 2]).result() == 3
-
-
 def test_a_lettering_face_survives_the_trip_from_a_worker_with_its_fill_test(monkeypatch):
     # Bug: the face cannot be pickled (its fill test is a lambda), so the build with workers fails, or the
     # face comes back with another fill test and finds other pixels.
@@ -720,24 +710,14 @@ def test_a_lettering_face_survives_the_trip_from_a_worker_with_its_fill_test(mon
     assert back.is_fill is faces.FILLS["help"] and back.__dict__.keys() == face.__dict__.keys()
 
 
-def _slow_early_face(name):  # at module level so a worker process can be handed it
-    import time
-    time.sleep({"stage": 0.3, "title": 0.2}.get(name, 0.0))
+def _named_face(mapping, donors, name):
     return name.upper()
-
-
-def test_faces_built_by_workers_come_back_in_the_order_of_the_recipe(monkeypatch):
-    # Bug: faces are kept in the order the workers finish, so the recipe order (and what reads it) changes per run.
-    monkeypatch.setattr(faces, "_face", _slow_early_face)
-    mapping = {"faces": {"list": {}, "header": {}, "tabs": {}}}
-    assert list(faces.faces(mapping, {}, 4).values()) == ["STAGE", "TITLE", "LIST", "HEADER", "TABS"]
-    assert list(faces.faces(mapping, {}, 1)) == ["stage", "title", "list", "header", "tabs"]
 
 
 def test_the_build_letters_with_exactly_the_faces_its_edits_name(monkeypatch):
     """Bugs: a face a nested piece or a stage title names is left out (the build stops on it), a face no edit names is
     built anyway, or a preview of an entry that letters with no face cannot start (a pool of no workers)."""
-    monkeypatch.setattr(faces, "_face", _slow_early_face)
+    monkeypatch.setattr(faces, "_face", _named_face)
     mapping = {"faces": {"list": {}, "header": {}, "tabs": {}}}
     edits = {"none": [{"blank": True}],
              "nested and title": [{"rows": [[{"text": "a"}, {"face": "header", "text": "b"}]]}, {"stage_title": "c"}],
@@ -758,9 +738,9 @@ def test_every_official_sheet_a_face_names_is_a_donor_the_recipes_pass() -> None
             for child in node:
                 yield from donors(child)
 
-    passed = {sheet for edit in json.loads(build.MAPPING.read_text())["textures"]
+    passed = {sheet for edit in json.loads(build.MAPPING.read_text(encoding="utf-8"))["textures"]
               for _, step in build.expanded(edit) for sheet in donors(step)}
-    faces = "".join((build.REPO / "data/art/faces" / f"{face}.py").read_text() for face in ("headervec", "valuevec"))
+    faces = "".join((build.REPO / "data/art/faces" / f"{face}.py").read_text(encoding="utf-8") for face in ("headervec", "valuevec"))
     named = set(re.findall(r"""['"][^'"@]+@(\d+\.\d+)['"]""", faces))
     assert named and named <= passed, named - passed
 
@@ -841,104 +821,22 @@ def test_art_data_names_no_warriors_orochi_pc_art():
 # and conftest.py, the game and donor folders, and both Pythons with what they load (the font Python's fontforge, cairo
 # and freetype are system packages, so the package database counts). Each full run checks the module list again
 # through the bytecode the build leaves behind.
-ART_UNREAD = ("src/wozmod/install/", "src/wozmod/voices/", "src/wozmod/__main__.py", "src/wozmod/interactive.py",
-              "src/wozmod/movies.py", "src/wozmod/remembered.py", "src/wozmod/window.py", "src/wozmod/art/__main__.py",
-              "src/wozmod/art/bundle.py", "src/wozmod/art/compose.py", "src/wozmod/art/render.py",
-              "src/wozmod/formats/audio.py", "src/wozmod/runtime/__main__.py", "src/wozmod/runtime/build.py",
-              "src/wozmod/runtime/english_runtime.py", "src/wozmod/runtime/runtime_edits.py",
-              "src/wozmod/runtime/text_room.py", "src/wozmod/text/build.py", "src/wozmod/text/inventory.py",
-              "src/wozmod/text/psp_alignment.py", "src/wozmod/text/script_alignment.py", "src/wozmod/text/stock.py")
-PYTHON_SETUP = """import hashlib, importlib.metadata, importlib.util, pathlib, sys
-print(sys.version, sorted(f"{d.name}=={d.version}" for d in importlib.metadata.distributions()))
-native = importlib.util.find_spec("wozmod_native")  # rebuilt in place from native/, so its version never changes
-print(native and [hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(pathlib.Path(native.origin).parent.glob("*.so"))])"""
-PACKAGE_DATABASE = (Path("/usr/lib/sysimage/rpm/rpmdb.sqlite"), Path("/usr/lib/sysimage/rpm/rpmdb.sqlite-wal"))
-
-
-def art_sources(repo: Path) -> list[Path]:
-    files = [*(repo / "src/wozmod").rglob("*.py"), *(repo / "data/art").rglob("*"), repo / "tests/test_art_build.py",
-             repo / "tests/conftest.py", repo / "runtime/shared.h"]  # the C: hires.bin's flags and limits
-    return sorted(p for p in files if p.is_file() and "__pycache__" not in p.parts
-                  and not p.relative_to(repo).as_posix().startswith(ART_UNREAD))
-
-
-def art_build_key(repo: Path, inputs, pythons) -> str:
-    """SHA-256 over everything the art build reads: source contents, the sizes and times of the files in `inputs`
-    (files or folders), and the Pythons."""
-    digest = hashlib.sha256()
-    for path in art_sources(repo):
-        digest.update(repr((path.relative_to(repo).as_posix(), hashlib.sha256(path.read_bytes()).digest())).encode())
-    for each in map(Path, inputs):
-        for path in [each] if each.is_file() else sorted(p for p in each.rglob("*") if p.is_file()):
-            digest.update(repr((str(path), path.stat().st_size, path.stat().st_mtime_ns)).encode())
-    for python in pythons:
-        digest.update(subprocess.run([python, "-c", PYTHON_SETUP], capture_output=True, text=True, check=True).stdout.encode())
-    return digest.hexdigest()
-
-
-def test_the_art_build_key_changes_with_each_input_it_covers(tmp_path):
-    """Bug: an input drops out of the key, so verify.sh skips the art build after a change that breaks it."""
-    repo, game, donors, python = tmp_path / "repo", tmp_path / "game", tmp_path / "donors", tmp_path / "python"
-    paths = [repo / "src/wozmod/fonts/raster.py", repo / "data/art/faces/mainvec.py", repo / "data/art/lettering.json",
-             repo / "tests/test_art_build.py", repo / "runtime/shared.h", game / "LINKDATA1.BIN",
-             donors / "wo2-x360/linkdata_ens.idx"]
-    for path in paths:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("a")
-    python.write_text("#!/bin/sh\necho 3.14.0\n")
-    python.chmod(0o755)
-
-    def later(path):
-        os.utime(path, ns=(path.stat().st_atime_ns, path.stat().st_mtime_ns + 10**9))
-
-    edits = {**{path.relative_to(tmp_path).as_posix(): lambda path=path: path.write_text("b") for path in paths[:5]},
-             "game file grows": lambda: paths[5].write_text("ab"), "donor file touched": lambda: later(paths[6]),
-             "Python version": lambda: python.write_text("#!/bin/sh\necho 3.14.1\n")}
-    unchanged = []
-    for name, edit in edits.items():
-        before = art_build_key(repo, (game, donors), (str(python),))
-        edit()
-        if art_build_key(repo, (game, donors), (str(python),)) == before:
-            unchanged.append(name)
-    assert unchanged == []
-
-
-@pytest.mark.skipif(not os.environ.get("WOZMOD_ART_NO_WO1PC"), reason="set WOZMOD_ART_NO_WO1PC=1 (a full art build, minutes)")
-def test_art_build_runs_without_the_warriors_orochi_pc_disc(tmp_path):
-    """The whole build, hi-res included, from the X360 donors alone: a WO1 PC read the data check cannot see (an entry
-    the code computes) fails it. Skipped while nothing it reads has changed since it last passed (WOZMOD_ART_FULL=1
-    runs it anyway)."""
-    game, donors = (Path(os.environ.get(name, "")) for name in ("WOZMOD_GAME", "WOZMOD_DONORS"))
-    if not (game / "LINKDATA1.BIN").is_file() or not (donors / "wo2-x360/linkdata_ens.idx").is_file():
-        pytest.skip("set WOZMOD_GAME and WOZMOD_DONORS (the installer's donors folder)")
-    repo = build.REPO.resolve()
-    key = art_build_key(repo, (game, donors, *PACKAGE_DATABASE), (sys.executable, lettering.FONT_PYTHON))
-    passed = repo / "work/art-build.passed"
-    if os.environ.get("WOZMOD_ART_FULL") != "1" and passed.is_file() and passed.read_text() == key:
-        pytest.skip("nothing the art build reads has changed since it last passed (set WOZMOD_ART_FULL=1 to run it)")
-    pycache = tmp_path / "pycache"  # every module any of the build's Pythons imports leaves its bytecode here
-    run = subprocess.run([sys.executable, "-m", "wozmod.art.build", "--game", str(game),
-                          "--wo1-x360-donor", str(donors / "wo1-x360/linkdata_ens"),
-                          "--wo2-x360-donor", str(donors / "wo2-x360/linkdata_ens"), "--text-donors", str(donors),
-                          "--output-dir", str(tmp_path / "out"), "--hires"],
-                         capture_output=True, text=True, env={**os.environ, "PYTHONPYCACHEPREFIX": str(pycache)})
-    assert run.returncode == 0, run.stdout[-2000:] + run.stderr[-4000:]
-    imported = {Path("/", *p.relative_to(pycache).parent.parts, p.name.split(".")[0] + ".py") for p in pycache.rglob("*.pyc")}
-    keyed = set(art_sources(repo))
-    unkeyed = [p for p in imported if p.is_relative_to(repo) and not p.is_relative_to(repo / ".venv") and p not in keyed]
-    assert sorted(unkeyed) == [], "add these to the key"  # .venv is keyed by its package list
+@pytest.mark.skipif(os.environ.get("WOZMOD_ART_COMPOSE") != "1", reason="set WOZMOD_ART_COMPOSE=1 (an art build)")
+def test_a_partial_build_writes_the_entries_the_install_build_writes(tmp_path, built):
     # Bug: a stage after the entry build changes an entry (the hires pass once cleaned the dark plates in place), so the
     # entries a partial build hands a test run (`run_check.py --entries-dir`) differ from the ones players get. 4077
     # holds dark plates (the RECORD labels).
+    game, donors = (Path(os.environ.get(name, "")) for name in ("WOZMOD_GAME", "WOZMOD_DONORS"))
+    if not (game / "LINKDATA1.BIN").is_file() or not (donors / "wo2-x360/linkdata_ens.idx").is_file():
+        pytest.skip("set WOZMOD_GAME and WOZMOD_DONORS (the installer's donors folder)")
     partial = subprocess.run([sys.executable, "-m", "wozmod.art.build", "--game", str(game),
                               "--wo1-x360-donor", str(donors / "wo1-x360/linkdata_ens"),
                               "--wo2-x360-donor", str(donors / "wo2-x360/linkdata_ens"), "--text-donors", str(donors),
                               "--entries", "4077", "--entries-dir", str(tmp_path / "partial")],
-                             capture_output=True, text=True)
+                             capture_output=True, text=True, encoding="utf-8")
     assert partial.returncode == 0, partial.stdout[-2000:] + partial.stderr[-4000:]
-    assert (tmp_path / "partial/4077.bin").read_bytes() == (tmp_path / "out/wozmod/entries/4077.bin").read_bytes()
-    passed.parent.mkdir(exist_ok=True)
-    passed.write_text(key)
+    install = built("art", tmp_path / "art") / "out/wozmod/entries/4077.bin"
+    assert (tmp_path / "partial/4077.bin").read_bytes() == install.read_bytes()
 
 
 def test_every_spacing_table_key_is_a_word_its_face_draws() -> None:
@@ -946,11 +844,11 @@ def test_every_spacing_table_key_is_a_word_its_face_draws() -> None:
     with that face (a reworded menu word, a word hashed with other casing) silently falls back to default spacing."""
     import ast
 
-    requests = json.loads((build.REPO / "data/art/lettering.json").read_text())["requests"].values()
+    requests = json.loads((build.REPO / "data/art/lettering.json").read_text(encoding="utf-8"))["requests"].values()
     for face, tables in (("labelvec", ("ROWS", "SETS")), ("mainvec", ("SETS",))):
         raster = "wozmod.fonts." + face.replace("vec", "raster")
         drawn = {request["text"]["text_sha256"] for request in requests if request.get("raster") == raster}
-        source = ast.parse((build.REPO / "data/art/faces" / f"{face}.py").read_text())
+        source = ast.parse((build.REPO / "data/art/faces" / f"{face}.py").read_text(encoding="utf-8"))
         for node in source.body:
             if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", None) in tables:
                 keys = {key.value for key in node.value.keys}

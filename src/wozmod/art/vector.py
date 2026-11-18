@@ -7,16 +7,15 @@ import math
 import struct
 import sys
 import zlib
-from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from statistics import mode
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 from wozmod.formats.linkdata import parse_lzp2
-from wozmod import native
 from wozmod.donors import WO1_X360, WO2_X360
 from wozmod.progress import report as report_progress
+from wozmod.workers import ordered_map
 from . import lettering, words
 from .hires import HIRES_SCALE, HiresRow, hires_bank, hires_blocks
 from wozmod.formats.textures import G1T_TEXTURE_HEADER, G1tFile, parse_g1t, parse_texture_package
@@ -929,26 +928,23 @@ def native_menu_art(entry: int, item: int, served: Image.Image, mapping: dict,
     })
     return art
 
-def _now(function, *args) -> Future:
-    done = Future()
-    done.set_result(function(*args))
-    return done
-
-
 def hires_bin(entries: Path, vector: tuple, squeeze: bool = False, jobs: int = 1,
               review: Path | None = None) -> bytes:
-    """The large-menu sheets. With the native codecs (they let go of the GIL) the texture encoding and the
-    LZP2 packing of each sheet run on `jobs` threads while the next sheet is drawn; the bytes are the same.
+    """The large-menu sheets. The texture encoding and the LZP2 packing of each sheet run on `jobs` threads while
+    the next sheet is drawn (the native codecs let go of the GIL); the bytes are the same.
     vector is (the menu_textures mapping, the donors); review is the developer folder that keeps the per-sheet
     layout details. It reads the built entries and never changes them: the entry build cleans the dark plates."""
-    if not (native.module and jobs > 1):
-        return _hires_bin(entries, vector, squeeze, _now, review)
-    with ThreadPoolExecutor(jobs) as pool:
-        return _hires_bin(entries, vector, squeeze, pool.submit, review)
+    return hires_bank(list(ordered_map(_encoded, _hires_sheets(entries, vector, squeeze, review), jobs)))
 
 
-def _hires_bin(entries: Path, vector: tuple, squeeze: bool, later, review: Path | None) -> bytes:
-    rows, parsed = [], {}
+def _encoded(sheet: tuple[dict, Image.Image, int, int, int]) -> HiresRow:
+    fields, art, w, band, per_col = sheet
+    return HiresRow(**fields, blocks=hires_blocks(art, w, band, per_col))
+
+
+def _hires_sheets(entries: Path, vector: tuple, squeeze: bool, review: Path | None):
+    """Each large-menu sheet as drawn, before encoding: (its row's fields, its art, w, band, per_col)."""
+    parsed = {}
     extras = list(DARK) + sorted(HIRES_NATIVE_MENU)
     plates = HIRES + [(e, i, 0, 0, 0, 0) for e, i in extras]
     for number, (entry, item, w, h, band, per_col) in enumerate(plates):
@@ -1020,9 +1016,8 @@ def _hires_bin(entries: Path, vector: tuple, squeeze: bool, later, review: Path 
             minimum = art.info.get("minimum", 4 * math.ceil((box[2] / scale + 2) / 4) if box else 0)
             if (entry, item) in ATTRIBUTE_QUAD_MINIMUM:
                 minimum = max(minimum, ATTRIBUTE_QUAD_MINIMUM[entry, item])
-        rows.append((dict(entry=entry, item=item, w=w, h=h, band=band, per_col=per_col, overlay=overlay,
-                          right_grow=bool(growth), minimum=minimum), later(hires_blocks, art, w, band, per_col)))
+        yield (dict(entry=entry, item=item, w=w, h=h, band=band, per_col=per_col, overlay=overlay,
+                    right_grow=bool(growth), minimum=minimum), art, w, band, per_col)
     if (4069, 2) in {plate[:2] for plate in plates}:  # entry 0: no stock texture, the runtime draws it
-        rows.append((dict(entry=0, item=0, w=OPTION_W, h=len(OPTION_ROWS) * OPTION_BAND, band=OPTION_BAND, per_col=0),
-                     later(hires_blocks, option_rows_art(HIRES_SCALE, squeeze), OPTION_W, OPTION_BAND, 0)))
-    return hires_bank([HiresRow(**fields, blocks=blocks.result()) for fields, blocks in rows])
+        yield (dict(entry=0, item=0, w=OPTION_W, h=len(OPTION_ROWS) * OPTION_BAND, band=OPTION_BAND, per_col=0),
+               option_rows_art(HIRES_SCALE, squeeze), OPTION_W, OPTION_BAND, 0)

@@ -17,7 +17,7 @@ import wozmod.install as installer
 from synthetic import fake_step_keys, speech_model, stock_game
 from wozmod import movies, remembered
 from wozmod.donors import Donor, DonorFile
-from wozmod.install import STEPS, step_keys
+from wozmod.install import STEPS, manifest, step_keys
 from wozmod.progress import Cancelled, Progress
 
 MOVIES = {"voice/movie001.wmv": b"first movie", "voice/movie002.wmv": b"second movie"}
@@ -42,8 +42,8 @@ def _fake_art(game, donors, lettering, staging, out, jobs):
     (out / "wozmod/hires/hires.bin").write_bytes(b"art from " + Path(lettering).read_bytes())
 
 
-def _ran(game, step):
-    with open(game / "runs.txt", "a", encoding="utf-8") as runs:
+def _ran(game, step):  # beside the game folder: a step may read only the game files its stock pieces are in
+    with open(game.parent / "runs.txt", "a", encoding="utf-8") as runs:
         runs.write(step + "\n")
 
 
@@ -83,10 +83,10 @@ def setup(tmp_path, monkeypatch):
 def _install(game, inputs, seen, progress=None):
     for value in seen.values():
         value.clear()
-    (game / "runs.txt").unlink(missing_ok=True)
+    (game.parent / "runs.txt").unlink(missing_ok=True)
     installer.install(game, inputs, log=lambda _: None, progress=progress)
-    runs = sorted((game / "runs.txt").read_text(encoding="utf-8").split()) if (game / "runs.txt").exists() else []
-    (game / "runs.txt").unlink(missing_ok=True)
+    runs = sorted((game.parent / "runs.txt").read_text(encoding="utf-8").split()) if (game.parent / "runs.txt").exists() else []
+    (game.parent / "runs.txt").unlink(missing_ok=True)
     return runs
 
 
@@ -122,11 +122,11 @@ def test_a_changed_key_builds_only_its_step_from_only_the_disc_files_it_reads(se
         before = _installed(game)
         keys[step] = {"key": f"another {step} key", "parts": {"mod": "another"}}
         runs = _install(game, inputs, seen)
-        expected_reads = sorted(f"{disc}/{name}" for disc, names in step_keys.disc_reads(step).items() for name in names)
+        expected_reads = sorted(f"{disc}/{name}" for disc, names in manifest.disc_reads(step).items() for name in names)
         after = _installed(game)
         moved = sorted(name for name in before if after[name][0] != before[name][0] and step not in _owner(name))
         if (runs, sorted(seen["reads"]), bool(seen["programs"]), seen["rebuilt"], moved) != (
-                [step], expected_reads, step in step_keys.PROGRAMS, [(step,)], []):
+                [step], expected_reads, step in manifest.PROGRAMS, [(step,)], []):
             wrong.append(f"{step}: ran {runs}, read {len(seen['reads'])} files, programs {seen['programs']}, "
                          f"checked for {seen['rebuilt']}, moved {moved}")
         if _record(game)["steps"][step]["key"] != f"another {step} key":
@@ -240,12 +240,12 @@ def test_the_build_folder_has_the_game_folders_permissions(setup, monkeypatch):
         _install(game, inputs, seen)
     finally:
         os.umask(mask)
-    assert (game / "build-folder-mode.txt").read_text() == oct((game / "plain").stat().st_mode)
+    assert (game.parent / "build-folder-mode.txt").read_text(encoding="utf-8") == oct((game / "plain").stat().st_mode)
 
 
 def _art_noting_the_build_folder(game, donors, lettering, staging, out, jobs):
-    """The art step, in a worker process: notes the mode of the folder it builds in."""
-    (game / "build-folder-mode.txt").write_text(" ".join(oct(p.stat().st_mode) for p in game.glob(".wozmod-build-*")))
+    """The art step, in a worker process: notes the mode of the folder it builds in (beside the game folder, as _ran)."""
+    (game.parent / "build-folder-mode.txt").write_text(" ".join(oct(p.stat().st_mode) for p in game.glob(".wozmod-build-*")), encoding="utf-8")
     _fake_art(game, donors, lettering, staging, out, jobs)
 
 

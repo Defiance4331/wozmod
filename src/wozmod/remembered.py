@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
+
+from wozmod import platform
 
 # Inputs that v0.1.0 remembered under the names its command line used then, by their names now.
 RENAMED = {"x360": "wo2-x360", "psp": "wo2-psp", "x360-file": "wo2-x360-file", "psp-file": "wo2-psp-file"}
 
 
 def settings_path() -> Path:
-    base = os.environ.get("APPDATA") if os.name == "nt" else None
-    base = Path(base) if base else Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-    return base / "wozmod" / "setup.json"
+    return platform.settings_folder() / "wozmod" / "setup.json"
 
 
 def load_settings() -> dict[str, str]:

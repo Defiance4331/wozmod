@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import io
 import json
@@ -16,7 +15,8 @@ import time
 import PIL
 from PIL import Image
 
-from wozmod import process
+from wozmod import platform
+from wozmod.workers import ordered_map
 from . import build, faces, lettering, vector, words
 from .bundle import write_bundle
 
@@ -29,7 +29,7 @@ TEXT_SOURCES = (build.REPO / "data/art/menu_textures.json",
 # Python runs (its imports never leave these), that Python and its drawing libraries, and the system libraries under
 # them (the package database). A layer cache keyed on less serves layers an older renderer drew.
 RENDERER_SOURCES = ("src/wozmod/fonts", "src/wozmod/art/lettering.py", "src/wozmod/runtime/latin_font.py",
-                    "src/wozmod/process.py", "src/wozmod/resources.py", "data/art/faces")
+                    "src/wozmod/platform", "src/wozmod/resources.py", "data/art/faces")
 FONT_SETUP = """import sys, cairo, fontforge, numpy, PIL
 print(sys.version, fontforge.version(), cairo.version, cairo.cairo_version_string(), numpy.__version__, PIL.__version__)"""
 SYSTEM_PACKAGES = (Path("/usr/lib/sysimage/rpm/rpmdb.sqlite"), Path("/usr/lib/sysimage/rpm/rpmdb.sqlite-wal"))
@@ -200,7 +200,7 @@ def renderer_key(python: str) -> str:
                                                          and "__pycache__" not in p.parts):
             digest.update(repr((each.relative_to(build.REPO).as_posix(),
                                 hashlib.sha256(each.read_bytes()).hexdigest())).encode())
-    setup = process.run([python, "-c", FONT_SETUP], capture_output=True, text=True, encoding="utf-8", check=True)
+    setup = platform.run_hidden([python, "-c", FONT_SETUP], capture_output=True, text=True, encoding="utf-8", check=True)
     digest.update(repr((setup.stdout, PIL.__version__)).encode())  # Pillow here reads the drawn PNGs
     for path in SYSTEM_PACKAGES:
         if path.exists():
@@ -286,13 +286,15 @@ def render(bundle: str | Path, jobs: int | None = None, font_python: str | None 
         if store:
             layers = {identity: layer for identity in drawn if (layer := store.get(identity)) is not None}
             drawn = {identity: request for identity, request in drawn.items() if identity not in layers}
-        with ThreadPoolExecutor(max_workers=jobs) as pool:
-            futures = {pool.submit(_render_full, producer, request, folder): identity
-                       for identity, request in drawn.items() if request["kind"] != "native"}
-            native = pool.submit(_render_native, producer, drawn)
-            for future in as_completed(futures):
-                layers[futures[future]] = future.result()
-            layers.update(native.result())
+
+        def draw(identity: str | None) -> dict[str, tuple]:  # None: the native requests, in one batch
+            if identity is None:
+                return _render_native(producer, drawn)
+            return {identity: _render_full(producer, drawn[identity], folder)}
+
+        full = [identity for identity, request in drawn.items() if request["kind"] != "native"]
+        for part in ordered_map(draw, [*full, None], jobs):
+            layers.update(part)
         if store:
             for identity in drawn:
                 store.put(identity, layers[identity])

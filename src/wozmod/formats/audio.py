@@ -12,12 +12,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO, NamedTuple
 
-from wozmod import process, resources
+from wozmod import platform, resources
 from wozmod.formats.linkdata import ps2_extents
 from wozmod.progress import report
+from wozmod.workers import ordered_map
 
 if TYPE_CHECKING:
     from wozmod.formats.scripts import Script
+    from wozmod.game_files import StockVoices
 
 
 KOVS_HEADER_BYTES = 32
@@ -289,6 +291,22 @@ WO2_EVENT_VOICES = (0xAF3, 0x576, 0xF1)
 MOZ_EVENT_LINES = {"wo1-x360": 0x1FF, "wo2-x360": 0x150}  # by the donor whose events the voice mode plays
 
 
+def event_voice(ordinal: int, index: int) -> int | None:
+    """An event line's voice id: index + 0xAF3, or + 0x8F4 when [0x801F24] is set (0x513731), which it is for the
+    WO1 scenes 245-383 and 401. For 384-400 the mode is not known.
+
+    The Z Dream scenes 402-413 play index + 0xAF3, a measurement rather than a trace of the flag: their indexes run
+    241-335, from the WO2 X360's last event line (0xF1) to the limit of that mode (0x150), and in the WO2 PSP's
+    movies of these scenes the stock clip index + 0xAF3 of 91 of their 96 voiced speaks sits whole in the Japanese
+    track (gain 0.70-0.79, 0.12-0.22 s after the subtitle; the other 5 begin there, the PSP having edited their
+    rest), while index + 0x8F4 matches none (gain 0.01-0.21, correlation at most 0.12)."""
+    if 177 <= ordinal < 245 or 402 <= ordinal <= 413:
+        return WO2_EVENT_VOICES[0] + index if index < MOZ_EVENT_LINES["wo2-x360"] else None
+    if 245 <= ordinal < 384 or ordinal == 401:
+        return WO1_EVENT_VOICES[0] + index if index < MOZ_EVENT_LINES["wo1-x360"] else None
+    return None
+
+
 WO2_SELECT_VOICES = (0, 0, 92)
 # Officers 92 and 93 have select voices of their own in both programs: MOZ 0x512B20 plays 0x5875 and 0x5883 (pushed at
 # 0x512B29, 0x512B3E), and WO2 X360 0x8229C89C plays clip 0x28F4 for 92 and 0x2902 for 93 (0x8229C8A0, 0x8229C8A8).
@@ -411,10 +429,8 @@ def _ffmpeg_each(jobs: list[tuple[list[str], bytes, list[str]]], workers: int | 
     """
     import subprocess
     import tempfile
-    import threading
-    from concurrent.futures import ThreadPoolExecutor
 
-    finished, lock = [0], threading.Lock()
+    finished = [0]
 
     def batch(start: int) -> list[bytes]:
         part = jobs[start:start + FFMPEG_BATCH]
@@ -426,15 +442,15 @@ def _ffmpeg_each(jobs: list[tuple[list[str], bytes, list[str]]], workers: int | 
                 command += [*before, "-i", str(Path(folder, f"{k}.in"))]
             for k, (_, _, after) in enumerate(part):
                 command += ["-map", f"{k}:a", *after, str(Path(folder, f"{k}.out"))]
-            process.run(command, capture_output=True, check=True, stdin=subprocess.DEVNULL)  # never read the terminal
-            outputs = [Path(folder, f"{k}.out").read_bytes() for k in range(len(part))]
-        with lock:  # report() raises Cancelled when the player cancelled, which stops the other batches too
-            finished[0] += len(part)
-            report("voices", label, span[0] + (span[1] - span[0]) * finished[0] / len(jobs), (finished[0], len(jobs)))
-        return outputs
+            platform.run_hidden(command, capture_output=True, check=True, stdin=subprocess.DEVNULL)  # never read the terminal
+            return [Path(folder, f"{k}.out").read_bytes() for k in range(len(part))]
 
-    with ThreadPoolExecutor(workers or os.process_cpu_count()) as pool:
-        return [out for part in pool.map(batch, range(0, len(jobs), FFMPEG_BATCH)) for out in part]
+    def progress(start: int) -> None:  # report() raises Cancelled when the player cancelled: no batch starts after
+        finished[0] += len(jobs[start:start + FFMPEG_BATCH])
+        report("voices", label, span[0] + (span[1] - span[0]) * finished[0] / len(jobs), (finished[0], len(jobs)))
+
+    starts = range(0, len(jobs), FFMPEG_BATCH)
+    return [out for part in ordered_map(batch, starts, workers or os.process_cpu_count(), progress) for out in part]
 
 
 def decoded_clips(clips: dict[int, bytes], rate: int, jobs: int | None = None) -> dict[int, bytes]:
@@ -583,13 +599,13 @@ def vorbis_records(sources: dict[int, tuple[list[str], bytes, str]], jobs: int |
 
 def english_voice_clips(wo1_mapping: dict[int, int], wo1_index: bytes, wo1_bank: Path,
                         wo2_mapping: dict[int, int], wo2_index: bytes, wo2_bank: Path,
-                        stock_index: bytes, stock_bank: Path,
+                        stock: StockVoices,
                         jobs: int | None = None, *, psp: tuple[dict[int, int], Path] | None = None,
                         stock_ids: dict[int, int] | None = None) -> tuple[dict[int, bytes], dict[int, str]]:
     """Select usable WO2 X360 clips, then WO1 X360 ones, then WO2 PSP ones (lower quality: only for a line neither
     Xbox 360 disc has), with each clip's source; jobs is the ffmpeg process count. A WO1 clip as long as the stock
-    clip is the stock take, not an English one, and is left out; stock_ids names the stock id whose take a voice slot
-    stands in for."""
+    clip is the stock take, not an English one, and is left out (stock: the game's own clips); stock_ids names the stock
+    id whose take a voice slot stands in for."""
     stock_ids = stock_ids or {}
     banks = [("wo2-x360", wo2_mapping, wo2_voice_records(wo2_index), wo2_bank),
              ("wo1-x360", wo1_mapping, wo2_voice_records(wo1_index), wo1_bank)]
@@ -597,17 +613,11 @@ def english_voice_clips(wo1_mapping: dict[int, int], wo1_index: bytes, wo1_bank:
         banks.append(("wo2-psp", psp[0], ps2_extents(psp[1]), psp[1]))
     clips, sources = donor_voice_clips(banks, jobs)
     samples = lambda record: parse_kovs_record(record, verify_checksums=False)[2].sample_count  # noqa: E731
-    with stock_bank.open("rb") as stock:
-        stock_takes = {moz_id for moz_id, source in sources.items() if source == "wo1-x360" and samples(clips[moz_id])
-                       == samples(stock_record(stock, stock_index, stock_ids.get(moz_id, moz_id)))}
+    wo1 = [moz_id for moz_id, source in sources.items() if source == "wo1-x360"]
+    takes = stock.clips(stock_ids.get(moz_id, moz_id) for moz_id in wo1)
+    stock_takes = {moz_id for moz_id in wo1 if samples(clips[moz_id]) == samples(takes[stock_ids.get(moz_id, moz_id)])}
     return ({i: clip for i, clip in clips.items() if i not in stock_takes},
             {i: source for i, source in sources.items() if i not in stock_takes})
-
-
-def stock_record(bank: BinaryIO, index: bytes, voice_id: int) -> bytes:
-    """A voice id's KOVS record in the stock Voice.bin (bank), through its index (LINKDATA1 entry 4058 decoded:
-    big-endian (offset, size) pairs from byte 8)."""
-    return _read_at(bank, *struct.unpack_from(">II", index, 8 + 8 * voice_id))
 
 
 def _read_at(stream: BinaryIO, offset: int, size: int) -> bytes:

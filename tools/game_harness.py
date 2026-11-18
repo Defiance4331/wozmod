@@ -156,7 +156,7 @@ def render_size_arg(value: str) -> tuple[int, int]:
 
 def write_json(path: Path, value: dict) -> None:
     temporary = path.with_suffix(".next")
-    temporary.write_text(json.dumps(value) + "\n")
+    temporary.write_text(json.dumps(value) + "\n", encoding="utf-8")
     temporary.replace(path)
 
 
@@ -261,7 +261,7 @@ def tap_keys(names: list[str], hold: float, gap: float, settle: float | None = N
                 down = pumps() if pumps else None
                 pressed = time.clock_gettime(time.CLOCK_MONOTONIC_RAW)
                 if os.environ.get("MUSOU_HARNESS_ROOT"):  # the game's performance counter runs on this clock (Wine)
-                    with open(Path(os.environ["MUSOU_HARNESS_ROOT"], "evidence/key-presses.tsv"), "a") as log:
+                    with open(Path(os.environ["MUSOU_HARNESS_ROOT"], "evidence/key-presses.tsv"), "a", encoding="utf-8") as log:
                         log.write(f"{pressed:.7f}\t{names[n]}\n")
                 time.sleep(hold)
                 if pumps:
@@ -523,7 +523,7 @@ def pad_names(names: object) -> list[str]:
 def game_pid() -> int:
     """The game's pid in this PID namespace: the server only sees its own run's processes."""
     pids = [p.parent.name for p in Path("/proc").glob("[0-9]*/comm")
-            if p.read_text(errors="replace").strip() == GAME_PROCESS]
+            if p.read_text(errors="replace", encoding="utf-8").strip() == GAME_PROCESS]
     if len(pids) != 1:
         raise ValueError(f"expected one {GAME_PROCESS} process, found {len(pids)}")
     return int(pids[0])
@@ -545,7 +545,7 @@ def find_bytes(pid: int, pattern: bytes) -> list[int]:
     """Addresses of pattern in the game's writable memory, up to MAX_HITS."""
     hits, chunk = [], FIND_CHUNK
     with open(f"/proc/{pid}/mem", "rb", buffering=0) as memory:
-        for line in Path(f"/proc/{pid}/maps").read_text().splitlines():
+        for line in Path(f"/proc/{pid}/maps").read_text(encoding="utf-8").splitlines():
             span, permissions = line.split()[:2]
             start, end = (int(x, 16) for x in span.split("-"))
             if not permissions.startswith("rw") or end > ADDRESS_LIMIT:
@@ -574,7 +574,7 @@ SLOW = 0.95  # of the target frame rate: below it a second counts as slow
 def target_fps(game: Path) -> int:
     """The frame rate the mod's display.fps setting asks for (the runtime's default 60 when unset)."""
     ini = game / "wozmod/settings.ini"
-    text = ini.read_text(errors="replace") if ini.is_file() else ""
+    text = ini.read_text(errors="replace", encoding="utf-8") if ini.is_file() else ""
     section = re.search(r"(?ims)^\[display\](.*?)(?=^\[|\Z)", text)
     fps = section and re.search(r"(?im)^fps\s*=\s*(\d+)\s*$", section.group(1))
     return int(fps[1]) if fps and int(fps[1]) in (60, 120, 144, 165, 240) else 60  # runtime fps_rates; monitor: 60
@@ -583,13 +583,13 @@ def target_fps(game: Path) -> int:
 def run_target(root: Path) -> int:
     """The run's target frame rate, as its launch recorded it (60 for a run without one)."""
     session = root / "evidence/session.json"
-    return json.loads(session.read_text()).get("target_fps", 60) if session.is_file() else 60
+    return json.loads(session.read_text(encoding="utf-8")).get("target_fps", 60) if session.is_file() else 60
 
 
 def fps_seconds(root: Path, start: float = 0, end: float = float("inf")) -> list[float]:
     """Frames per second for each logged second from start to end (wall-clock times)."""
     path = root / "evidence/fps.jsonl"
-    rows = [json.loads(line) for line in path.read_text().splitlines()] if path.is_file() else []
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.is_file() else []
     return [(b["frames"] - a["frames"]) / (b["time"] - a["time"]) for a, b in zip(rows, rows[1:], strict=False)
             if start <= a["time"] and b["time"] <= end and b["time"] > a["time"] and b["frames"] >= a["frames"]]
 
@@ -609,7 +609,7 @@ def fps_summary(root: Path, target: int, start: float = 0, end: float = float("i
 def recordings_slow(root: Path, target: int) -> list[str]:
     """Recordings (record, video) whose stretch had a slow second: their timing is the machine's."""
     path = root / "evidence/actions.jsonl"
-    rows = [json.loads(line) for line in path.read_text().splitlines()] if path.is_file() else []
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.is_file() else []
     slow = []
     for row in rows:
         request = row["request"]
@@ -637,7 +637,7 @@ def watch_recording(root: Path, name: str, seconds: float) -> None:
     def errors() -> int | None:
         try:
             return pw_top_errors(subprocess.run(["pw-top", "--batch-mode", "--iterations", "2"], capture_output=True,
-                                                text=True, timeout=10).stdout)
+                                                text=True, timeout=10, encoding="utf-8").stdout)
         except (OSError, subprocess.SubprocessError):
             return None
     if seconds < 5:
@@ -645,7 +645,7 @@ def watch_recording(root: Path, name: str, seconds: float) -> None:
     time.sleep(2)
     first, start = errors(), time.monotonic()
     time.sleep(max(0.0, seconds - 4.5 - (time.monotonic() - start)))
-    with (root / "evidence/xruns.jsonl").open("a") as log:
+    with (root / "evidence/xruns.jsonl").open("a", encoding="utf-8") as log:
         log.write(json.dumps({"name": name, "first": first, "last": errors()}) + "\n")
 
 
@@ -660,13 +660,13 @@ def watch_growth(wav: Path, seconds: float = 3.0, gap: float = 0.002) -> None:
             rows.append([time.time(), size])
             last = size
         time.sleep(gap)
-    wav.with_suffix(".growth.json").write_text(json.dumps(rows))
+    wav.with_suffix(".growth.json").write_text(json.dumps(rows), encoding="utf-8")
 
 
 def recordings_dropped(root: Path) -> list[str]:
     """Recordings over whose stretch the audio server's xrun count rose: their audio lost or gained time."""
     path = root / "evidence/xruns.jsonl"
-    rows = [json.loads(line) for line in path.read_text().splitlines()] if path.is_file() else []
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.is_file() else []
     return [row["name"] for row in rows if row["first"] is not None and row["last"] is not None
             and row["last"] > row["first"]]
 
@@ -674,7 +674,7 @@ def recordings_dropped(root: Path) -> list[str]:
 def log_frames(root: Path, stop: "threading.Event") -> None:
     """The supervisor's sampler: the runtime's frame count once a second, until stop is set."""
     block = None
-    with (root / "evidence/fps.jsonl").open("a") as log:
+    with (root / "evidence/fps.jsonl").open("a", encoding="utf-8") as log:
         while not stop.wait(1.0):
             try:
                 with open(f"/proc/{game_pid()}/mem", "rb", buffering=0) as memory:
@@ -958,7 +958,7 @@ def pad_plan(args: argparse.Namespace) -> list[str]:
 
 def plug_pad(root: Path, on: bool) -> dict:
     """Link or unlink the active pad's event node. The node is the host path; it points at the hidden bind."""
-    session = json.loads((root / "evidence/session.json").read_text())
+    session = json.loads((root / "evidence/session.json").read_text(encoding="utf-8"))
     node = session.get("pad")
     if not node:
         raise ValueError("this run has no pad; start it with run --pad")
@@ -973,7 +973,7 @@ def reenumerate_pad(root: Path) -> dict:
     """Unlink the identity that is in and link the other one. From the game that is a disconnect and a new device,
     with a different vendor and product, which is what a dongle does when its first identity gives way to the second."""
     path = root / "evidence/session.json"
-    session = json.loads(path.read_text())
+    session = json.loads(path.read_text(encoding="utf-8"))
     pads = session.get("pads") or []
     if len(pads) < 2:
         raise ValueError("this run has no second pad; start it with run --spare")
@@ -1114,7 +1114,7 @@ def perform(root: Path, request: dict) -> dict:
     if action == "find":
         return {"addresses": [f"{a:#x}" for a in find_bytes(game_pid(), hex_bytes(request["hex"], MAX_PATTERN))]}
     if action == "click":
-        size = json.loads(local_path(root, "evidence/session.json").read_text())["render_size"]
+        size = json.loads(local_path(root, "evidence/session.json").read_text(encoding="utf-8"))["render_size"]
         if not isinstance(size, list) or len(size) != 2 or any(type(value) is not int for value in size):
             raise ValueError("run has no valid render size for click input")
         width, height = size
@@ -1151,7 +1151,7 @@ def perform(root: Path, request: dict) -> dict:
             if time.monotonic() >= deadline:
                 raise TimeoutError("the supervisor did not take the pad input")
             time.sleep(0.02)
-        done = json.loads((control / "pad-done.json").read_text())
+        done = json.loads((control / "pad-done.json").read_text(encoding="utf-8"))
         if done.get("error"):
             raise ValueError(done["error"])
         time.sleep(request["gap"])
@@ -1190,7 +1190,7 @@ def perform(root: Path, request: dict) -> dict:
             raise ValueError(f"video already exists: {destination}")
         log_path, ended = local_path(root, "game/lipav.log"), 0
         try:
-            ended = log_path.read_text(errors="replace").count("E probe ended") if log_path.exists() else 0
+            ended = log_path.read_text(errors="replace", encoding="utf-8").count("E probe ended") if log_path.exists() else 0
             with open(f"/proc/{game_pid()}/mem", "r+b", buffering=0) as memory:
                 # test op 30: lipav.log's Present rows and the corner code, ending by itself after the recording
                 test_command(memory.fileno(), test_block(memory.fileno()), 30, 3 | (int(seconds) + 2) << 16)
@@ -1204,7 +1204,7 @@ def perform(root: Path, request: dict) -> dict:
             tail = ["!", "queue", "!", "mux.", "pulsesrc", "device=musou_harness.monitor", "do-timestamp=true", "!",
                     "audioconvert", "!", "opusenc", "bitrate=192000", "!", "queue", "!", "mux.",
                     "matroskamux", "name=mux", "!", "filesink", f"location={picture}"]
-        with local_path(root, f"evidence/{name}.log").open("w") as log:
+        with local_path(root, f"evidence/{name}.log").open("w", encoding="utf-8") as log:
             recorder = subprocess.Popen(
                 ["timeout", "-s", "INT", str(seconds), "gst-launch-1.0", "-e",
                  "pipewiresrc", "target-object=gamescope", "do-timestamp=true", "!", "video/x-raw,format=BGRx", "!",
@@ -1244,7 +1244,7 @@ def record_sink(path: Path, seconds: float, reads: list[tuple[int, int]]) -> Non
             reads.append((now, total))
     reader.terminate()
     reader.wait()
-    path.with_suffix(".json").write_text(json.dumps(reads))  # with the audio, so a failed retime can be rerun
+    path.with_suffix(".json").write_text(json.dumps(reads), encoding="utf-8")  # with the audio, so a failed retime can be rerun
 
 
 def finish_video(recorder: subprocess.Popen, reader: threading.Thread, log: Path, ended: int, destination: Path) -> None:
@@ -1253,13 +1253,13 @@ def finish_video(recorder: subprocess.Popen, reader: threading.Thread, log: Path
     recorder.wait()
     reader.join()
     deadline = time.monotonic() + 10
-    while time.monotonic() < deadline and log.read_text(errors="replace").count("E probe ended") <= ended:
+    while time.monotonic() < deadline and log.read_text(errors="replace", encoding="utf-8").count("E probe ended") <= ended:
         time.sleep(0.25)
     try:
         av_sync.retime_files(destination, log)
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:  # rerun: tools/av_sync.py
         detail = exc.stderr.decode(errors="replace")[-400:] if getattr(exc, "stderr", None) else ""
-        destination.with_suffix(".timing.json").write_text(json.dumps({"error": str(exc), "stderr": detail}) + "\n")
+        destination.with_suffix(".timing.json").write_text(json.dumps({"error": str(exc), "stderr": detail}) + "\n", encoding="utf-8")
 
 
 def start_audio(root: Path) -> None:
@@ -1269,7 +1269,7 @@ def start_audio(root: Path) -> None:
     daemons: dict[str, subprocess.Popen[bytes]] = {}
 
     def start(name: str) -> None:
-        with (root / f"evidence/{name}.log").open("w") as log:
+        with (root / f"evidence/{name}.log").open("w", encoding="utf-8") as log:
             daemons[name] = subprocess.Popen([name], stdout=log, stderr=subprocess.STDOUT)
 
     def wait(ready: Callable[[], bool], what: str) -> None:
@@ -1306,11 +1306,11 @@ def serve(root: Path) -> int:
         raise ValueError("serve requires the harness Gamescope environment")
     control = root / "control"
     session_path = root / "evidence/session.json"
-    session = json.loads(session_path.read_text()) if session_path.is_file() else {}
+    session = json.loads(session_path.read_text(encoding="utf-8")) if session_path.is_file() else {}
     idle, target = session.get("idle_seconds"), session.get("target_fps", 60)
     sampling = threading.Event()
     threading.Thread(target=log_frames, args=(root, sampling), daemon=True).start()
-    with (root / "evidence/launcher.log").open("w") as log:
+    with (root / "evidence/launcher.log").open("w", encoding="utf-8") as log:
         process = subprocess.Popen(
             ["bash", str(root / "launch.sh")], cwd=root,
             stdout=log, stderr=subprocess.STDOUT,
@@ -1326,7 +1326,7 @@ def serve(root: Path) -> int:
                         return 0
                     time.sleep(0.02)
                     continue
-                request = json.loads(path.read_text())
+                request = json.loads(path.read_text(encoding="utf-8"))
                 response = {"id": request.get("id"), "ok": False}
                 try:
                     response.update(perform(root, request), ok=True)
@@ -1342,7 +1342,7 @@ def serve(root: Path) -> int:
                 if request.get("action") == "stop":  # how the game kept its frame rate, for every run's last word
                     response.update(fps=fps_summary(root, target), slow_recordings=recordings_slow(root, target),
                                     dropped_recordings=recordings_dropped(root))
-                with (root / "evidence/actions.jsonl").open("a") as journal:
+                with (root / "evidence/actions.jsonl").open("a", encoding="utf-8") as journal:
                     journal.write(json.dumps({
                         "time": time.time(), "request": request,
                         "response": response,
@@ -1372,7 +1372,7 @@ def serve(root: Path) -> int:
 def last_actions(root: Path, count: int = 3) -> list[str]:
     """The run's last journaled requests, as `action args -> ok|error`."""
     journal = root / "evidence/actions.jsonl"
-    lines = journal.read_text().splitlines()[-count:] if journal.is_file() else []
+    lines = journal.read_text(encoding="utf-8").splitlines()[-count:] if journal.is_file() else []
     out = []
     for line in lines:
         entry = json.loads(line)
@@ -1397,7 +1397,7 @@ def exit_record(root: Path, returncode: int | None, interrupted: bool) -> dict:
     """Why a run ended. The harness exits with the server's code after both a crash and a quit; the game's own exit
     status (evidence/game-exit.json, written inside the sandbox) separates them."""
     path = root / "evidence/game-exit.json"
-    game = json.loads(path.read_text()) if path.is_file() else None
+    game = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
     if game and game.get("idle"):
         reason = "idle"  # no command for the idle limit (run --idle): left up by an agent that moved on
     elif game and game.get("stopped"):
@@ -1421,7 +1421,7 @@ def exit_record(root: Path, returncode: int | None, interrupted: bool) -> dict:
 def exit_info(root: Path) -> dict | None:
     """The exit_record the supervisor wrote as it ended, or None before then."""
     path = root / "evidence/exit.json"
-    return json.loads(path.read_text()) if path.is_file() else None
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
 
 
 def describe_exit(record: dict) -> str:
@@ -1497,11 +1497,11 @@ def raise_audio_priority(root: Path, raised: dict[int, str]) -> None:
     before = len(raised)
     for proc in Path("/proc").iterdir():
         try:
-            if (not proc.name.isdigit() or (proc / "comm").read_text().strip() not in AUDIO_DAEMONS
+            if (not proc.name.isdigit() or (proc / "comm").read_text(encoding="utf-8").strip() not in AUDIO_DAEMONS
                     or tag not in (proc / "environ").read_bytes().split(b"\0")):
                 continue
             pid = int(proc.name)
-            threads = [(int(task.name), (task / "comm").read_text().strip()) for task in (proc / "task").iterdir()]
+            threads = [(int(task.name), (task / "comm").read_text(encoding="utf-8").strip()) for task in (proc / "task").iterdir()]
         except (OSError, ValueError):
             continue  # gone, or not ours
         for tid, name in threads:
@@ -1579,7 +1579,7 @@ def launch_in_slot(root: Path, args: argparse.Namespace, game: Path, launcher: P
         "--dev", "/dev", "--proc", "/proc",
     ]
     fixtures = root / "fixtures.json"
-    for part, lower in (json.loads(fixtures.read_text()).get("overlays", {}) if fixtures.is_file() else {}).items():
+    for part, lower in (json.loads(fixtures.read_text(encoding="utf-8")).get("overlays", {}) if fixtures.is_file() else {}).items():
         # the template under the run's own folder, which keeps what the run writes (prepare_run.py)
         upper, scratch = local_path(root, part), local_path(root, f"overlay-work/{part}")
         scratch.mkdir(parents=True)
@@ -1635,7 +1635,7 @@ def launch_in_slot(root: Path, args: argparse.Namespace, game: Path, launcher: P
     previous_handler = signal.signal(signal.SIGTERM, interrupted)
     code = None
     try:
-        with (root / "evidence/harness.log").open("w") as log:
+        with (root / "evidence/harness.log").open("w", encoding="utf-8") as log:
             process = subprocess.Popen(
                 command, stdout=log, stderr=subprocess.STDOUT,
                 start_new_session=True,  # no core dumps: a gamescope dump can stall the desktop
@@ -1651,7 +1651,7 @@ def launch_in_slot(root: Path, args: argparse.Namespace, game: Path, launcher: P
                     which = root / "control/pad-active.json"
                     if which.is_file():
                         try:
-                            chosen = int(json.loads(which.read_text())["index"])
+                            chosen = int(json.loads(which.read_text(encoding="utf-8"))["index"])
                             if 0 <= chosen < len(pads):
                                 active = chosen
                         except (OSError, ValueError, KeyError, TypeError):
@@ -1659,7 +1659,7 @@ def launch_in_slot(root: Path, args: argparse.Namespace, game: Path, launcher: P
                         which.unlink(missing_ok=True)
                     request = root / "control/pad.json"
                     if pads and request.exists():
-                        taken = json.loads(request.read_text())
+                        taken = json.loads(request.read_text(encoding="utf-8"))
                         done = {"id": taken.get("id")}
                         try:
                             pads[active].tap(pad_names(taken["names"]), float(taken["hold"]), float(taken["gap"]),
@@ -1672,7 +1672,7 @@ def launch_in_slot(root: Path, args: argparse.Namespace, game: Path, launcher: P
                 if served.exists():  # SIGKILL ends gamescope before its crashing exit path runs
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait()
-                    code = json.loads(served.read_text())["returncode"]
+                    code = json.loads(served.read_text(encoding="utf-8"))["returncode"]
                     return code
                 return process.returncode
             finally:
@@ -1700,7 +1700,7 @@ def send(root: Path, request: dict, timeout: float) -> dict:
     control = local_path(root, "control")
     deadline = time.monotonic() + timeout
     # ponytail: one command at a time per run; add a queue only for real concurrent scenarios.
-    with (control / "client.lock").open("a") as lock:
+    with (control / "client.lock").open("a", encoding="utf-8") as lock:
         while True:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -1720,7 +1720,7 @@ def send(root: Path, request: dict, timeout: float) -> dict:
         while time.monotonic() < deadline:
             response_path = control / "response.json"
             if response_path.exists():
-                response = json.loads(response_path.read_text())
+                response = json.loads(response_path.read_text(encoding="utf-8"))
                 if response.get("id") == request["id"] and not (control / "request.json").exists():
                     return response
             time.sleep(0.02)
@@ -1871,7 +1871,7 @@ PAUSE_SOURCES = {"battle", "story-battle", "story-wei-battle"}
 
 def route_input(root: Path) -> str:
     try:
-        return json.loads((root / "evidence/session.json").read_text()).get("route_input", "keys")
+        return json.loads((root / "evidence/session.json").read_text(encoding="utf-8")).get("route_input", "keys")
     except (OSError, ValueError):
         return "keys"
 
@@ -2537,9 +2537,9 @@ def route_position(root: Path) -> str | None:
     """The screen the last route left the game on: "boot" for a run with no input yet, None once
     input was sent after it (by hand, or by a route that then failed)."""
     journal = root / "evidence/actions.jsonl"
-    lines = journal.read_text().splitlines() if journal.is_file() else []
+    lines = journal.read_text(encoding="utf-8").splitlines() if journal.is_file() else []
     state_path = root / "evidence/route.json"
-    state = json.loads(state_path.read_text()) if state_path.is_file() else {"at": "boot", "journal": 0}
+    state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.is_file() else {"at": "boot", "journal": 0}
     if any(json.loads(line)["request"]["action"] in NAVIGATION for line in lines[state["journal"]:]):
         return None
     return state["at"]
@@ -2757,7 +2757,7 @@ def route(root: Path, target: str, stage: int | None = None, movie: int | None =
 
     def settle(at: str) -> None:
         journal = root / "evidence/actions.jsonl"
-        count = len(journal.read_text().splitlines()) if journal.is_file() else 0
+        count = len(journal.read_text(encoding="utf-8").splitlines()) if journal.is_file() else 0
         write_json(state_path, {"at": at, "journal": count})
 
     start = route_position(root)
@@ -2915,7 +2915,7 @@ class CheckDriver:
               script: int | None = None, movie: int | None = None) -> None:
         if fixture:
             seeded = self.root / "fixtures.json"
-            if not seeded.is_file() or fixture not in seeded.read_text():
+            if not seeded.is_file() or fixture not in seeded.read_text(encoding="utf-8"):
                 raise ValueError(f"needs save fixture {fixture!r}; stage the run with --save {fixture}")
         stage = battle
         position = route_position(self.root)
@@ -2999,10 +2999,10 @@ class CheckDriver:
             if not shows(seen, ROUTE_SCREENS[at]) and len(back) == 1:
                 journal = self.root / "evidence/actions.jsonl"
                 write_json(local_path(self.root, "evidence/route.json"),
-                           {"at": back[0], "journal": len(journal.read_text().splitlines())})
+                           {"at": back[0], "journal": len(journal.read_text(encoding="utf-8").splitlines())})
         return {"wav": str(wav), "growth": str(wav.with_suffix(".growth.json")), "polls": polls, "end": end,
                 "bank": str(self.root / "game/wozmod/voice/Voice.bin"), "game": str(self.root / "game"),
-                "log": (self.root / "game/wozmod/runtime.log").read_text(errors="replace")}
+                "log": (self.root / "game/wozmod/runtime.log").read_text(errors="replace", encoding="utf-8")}
 
     def spawn(self, count: int) -> dict:
         """Enemy troops around the player, in the battle the route reached; the rest of the run keeps them."""
@@ -3019,7 +3019,7 @@ class CheckDriver:
         if at in ROUTE_SCREENS and shows(ask(self.root, {"action": "screen"}), ROUTE_SCREENS[at]):
             journal = self.root / "evidence/actions.jsonl"
             write_json(local_path(self.root, "evidence/route.json"),
-                       {"at": at, "journal": len(journal.read_text().splitlines()) if journal.is_file() else 0})
+                       {"at": at, "journal": len(journal.read_text(encoding="utf-8").splitlines()) if journal.is_file() else 0})
 
     def fire(self, script: int) -> None:
         """Send a battle script once the stage's own scripts let it run: the game runs one at a time, and a battle's
@@ -3086,9 +3086,9 @@ def check(root: Path, spec: Path, only: list[str] | None = None, learn: Path | N
     driver = CheckDriver(root)
     rows = screen_checks.run_spec(screens, driver, seen)
     if learn:
-        structure = json.loads(learn.read_text()) if learn.is_file() else {}
+        structure = json.loads(learn.read_text(encoding="utf-8")) if learn.is_file() else {}
         structure.update({name: layout_rules.learn(data, img) for name, (data, img) in seen.items()})
-        learn.write_text(json.dumps(structure, indent=1, sort_keys=True) + "\n")
+        learn.write_text(json.dumps(structure, indent=1, sort_keys=True) + "\n", encoding="utf-8")
         print(f"learned {', '.join(seen)} into {learn}")
     write_json(local_path(root, "evidence/check-report.json"),
                {"spec": str(spec), "order": order, "shortcuts": driver.shortcuts, "rows": [vars(row) for row in rows]})
@@ -3101,9 +3101,9 @@ def check(root: Path, spec: Path, only: list[str] | None = None, learn: Path | N
 def tour(root: Path, stages: range | None = None, dialog: float = 25) -> int:
     """Drive TOUR, or the stage sweep over ``stages``, on a running --test --log build; write
     evidence/tour-report.json and a PNG per stop, and copy the log into the corpus."""
-    game = Path(json.loads(local_path(root, "evidence/session.json").read_text())["game"])
+    game = Path(json.loads(local_path(root, "evidence/session.json").read_text(encoding="utf-8"))["game"])
     log, logged = game / "enrt_log.txt", 0
-    report = {"build": local_path(root, "game.sha256").read_text().split("\n"), "stops": [], "failed": None}
+    report = {"build": local_path(root, "game.sha256").read_text(encoding="utf-8").split("\n"), "stops": [], "failed": None}
     try:
         route = TOUR if stages is None else SWEEP_START + [s for n in stages for s in stage_route(n, dialog)]
         for n in stages or ():
@@ -3145,7 +3145,7 @@ def tour_diff(one: Path, two: Path) -> list[dict]:
     """Per stop of base run one's tour: the drawn texts gone and new in run two's, and the image change."""
     from PIL import Image, ImageChops, ImageStat
 
-    a, b = (json.loads(local_path(root, "evidence/tour-report.json").read_text()) for root in (one, two))
+    a, b = (json.loads(local_path(root, "evidence/tour-report.json").read_text(encoding="utf-8")) for root in (one, two))
     theirs = {stop["name"]: stop for stop in b["stops"]}
     rows = []
     for stop in a["stops"]:

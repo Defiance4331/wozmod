@@ -124,7 +124,7 @@ def test_stock_catalog_does_not_drop_archive_keys_or_quote_voice_suffixes(synthe
 
 
 def test_stock_catalog_takes_program_strings_up_to_400_bytes(synthetic_stock) -> None:
-    # Bug: the program-string scan's limit (psp_exe.EXE_STRING, 400 bytes) shrinks or is off by one, so a row keyed
+    # Bug: the program-string scan's limit (game_files.STRING, 400 bytes) shrinks or is off by one, so a row keyed
     # by a long program string cannot build; or it grows past 400 and also takes the longer runs between NULs.
     stock, _ = synthetic_stock
     exe = bytearray((stock / "OROCHI_Z.exe").read_bytes())
@@ -235,7 +235,7 @@ def test_hashed_builder_does_not_drop_a_pointer_row_or_shift_name_overrides(synt
     view = {"key": hashlib.sha256(substring).hexdigest(), "source": "authored", "en": "Authored substring", "key_ref": ["exe", len(old_exe) + 6, len(substring)]}
     data = tmp_path / "data"
     data.mkdir()
-    (data / "table.json").write_text(json.dumps({"version": 1, "rows": [pointer, authored, view], "parts": [{"table": "names", "index": 1, "source": "authored", "en": "Override"}]}))
+    (data / "table.json").write_text(json.dumps({"version": 1, "rows": [pointer, authored, view], "parts": [{"table": "names", "index": 1, "source": "authored", "en": "Override"}]}), encoding="utf-8")
     output = tmp_path / "built" / "table.bin"
     result = write_table(*resolved_text(stock, _SyntheticResolver(), data)[1:], output)
     pairs, names = _table_values(output.read_bytes())
@@ -253,7 +253,7 @@ def test_voiced_line_keeps_its_own_english_where_another_voice_shares_its_text(s
     rows = [{"key": hashlib.sha256(text).hexdigest(), "source": "authored", "en": "Shared wording"},
             {"key": hashlib.sha256(voiced).hexdigest(), "source": "authored", "en": "This voice's wording"}]
     data = tmp_path / "table.json"
-    data.write_text(json.dumps({"version": 1, "rows": rows, "parts": []}))
+    data.write_text(json.dumps({"version": 1, "rows": rows, "parts": []}), encoding="utf-8")
     output = tmp_path / "table.bin"
     write_table(*resolved_text(stock, _SyntheticResolver(), data)[1:], output)
     pairs, _ = _table_values(output.read_bytes())
@@ -277,7 +277,7 @@ def test_bad_schema_cannot_drop_or_overwrite_a_row(fault: str, tmp_path: Path) -
     else:
         payload["version"] = 2
     data = tmp_path / "data.json"
-    data.write_text(json.dumps(payload))
+    data.write_text(json.dumps(payload), encoding="utf-8")
     output = tmp_path / "table.bin"
     with pytest.raises(TableBuildError):
         write_table(*resolved_text(tmp_path / "absent", _SyntheticResolver(), data)[1:], output)
@@ -288,7 +288,7 @@ def test_missing_stock_hash_cannot_silently_drop_a_translation(synthetic_stock, 
     stock, _ = synthetic_stock
     key = "0" * 64
     data = tmp_path / "table.json"
-    data.write_text(json.dumps({"version": 1, "rows": [{"key": key, "source": "authored", "en": "Authored"}], "parts": []}))
+    data.write_text(json.dumps({"version": 1, "rows": [{"key": key, "source": "authored", "en": "Authored"}], "parts": []}), encoding="utf-8")
     output = tmp_path / "table.bin"
     with pytest.raises(TableBuildError, match=key):
         write_table(*resolved_text(stock, _SyntheticResolver(), data)[1:], output)
@@ -323,8 +323,8 @@ def test_every_stock_text_line_has_a_row_or_a_reviewed_reason_to_stay_japanese()
     # row, or leaves the stock game, is stale and would hide the next gap.
     from wozmod.text.inventory import inventory
 
-    keys = {row["key"] for row in json.loads(TABLE.read_text())["rows"]}
-    reviewed = json.loads((TABLE.parent / "left_japanese.json").read_text())["keys"]
+    keys = {row["key"] for row in json.loads(TABLE.read_text(encoding="utf-8"))["rows"]}
+    reviewed = json.loads((TABLE.parent / "left_japanese.json").read_text(encoding="utf-8"))["keys"]
     allowed = {entry["key"] for entry in reviewed}
     found = inventory(Path(os.environ["WOZMOD_GAME"]))
     stock = {stock_key(text)[0]: source for source, texts in found.items() for text in texts}
@@ -332,5 +332,6 @@ def test_every_stock_text_line_has_a_row_or_a_reviewed_reason_to_stay_japanese()
     assert set(found) == {"notices", "spoken", "captions", "events", "mesc 4071", "mesc 4073", "mesc 4103",
                           "mesc 4105", "briefings", "quote formats", "officer quotes", "exe messages"}
     assert all(entry["reason"].strip() and entry["source"] == stock.get(entry["key"]) for entry in reviewed)
-    assert sorted((source, key) for key, source in stock.items() if key not in keys | allowed) == []
+    covered = keys | allowed
+    assert sorted((source, key) for key, source in stock.items() if key not in covered) == []
     assert sorted(allowed & keys | allowed - stock.keys()) == []

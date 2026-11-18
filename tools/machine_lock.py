@@ -5,8 +5,8 @@
     python3 tools/machine_lock.py COMMAND [ARG...]
 
 runs COMMAND with the machine to itself: it waits for every other heavy run and every running game to end first
-(saying who holds the machine), holds the lock for COMMAND's life, and exits with COMMAND's status. tools/verify.sh
-runs itself this way; run a dev install, an art build or a benchmark this way too. A game launch (game_harness.py
+(saying who holds the machine), holds the lock for COMMAND's life, and exits with COMMAND's status. tools/verify.py
+takes it this way; run a dev install, an art build or a benchmark this way too. A game launch (game_harness.py
 run) and a test run (tests/conftest.py) wait in turn while a heavy run holds the machine or waits for it. A heavy run beside another, or beside a game,
 slows both, skews a benchmark's numbers and makes time limits (the install budget, Wine boot timeouts) fail for no
 fault of the code.

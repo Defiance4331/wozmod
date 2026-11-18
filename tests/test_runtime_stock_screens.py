@@ -277,7 +277,7 @@ def test_every_filled_attribute_cell_is_painted_once_at_the_cell_width(game, cod
         assert code(height, 4) == bytes.fromhex("6a1c6a62"), hex(call)
         if (width := immediate(edited_run(code, height, 2)[1])) != cell:
             wrong.append(f"the wash called at {call:#x} is {width} wide, not the {cell} px cell")
-    widened = {e["item"]: d["splice"]["width"] for e in json.loads(Path("data/art/menu_textures.json").read_text())[
+    widened = {e["item"]: d["splice"]["width"] for e in json.loads(Path("data/art/menu_textures.json").read_text(encoding="utf-8"))[
         "textures"] if e["entry"] == 4079 for d in e.get("draw", []) if "splice" in d}
     for item in (plates[0x5919DB], green):  # the plates drawn as one stretched quad (the wash is a 9-slice)
         width = widened.get(item)
@@ -302,7 +302,7 @@ def test_skill_tag_rows_step_one_tag_and_stay_on_the_weapon_card(code) -> None:
     grid_x = struct.unpack("<b", edited_run(code, 0x595528, 2)[1][3:4])[0]  # lea ecx, [ecx + edx + x]
     grid_right = grid_x + 3 * column + cell  # the card's attribute grid, from the card's left edge
     tag_x = immediate(edited_run(code, 0x59549D, 1)[0])  # add ebp, x: the card's first tag
-    plates = {e["item"]: e["plate"]["width"] for e in json.loads(Path("data/art/menu_textures.json").read_text())[
+    plates = {e["item"]: e["plate"]["width"] for e in json.loads(Path("data/art/menu_textures.json").read_text(encoding="utf-8"))[
         "textures"] if e["entry"] == 4079 and e.get("item") in (198, 213)}
     wrong = [f"{row} steps {s}, not past the {tag} px tag" for row, s in step.items() if s <= tag]
     if len(set(step.values())) != 1:

@@ -46,19 +46,16 @@ def test_settings_rows_does_not_leave_default_at_the_old_index(
 @pytest.mark.skipif(os.environ.get("WOZMOD_AUDIO") != "1" or not shutil.which("ffmpeg")
                     or not os.environ.get("WOZMOD_DONORS") or not os.environ.get("WOZMOD_GAME"),
                     reason="set WOZMOD_AUDIO=1, WOZMOD_DONORS and WOZMOD_GAME, with ffmpeg")
-def test_sound_pool_holds_every_english_effect_bank_on_top_of_the_stock_ones() -> None:
+def test_sound_pool_holds_every_english_effect_bank_on_top_of_the_stock_ones(tmp_path, built) -> None:
     # Bug: the English effect banks grow (more clips, another format) past the pool the voice installs size at boot;
     # the pool fills at battle start and the game crashes. Each bank's header and data are pool blocks with a 16-byte
     # header, rounded to 16 (a stock 8,140,732-byte bank takes 8,140,752).
-    from wozmod.formats.audio import SE_BANKS, english_se_bank, moz_se_banks
-    from wozmod.formats.linkdata import moz_entries, ps2_members
-    from wozmod.voices.build import PSP_ENGLISH_SHOUTS, PSP_SHOUTS
+    from wozmod.formats.audio import SE_BANKS, moz_se_banks
+    from wozmod.formats.linkdata import moz_entries
 
-    game, donors = Path(os.environ["WOZMOD_GAME"]), Path(os.environ["WOZMOD_DONORS"])
+    game = Path(os.environ["WOZMOD_GAME"])
     seidx, se = moz_entries(game / "LINKDATA1.BIN", game / "LINKDATA1.IDX", [4056, 4057]).values()
-    psp = ps2_members(donors / "wo2-psp" / PSP_SHOUTS, [PSP_ENGLISH_SHOUTS])[PSP_ENGLISH_SHOUTS]
-    bank, _ = english_se_bank(seidx, se, (donors / "wo1-x360/link_sebank.hdx").read_bytes(), donors / "wo1-x360/link_sebank.bdx",
-                              (donors / "wo2-x360/link_sebank.hdx").read_bytes(), donors / "wo2-x360/link_sebank.bdx", psp)
+    bank = (built("voices", tmp_path) / "out/wozmod/voice/SE.bin").read_bytes()
     block = lambda size: (size + 16 + 15) // 16 * 16 if size else 0
     growth = 0
     for b, (header, data) in enumerate(moz_se_banks(seidx, se)):

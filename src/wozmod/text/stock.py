@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections import ChainMap
 from pathlib import Path
 
+from wozmod import game_files
 from wozmod.formats.audio import MOZ_EVENT_LINES, WO1_EVENT_VOICES, WO2_EVENT_VOICES
-from wozmod.formats.linkdata import archive
 from wozmod.formats.pe import pointer_strings
 from wozmod.formats.scripts import EVENT_TEXT, event_lines, mesc_blocks, quote_tables, quote_text
 
@@ -13,7 +14,6 @@ from .keys import event_voice_form, stock_key
 from .build import NAME_PARTS, NAME_TABLE, TableBuildError
 from .inventory import EVENTS, inventory
 from .narration_voices import VOICE_KEYED, line_voices
-from .psp_exe import EXE_STRING
 from .script_alignment import EVENTS as PAIRED_EVENTS
 from .script_alignment import QUOTES, moz_scripts
 
@@ -33,13 +33,14 @@ def event_voices(linkdata2) -> dict[int, tuple[int, int]]:
             if o in linkdata2}
 
 
-def stock_strings(stock: Path) -> dict[str, bytes]:
-    """SHA-256 of canonical CP932 bytes mapped to those bytes, without donors.
+def stock_strings(stock: Path) -> ChainMap:
+    """SHA-256 of canonical CP932 bytes mapped to those bytes, without donors, to look keys up in.
 
     A spoken line or officer quote is also listed with its @NNNN voice suffix: the runtime looks the whole line up
     first (runtime voiced_line), so a row keyed that way gives one voiced line its own English where another line
     with the same text is voiced from another donor. An event line, a WO1 narration page line and a still event's
-    line (camp talk) are listed with their voice id the same way, and a spoken stage line with its stage and line."""
+    line (camp talk) are listed with their voice id the same way, and a spoken stage line with its stage and line.
+    Last come the exe's other strings (game_files.StockBytes.strings), which only a lookup reads."""
     found: dict[str, bytes] = {}
 
     def add(value: bytes) -> None:
@@ -49,7 +50,7 @@ def stock_strings(stock: Path) -> dict[str, bytes]:
     for source in inventory(stock).values():
         for value in source:
             add(value)
-    linkdata2 = archive(stock / "LINKDATA2")
+    linkdata2 = game_files.archive(stock / "LINKDATA2")
     for data in linkdata2.read(o for o in EVENTS if o in linkdata2).values():
         for value in event_lines(data).values():
             add(value)
@@ -59,8 +60,8 @@ def stock_strings(stock: Path) -> dict[str, bytes]:
         for index, value in event_lines(linkdata2[ordinal]).items():
             if index < count:
                 add(event_voice_form(value, base + index))
-    linkdata1 = archive(stock / "LINKDATA1")
-    exe = (stock / "OROCHI_Z.exe").read_bytes()
+    linkdata1 = game_files.archive(stock / "LINKDATA1")
+    exe = game_files.exe(stock)
     for entry in (e for e in VOICE_KEYED if e in linkdata1):
         data = linkdata1[entry]
         if lines := [line for block in mesc_blocks(data) for line in block]:
@@ -74,16 +75,14 @@ def stock_strings(stock: Path) -> dict[str, bytes]:
             if record.dialog_suffix:
                 add(record.value[2:])
                 add(stage_line_form(record.value[2:], stage, line))
-    for match in EXE_STRING.finditer(exe):
-        add(match.group())
     for value in pointer_strings(exe, NAME_TABLE, NAME_PARTS, 8):
         add(value)
-    quote_data = archive(stock / "LINKDATA1")[QUOTES[0]]
+    quote_data = linkdata1[QUOTES[0]]
     for table in quote_tables(quote_data):
         for line in table:  # every slot, also those no game shows (the inventory lists only the shown ones)
             add(line[2:])
             add(quote_text(line))
-    return found
+    return ChainMap(found, exe.strings(stock_key))
 
 
 def resolve_stock_ref(stock: Path, reference: list, key: str) -> bytes:
@@ -93,8 +92,7 @@ def resolve_stock_ref(stock: Path, reference: list, key: str) -> bytes:
     _, offset, length = reference
     if type(offset) is not int or type(length) is not int or offset < 0 or length <= 0:
         raise TableBuildError(f"row {key}: invalid stock reference span")
-    exe = (stock / "OROCHI_Z.exe").read_bytes()
-    raw = exe[offset:offset + length]
+    raw = game_files.exe(stock)[offset:offset + length]
     if len(raw) != length:
         raise TableBuildError(f"row {key}: stock reference exceeds executable")
     keyed = stock_key(raw)

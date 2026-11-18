@@ -1,129 +1,97 @@
-"""tools/stock_pieces.py on a synthetic game, and data/stock_pieces.json against the real build: it is what the build
-reads, and all of it.
+"""tools/stock_pieces.py on a synthetic game, and data/stock_pieces.json against what the reference builds read.
 
-The real-build tests are slow (about 11 minutes alone): run them with WOZMOD_STOCK_PIECES=1, WOZMOD_GAME, WOZMOD_DONORS,
-WOZMOD_LETTERING and WOZMOD_SPEECH. tools/stock_pieces.py records the three build steps once (the art with one worker); a second
-build, from a copy of the game that keeps only the listed pieces, must write the same bytes.
+The real test (WOZMOD_STOCK_PIECES=1, with WOZMOD_GAME, WOZMOD_DONORS, WOZMOD_LETTERING and WOZMOD_SPEECH) reads the
+traces of the three steps' builds (tests/conftest.py, the built fixture; tools/verify.py ref makes them). A read of a
+piece the list leaves out stops a build there, at the read gate; this test catches the other way round.
 """
 
 from __future__ import annotations
 
 import os
-import time
 from pathlib import Path
 
 import pytest
 
 import stock_pieces
-from wozmod.install import worker_count
-from wozmod.install.stock import check_game, parse
+from wozmod import game_files
+from wozmod.install import steps
+from wozmod.install.gate import records
+from wozmod.install.stock import parse
 
 INPUTS = ("WOZMOD_GAME", "WOZMOD_DONORS", "WOZMOD_LETTERING", "WOZMOD_SPEECH")
-SLOW = pytest.mark.skipif(
-    os.environ.get("WOZMOD_STOCK_PIECES") != "1" or not all(os.environ.get(name) for name in INPUTS),
-    reason="set WOZMOD_STOCK_PIECES=1, " + ", ".join(INPUTS))
 
 
-def _inputs() -> tuple[Path, Path, Path, Path]:
-    return tuple(Path(os.environ[name]) for name in INPUTS)
+@pytest.mark.skipif(os.environ.get("WOZMOD_STOCK_PIECES") != "1" or not all(os.environ.get(name) for name in INPUTS),
+                    reason="set WOZMOD_STOCK_PIECES=1, " + ", ".join(INPUTS))
+def test_the_steps_read_exactly_the_committed_pieces(tmp_path, built):
+    # Bug: the build no longer reads a piece the committed record lists (a player whose game differs there is stopped
+    # for nothing), reads an entry in another form or from another step than the record says, or serves its own in
+    # place of other entries or clips: data/stock_pieces.json was not written again with tools/stock_pieces.py.
+    folders = [built(step, tmp_path / step) for step in steps.STEPS]
+    found = stock_pieces.pieces_document(Path(os.environ["WOZMOD_GAME"]),
+                                         [r for folder in folders for r in records(folder / "trace.jsonl")],
+                                         [folder / "out" for folder in folders])
+    assert stock_pieces.dumps(found) == stock_pieces.OUTPUT.read_text(encoding="utf-8"), \
+        "run tools/stock_pieces.py and commit data/stock_pieces.json:\n" + stock_pieces.summary(found)
 
 
-@pytest.fixture(scope="module")
-def recorded(tmp_path_factory):
-    """(the pieces document of a fresh record, the build's output folder)."""
-    game, donors, lettering, speech = _inputs()
-    started = time.monotonic()
-    found = stock_pieces.record(game, donors, lettering, speech, tmp_path_factory.mktemp("recorded"))
-    print(f"record: {time.monotonic() - started:.0f} s")
-    return found
+def _text(game, out):  # what each fake step reads of synthetic.stock_game, as its record says
+    exe = game_files.exe(game)
+    exe[0x200:0x220], exe[0x300:0x310]
+    game_files.archive(game / "LINKDATA1")[3]
 
 
-@SLOW
-def test_a_fresh_record_is_the_committed_one(recorded):
-    # Bug: the build now reads a piece the committed record lacks (another mod's change there would go unnoticed and
-    # change what is built), or no longer reads one (the install stops for nothing): data/stock_pieces.json was not
-    # written again with tools/stock_pieces.py.
-    document, _ = recorded
-    assert stock_pieces.dumps(document) == stock_pieces.OUTPUT.read_text(encoding="utf-8"), \
-        "run tools/stock_pieces.py and commit data/stock_pieces.json:\n" + stock_pieces.summary(document)
+def _art(game, out):
+    from wozmod.art.build import read_entry
+
+    game_files.exe(game)[0x308:0x310]
+    read_entry(game_files.archive(game / "LINKDATA1"), 2)
 
 
-def _files(root: Path) -> dict[str, Path]:
-    return {p.relative_to(root).as_posix(): p for p in sorted(root.rglob("*")) if p.is_file()}
+def _voices(game, out):
+    game_files.archive(game / "LINKDATA2").read([0])
+    game_files.voices(game).clips([3, 0])
 
 
-@SLOW
-def test_a_build_from_only_the_listed_pieces_writes_the_same_bytes(recorded, tmp_path_factory):
-    # Bug: the build reads a piece the record does not list (an entry, exe bytes or a clip a reader the recorder does
-    # not see opens), so another mod's change there passes the check and changes what is built; or the check does not
-    # find the pieces through the player's indexes (every unlisted entry here changes size, so the later ones move).
-    document, out = recorded
-    game, donors, lettering, speech = _inputs()
-    junk = tmp_path_factory.mktemp("junk") / "game"
-    stock_pieces.junk_game(game, document, junk)
-    verdict = check_game(junk, parse(document))  # the clips wozmod only serves are zeroed: noted, not blocking
-    assert (verdict.problem(), verdict.blocking()) == (None, ())
-    started = time.monotonic()
-    rebuilt = stock_pieces.run_steps(junk, donors, lettering, speech, tmp_path_factory.mktemp("rebuilt"), worker_count())
-    print(f"build from the junked copy: {time.monotonic() - started:.0f} s")
-    before, after = _files(out), _files(rebuilt)
-    assert sorted(after) == sorted(before)
-    assert [name for name, path in before.items() if path.read_bytes() != after[name].read_bytes()] == []
+def test_the_tool_hands_each_step_every_argument_its_function_takes(tmp_path, monkeypatch):
+    # Bug: a step's function gains a parameter that the tool's call of the steps does not pass (the stale stock-pieces
+    # call: the voices step gained speech, and the tool failed only when someone next ran it).
+    import argparse
+
+    called = {}
+
+    def run(work, progress, log, mode=None, trace=None):
+        for step, arguments in work.items():
+            called[step] = steps._taken(steps._function(step), arguments)  # what each step's worker hands it
+
+    monkeypatch.setattr(steps, "run", run)
+    named = argparse.Namespace(**{name: tmp_path / name for name in ("game", "donors", "speech", "lettering")})
+    stock_pieces.run_steps(stock_pieces.inputs(named), tmp_path / "scratch")
+    assert set(called) == set(steps.STEPS)
 
 
-def test_the_recorder_keeps_what_each_step_reads_and_how(tmp_path):
-    # Bug: an entry the art reads as stored (here also unpacked by the text) gets an unpacked hash (a repacked copy would pass, and the art would pack
-    # it again where the stock entry was not packed); an exe span is kept at a shifted offset; the voice index is
-    # listed as a piece (re-laid-out clips would stop the install); a served entry or clip is put under the wrong
-    # archive or number; a read past the tracking opener goes unseen; or a file read whole (a Dream movie) is
-    # refused or kept as anything but one span.
+def test_a_record_run_writes_the_pieces_the_steps_read(tmp_path, monkeypatch):
+    # Bug: an entry the art reads as stored gets an unpacked hash (a repacked copy would pass, and the art would pack
+    # it again where the stock entry was not packed); exe spans are kept at a shifted offset or not merged per file;
+    # the voice index is listed as a piece (re-laid-out clips would stop the install); a served entry or clip is put
+    # under the wrong archive or number; a step's reads are put under another step.
     import struct
 
+    import wozmod.install as installer
     from synthetic import stock_game
-    from wozmod.art.build import read_entry
-    from wozmod.formats.linkdata import archive, parse_index
-    from wozmod.install.stock import EXE, VOICE, VOICE_INDEX
+    from wozmod.install import gate
 
-    game = tmp_path / "game"
-    stock_game(game)
-    (game / "movie").mkdir()
-    (game / "movie/movie200.wmv").write_bytes(b"a stock movie" * 9)
-    with stock_pieces.Recorder(game) as recorder:
-        recorder.step = "text"
-        archive(game / "LINKDATA1").read([3])
-        exe = (game / EXE).read_bytes()
-        assert exe[0x204:0x208] and struct.unpack_from("<H", exe, 0x300)
-        recorder.step = "art"
-        index = parse_index((game / "LINKDATA1.IDX").read_bytes(), (game / "LINKDATA1.BIN").stat().st_size)
-        with (game / "LINKDATA1.BIN").open("rb") as stream:
-            read_entry(stream, index.entries[2])
-            read_entry(stream, index.entries[3])  # the text reads it unpacked, the art as stored: stored counts
-        recorder.step = "voices"
-        table = archive(game / "LINKDATA1")[VOICE_INDEX]
-        archive(game / "LINKDATA2").read([0])
-        with open(game / VOICE, "rb") as stream:
-            stream.seek(struct.unpack_from(">I", table, 16)[0])
-            stream.read(4)  # the start of clip 1
-        (game / "movie/movie200.wmv").read_bytes()
-        with pytest.raises(PermissionError):
-            os.open(game / "LINKDATA2.BIN", os.O_RDONLY)
-        recorder.step = None
-    assert recorder.violations == ["voices: opened LINKDATA2.BIN outside the tracking opener"]
-    out = tmp_path / "out/wozmod"
-    (out / "captions").mkdir(parents=True)
-    (out / "captions/4253.bin").write_bytes(b"served in place of LINKDATA2 2")
-    (out / "voice").mkdir()
-    (out / "voice/Voice.bin").write_bytes(struct.pack("<I6I", 3, 0, 0, 40, 9, 0, 0))
-    pieces = stock_pieces.pieces_document(game, recorder.reads, tmp_path / "out")["pieces"]
-    shape = {name: [[v if not isinstance(v, str) or len(v) != 64 else "sha" for v in row] for row in rows]
-             for name, rows in pieces.items()}
-    assert shape == {
-        EXE: [[0x204, 4, "sha", "text"], [0x300, 2, "sha", "text"]],
-        "LINKDATA1": [[2, "sha", None, "art", 0], [3, "sha", None, "text art", 0]],
-        "LINKDATA2": [[0, "sha", "sha", "voices", 0], [2, "sha", None, "", 1]],
-        VOICE: [[1, "sha", "voices", 1]],
-        "movie/movie200.wmv": [[0, 117, "sha", "voices"]],
-    }
+    game, out, trace = tmp_path / "game", tmp_path / "out", tmp_path / "trace.jsonl"
+    record = stock_game(game)
+    for step, fake in (("text", _text), ("art", _art), ("voices", _voices)):
+        monkeypatch.setattr(installer, steps.STEPS[step].function, fake)
+        steps.run_here(step, mode=gate.RECORD, trace=trace, game=game, out=out)
+    (out / "wozmod/captions").mkdir(parents=True)
+    (out / "wozmod/captions/4253.bin").write_bytes(b"served in place of LINKDATA2 2")
+    (out / "wozmod/voice").mkdir()
+    (out / "wozmod/voice/Voice.bin").write_bytes(struct.pack("<I10I", 5, 0, 0, 40, 9, 49, 9, 0, 0, 58, 9))
+    found = parse(stock_pieces.pieces_document(game, gate.records(trace), [out]))
+    assert (found.stamp, sorted(found.pieces, key=repr)) == (record.stamp, sorted(record.pieces, key=repr))
 
 
 def test_a_stage_lines_own_voice_slot_serves_no_stock_clip(tmp_path):
@@ -138,4 +106,4 @@ def test_a_stage_lines_own_voice_slot_serves_no_stock_clip(tmp_path):
     table = b"".join(struct.pack("<II", 0, sizes.get(i, 0)) for i in range(count))
     (tmp_path / "wozmod/voice").mkdir(parents=True)
     (tmp_path / "wozmod/voice/Voice.bin").write_bytes(struct.pack("<I", count) + table)
-    assert stock_pieces.served_pieces(tmp_path)[1] == {3, MOZ_VOICE_IDS - 1}
+    assert stock_pieces.served_pieces([tmp_path])[1] == {3, MOZ_VOICE_IDS - 1}

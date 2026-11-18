@@ -12,10 +12,12 @@ from pathlib import Path
 
 import pytest
 
-from wozmod.formats.audio import WO1_EVENT_VOICES
+from wozmod.formats.audio import WO1_EVENT_VOICES, event_voice
+from wozmod.formats.events import event_scenes
 from wozmod.runtime import layout
 from wozmod.runtime.text_table import table_blob
 from wozmod.text import contexts
+from wozmod.text.movie_captions import movie_schedule, movie_slot_entry
 from synthetic import container, mesc, spans, strings, write_stock_archive
 from synthetic import timed_event as event_file
 
@@ -28,11 +30,11 @@ def test_an_event_window_runs_from_its_speak_to_the_next_text_record() -> None:
     # the record chain built here, with ticks chosen by hand.
     for order in "<>":
         data = event_file([(30.0, 90.0, 7, b"a"), (120.0, 200.0, 9, b"b")], 300.0, order, captions=((100.0, b"c"),))
-        scene = contexts.event_scenes(data, order)
+        scene = event_scenes(data, order)
         assert [(w.index, w.start, w.end, w.end_by) for w in scene.windows] == [(7, 30, 90, "clear"), (9, 120, 200, "clear")]
         assert [(c.sub, c.ordinal, c.text) for c in scene.captions] == [(0, 0, b"c")]
         assert scene.lengths == (300.0,)
-    last = contexts.event_scenes(event_file([(30.0, 400.0, 7, b"a")], 300.0), "<")
+    last = event_scenes(event_file([(30.0, 400.0, 7, b"a")], 300.0), "<")
     assert [(w.end, w.end_by) for w in last.windows] == [(301, "end")]  # the scene ends before the clear runs
 
 
@@ -40,9 +42,9 @@ def test_a_clear_on_the_last_frame_is_the_scene_end() -> None:
     # Bug: a line cleared on its sub-scene's last frame (the retimer's clamp when the English clip outlasts the
     # event, 254.1 line 438) read as cleared early, so C2 reports a cut the scene end makes. Oracle: the record
     # chain built here; a clear one tick before the end is still a clear.
-    windows = contexts.event_scenes(event_file([(30.0, 300.0, 7, b"a"), (100.0, 299.0, 9, b"b")], 300.0), "<").windows
+    windows = event_scenes(event_file([(30.0, 300.0, 7, b"a"), (100.0, 299.0, 9, b"b")], 300.0), "<").windows
     assert [(w.end, w.end_by) for w in windows] == [(100, "speak"), (299, "clear")]
-    last = contexts.event_scenes(event_file([(30.0, 300.0, 7, b"a")], 300.0), "<").windows
+    last = event_scenes(event_file([(30.0, 300.0, 7, b"a")], 300.0), "<").windows
     assert [(w.end, w.end_by) for w in last] == [(300, "end")]
 
 
@@ -68,7 +70,7 @@ def test_a_wo1_event_line_finds_its_donor_line_by_voice_record_in_any_ens_entry(
              249: event_file([(10.0, 20.0, 150, b"Own line")], 50.0, ">"),
              12: b"\x00\x00\x00\x02not an event file at all"}
     lines = dict(contexts.event_records("wo1-x360", files, ">", WO1_EVENT_VOICES[1], WO1_EVENT_VOICES[2]))
-    voice = contexts.event_voice(283, 150)
+    voice = event_voice(283, 150)
     assert voice == WO1_EVENT_VOICES[0] + 150
     record = WO1_EVENT_VOICES[1] + voice - WO1_EVENT_VOICES[0]  # the WO1 event block maps id to record one to one
     assert (lines[("wo1-x360", record)].pointer, lines[("wo1-x360", record)].text) == (
@@ -81,11 +83,11 @@ def test_a_movie_cue_takes_the_caption_schedule_of_the_donor_file_it_plays() -> 
     # (ENS 246 to 270 hold MEV01 to MEV25); WO1 X360 mev02 to mev05 have French timing in FNS 369 to 372 and no
     # English captions; the other donor movies have none.
     row = lambda slot, donor, name: {"slot": slot, "donor": donor, "source": f"data/movie/{name}.wmv"}  # noqa: E731
-    assert contexts.movie_schedule(row("movie003", "wo2-x360", "MEV07")) == ("wo2-x360", "ens", 252)
-    assert contexts.movie_schedule(row("movie001", "wo2-x360", "MEV01")) == ("wo2-x360", "ens", 246)
-    assert contexts.movie_schedule(row("movie103", "wo1-x360", "mev03")) == ("wo1-x360", "fns", 370)
-    assert [contexts.movie_schedule(row("movie100", "wo1-x360", n)) for n in ("mev06", "mev01")] == [None, None]
-    assert contexts.movie_schedule(row("movie031", "wo2-x360", "story_title0")) is None
+    assert movie_schedule(row("movie003", "wo2-x360", "MEV07")) == ("wo2-x360", "ens", 252)
+    assert movie_schedule(row("movie001", "wo2-x360", "MEV01")) == ("wo2-x360", "ens", 246)
+    assert movie_schedule(row("movie103", "wo1-x360", "mev03")) == ("wo1-x360", "fns", 370)
+    assert [movie_schedule(row("movie100", "wo1-x360", n)) for n in ("mev06", "mev01")] == [None, None]
+    assert movie_schedule(row("movie031", "wo2-x360", "story_title0")) is None
 
 
 def test_each_movie_slot_reads_the_schedule_entry_the_loader_reads() -> None:
@@ -95,7 +97,7 @@ def test_each_movie_slot_reads_the_schedule_entry_the_loader_reads() -> None:
     expected = {"movie000": None, "movie001": 146, "movie025": 170, "movie026": None, "movie035": None,
                 "movie100": None, "movie101": None, "movie102": 171, "movie105": 174, "movie106": None,
                 "movie200": 175, "movie201": 176, "movie202": None}
-    assert {slot: contexts.movie_slot_entry(slot) for slot in expected} == expected
+    assert {slot: movie_slot_entry(slot) for slot in expected} == expected
 
 
 def _c_function(source: str, name: str) -> str:
@@ -202,7 +204,7 @@ def test_each_text_hook_looks_up_the_key_the_context_model_uses(tmp_path: Path) 
         '    { struct loose *e = served(4396); printf("%d\\n", e ? (int)e[0].' + ("dir" if "u32 key, size, dir" in source
                                                                               else "voice") + " : -1); }")]
       + ["    return 0;", "}"])
-    (tmp_path / "keys.c").write_text(glue)
+    (tmp_path / "keys.c").write_text(glue, encoding="utf-8")
     subprocess.run(["i686-w64-mingw32-gcc", "-std=gnu11", "-O1", "-w", "-I", str(RUNTIME), str(tmp_path / "keys.c"),
                     "-o", str(tmp_path / "keys.exe")], check=True)
     env = {**os.environ, "WINEPREFIX": str(tmp_path / "prefix"), "WINEDEBUG": "-all", "WINEDLLOVERRIDES": "mscoree,mshtml="}

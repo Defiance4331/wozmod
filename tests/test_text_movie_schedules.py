@@ -1,4 +1,4 @@
-"""The movie caption loaders' constants (contexts.MOVIE_CAPTION_LOADERS, MOZ_CAPTION_KEY) against the programs."""
+"""The movie caption loaders' constants (movie_captions.MOVIE_CAPTION_LOADERS, MOZ_CAPTION_KEY) against the programs."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from wozmod.formats import pe
-from wozmod.text import contexts
+from wozmod.text import movie_captions
 
 X360_BASE = 0x82000000  # VA = 0x82000000 + default.pe offset
 
@@ -36,7 +36,7 @@ def test_a_donor_movie_loads_the_caption_schedule_its_loader_computes(donor) -> 
     # Expected: the immediates of WO2 X360 0x822B9EB0 and WO1 X360 0x822754A0 (addi 14, li/addi 14, cmpwi 11,
     # cmplwi 10).
     program = _program(donor)
-    movies, caption_id, first_id, _ = contexts.MOVIE_CAPTION_LOADERS[donor]
+    movies, caption_id, first_id, _ = movie_captions.MOVIE_CAPTION_LOADERS[donor]
     if donor == "wo2-x360":  # n == 0 and n >= 0x1A load nothing
         found = (range(_immediate(program, 0x822B9FA8, 11) + 1, _immediate(program, 0x822B9FB0, 11)),
                  _immediate(program, 0x822B9EEC, 14), _immediate(program, 0x822B9EF0, 14))
@@ -55,4 +55,4 @@ def test_a_stock_movie_slot_reads_the_entry_its_loader_keys() -> None:
         pytest.skip("set WOZMOD_GAME to the stock game folder")
     exe = Path(game, "OROCHI_Z.exe").read_bytes()
     at = pe.file_offset(pe.layout(exe), 0x56A319)
-    assert exe[at] == 0x05 and struct.unpack_from("<I", exe, at + 1)[0] == contexts.MOZ_CAPTION_KEY
+    assert exe[at] == 0x05 and struct.unpack_from("<I", exe, at + 1)[0] == movie_captions.MOZ_CAPTION_KEY

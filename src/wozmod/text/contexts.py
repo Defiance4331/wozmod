@@ -18,30 +18,32 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import struct
 from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
 from functools import cached_property
 from pathlib import Path
 
-from wozmod import resources
+from wozmod import game_files, resources
 from wozmod.donors import DonorsFolder
 from wozmod.formats.audio import (
-    MOZ_EVENT_LINES, PSP_CLIP_BASE, WO1_EVENT_VOICES, WO1_NARRATION_VOICES, WO1_RECORD_BASE, WO2_CLIP_BASE, WO2_EVENT_VOICES,
-    WO2_NARRATION_VOICES, _suffix, donor_voice_choice, ps2_extents, quote_voice, stage_line_voices, wo2_voice_records,
+    PSP_CLIP_BASE, WO1_EVENT_VOICES, WO1_NARRATION_VOICES, WO1_RECORD_BASE, WO2_CLIP_BASE, WO2_EVENT_VOICES,
+    WO2_NARRATION_VOICES, _suffix, donor_voice_choice, event_voice, ps2_extents, quote_voice, stage_line_voices,
+    wo2_voice_records,
 )
+from wozmod.formats.events import EventScene, EventWindow, event_file, event_scenes
 from wozmod.formats.linkdata import LINKDATA2_FIRST, archive, decoded_member, ps2_members
 from wozmod.formats.scripts import (
     caption_cues, donor_text, event_lines, mesc_blocks, quote_tables, quote_text,
 )
 from wozmod.runtime.text_table import decode_english, table_lookup
+from wozmod.text.movie_captions import (
+    CUE_TICKS, PAL_TICKS, movie_schedule, movie_slot_entry, overlapping_cues, x360_schedules,
+)
 from wozmod.text.narration_voices import VOICE_KEYED, camp_lines_drawn, line_voices
+from wozmod.text.psp_alignment import PSP_EVENT_CAPTIONS, PSP_MOVIE_CAPTIONS, joined_cue_text, psp_line_cues
 from wozmod.text.script_alignment import NARRATION, X360_ENS, quote_slot_read
 from wozmod.text.stock import stage_line_form
 
-CUE_TICKS = 29.97  # a movie caption schedule counts 29.97 a second (MovieTelop counter 0x5E91F0)
-PAL_TICKS = 25  # a French or German schedule counts 25 a second
-EVENT_TICKS = 60  # an event scene's clock counts 60 a second (runner 0x49D9A0)
 
 # ---------------------------------------------------------------------------------------------------------------
 # The runtime. Keep in step with runtime/english_runtime.c (tests/test_text_contexts.py compares them).
@@ -112,29 +114,6 @@ QUOTES_ENTRY, WO1_QUOTES, WO2_QUOTES, PSP_QUOTES = 4084, 21, 17, 27
 WO1_SCRIPTS = range(88, 148)  # WO1 X360 ENS: the stage scripts (loader 0x8219D948 reads ENS 88 + stage)
 WO2_SCRIPTS = range(103, 171)  # WO2 X360 ENS: the stage scripts, PS2 members 2796-2863
 PSP_SCRIPTS = range(270, 282)  # WO2 PSP FNS: the Z Dream stage scripts
-# The WO2 PSP plays the Z Dream scenes (stock events 402-413) as movies GEV_201 to GEV_212 and loads the caption
-# schedule FNS member GEV - 0x2B (EBOOT loader 0x5BA64, vaddr; 0x5BB18), and its movies 30 and 31 load member
-# n + 0xAA - 4 (0x5BB64, 0x5BB68), the scenes of stock schedules 175 and 176 (movie200, movie201). No number links a
-# stock event to a GEV file: the scenes pair by time (every PSP cue starts where a stock line's window starts,
-# tests/test_text_psp_alignment.py), and lines pair with cues by time within a scene (psp_line_cues).
-PSP_EVENT_CAPTIONS = {**{402 + i: 164 + i for i in range(6)}, **{408 + i: 158 + i for i in range(6)}}
-PSP_MOVIE_CAPTIONS = {175: 196, 176: 197}
-
-
-def event_voice(ordinal: int, index: int) -> int | None:
-    """An event line's voice id: index + 0xAF3, or + 0x8F4 when [0x801F24] is set (0x513731), which it is for the
-    WO1 scenes 245-383 and 401. For 384-400 the mode is not known.
-
-    The Z Dream scenes 402-413 play index + 0xAF3, a measurement rather than a trace of the flag: their indexes run
-    241-335, from the WO2 X360's last event line (0xF1) to the limit of that mode (0x150), and in the WO2 PSP's
-    movies of these scenes the stock clip index + 0xAF3 of 91 of their 96 voiced speaks sits whole in the Japanese
-    track (gain 0.70-0.79, 0.12-0.22 s after the subtitle; the other 5 begin there, the PSP having edited their
-    rest), while index + 0x8F4 matches none (gain 0.01-0.21, correlation at most 0.12)."""
-    if 177 <= ordinal < 245 or 402 <= ordinal <= 413:
-        return WO2_EVENT_VOICES[0] + index if index < MOZ_EVENT_LINES["wo2-x360"] else None
-    if 245 <= ordinal < 384 or ordinal == 401:
-        return WO1_EVENT_VOICES[0] + index if index < MOZ_EVENT_LINES["wo1-x360"] else None
-    return None
 
 
 def narration_record(donor: str, voice_id: int) -> int | None:
@@ -143,104 +122,6 @@ def narration_record(donor: str, voice_id: int) -> int | None:
         if base <= voice_id < base + count:
             return record + voice_id - base
     return None
-
-
-# ---------------------------------------------------------------------------------------------------------------
-# Event scenes: the record chain the runner 0x49D9A0 executes, as stock (little-endian) and Xbox 360 (big-endian)
-# files share it. A sub-scene is a chain of records: u32 next | type | sub | n | n field types | data offset | n
-# field sizes | data. Type 0 sub 0 is a gate (a float tick the clock must reach), type 0 sub 1 the length, type 5
-# a text record (sub 0 place caption, sub 1 clear, sub 2 and 5 speak), type 8 sub 1 or 2 opens a conditional
-# block and type 8 sub 0 closes it.
-
-
-@dataclass(frozen=True)
-class EventWindow:
-    sub: int
-    index: int  # the line index: also the voice index
-    start: int  # ticks from the sub-scene start
-    end: int
-    end_by: str  # "clear", "speak", "caption" or "end" (the sub-scene ends)
-    in_block: bool  # the speak or what ends it is inside a conditional block: the simulation cannot tell its end
-    text: bytes = b""  # the line record's text
-
-
-@dataclass(frozen=True)
-class EventCaption:
-    sub: int
-    ordinal: int  # the place caption's place among its sub-scene's captions
-    offset: int  # of its text in the file
-    text: bytes
-
-
-def event_file(data: bytes, order: str = "<") -> bool:
-    """Whether data starts like an event file: a sub-scene count, then that many ascending sub-scene offsets."""
-    if len(data) < 8:
-        return False
-    count = struct.unpack_from(f"{order}I", data)[0]
-    if not 0 < count <= 64 or len(data) < 4 + 4 * count:
-        return False
-    bases = struct.unpack_from(f"{order}{count}I", data, 4)
-    if bases[0] < 4 + 4 * count or any(a >= b for a, b in zip(bases, bases[1:], strict=False)) or bases[-1] >= len(data):
-        return False
-    from wozmod.voices.events import _records  # wozmod.voices imports this module (voices.dream_events)
-    try:
-        return all(_records(data, base, order) for base in bases)
-    except (struct.error, IndexError, ValueError):
-        return False
-
-
-@dataclass(frozen=True)
-class EventScene:
-    windows: list[EventWindow]
-    captions: list[EventCaption]
-    lengths: tuple[float, ...]  # each sub-scene's length in ticks
-
-    def lines(self) -> set[int]:
-        return {w.index for w in self.windows}
-
-
-def event_scenes(data: bytes, order: str = "<") -> EventScene:
-    """Every subtitle window and place caption of an event file, by simulating each sub-scene's clock: it starts
-    at -1, clamps to 0, then counts one a frame; a gate above the clock stops the chain; the scene ends when the
-    clock passes its length. A subtitle shows from its speak to the next text record or the scene end."""
-    from wozmod.voices.events import _records
-    windows, captions, lengths = [], [], []
-    count = struct.unpack_from(f"{order}I", data)[0]
-    for sub, base in enumerate(struct.unpack_from(f"{order}{count}I", data, 4)):
-        records = _records(data, base, order)
-        length = next((r.fields[0] for r in reversed(records) if r.kind == 0 and r.sub == 1), 0.5)
-        lengths.append(length)
-        ran, clock, ip, tick = [], -1.0, 0, 0
-        while True:
-            clock = 0.0 if clock < 0 else clock + 1.0
-            while records[ip].kind != 0xFF and not (records[ip].kind == records[ip].sub == 0 and records[ip].fields[0] > clock):
-                ran.append((tick, ip))
-                ip += 1
-            if not clock <= length:
-                break
-            tick += 1
-        texts = [(t, i) for t, i in ran if records[i].kind == 5 and records[i].sub in (0, 1, 2, 5)]
-        ordinal = 0
-        for k, (t, i) in enumerate(texts):
-            s, fields = records[i].sub, records[i].fields
-            if s == 0:
-                at = base + fields[0] + 4
-                captions.append(EventCaption(sub, ordinal, at, data[at:data.index(b"\0", at)]))
-                ordinal += 1
-            elif s in (2, 5):
-                index = struct.unpack_from(f"{order}H", data, base + fields[1] + 4)[0]
-                text = data[base + fields[1] + 8:data.index(b"\0", base + fields[1] + 8)]
-                following = texts[k + 1] if k + 1 < len(texts) else None
-                end_by = "end" if following is None else {0: "caption", 1: "clear"}.get(records[following[1]].sub, "speak")
-                after = texts[k + 2] if k + 2 < len(texts) else None
-                if end_by == "clear" and after and after[0] == following[0] and records[after[1]].sub != 1:
-                    end_by = "speak"  # cleared on the tick the next line starts: the next line ends it
-                if end_by == "clear" and following[0] >= length:
-                    end_by = "end"  # cleared on the sub-scene's last frame: the scene end ends it
-                windows.append(EventWindow(sub, index, t, following[0] if following else tick, end_by,
-                                           records[i].depth > 0 or (following is not None and records[following[1]].depth > 0),
-                                           text))
-    return EventScene(windows, captions, tuple(lengths))
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -320,79 +201,6 @@ def mesc_records(donor: str, entry: int, blocks: list[list[bytes]], voices: list
 def _english_cues(data: bytes) -> list[tuple[int, int, str | None]]:
     return [(start, end, donor_text(raw)) for start, end, raw in caption_cues(data)]
 
-
-# The donors' movie caption loaders (VA = 0x82000000 + default.pe offset; tests/test_text_movie_schedules.py reads
-# the immediates). WO2 X360 0x822B9EB0, gated at 0x822B9FA8/0x822B9FB0 to movies 1-25 (from the movie start
-# 0x821A072C), loads archive id nn + 0xFDF (0x822B9EEC); its archive loader 0x822F3F70 numbers ENS k as id 0xEEA + k
-# (0x822B9EF0, 0x821871B4-0x821871C4). WO1 X360 0x822754A0, gated at 0x822754B4/0x822754B8 to mev02-05, loads id
-# nn + 0xBC2 (0x822754F8) with ENS k at id 0xA53 + k (0x822754FC; loader 0x822A28C0), and reads it from FNS or GNS
-# on French or German consoles (0x82174744). (movies, caption id, first ENS id) per donor:
-MOVIE_CAPTION_LOADERS = {"wo2-x360": (range(1, 26), 0xFDF, 0xEEA, "ens"), "wo1-x360": (range(2, 6), 0xBC2, 0xA53, "fns")}
-
-
-def movie_schedule(row: dict) -> tuple[str, str, int] | None:
-    """The donor caption schedule timed to the movie file a data/movies.json row plays, by the donor's own loader
-    (MOVIE_CAPTION_LOADERS) for the number in its file name: WO2 X360 MEVnn's English captions; WO1 X360 mev02 to
-    mev05 have none in English, so their French ones (timed to the same dub)."""
-    number = re.fullmatch(r"(?i)mev([0-9]+)", Path(row["source"]).stem)
-    if not number or row["donor"] not in MOVIE_CAPTION_LOADERS:
-        return None
-    movies, caption_id, first_id, archive_name = MOVIE_CAPTION_LOADERS[row["donor"]]
-    nn = int(number.group(1))
-    return (row["donor"], archive_name, nn + caption_id - first_id) if nn in movies else None
-
-
-def x360_schedules(movies: list[dict]) -> dict[int, int]:
-    """Stock schedule entry -> the WO2 X360 ENS schedule of the movie data/movies.json plays in that slot."""
-    found = {}
-    for row in movies:
-        entry, source = movie_slot_entry(row["slot"]), movie_schedule(row)
-        if entry is not None and source is not None and source[:2] == ("wo2-x360", "ens"):
-            found[entry] = source[2]
-    return found
-
-
-MOZ_CAPTION_KEY = 0x112C  # the stock loader 0x56A2C0 reads key index + 0x112C (0x56A319)
-
-
-def movie_slot_entry(slot: str) -> int | None:
-    """The LINKDATA2 entry of a movie slot's caption schedule (loader 0x56A2C0), or None when the slot loads none."""
-    number = int(slot[5:])
-    index = number if number < 36 else 36 + number - 100 if number < 200 else 46 + number - 200
-    if index == 0 or 26 <= index <= 37 or 42 <= index <= 45 or index >= 48:
-        return None
-    return MOZ_CAPTION_KEY - LINKDATA2_FIRST + (index - 12 if 38 <= index <= 41 else index - 16 if index >= 46 else index)
-
-
-def overlapping_cues(cues: list[tuple], donor: list[tuple]) -> list[list[int]]:
-    """For each cue, the donor cues whose greatest positive time overlap is with it, in order."""
-    joined: list[list[int]] = [[] for _ in cues]
-    for k, (start, end, _) in enumerate(donor):
-        overlap, at = max(((min(end, e) - max(start, s), i) for i, (s, e, _) in enumerate(cues)), default=(0, 0))
-        if overlap > 0:
-            joined[at].append(k)
-    return joined
-
-
-def psp_line_cues(scene: EventScene, cues: list[tuple[int, int, bytes]]) -> dict[int, list[list[int]]]:
-    """Each stock event line's cues in the WO2 PSP caption schedule of the same scene, by time: the PSP plays the
-    scene as a movie and shows cue k from its start to its end (CUE_TICKS a second); MOZ shows the line from its
-    speak to what ends it (EVENT_TICKS a second, runner 0x49D9A0). The movie is the sub-scene that speaks the lines,
-    so both clocks start together; a cue joins the window it overlaps most. A line spoken twice may have two."""
-    if len({w.sub for w in scene.windows}) > 1:
-        raise ValueError("lines spoken in more than one sub-scene: the PSP movie's clock is not known")
-    seconds = [(w.start / EVENT_TICKS, w.end / EVENT_TICKS, None) for w in scene.windows]
-    found: dict[int, list[list[int]]] = {}
-    for w, joined in zip(scene.windows, overlapping_cues(seconds, [(s / CUE_TICKS, e / CUE_TICKS, None)
-                                                                   for s, e, _ in cues]), strict=True):
-        if joined and joined not in found.setdefault(w.index, []):
-            found[w.index].append(joined)
-    return {index: joined for index, joined in found.items() if joined}
-
-
-def joined_cue_text(cues: list[tuple[int, int, bytes]], joined: list[int]) -> bytes:
-    """The words of the cues joined to one place, as the resolver reads a ["captions", joined] pointer."""
-    return b" ".join(word for k in joined for word in cues[k][2].split())
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -887,8 +695,7 @@ def build_text_stage(stock: Path, donors: Path, out: Path) -> Path:
     clips, _ = english_voice_clips(
         maps["wo1-x360"], (wo1 / "linkdata_ans.idx").read_bytes(), wo1 / "link_vodat.bdx",
         maps["wo2-x360"], (wo2 / "linkdata_ans.idx").read_bytes(), wo2 / "link_vodat.bdx",
-        decoded_member(archive(stock / "LINKDATA1")[4058]), stock / "data/Sound/Voice/Voice.bin",
-        psp=(maps["wo2-psp"], psp))
+        game_files.voices(stock), psp=(maps["wo2-psp"], psp))
     wo2_donor = wo2_x360(wo2 / "linkdata_ens")
     wo1_events = world.wo1_ens.read(donor_event_entries("wo1-x360"))
     wo2_events = wo2_donor.members(donor_event_entries(WO2_X360.name))

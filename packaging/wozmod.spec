@@ -28,7 +28,10 @@ program = Analysis(
     hiddenimports=["wozmod_native", "wozmod.window"],  # the Rust codecs (native.py imports them in a try block)
     excludes=EXCLUDES,
 )
-# UTF-8 mode: the program reads UTF-8 files without naming the encoding, and Windows would use cp1252.
-utf8 = [("X utf8", None, "OPTION")]
-exe = EXE(PYZ(program.pure), program.scripts, utf8, exclude_binaries=True, name="wozmod", console=True)
+# The bootloader starts Python isolated, so it ignores PYTHONUTF8 and PYTHONHASHSEED, which install/steps.FIXED sets
+# for each step worker: pin them here. UTF-8 mode: Windows would read files with cp1252. Hash seed 0: a step's set
+# order, and so what it writes, is the same in every worker. PyInstaller 6.22 on Python 3.14 happens to give seed 0
+# without it (it always sets hash_seed, which turns use_hash_seed on); the option makes it ours, not a side effect.
+options = [("X utf8", None, "OPTION"), ("hash_seed=0", None, "OPTION")]
+exe = EXE(PYZ(program.pure), program.scripts, options, exclude_binaries=True, name="wozmod", console=True)
 COLLECT(exe, program.binaries, program.datas, name="wozmod")

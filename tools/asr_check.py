@@ -90,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--clips", type=Path, help="a JSON list of stretches to hear with one model load")
     args = parser.parse_args(argv)
     if args.clips:
-        print(json.dumps(clips(args.audio.resolve(strict=True), json.loads(args.clips.read_text()), args.model)))
+        print(json.dumps(clips(args.audio.resolve(strict=True), json.loads(args.clips.read_text(encoding="utf-8")), args.model)))
         return 0
     try:
         heard = transcribe(args.audio.resolve(strict=True), args.start, args.end, args.model)

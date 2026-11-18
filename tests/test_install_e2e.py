@@ -11,7 +11,6 @@ by a run killed outright (SIGKILL) is removed when the next run starts. WOZMOD_I
 from __future__ import annotations
 
 import ctypes
-import fcntl
 import filecmp
 import hashlib
 import importlib.util
@@ -76,9 +75,11 @@ def installed(release_files, release_ffmpeg):
              for name, path in release_files.items() if (problem := check_input(name, path))]
     if wrong:
         pytest.fail("\n".join(wrong), pytrace=False)
+    import fcntl  # POSIX-only, so imported here: the module still collects on Windows
+
     folder = REPO / "work/install-e2e"
     folder.parent.mkdir(exist_ok=True)
-    with folder.with_suffix(".lock").open("w") as lock:
+    with folder.with_suffix(".lock").open("w", encoding="utf-8") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)  # held while the copy is in use, so whatever is there now is a dead run's
         shutil.rmtree(folder, ignore_errors=True)
         folder.mkdir()
@@ -96,7 +97,7 @@ def installed(release_files, release_ffmpeg):
 
 def _snapshot(game: Path) -> dict[str, tuple[str, int]]:
     """Each file the install wrote, with its SHA-256 and inode."""
-    files = json.loads((game / "wozmod/install.json").read_text())["files"]
+    files = json.loads((game / "wozmod/install.json").read_text(encoding="utf-8"))["files"]
     return {name: (hashlib.sha256((game / name).read_bytes()).hexdigest(), (game / name).stat().st_ino) for name in files}
 
 
@@ -194,7 +195,7 @@ def test_the_dll_accepts_every_file_the_install_wrote(installed, c_library):
         else lib.copies(d, len(d), slots[0]) if "hires" in name
         else lib.package(d, len(d), slots, len(slots)))}
     assert (count, sorted(n for n in names if not (game / n).is_file()), refused) == (
-        len(json.loads((folder / "install.json").read_text())["files"]), [], set())
+        len(json.loads((folder / "install.json").read_text(encoding="utf-8"))["files"]), [], set())
 
 
 def test_a_second_install_keeps_every_step_and_leaves_the_files_of_the_first(installed, release_files, capsys):
@@ -216,9 +217,9 @@ def test_a_changed_step_key_rebuilds_only_that_step_and_the_same_files(installed
     # Bug: one changed key rebuilds the other steps too, or the rebuilt step's files differ from a fresh install's
     # (a kept step's output fed back into it).
     game, _, _, _, fresh = installed
-    record = json.loads((game / "wozmod/install.json").read_text())
+    record = json.loads((game / "wozmod/install.json").read_text(encoding="utf-8"))
     record["steps"]["text"]["key"] = "0" * 64
-    (game / "wozmod/install.json").write_text(json.dumps(record))
+    (game / "wozmod/install.json").write_text(json.dumps(record), encoding="utf-8")
     _install(game, release_files, copy=False)
     log = _install_log()
     assert [line.split(": ")[1] for line in log[:3]] == ["built", "kept", "kept"]
@@ -230,7 +231,7 @@ def test_install_lists_every_file_it_wrote_and_uninstall_restores_the_stock_fold
     # Bug: a built file missing from install.json (left by uninstall), a stale hash, or a stock file touched.
     game, command, _, _, _ = installed
     stock = Path(os.environ["WOZMOD_GAME"])
-    listed = json.loads((game / "wozmod/install.json").read_text())["files"]
+    listed = json.loads((game / "wozmod/install.json").read_text(encoding="utf-8"))["files"]
     on_disk = {p.relative_to(game).as_posix() for p in game.rglob("*")
                if p.is_file() and not (stock / p.relative_to(game)).exists()} - {"wozmod/install.json"}
     assert set(listed) == on_disk

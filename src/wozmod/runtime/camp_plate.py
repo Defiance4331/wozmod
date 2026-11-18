@@ -59,8 +59,8 @@ def widened(plate: Image.Image, to: int) -> Image.Image:
 
 def stock_plate(game: Path) -> Image.Image:
     """The stock plate art from the game folder's LINKDATA1."""
-    from wozmod.formats.linkdata import archive
+    from wozmod import game_files
     from wozmod.formats.textures import parse_texture_package
 
-    texture = parse_texture_package(archive(game / "LINKDATA1")[ENTRY]).items[ITEM].g1t.textures[0]
+    texture = parse_texture_package(game_files.archive(game / "LINKDATA1")[ENTRY]).items[ITEM].g1t.textures[0]
     return Image.frombytes("RGBA", (texture.width, texture.height), texture.decode_rgba())

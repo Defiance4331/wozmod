@@ -19,11 +19,11 @@ def test_letter_map_rebuilds_each_label_and_refuses_a_shifted_box(tmp_path):
            "texts": [{"boxes": 3, "spaces": [1, 1], "sha256": word_key(labels[0])}, None,
                      {"boxes": 2, "sha256": word_key(labels[2])}]}
     path = tmp_path / "art.json"
-    path.write_text(json.dumps({"faces": {"f": {"rows": [row]}}}))
+    path.write_text(json.dumps({"faces": {"f": {"rows": [row]}}}), encoding="utf-8")
     assert words.load(path)["faces"]["f"]["rows"][0] == {"wo1-x360": [1, 2, 0], "texts": labels}
 
     row["letters"] |= {"A": "0:0 2:0", "d": "2:1"}
-    path.write_text(json.dumps({"faces": {"f": {"rows": [row]}}}))
+    path.write_text(json.dumps({"faces": {"f": {"rows": [row]}}}), encoding="utf-8")
     with pytest.raises(ValueError, match="line 2 does not give the word"):
         words.load(path)
 
@@ -39,11 +39,11 @@ def test_pointer_deletes_then_cases_and_must_give_its_word(tmp_path, monkeypatch
     stored = {"a": {"ref": ["wo2-x360", "pe", 7], "edits": [[0, 1, ""]], "case": "upper",
                     "sha256": word_key("ALDER GROVE")},
               "b": [{"ref": ["wo2-x360", "pe", 8], "edits": [[0, 1, ""], [6, 7, ""]], "sha256": word_key("arbor")}]}
-    path.write_text(json.dumps(stored))
+    path.write_text(json.dumps(stored), encoding="utf-8")
     assert words.load(path) == {"a": "ALDER GROVE", "b": ["arbor"]}
 
     stored["a"]["ref"][2] = 8
-    path.write_text(json.dumps(stored))
+    path.write_text(json.dumps(stored), encoding="utf-8")
     with pytest.raises(ValueError, match="does not give the word"):
         words.load(path)
 

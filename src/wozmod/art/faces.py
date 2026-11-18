@@ -2,15 +2,16 @@
 from __future__ import annotations
 
 import unicodedata
-from concurrent.futures import as_completed
+from functools import partial
 from statistics import fmean, median, mode
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
+from wozmod import native
 from wozmod.progress import report as report_progress
+from wozmod.workers import ordered_map
 from wozmod.donors import WO1_X360, WO2_X360
 from .imaging import keyed, rgba, unglowed
-from .packing import worker_pool
 
 
 def text_lines(layer: Image.Image, baselines) -> list[tuple[Image.Image, int]]:
@@ -77,10 +78,10 @@ DREAM_NAME_BASELINES = {1: (159,), 2: (143, 175)}
 
 def ink_rows(atlas: Image.Image) -> list[tuple[int, int]]:
 
-    alpha = atlas.getchannel("A").point(lambda v: 255 if v > 16 else 0)
+    inked = atlas.getchannel("A").point(lambda v: 255 if v > 16 else 0).getprojection()[1]
     bands, top = [], None
     for y in range(atlas.height + 1):
-        on = y < atlas.height and alpha.crop((0, y, atlas.width, y + 1)).getbbox() is not None
+        on = y < atlas.height and inked[y]
         if on and top is None:
             top = y
         elif not on and top is not None:
@@ -109,22 +110,10 @@ FILLS = {"yellow": yellow, "saturated": saturated, "opaque": opaque, "solid": la
          "faint": lambda p: p[3] < 64}  
 
 def strokes(row: Image.Image, is_fill=yellow, least: int = 3) -> list[list[tuple[int, int]]]:
-
-    px = row.load()
-    fill = {(x, y) for y in range(row.height) for x in range(row.width) if is_fill(px[x, y])}
-    found = []
-    while fill:
-        stack, stroke = [fill.pop()], []
-        while stack:
-            x, y = point = stack.pop()
-            stroke.append(point)
-            for near in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
-                if near in fill:
-                    fill.remove(near)
-                    stack.append(near)
-        if len(stroke) >= least:
-            found.append(stroke)
-    return sorted(found, key=lambda stroke: min(x for x, _ in stroke))
+    """The 4-connected strokes of the RGBA row's pixels is_fill picks, each of at least least pixels, as (x, y)
+    points, ordered by their leftmost pixel (the topmost of that column first). is_fill sees each colour once."""
+    picked = [colour for _, colour in row.getcolors(max(1, row.width * row.height)) if is_fill(colour)]
+    return native.module.strokes(row.tobytes(), row.width, row.height, picked, least)
 
 def parted(found: list[list[tuple[int, int]]]) -> list[list[tuple[int, int]]]:
     """The strokes with the widest one cut in two where it has the least fill, away from its ends."""
@@ -156,19 +145,12 @@ def glyph_fills(row: Image.Image, text: str, is_fill=yellow, least: int = 3,
         raise ValueError(f"row does not segment as {text!r} ({len(strokes(row, is_fill, least))} strokes)")
     return glyphs
 
-def nearest(row: Image.Image, fills: list[list[tuple[int, int]]]) -> dict[tuple[int, int], int]:
-
-    label, queue = {}, []
-    for k, fill in enumerate(fills):
-        label.update(dict.fromkeys(fill, k))
-        queue += fill
-    px = row.load()
-    for x, y in queue:
-        for near in ((x + i, y + j) for i in (-1, 0, 1) for j in (-1, 0, 1)):
-            if near not in label and 0 <= near[0] < row.width and 0 <= near[1] < row.height and px[near][3]:
-                label[near] = label[x, y]
-                queue.append(near)
-    return label
+def nearest(row: Image.Image, fills: list[list[tuple[int, int]]]) -> list[tuple[int, int, int, int, Image.Image]]:
+    """Each fill's share of the RGBA row: its own points, and every other pixel with any alpha that a chain of such
+    pixels (8-connected) joins to a fill, given to the fill the fewest steps lead from (the first fill on a tie).
+    Per fill: its box (x0, y0, x1, y1; x1 and y1 exclusive) and row's pixels in it that are the fill's, others blank."""
+    return [(x0, y0, x1, y1, Image.frombytes("RGBA", (x1 - x0, y1 - y0), cut))
+            for x0, y0, x1, y1, cut in native.module.nearest_cuts(row.tobytes(), row.width, row.height, fills)]
 
 def fit_spacing(pairs, prior=None, weight: float = 0.0, rounds: int = 200):
 
@@ -264,16 +246,12 @@ class Face:
                             or [max(y for _, y in f) for c, f in glyphs if c in "AFY"])  
             if scale >= 0.98:
                 self.rows[text] = (row, baseline)
-            label, px = nearest(row, [fill for _, fill in glyphs]), row.load()
+            cuts = nearest(row, [fill for _, fill in glyphs])
             lefts = [min(x for x, _ in fill) for _, fill in glyphs]
             for k, (char, _) in enumerate(glyphs):
                 if found.get(char, 0) >= scale:
                     continue
-                points = [p for p, v in label.items() if v == k]
-                x0, y0 = min(x for x, _ in points), min(y for _, y in points)
-                image = Image.new("RGBA", (max(x for x, _ in points) + 1 - x0, max(y for _, y in points) + 1 - y0))
-                for x, y in points:
-                    image.putpixel((x - x0, y - y0), px[x, y])
+                x0, y0, _, _, image = cuts[k]
                 self.glyphs[char], found[char] = (image, x0 - lefts[k], y0 - baseline), scale
                 self.origin[char] = text
             chars = text.replace(" ", "")
@@ -283,8 +261,7 @@ class Face:
                     continue
                 gap = len(text[i + 1:]) - len(text[i + 1:].lstrip(" "))
                 pairs.append((char, chars[k + 1], gap, (lefts[k + 1] - lefts[k]) / scale))
-                inks.append((gap, (min(x for (x, _), v in label.items() if v == k + 1)
-                                   - max(x for (x, _), v in label.items() if v == k) - 1) / scale))
+                inks.append((gap, (cuts[k + 1][0] - cuts[k][2]) / scale))  # columns between the two cuts
                 right, left = {}, {}
                 for x, y in glyphs[k][1]:
                     right[y] = max(right.get(y, x), x)
@@ -422,12 +399,8 @@ def face_rows(image: Image.Image, texts: list, is_fill=yellow, least: int = 3, c
     return [(image.crop((0, top, image.width, bottom)), text, is_fill, least, counts)
             for (top, bottom), text in zip(ink_rows(image), texts, strict=True) if text]
 
-_face_work: tuple = ()  # (mapping, donors) for the face workers; set before they start, so forked workers share it
-
-
-def _face(name: str) -> Face:
-    """One lettering face, built from the donors in _face_work."""
-    mapping, donors = _face_work
+def _face(mapping: dict, donors: dict, name: str) -> Face:
+    """One lettering face, built from the donors."""
     stages = mapping["stage_names"]
     if name == "stage":
         entry, item, texture = stages["font"]
@@ -477,32 +450,19 @@ def used_faces(edits) -> set[str]:
 
 
 def faces(mapping: dict, donors: dict, jobs: int = 1, used: set[str] | None = None) -> dict:
-    """The lettering faces (only those in used, when given), one worker process each when jobs > 1 (the longest step
-    before the worker pool)."""
-    global _face_work
+    """The lettering faces (only those in used, when given), jobs at once (the longest step before the entries)."""
     # a words-only face lends its sheets' words (labels, hi-res rows) and letters nothing, so its art is never read
     names = ["stage", "title", *(name for name, face in mapping.get("faces", {}).items() if not face.get("words_only"))]
     names = [name for name in names if used is None or name in used]
-    _face_work = mapping, donors
     report_progress("art", "reading the lettering faces", 0.05, (0, len(names)))
-    found = {}
-    if jobs > 1 and len(names) > 1:  # an entry may letter with one face or none
-        with worker_pool(min(jobs, len(names))) as pool:
-            pending = {pool.submit(_face, name): name for name in names}
-            try:
-                for count, future in enumerate(as_completed(pending), 1):
-                    found[pending[future]] = future.result()
-                    report_progress("art", "reading the lettering faces", 0.05 + 0.45 * count / len(names),
-                                    (count, len(names)))
-            except BaseException:
-                pool.shutdown(wait=False, cancel_futures=True)
-                raise
-    else:
-        for count, name in enumerate(names, 1):
-            found[name] = _face(name)
-            report_progress("art", "reading the lettering faces", 0.05 + 0.45 * count / len(names),
-                            (count, len(names)))
-    return {name: found[name] for name in names}
+    finished = []
+
+    def progress(name: str) -> None:
+        finished.append(name)
+        report_progress("art", "reading the lettering faces", 0.05 + 0.45 * len(finished) / len(names),
+                        (len(finished), len(names)))
+
+    return dict(zip(names, ordered_map(partial(_face, mapping, donors), names, jobs, progress), strict=True))
 
 def source_image(spec: dict, donors: dict, stock: Image.Image) -> Image.Image:
 

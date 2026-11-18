@@ -49,13 +49,12 @@ def pins(monkeypatch):
     monkeypatch.setattr(installer, "check_input", lambda name, path: check(name, path) if name in installer.FILE_PROGRAMS else None)
 
 
-pytestmark = pytest.mark.skipif(os.name == "nt", reason="the fake programs are scripts with a #! line")
 COUNT = "Path(sys.argv[0] + '.runs').open('a').write('x')"
 
 
 def _runs(tool: Path) -> int:
     runs = Path(str(tool) + ".runs")
-    return len(runs.read_text()) if runs.exists() else 0
+    return len(runs.read_text(encoding="utf-8")) if runs.exists() else 0
 
 
 def test_the_programs_output_is_what_the_text_build_reads_and_the_program_runs_once(tmp_path):
@@ -119,7 +118,7 @@ def test_the_check_and_the_build_asking_at_once_run_the_program_once(tmp_path):
     with ThreadPoolExecutor(2) as pool:
         found = list(pool.map(lambda _: decrypt_with_tool("wo2-x360", tool, image), range(2)))
     assert found == [DECRYPTED, DECRYPTED]
-    assert runs.read_text() == "x"
+    assert runs.read_text(encoding="utf-8") == "x"
 
 
 def _marker_tool(tmp_path: Path) -> Path:

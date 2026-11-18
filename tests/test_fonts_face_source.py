@@ -20,7 +20,7 @@ def test_face_source_lookup_cannot_depend_on_cwd_or_break_dynamic_sibling_faces(
     if not Path(python).is_file():
         pytest.skip("font Python absent")
     probe = subprocess.run([python, "-c", "import importlib.util,json; print(json.dumps([m for m in ('fontforge','cairo','numpy','PIL','psMat') if importlib.util.find_spec(m) is None]))"],
-                           capture_output=True, text=True, check=True)
+                           capture_output=True, text=True, check=True, encoding="utf-8")
     if missing := json.loads(probe.stdout):
         pytest.skip("optional font libraries absent: " + ", ".join(missing))
     code = """
@@ -44,16 +44,17 @@ print(json.dumps(out,sort_keys=True))
     relocated = tmp_path / "relocated"
     package = relocated / "src/wozmod"
     shutil.copytree(REPO / "src/wozmod/fonts", package / "fonts")
-    (package / "__init__.py").write_text("")
+    (package / "__init__.py").write_text("", encoding="utf-8")
     shutil.copyfile(REPO / "src/wozmod/resources.py", package / "resources.py")
+    shutil.copytree(REPO / "src/wozmod/platform", package / "platform")  # resources imports it
     (package / "runtime").mkdir()
-    (package / "runtime/__init__.py").write_text("")
+    (package / "runtime/__init__.py").write_text("", encoding="utf-8")
     shutil.copyfile(REPO / "src/wozmod/runtime/latin_font.py", package / "runtime/latin_font.py")
     shutil.copytree(REPO / "data/art/faces", relocated / "data/art/faces")
     for variant, project in (("repository", REPO), ("relocated", relocated)):
         environment = dict(os.environ, PYTHONPATH=str(project / "src"), PYTHONDONTWRITEBYTECODE="1")
         run = subprocess.run([python, "-c", code], cwd=unrelated, env=environment,
-                             capture_output=True, text=True)
+                             capture_output=True, text=True, encoding="utf-8")
         assert run.returncode == 0, run.stdout + run.stderr
         results[variant] = json.loads(run.stdout.splitlines()[-1])
     failures = {name: {variant: results[variant].get(name) for variant in results}

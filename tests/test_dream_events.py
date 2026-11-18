@@ -290,12 +290,11 @@ SLOW = pytest.mark.skipif(
 
 
 def _stock_clips(game: Path, voices: list[int]) -> dict[int, array]:
-    from wozmod.formats.audio import _ffmpeg_each, kovs_ogg, stock_record
-    from wozmod.formats.linkdata import archive, decoded_member
+    from wozmod import game_files
+    from wozmod.formats.audio import _ffmpeg_each, kovs_ogg
 
-    index = decoded_member(archive(game / "LINKDATA1")[4058])
-    with (game / "data/Sound/Voice/Voice.bin").open("rb") as bank:
-        oggs = [kovs_ogg(stock_record(bank, index, v)) for v in voices]
+    takes = game_files.voices(game).clips(voices)
+    oggs = [kovs_ogg(takes[v]) for v in voices]
     pcms = _ffmpeg_each([(["-f", "ogg"], ogg, ["-ac", "1", "-ar", str(RATE), "-f", "f32le"]) for ogg in oggs])
     return {v: array("f", pcm) for v, pcm in zip(voices, pcms, strict=True)}
 
@@ -352,12 +351,12 @@ def test_the_three_lines_the_psp_sped_up_get_english_without_their_japanese():
     # Bug: the sped-up clips of 403/306, 410/255 and 411/273 are placed whole (the Japanese of their second halves
     # stays), the splice path drifts off the PSP's runs, or the leftover rule refuses them (they stay Japanese).
     # Measured: leftover -8.3, -6.6 and -8.6 dB against the worst other line's -4.2 (median -8.1).
-    from wozmod.formats.linkdata import archive, decoded_member
+    from wozmod import game_files
     from wozmod.voices.dream_events import DREAM_EVENTS, build_dream_events
 
     game, psp = Path(os.environ["WOZMOD_GAME"]), Path(os.environ["WOZMOD_DONORS"]) / "wo2-psp"
-    index = decoded_member(archive(game / "LINKDATA1")[4058])
-    _, scenes = build_dream_events(game, psp, index, archive(game / "LINKDATA2").read(list(DREAM_EVENTS)))
+    _, scenes = build_dream_events(game_files.voices(game), psp,
+                                   game_files.archive(game / "LINKDATA2").read(list(DREAM_EVENTS)))
 
     sped_up = {403: 306, 410: 255, 411: 273}
     assert {o: [line.index for line in scene.spliced] for o, scene in scenes.items() if scene.spliced} \

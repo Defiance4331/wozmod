@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from wozmod.game_files import StockVoices
 from wozmod.formats.audio import (
     MOZ_VOICE_IDS,
     VoiceBankError,
@@ -213,7 +214,7 @@ def test_x360_placeholder_falls_back_without_blocking_a_usable_shared_clip(tmp_p
     stock.write_bytes(kovs(96, samples=1234))
     stock_index = bytes(8) + struct.pack(">II", 0, 96) * 14
 
-    selected, sources = english_voice_clips({10: 0, 11: 1, 12: 2}, wo1_index, wo1_bank, {10: 3, 11: 0, 12: 2, 13: 1}, wo2_index, wo2_bank, stock_index, stock)
+    selected, sources = english_voice_clips({10: 0, 11: 1, 12: 2}, wo1_index, wo1_bank, {10: 3, 11: 0, 12: 2, 13: 1}, wo2_index, wo2_bank, StockVoices(stock_index, stock))
 
     assert {i: parse_kovs_record(clip)[2].sample_count for i, clip in selected.items()} == {10: 9600, 11: 7000}
     assert sources == {10: "wo2-x360", 11: "wo1-x360"}
@@ -249,7 +250,7 @@ def test_psp_voice_fills_only_a_line_neither_xbox_360_disc_has_and_leaves_as_48_
     stock_index = bytes(8) + struct.pack(">II", 0, 96) * 15
 
     clips, sources = english_voice_clips(
-        {11: 0}, wo1_index, wo1_bank, {10: 0}, wo2_index, wo2_bank, stock_index, stock,
+        {11: 0}, wo1_index, wo1_bank, {10: 0}, wo2_index, wo2_bank, StockVoices(stock_index, stock),
         psp=({10: 0, 11: 1, 12: 2, 14: 3}, psp_bank))
 
     assert sources == {10: "wo2-x360", 11: "wo1-x360", 12: "wo2-psp"}

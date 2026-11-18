@@ -8,16 +8,18 @@ import math
 import os
 import struct
 import zlib
-from concurrent.futures import as_completed
+from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 from wozmod.formats.linkdata import (
-    LINKDATA2_FIRST, parse_index, parse_lzp2, wo1_entries,
+    LINKDATA2_FIRST, parse_lzp2, wo1_entries,
 )
-from wozmod import resources
+from wozmod import game_files, resources
 from wozmod.progress import report as report_progress
+from wozmod.workers import ordered_map
 from . import lettering, words
 from wozmod.runtime.latin_font import CELL, LATIN_GLYPH
 from wozmod.runtime import camp_plate, design, text_boxes
@@ -39,7 +41,7 @@ from .imaging import (
 from . import packing
 from .stage_titles import title_members, title_sources
 from .logos import logo_image, resolved
-from .packing import packed_lzp2, worker_pool
+from .packing import packed_lzp2
 from .faces import (
     BANNER_LINES, BANNER_SAMPLE_WIDTH, BANNER_SINGLE_CENTRE, BASELINE, CARD_CENTRE, CARD_DROP, DREAM_NAME_BASELINES,
     FILLS, faces, ink_rows, lettering_layer, nearest, source_image, stock_image, strokes, text_lines, used_faces,
@@ -52,7 +54,6 @@ from .vector import (
 )
 MAPPING = REPO / "data/art/menu_textures.json"
 PACKAGE_MAGIC = 0x33B59
-_worker: dict = {}  # what each build worker reads: the archives, donors and edits build_art hands it
 
 def expanded(edit: dict):
     """Each (entry, recipe) a texture recipe stands for: its count steps the item and its WO1 X360 or WO2 X360 pointer alike."""
@@ -131,11 +132,11 @@ def only_strokes(image: Image.Image, spec: dict) -> Image.Image:
 
     found = strokes(image, FILLS[spec.get("fill", "yellow")])
     start, stop = (0, spec["strokes"]) if isinstance(spec["strokes"], int) else spec["strokes"]
-    keep = set(range(len(found))[start:stop])
-    label, kept = nearest(image, found), Image.new("RGBA", image.size)
-    for point, k in label.items():
-        if k in keep:
-            kept.putpixel(point, image.getpixel(point))
+    kept = Image.new("RGBA", image.size)
+    for x0, y0, _, _, cut in nearest(image, found)[start:stop]:
+        share = Image.new("RGBA", image.size)
+        share.paste(cut, (x0, y0))
+        kept = ImageChops.lighter(kept, share)  # the shares are disjoint: each pixel is one share's or blank
     return kept
 
 def button_1x(spec: dict) -> Image.Image:
@@ -633,27 +634,35 @@ def prompt_hires(family: str) -> bytes:
     return head + b"".join(art[scale][slot].tobytes("raw", "BGRA") for scale in PROMPT_HIRES_SCALES for slot in slots)
 
 
-def read_entry(stream, entry) -> tuple[bytes, bool]:
-
-    if entry.record.allocated_bytes:
-        raise ValueError(f"entry {entry.ordinal} is multi-member")
-    stream.seek(entry.offset)
-    data = stream.read(entry.stored_bytes)
+def read_entry(linkdata: game_files.StockArchive, ordinal: int) -> tuple[bytes, bool]:
+    """A single-member stock entry unpacked, and whether it was packed (LZP2)."""
+    if linkdata.index.entries[ordinal].record.allocated_bytes:
+        raise ValueError(f"entry {ordinal} is multi-member")
+    data = b"".join(linkdata.members(ordinal))
     return (parse_lzp2(data).decoded, True) if data[:4] == b"LZP2" else (data, False)
-
-def read_members(stream, entry) -> list[bytes]:
-
-    stream.seek(entry.offset)
-    allocation = stream.read(entry.allocated_bytes)
-    return [allocation[m.relative_offset:m.relative_offset + m.stored_bytes] for m in entry.members]
 
 # Shares of the art stage (measured): loading the donors 0 to 0.5, the entries to 0.65, the large plates to 0.95.
 
-def archive(key: int) -> tuple[Path, object]:
+@dataclass(frozen=True)
+class Rebuild:
+    """What each entry's rebuild reads, which build_art hands it: the stock archives, the donors and edits, where
+    previews go (None for none) and whether it keeps the bytes."""
+    linkdata1: game_files.StockArchive
+    linkdata2: game_files.StockArchive
+    donors: dict
+    edits: dict
+    preview: Path | None
+    write: bool
 
-    if key < LINKDATA2_FIRST:
-        return _worker["base_bin"], _worker["index"].entries[key]
-    return _worker["ld2_bin"], _worker["ld2_index"].entries[key - LINKDATA2_FIRST]
+    def archive(self, key: int) -> tuple[game_files.StockArchive, int]:
+        """The stock archive an entry key names (LINKDATA2 from LINKDATA2_FIRST) and the entry's ordinal in it."""
+        if key < LINKDATA2_FIRST:
+            return self.linkdata1, key
+        return self.linkdata2, key - LINKDATA2_FIRST
+
+    def stored_bytes(self, key: int) -> int:
+        linkdata, ordinal = self.archive(key)
+        return linkdata.index.entries[ordinal].stored_bytes
 
 def edited_lone(data: bytes, edits: list[dict], donors: dict, preview: Path | None = None) -> bytes:
 
@@ -670,26 +679,24 @@ def edited_lone(data: bytes, edits: list[dict], donors: dict, preview: Path | No
             preview_png(Path(f"{preview}.{at}.{edit['texture']}.png"), stock.textures[edit["texture"]], g1t.textures[edit["texture"]])
     return bytes(out)
 
-def rebuilt(ordinal: int) -> tuple[int, bytes, int]:
-
-    group = _worker["edits"][ordinal]
-    preview = _worker["preview"] and _worker["preview"] / str(ordinal)
+def rebuilt(work: Rebuild, ordinal: int) -> bytes:
+    """Entry ordinal with its edits (b"" when work keeps no bytes)."""
+    group = work.edits[ordinal]
+    preview = work.preview and work.preview / str(ordinal)
     edit = edited_lone if any("g1t_at" in e for e in group) else edited_entry
-    base_bin, entry = archive(ordinal)
-    with base_bin.open("rb") as stream:
-        if entry.record.allocated_bytes:  
-            members = read_members(stream, entry)
-            data = b"".join(parse_lzp2(m).decoded for m in members)
-            if ordinal == FONT_ENTRY:
-                data = latin_font(data, _worker["donors"]["latin"])
-            else:
-                data = edit(data, group, _worker["donors"], preview)
-            return ordinal, data if _worker["write"] else b"", len(group)
-        data, packed = read_entry(stream, entry)
-    data = edit(data, group, _worker["donors"], preview)
-    if not _worker["write"]:  
-        return ordinal, b"", len(group)
-    return ordinal, packed_lzp2(data) if packed else data, len(group)
+    linkdata, entry = work.archive(ordinal)
+    if linkdata.index.entries[entry].record.allocated_bytes:
+        data = b"".join(parse_lzp2(m).decoded for m in linkdata.members(entry))
+        if ordinal == FONT_ENTRY:
+            data = latin_font(data, work.donors["latin"])
+        else:
+            data = edit(data, group, work.donors, preview)
+        return data if work.write else b""
+    data, packed = read_entry(linkdata, entry)
+    data = edit(data, group, work.donors, preview)
+    if not work.write:
+        return b""
+    return packed_lzp2(data) if packed else data
 
 def donor_stem(stem: Path | None, image: Path | None, identity, destination: Path, check: bool = True) -> Path:
     """The donor's linkdata_ens stem: stem, else both members extracted from the disc image to destination, which
@@ -730,7 +737,7 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
     With preview_dir and entries, only those entries are rebuilt and their stock|edited sheets go to preview_dir
     instead (output_dir None); with entries_dir and entries, only those entries are rebuilt and written there as
     <ordinal>.bin, for a test run to swap in (`run_check.py --entries-dir`), never a partial install tree. jobs is the
-    worker process count (default: CPU count).
+    worker thread count (default: CPU count).
     Raises ArtError for a wrong input; for a wrong donor archive, before writing anything.
     """
     packing.LZP2_CACHE = lzp2_cache
@@ -786,12 +793,10 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
                | {3} | set(X360_PLATE_ENTRIES) | native_reference_entries(mapping))).items()}
     donors["squish"] = squeeze
     donors["mapping"] = mapping
-    base_bin = game / "LINKDATA1.BIN"
-    index = parse_index((game / "LINKDATA1.IDX").read_bytes(), base_bin.stat().st_size)
+    linkdata1 = game_files.archive(game / "LINKDATA1")
     stored: dict[int, bytes] = {}
-    with base_bin.open("rb") as stream:
-        donors |= {("moz", k): donor_g1ts(read_entry(stream, index.entries[k])[0])
-                   for k in sorted({e[key][0] for e in flat for key in ("against", "base", "footprint", "cover") if key in e})}
+    donors |= {("moz", k): donor_g1ts(read_entry(linkdata1, k)[0])
+               for k in sorted({e[key][0] for e in flat for key in ("against", "base", "footprint", "cover") if key in e})}
     donors["faces"] = faces(mapping, donors, jobs, used_faces(list(edits.values())))
     review_dir = output_dir / "review" if output_dir else preview_dir or entries_dir
     donors["menu_labels"] = prepare_menu_labels(mapping, review_dir / "native-menu-labels" if review else None,
@@ -805,25 +810,20 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
         with lettering.untracked():
             report = native_menu_widths(mapping, donors)
         native_width_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    ld2_bin = game / "LINKDATA2.BIN"
-    _worker.update(base_bin=base_bin, index=index, donors=donors, edits=edits,
-                  ld2_bin=ld2_bin, ld2_index=parse_index((game / "LINKDATA2.IDX").read_bytes(), ld2_bin.stat().st_size),
-                  preview=preview_dir, write=bool(output_dir or entries_dir))
+    work = Rebuild(linkdata1, game_files.archive(game / "LINKDATA2"), donors, edits, preview_dir,
+                   bool(output_dir or entries_dir))
+    finished = []
 
-    with worker_pool(jobs) as pool:
-        futures = [pool.submit(rebuilt, ordinal)
-                   for ordinal in sorted(edits, key=lambda ordinal: -archive(ordinal)[1].stored_bytes)]
-        try:
-            for future in as_completed(futures):
-                ordinal, data, count = future.result()
-                stored[ordinal] = data
-                report_progress("art", "building menu textures", 0.5 + 0.15 * len(stored) / len(edits),
-                                (len(stored), len(edits)))
-                print(f"entry {ordinal}: {count} textures, {archive(ordinal)[1].stored_bytes} -> {len(data)} bytes",
-                      flush=True)
-        except BaseException:
-            pool.shutdown(wait=False, cancel_futures=True)
-            raise
+    def progress(ordinal: int) -> None:
+        finished.append(ordinal)
+        report_progress("art", "building menu textures", 0.5 + 0.15 * len(finished) / len(edits),
+                        (len(finished), len(edits)))
+
+    order = sorted(edits, key=lambda ordinal: -work.stored_bytes(ordinal))  # the largest first
+    for ordinal, data in zip(order, ordered_map(partial(rebuilt, work), order, jobs, progress), strict=True):
+        stored[ordinal] = data
+        print(f"entry {ordinal}: {len(edits[ordinal])} textures, {work.stored_bytes(ordinal)} -> {len(data)} bytes",
+              flush=True)
     if entries_dir:
         entries_dir.mkdir(parents=True, exist_ok=True)
         for ordinal, data in stored.items():
@@ -837,16 +837,14 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
     built.mkdir(parents=True, exist_ok=True)
     for ordinal, data in stored.items():
         (built / f"{ordinal}.bin").write_bytes(data)
-    with base_bin.open("rb") as stream:
-        prompts = read_entry(stream, index.entries[PROMPT_ENTRY])[0]
+    prompts = read_entry(linkdata1, PROMPT_ENTRY)[0]
     wo2_prompts = wo1_entries(wo2.with_suffix(".lnk"), wo2.with_suffix(".idx"), [13])[13]
     for family in PROMPT_FAMILIES:
         (output_dir / f"wozmod/prompts-{family}.bin").write_bytes(pad_prompts(prompts, wo2_g1ts(wo2_prompts), family))
         (output_dir / f"wozmod/prompts-{family}-hires.bin").write_bytes(prompt_hires(family))
     # an install takes the outlines from the lettering bundle: players have no FontForge
     outlines = lettering.outlines(working)
-    with base_bin.open("rb") as stream:
-        atlas = b"".join(parse_lzp2(m).decoded for m in read_members(stream, index.entries[FONT_ENTRY]))
+    atlas = b"".join(parse_lzp2(m).decoded for m in linkdata1.members(FONT_ENTRY))
     (output_dir / "wozmod/glyphs.bin").write_bytes(glyphs_bin(atlas, from_json(outlines)))
     if hires:
         write_hires(output_dir, wo1_x360, wo2, squeeze, jobs, review)

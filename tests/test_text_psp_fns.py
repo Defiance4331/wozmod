@@ -37,7 +37,7 @@ def test_real_psp_pointers_do_not_decode_raw_quotes_or_leak_voice_suffixes(tmp_p
     member_name = "PSP_GAME/USRDIR/LINKDATA_NA.FNS"
     path = extract_donor(image, WO2_PSP, tmp_path / "wo2-psp", files=[member_name])[0]
     archive = path.read_bytes()
-    payload = json.loads((Path(__file__).resolve().parents[1] / "data/text/table.json").read_text())
+    payload = json.loads((Path(__file__).resolve().parents[1] / "data/text/table.json").read_text(encoding="utf-8"))
     refs = [row["ref"] for row in payload["rows"] if row.get("ref", [])[:2] == ["wo2-psp", "fns"]]
     assert refs, "No PSP data-file pointers"
     expected, views = {}, {}

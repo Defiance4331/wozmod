@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 CAPTION_CALLERS = ("0x49dace", "0x49db4c")  # an event caption's draws (runtime/english_runtime.c event_line_key)
 RATE = 48_000  # the `record` format: float32 stereo
 SCAN_RATE = 8_000  # the rate takes are found at: 0.125 ms steps, far inside the 0.1 s asked
-DREAM_VOICES = range(0xAF3 + 241, 0xAF3 + 336)  # the Z Dream scenes' voice ids (text.contexts.event_voice)
+DREAM_VOICES = range(0xAF3 + 241, 0xAF3 + 336)  # the Z Dream scenes' voice ids (formats.audio.event_voice)
 FOUND = 0.3  # least normalised correlation of a played take: 0.57-0.74 over the music (run 2026-11-15_2151-levels-408)
 NEAR = 1.0  # seconds from a caption's start within which its take is looked for
 ASR = Path(__file__).resolve().parent / "asr_check.py"
@@ -103,13 +103,10 @@ def decode(data: bytes, suffix: str, rate: int = SCAN_RATE) -> numpy.ndarray:
 
 def stock_takes(game: Path, ids) -> dict[int, bytes]:
     """The Ogg stream of each voice id in the game folder's stock Voice.bin, found through its voice index."""
-    from wozmod.formats.audio import kovs_ogg, stock_record
-    from wozmod.formats.linkdata import archive, decoded_member
-    from wozmod.install.stock import VOICE_INDEX
+    from wozmod import game_files
+    from wozmod.formats.audio import kovs_ogg
 
-    index = decoded_member(archive(game / "LINKDATA1")[VOICE_INDEX])
-    with (game / "data/Sound/Voice/Voice.bin").open("rb") as bank:
-        return {vid: kovs_ogg(record) for vid in ids if (record := stock_record(bank, index, vid))}
+    return {vid: kovs_ogg(record) for vid, record in game_files.voices(game).clips(ids).items() if record}
 
 
 def bank_takes(bank: bytes, ids) -> dict[int, bytes]:
@@ -145,11 +142,11 @@ def find(recording: numpy.ndarray, take: numpy.ndarray) -> tuple[float, float]:
 
 def hear(wav: Path, clips: list[dict], model: str = "medium") -> list[dict]:
     """asr_check.py over many stretches of one recording, one model load: each clip's transcript and language."""
-    with tempfile.NamedTemporaryFile("w", suffix=".json") as f:
+    with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8") as f:
         json.dump(clips, f)
         f.flush()
         out = subprocess.run(["nice", "uv", "run", "-q", str(ASR), str(wav), "--clips", f.name, "--model", model],
-                             capture_output=True, text=True)
+                             capture_output=True, text=True, encoding="utf-8")
     if out.returncode:
         raise RuntimeError(f"asr_check failed: {out.stderr.strip()[-400:]}")
     return json.loads(out.stdout)
@@ -166,7 +163,7 @@ def placed(heard: dict, takes: dict[int, bytes]) -> tuple[list[dict], float, lis
     """(caption spans, the recording's start on their clock, per caption: `at` seconds into the recording, `gap`,
     and the voice id, correlation and `lag` behind the caption of the nearest take played, when one is)."""
     wav = Path(heard["wav"])
-    start = recording_start(json.loads(Path(heard["growth"]).read_text()), wav_data_offset(wav.read_bytes()[:4096]))
+    start = recording_start(json.loads(Path(heard["growth"]).read_text(encoding="utf-8")), wav_data_offset(wav.read_bytes()[:4096]))
     spans = caption_spans(heard["polls"], heard["end"])
     recording = decode(wav.read_bytes(), ".wav")
     found = [(vid, *find(recording, decode(ogg, ".ogg"))) for vid, ogg in takes.items()]

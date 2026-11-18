@@ -1,12 +1,17 @@
+from collections import Counter, defaultdict
 from dataclasses import replace
+from itertools import accumulate
+import random
 import struct
 
-from wozmod.formats.scripts import Line, Table
+from wozmod.formats.scripts import NOTICE, SPEAK, Line, Table
 from wozmod.text.script_alignment import (
     QUOTE_INSERT,
     WO1_QUOTE_INSERT,
     Script,
     StageJoin,
+    _alignment,
+    _command_rows,
     caption_pairs,
     donor_event_lines,
     event_caption_pairs,
@@ -170,6 +175,87 @@ def test_notice_join_pairs_each_notice_with_the_one_its_commands_counterpart_sho
     stock = replace(_script([b"N0", b"N1", b"N2", b"N3", b"N4"]), events=(
         (_notice(0), a), (_notice(1), b, b, b, c), (_notice(2, form=1), a), (_notice(3), c), (_notice(4), c)))
     assert notice_join(StageJoin("wo2-x360", 0, donor, {}, {}, stock)) == {0: 0, 1: 1, 2: 3}
+
+
+def _reference_alignment(stock, donor, persons, pairs, opcode):
+    """script_alignment._alignment as it was in Python before its table and traces moved to streams.rs."""
+    lines = {r: d for (table, r), d in pairs.items() if table == "dialog"}
+    ours, oe = _command_rows(stock, lambda p: persons.get(p, ("stock", p)), lambda r: lines.get(r, ("stock", r)))
+    theirs, te = _command_rows(donor, lambda p: p, lambda r: r)
+    holders = defaultdict(Counter)
+    for (_, bag, _), f in zip(theirs, te, strict=True):
+        holders[bag][f] += 1
+    sizes, their_sizes = Counter(oe), [te.count(f) for f in range(len(donor.events))]
+    likeness = [[0] * len(their_sizes) for _ in stock.events]
+    for (e, bag), count in Counter(zip(oe, (bag for _, bag, _ in ours), strict=True)).items():
+        for f, their_count in holders[bag].items():
+            likeness[e][f] += min(count, their_count)
+    for e, row in enumerate(likeness):
+        row[:] = [k * 1000 // max(sizes[e], their_size) for k, their_size in zip(row, their_sizes, strict=True)]
+    n, m = len(ours), len(theirs)
+    heavy = 2000 * (n + m) + 1
+
+    def gain(i, j):
+        if ours[i][0] != theirs[j][0]:
+            return 0
+        c = ours[i][2]
+        return (heavy if c is not None and c[0] in (NOTICE, SPEAK) else 1000) + likeness[oe[i]][te[j]]
+
+    score = [[0] * (m + 1)]
+    for i in range(n):
+        above, row = score[-1], score[-1].copy()
+        for j in range(m):
+            if (g := gain(i, j)) and above[j] + g > row[j + 1]:
+                row[j + 1] = above[j] + g
+        score.append(list(accumulate(row, max)))
+
+    def traced(earliest):
+        found, i, j = defaultdict(set), n, m
+        while i and j:
+            g = gain(i - 1, j - 1)
+            here = score[i][j]
+            pair = g > 0 and here == score[i - 1][j - 1] + g
+            up, left = here == score[i - 1][j], here == score[i][j - 1]
+            if pair and not (earliest and (up or left)):
+                c = ours[i - 1][2]
+                if c is not None and c[0] == opcode:
+                    found[c[1 if opcode == NOTICE else 2]].add(theirs[j - 1][2][1 if opcode == NOTICE else 2])
+                i, j = i - 1, j - 1
+            elif up:
+                i -= 1
+            else:
+                j -= 1
+        return found
+
+    return traced(True), traced(False)
+
+
+def test_the_native_stream_alignments_trace_the_pairs_the_python_table_did():
+    # Bugs: a tie broken the other way in streams.rs (the earliest trace taking a pair where up or left scores the
+    # same, or the latest not), an off-by-one between a row and its place in the table, or a row given the wrong
+    # weight (a notice or speak scored as a plain command). Few opcodes, records and speakers make ties common.
+    rng = random.Random(7)
+
+    def command():
+        op = rng.choice((0x0A, 0x23, NOTICE, SPEAK, SPEAK))
+        if op == NOTICE:
+            return _notice(rng.randrange(4), form=rng.randrange(2))
+        return _speak(rng.randrange(1, 3), rng.randrange(4)) if op == SPEAK else (op, 0, 0, 0, 0, 0, 0, 0)
+
+    def events():
+        return tuple(tuple(command() for _ in range(rng.randrange(6))) for _ in range(rng.randrange(1, 6)))
+
+    wrong = []
+    for case in range(400):
+        stock, donor = replace(_script(), events=events()), replace(_script(), events=events())
+        persons = rng.choice(({1: 1, 2: 2}, {1: 2, 2: 1}, {1: 1}))
+        pairs = {("dialog", r): rng.randrange(4) for r in range(4) if rng.random() < 0.6}
+        for opcode in (NOTICE, SPEAK):
+            got = _alignment(stock, donor, persons, pairs, opcode)
+            want = _reference_alignment(stock, donor, persons, pairs, opcode)
+            if [list(d.items()) for d in got] != [list(d.items()) for d in want]:
+                wrong.append((case, hex(opcode), got, want))
+    assert not wrong, wrong[:3]
 
 
 def _container(*entries):

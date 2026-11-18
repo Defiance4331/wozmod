@@ -5,26 +5,21 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import queue
 import re
 import shutil
-import signal
-import sys
 import threading
 import time
-from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, wait
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from functools import partial
-from multiprocessing import get_context
 from pathlib import Path
 
 from wozmod.version import __version__ as VERSION
 from wozmod import progress as reporting
-from wozmod import native, permissions, process, remembered, resources
+from wozmod import native, platform, remembered, resources
 from wozmod.donors.discs import DISCS, DonorsFolder
-from wozmod.install import step_keys
+from wozmod.install import manifest, step_keys, steps
 from wozmod.install.stock import STEPS, Verdict, check_game
-from wozmod.progress import Cancelled, Progress
+from wozmod.progress import Progress
 
 MANIFEST = "wozmod/install.json"
 RECORD_FORMAT = 2  # 1: files only; 2: also each step's key and files, and each movie's key (see _write_manifest)
@@ -47,28 +42,6 @@ PARENT_MEMORY = 4 * GIB  # the art stage's main process peaks at 3.2-3.7 GB what
 WORKER_MEMORY = GIB // 2  # one art worker plus its share of the ffmpeg batches, measured at about 0.25 GB
 
 
-def _memory() -> tuple[int, int] | None:
-    """(total, available) physical memory in bytes, or None when the system does not say."""
-    try:
-        if os.name == "nt":
-            import ctypes
-
-            class Status(ctypes.Structure):
-                _fields_ = [("length", ctypes.c_ulong), ("load", ctypes.c_ulong),
-                            ("total", ctypes.c_ulonglong), ("available", ctypes.c_ulonglong),
-                            ("page_total", ctypes.c_ulonglong), ("page_available", ctypes.c_ulonglong),
-                            ("virtual_total", ctypes.c_ulonglong), ("virtual_available", ctypes.c_ulonglong),
-                            ("extended", ctypes.c_ulonglong)]
-            status = Status(length=ctypes.sizeof(Status))
-            if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
-                return None
-            return status.total, status.available
-        fields = dict(line.split(":", 1) for line in Path("/proc/meminfo").read_text(encoding="ascii").splitlines())
-        return int(fields["MemTotal"].split()[0]) * 1024, int(fields["MemAvailable"].split()[0]) * 1024
-    except (OSError, KeyError, ValueError, AttributeError):
-        return None
-
-
 def default_workers(cpus: int, memory: tuple[int, int] | None) -> int:
     """Workers that leave the player one core and a quarter of RAM (at least 2 GiB) free."""
     workers = max(1, cpus - 1)
@@ -83,7 +56,7 @@ def worker_count() -> int:
     """Worker processes for each build stage: WOZMOD_JOBS, else what the CPUs and free RAM allow."""
     value = os.environ.get("WOZMOD_JOBS", "")
     if not value:
-        return default_workers(os.process_cpu_count() or 1, _memory())
+        return default_workers(os.process_cpu_count() or 1, platform.memory())
     if not value.isdecimal() or int(value) < 1:
         raise InstallError(f"WOZMOD_JOBS must be a whole number of 1 or more, not {value!r}")
     return int(value)
@@ -353,6 +326,9 @@ def check_inputs(game: Path, inputs: dict[str, Path | None], log=None, rebuilt=S
         # a checkout synced without --extra native, or before the package gained the mouths
         lines.append("the wozmod-native package is missing or out of date; the voice build needs it for the Dream "
                      "movies and scenes and the event lines' mouths")
+    if "art" in rebuilt and not all(hasattr(native.module, name) for name in ("strokes", "nearest_cuts", "unglowed")):
+        lines.append("the wozmod-native package is missing or out of date; the art build needs it to read the "
+                     "lettering faces")
     if lines:
         raise InstallError("\n".join(lines))
     return [*verdict.notes(), *verdict.kept_notes(rebuilt)]
@@ -400,9 +376,9 @@ def _remove(game: Path, files: dict[str, str]) -> dict[str, str]:
 
 def _unlock(game: Path, names, log) -> None:
     """Give the installed files the game folder's permissions before anything reads them: releases up to 0.2.1
-    placed them so that only the account that installed them could open them (wozmod.permissions)."""
+    placed them so that only the account that installed them could open them (platform.match_folder_access)."""
     try:
-        changed = permissions.inherit(game / name for name in names)
+        changed = platform.match_folder_access(game / name for name in names)
     except PermissionError as error:
         raise InstallError(f"wozmod needs administrator rights, just this once, to fix its files in {game}. Close "
                            "wozmod, right-click wozmod-setup.exe, choose \"Run as administrator\", and try "
@@ -417,7 +393,7 @@ def _write_manifest(game: Path, files: dict[str, str], version: str | None = VER
     "movies". Every later version reads every earlier format; uninstall needs only "files"."""
     path = game / MANIFEST
     temporary = path.with_name(path.name + ".tmp")
-    record = {"format": RECORD_FORMAT, **({"version": version} if version else {}), "platform": sys.platform,
+    record = {"format": RECORD_FORMAT, **({"version": version} if version else {}), "platform": platform.NAME,
               "files": dict(sorted(files.items())), **({"steps": steps} if steps is not None else {})}
     temporary.write_text(json.dumps(record, indent=1) + "\n", encoding="utf-8")
     os.replace(temporary, path)
@@ -520,7 +496,7 @@ def _recorded_steps(record: dict) -> dict | str:
     """The record's steps, or why they cannot be used (then every step is built)."""
     if record.get("format") != RECORD_FORMAT or not isinstance(record.get("steps"), dict):
         return "the last install was made by a wozmod from before step keys"
-    if record.get("platform") != sys.platform:
+    if record.get("platform") != platform.NAME:
         return f"the last install was made on {record.get('platform')}"
     steps, files, owner = record["steps"], record["files"], {}
     try:
@@ -647,21 +623,6 @@ def _menu_art(game: Path, donors: Path, lettering: Path, staging: Path, out: Pat
         os.replace(built, out / "wozmod" / built.name)
 
 
-def _worker_start(events, stop, log_path=None) -> None:
-    """Runs first in each build worker: its progress events go to the parent, and `stop` cancels it.
-
-    What the build code prints goes to the log file, not to the terminal or the window.
-    """
-    reporting.attach(events.put, stop)
-    if hasattr(os, "setpgrp"):
-        os.setpgrp()  # the worker and what it starts (ffmpeg, a pool of its own) can be killed together
-    if log_path:
-        log = open(log_path, "a", buffering=1, encoding="utf-8")
-        sys.stdout = sys.stderr = log
-        for descriptor in (1, 2):  # also what a child process or native code writes
-            os.dup2(log.fileno(), descriptor)
-
-
 def _voice_banks(game: Path, donors: Path, speech: Path, out: Path, jobs: int) -> None:
     """The voice stage, at a lower priority than the art stage: the banks go below out/wozmod.
 
@@ -672,65 +633,8 @@ def _voice_banks(game: Path, donors: Path, speech: Path, out: Path, jobs: int) -
     """
     from wozmod.voices import build_voice_banks
 
-    if hasattr(os, "nice"):
-        os.nice(VOICE_NICE)
-    if hasattr(os, "sched_setscheduler"):  # Linux; threads and child processes started from here inherit it
-        try:
-            os.sched_setscheduler(0, os.SCHED_BATCH, os.sched_param(0))
-        except OSError:
-            pass  # the system does not allow it: the voices only take a little longer
+    platform.lower_priority()  # threads and child processes started from here inherit it
     build_voice_banks(game, donors, speech, out / "wozmod", jobs)
-
-
-def _drain(events, progress: Progress) -> None:
-    while True:
-        try:
-            progress.apply(events.get_nowait())
-        except queue.Empty:
-            return
-
-
-VOICE_NICE = 10  # how much lower than the art stage the voice stage runs (Unix)
-GRACE = 10  # seconds the build workers get to stop by themselves before they are killed
-
-
-def _kill_tree(worker) -> None:
-    """Kill a build worker and everything it started."""
-    if hasattr(os, "killpg"):
-        try:
-            os.killpg(worker.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
-    elif os.name == "nt":
-        process.run(["taskkill", "/F", "/T", "/PID", str(worker.pid)], capture_output=True, check=False)
-    worker.kill()
-
-
-def _stop_workers(pool, futures, stop) -> None:
-    """Ask the build workers to stop, give them GRACE seconds, then kill what is left."""
-    stop.set()
-    wait(futures, timeout=GRACE)
-    processes = list((getattr(pool, "_processes", None) or {}).values())  # shortcut: no public way to kill a pool
-    pool.shutdown(wait=False, cancel_futures=True)
-    for worker in processes:
-        _kill_tree(worker)
-    for worker in processes:
-        worker.join(5)
-
-
-def _run_stages(pool, futures: dict, events, stop, progress: Progress) -> None:
-    pending, cancelled_at = dict(futures), None
-    while pending:
-        done, _ = wait(pending, timeout=0.2, return_when=FIRST_COMPLETED)
-        _drain(events, progress)
-        for future in done:
-            future.result()  # a stage that failed or was cancelled raises here
-            progress.finish(pending.pop(future))
-        if progress.cancel.is_set():
-            stop.set()
-            cancelled_at = cancelled_at or time.monotonic()
-            if time.monotonic() - cancelled_at > GRACE:
-                raise Cancelled()
 
 
 def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progress, jobs: int, checked,
@@ -749,7 +653,7 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
               if movies is None or f"wozmod/movie/{m.path}" in movies]
     reads: dict[str, list[str]] = {}
     for step in rebuilt:
-        for disc, files in step_keys.disc_reads(step).items():
+        for disc, files in manifest.disc_reads(step).items():
             reads.setdefault(disc, []).extend(f for f in files if f not in reads[disc])
     plan = [(disc, DISCS[disc].donor, folders.folder(disc), files, f"reading the {DISCS[disc].title} disc")
             for disc, files in reads.items()]
@@ -770,7 +674,7 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
     checked()  # a wrong input is named before a disc that failed to read
     if unread:
         raise unread
-    if step_keys.PROGRAMS & set(rebuilt):
+    if manifest.PROGRAMS & set(rebuilt):
         _place_programs(inputs, donors)
     progress.finish("discs")
     progress.checkpoint()
@@ -778,12 +682,12 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
     # The builds are independent: run them side by side, each in its own process, each into its own folder laid out
     # as the game folder, so that the record knows which step wrote which file.
     progress.begin("build")
-    builds = {"text": partial(_text_table, game, donors), "voices": partial(_voice_banks, game, donors, inputs["speech"], jobs=jobs),
-              "art": partial(_menu_art, game, donors, inputs["lettering"], staging / "art", jobs=jobs)}
-    builds = {name: build for name, build in builds.items() if name in rebuilt}
-    targets = {name: staging / "steps" / name for name in builds}
-    context = get_context("spawn")
-    events, stop = context.Queue(), context.Event()
+    given = steps.Inputs(game=game, donors=donors, speech=inputs["speech"], lettering=inputs["lettering"], jobs=jobs)
+    work = {name: given.arguments(staging / name, staging / "steps" / name) for name in rebuilt}
+    for name, step in steps.STEPS.items():
+        progress.begin(name, step.label)
+    for name in [s for s in STEPS if s not in work]:
+        progress.finish(name)
     log_path = remembered.settings_path().with_name("install.log")  # one folder with the remembered paths
     try:
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -791,21 +695,10 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
             pass
     except OSError:
         log_path = None  # no log is better than no install
-    with ProcessPoolExecutor(3, mp_context=context, initializer=_worker_start,
-                             initargs=(events, stop, log_path)) as pool:
-        futures = {pool.submit(build, targets[name]): name for name, build in builds.items()}
-        for key, text in (("text", "building the text table"), ("voices", "reading the voice banks"),
-                          ("art", "preparing the menu art")):
-            progress.begin(key, text)
-        for name in [s for s in STEPS if s not in builds]:
-            progress.finish(name)
-        try:
-            _run_stages(pool, futures, events, stop, progress)
-        except BaseException:
-            _stop_workers(pool, futures, stop)
-            raise
+    steps.run(work, progress, log_path)
     written: dict[str, list[str]] = {}
-    for name, folder in targets.items():
+    for name in work:
+        folder = work[name]["out"]
         folder.mkdir(parents=True, exist_ok=True)
         written[name] = []
         for built in sorted(p for p in folder.rglob("*") if p.is_file()):
@@ -874,7 +767,7 @@ def install(game: Path, inputs: dict[str, Path], force: bool = False, log=print,
             progress.checkpoint()
 
         try:
-            staging = permissions.staging_folder(game, ".wozmod-build-")
+            staging = platform.staging_folder(game, ".wozmod-build-")
         except OSError:
             checked()  # a game folder that is not there is named by the checks
             raise

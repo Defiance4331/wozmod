@@ -60,7 +60,8 @@ copies.
   `--file`. Do not make another install per task or per round: each one
   costs about 3 GB of disk.
 - When the disk needs it, `tools/cleanup.py` lists old game test runs, stale
-  caches, older packaging rounds and worktrees already in main; `--delete`
+  caches, older packaging rounds, worktrees already in main and reference
+  builds (`work/verify/`) that no live checkout uses; `--delete`
   removes them slowly. Run it by hand only, never from a hook or a timer.
 
 ## Testing
@@ -71,20 +72,29 @@ stock bytes. Synthetic bytes in
 `tmp_path` cover formats and patch logic. Use stock or donor files only for
 what synthetic bytes cannot show, and skip when they are absent. Slow tests run
 only behind a `WOZMOD_<NAME>=1` skipif. Input paths come from `[tests]` in
-the main checkout's `work/harness.toml` (see `tests/conftest.py`).
-`tools/verify.sh` also runs the slow ones, and fails when an input is missing
-instead of skipping. Before handing back a change to the runtime, the art or the
-install, run the slow tests that guard what you changed: `tools/verify.sh`
-followed by their paths (for example the DLL pin in `tests/test_install_pins.py`
-after a runtime change). Run `tools/verify.sh --full`, which runs everything and
-rebuilds the art even when nothing it reads has changed, before a release.
-`tools/verify.sh` runs with the machine to itself: while another heavy run, from
-any worktree, holds `work/.machine.lock`, it waits and says who holds it. Run a
-dev install, an art build or a benchmark the same way, through
-`python3 tools/machine_lock.py COMMAND`, and give a run that may wait a long
-timeout (a full run takes about 26 minutes). A game launch and a test run wait
-in turn while a heavy run has the machine, and a heavy run waits for running
-games and test runs to end. Stop only runs you started.
+the main checkout's `work/harness.toml` (see `tests/conftest.py`). A test that
+cannot run on one system carries `linux_only(reason)` or `real_windows(reason)`
+(`SYSTEM_MARKS` in `tests/conftest.py`), so both systems collect the same tests.
+
+Before handing back a change, run `tools/verify.py`. It runs the fast suite on
+Linux in about 30 s, strictly (a missing input fails instead of skipping), then
+the same suite under Windows Python in the background (about 2 minutes; `--wait`
+waits for it). Verdicts are local git notes on the tree, so an unchanged tree
+reuses them. It also lists the slow checks your diff from main triggers
+(`tools/verify_checks.toml`, each row citing the incident behind it): run them
+with `tools/verify.py --triggered` before handing back a change to the runtime,
+the art or the install. `tools/verify.py ref STEP...` builds an install step
+(text, voices, art) once per step key, with its read trace and a byte diff
+against main's build. Before a release, run `tools/verify.py release`: everything,
+failing when a run skipped or left out a test. verify judges with its own code
+and checklist from the merge base with main, so an edit to either takes effect
+once it is on main. `ref`, `release` and `--triggered` run with the machine to
+itself: while another heavy run, from any worktree, holds `work/.machine.lock`,
+they wait and say who holds it. Run a dev install, an art build or a benchmark
+the same way, through `python3 tools/machine_lock.py COMMAND`, and give a run
+that may wait a long timeout (a release takes about 40 minutes). A game launch
+and a test run wait in turn while a heavy run has the machine, and a heavy run
+waits for running games and test runs to end. Stop only runs you started.
 `work/machine-lock.log` keeps each heavy run's minutes and CPU minutes. Hand back a
 change players see with the
 `evidence/contact-sheet.html` that `tools/run_check.py` writes: each capture beside

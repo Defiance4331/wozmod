@@ -37,6 +37,10 @@ PRIVATE = re.compile(r"\bADR[ -]?\d+|\bprivate/|\.agent-outputs|\bvault\b")
 PRIVATE_GUARDS = {".gitignore", "tests/test_repository_hygiene.py", "tests/test_githooks.py", "tools/githooks/commit-msg"}
 
 
+TREE = pytest.mark.linux_only("checks the repository's own files, the same bytes whichever system runs the check, "
+                              "listed by git, which the Windows test environment has no need for")
+
+
 def _files() -> list[Path]:
     listed = subprocess.run(
         ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
@@ -66,6 +70,7 @@ def _keys(value):
             yield from _keys(item)
 
 
+@TREE
 def test_only_our_source_and_data_types_are_tracked() -> None:
     # Bug: an extracted texture, sound or archive (.tga, .xma, .dat) is committed under a type no list names.
     others = [str(p.relative_to(REPO)) for p in _files() if p.suffix.lower() not in OWN_SUFFIXES]
@@ -73,6 +78,7 @@ def test_only_our_source_and_data_types_are_tracked() -> None:
     assert others == []
 
 
+@TREE
 def test_no_japanese_game_text_is_tracked() -> None:
     """Japanese is the game's own text; rows are keyed by hash, never by the stock string."""
     # Bug: the stock string is saved in the game's own Shift-JIS or UTF-16 (not UTF-8, so never searched),
@@ -86,6 +92,7 @@ def test_no_japanese_game_text_is_tracked() -> None:
     assert offending == []
 
 
+@TREE
 def test_no_tracked_file_cites_the_private_notes() -> None:
     # Bug: a comment cites a private ADR number or private/ path, which the public repo cannot resolve and
     # which once had to be scrubbed from history. The guards name the patterns on purpose.
@@ -95,6 +102,59 @@ def test_no_tracked_file_cites_the_private_notes() -> None:
     assert offending == []
 
 
+TEXT_CALLS = {"read_text": 0, "write_text": 1}  # Path method: the position its encoding argument may take
+PROCESS_CALLS = {"run", "Popen", "check_output", "check_call", "call"}
+
+
+def _unencoded(tree: ast.AST) -> list[int]:
+    """Lines of calls that take the locale's text encoding: Path.read_text/write_text, the builtin open in text mode, a
+    subprocess call with text=True or universal_newlines=True, each with no encoding named."""
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        named = {k.arg for k in node.keywords}
+        if "encoding" in named:
+            continue
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr in TEXT_CALLS and len(node.args) <= TEXT_CALLS[func.attr]:
+            found.append(node.lineno)
+        elif isinstance(func, ast.Name) and func.id == "open" and len(node.args) < 4:
+            mode = node.args[1] if len(node.args) > 1 else next((k.value for k in node.keywords if k.arg == "mode"), None)
+            if not (isinstance(mode, ast.Constant) and "b" in str(mode.value)) and (mode is None or isinstance(mode, ast.Constant)):
+                found.append(node.lineno)
+        elif isinstance(func, ast.Attribute) and func.attr in PROCESS_CALLS and any(
+                k.arg in ("text", "universal_newlines") and isinstance(k.value, ast.Constant) and k.value.value is True
+                for k in node.keywords):
+            found.append(node.lineno)
+    return found
+
+
+@TREE
+def test_text_files_and_program_output_name_their_encoding() -> None:
+    # Bug: a text read, write or program output with no encoding takes the locale's: cp1252 on Windows, where UTF-8
+    # data (our translations, recipes, JSON) fails to decode or is written garbled, while Linux, UTF-8 everywhere,
+    # stays green. 247 such calls in tests/ and tools/ broke the suite on Windows Python before this check.
+    unencoded = []
+    for path in _files():
+        if path.suffix == ".py" and path.relative_to(REPO).parts[0] in ("src", "tests", "tools", "packaging"):
+            unencoded += [f"{path.relative_to(REPO)}:{line}" for line in _unencoded(ast.parse(path.read_bytes()))]
+    assert unencoded == [], "name the encoding (encoding=\"utf-8\" for our files)"
+
+
+def test_the_encoding_check_finds_each_kind_of_unencoded_call() -> None:
+    # Bug: the check above misses a kind of call (a positional mode, a subprocess with text=True), so it passes while
+    # such calls come back.
+    flagged = ("p.read_text()", "p.write_text(s)", "open(f)", "open(f, 'w')", "open(f, mode='r')",
+               "subprocess.run(a, text=True)", "subprocess.check_output(a, universal_newlines=True)")
+    allowed = ("p.read_text(encoding='utf-8')", "p.read_text('utf-8')", "p.write_text(s, 'utf-8')", "open(f, 'rb')",
+               "open(f, mode='wb')", "open(f, encoding='cp932')", "subprocess.run(a, text=True, encoding='utf-8')",
+               "subprocess.run(a, capture_output=True)", "p.read_bytes()")
+    assert [code for code in flagged if not _unencoded(ast.parse(code))] == []
+    assert [code for code in allowed if _unencoded(ast.parse(code))] == []
+
+
+@TREE
 def test_json_holds_no_byte_dumps_or_machine_paths() -> None:
     offending = []
     for path in _files():
@@ -123,6 +183,7 @@ def _wo1_pc_pointers(value, where: str = ""):
             yield from _wo1_pc_pointers(item, f"{where}[{index}]")
 
 
+@TREE
 def test_no_data_points_into_the_warriors_orochi_pc_disc() -> None:
     """Bug: a reference crop, text row or art piece still names the Warriors Orochi PC disc, which no install reads."""
     found = [f"{path.relative_to(REPO)}{where}" for path in _files() if path.suffix == ".json"
@@ -217,6 +278,7 @@ FILE_NAME = re.compile(r"[\w-]+\.[A-Za-z0-9]{1,4}")
 
 @pytest.mark.skipif(not (os.environ.get("WOZMOD_ART_WORDS") and os.environ.get("WOZMOD_DONORS")),
                     reason="set WOZMOD_ART_WORDS=1 and WOZMOD_DONORS (about a minute)")
+@TREE
 def test_tracked_text_stores_no_official_english() -> None:
     # Bug: an official word or line is typed into the data, a font table's keys, the lettering code or a test (in
     # any case or spacing) instead of a pointer to its donor string, a letter map of its donor image or a hash.

@@ -82,11 +82,11 @@ def test_compiler_gets_every_header_and_the_requested_defines(tmp_path: Path, mo
     def fake_run(command, **kwargs):
         calls.append(command)
         build = Path(kwargs["cwd"])
-        assert (build / "enrt_data.h").read_text() == "synthetic header\n"
+        assert (build / "enrt_data.h").read_text(encoding="utf-8") == "synthetic header\n"
         assert (build / "english_runtime.c").is_file()
         # Bug: a header the runtime includes is left out of the compiler's folder.
         included = set(re.findall(r'#include "(\w+\.h)"', "".join(
-            p.read_text() for p in (REPO / "runtime").iterdir() if p.suffix in (".c", ".h")))) - {"enrt_data.h"}
+            p.read_text(encoding="utf-8") for p in (REPO / "runtime").iterdir() if p.suffix in (".c", ".h")))) - {"enrt_data.h"}
         assert included and sorted(name for name in included if not (build / name).is_file()) == []
         (build / "d3d9.dll").write_bytes(b"MZsynthetic-dll")
         return subprocess.CompletedProcess(command, 0)
@@ -122,6 +122,10 @@ def stock_builds(tmp_path_factory: pytest.TempPathFactory) -> tuple[bytes, dict[
     return stock, handed
 
 
+# The tests of what build_dll hands the compiler: it assembles the edits first.
+MINGW = pytest.mark.linux_only("the DLL is assembled with Fedora's MinGW cross tools, on the Linux machine that builds a release")
+
+
 def edit_groups(header: str) -> dict[int, list[tuple[int, bytes, bytes]]]:
     """The header's edits by group, read as the runtime reads them: group, VA, u16 length, stock, patched."""
     data, at, groups = bytes(layout.c_array("enrt_edits", header)), 0, {}
@@ -132,6 +136,7 @@ def edit_groups(header: str) -> dict[int, list[tuple[int, bytes, bytes]]]:
     return groups
 
 
+@MINGW
 @pytest.mark.parametrize("variant", OPTIONS)
 def test_build_puts_each_edit_list_in_its_text_mode_group(stock_builds, variant: str) -> None:
     """Bugs: a release build keeps the cursor slot of a compiled-out row (MOVING CAMERA FIX); an install with the
@@ -281,6 +286,7 @@ INSTRUCTIONS = {"CODE3_WIDE_DRAW": b"\x74\x14", "CODE3_WIDE_MEASURE": b"\x74\x14
                 "CODE3_TEXELS": b"\x6a\x3c", "WIDE_TEXELS": b"\x6a\x3c"}
 
 
+@MINGW
 def test_stock_code_the_runtime_writes_is_stock_and_clear_of_every_build_edit(stock_builds) -> None:
     """Bugs: a build edit or hook lands on a site the runtime rewrites itself (a new edit over the ftol call at
     0x5CD69D), so the runtime refuses its display sizes or edge HUD in game; a runtime site's address is shifted off

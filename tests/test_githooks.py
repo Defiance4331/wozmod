@@ -5,6 +5,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 HOOK = Path(__file__).resolve().parents[1] / "tools/githooks/commit-msg"
 WHY = "Players who are not developers could not tell what to pick."
 GOOD = ["- Add -v/--version, and show the version in the window's corner.",
@@ -37,6 +39,7 @@ CASES = [
 ]
 
 
+@pytest.mark.linux_only("the hook is a POSIX shell script, which git runs with sh on the contributor's machine")
 def test_commit_msg_hook_accepts_the_changelog_format_and_refuses_the_rest(tmp_path: Path) -> None:
     # Bug: a regex typo lets a file list, a test count, a private ADR number, quoted Japanese or a 'Fixes #N' that
     # closes the issue before the release into a public commit message, or the hook starts refusing the format
@@ -45,7 +48,7 @@ def test_commit_msg_hook_accepts_the_changelog_format_and_refuses_the_rest(tmp_p
     for name, message, accepted in CASES:
         path = tmp_path / "COMMIT_EDITMSG"
         path.write_text(message, encoding="utf-8")
-        run = subprocess.run(["sh", str(HOOK), str(path)], capture_output=True, text=True)
+        run = subprocess.run(["sh", str(HOOK), str(path)], capture_output=True, text=True, encoding="utf-8")
         if (run.returncode == 0) != accepted:
             wrong.append(f"{name}: exit {run.returncode} {run.stderr.strip()}")
     assert wrong == []

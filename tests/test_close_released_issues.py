@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).resolve().parents[1] / "packaging/close_released_issues.py"
 URL = "https://example.invalid/releases/tag/v2.0.0"
 
@@ -43,6 +45,7 @@ def _commit(repo: Path, message: str) -> None:
     _git(repo, "commit", "-q", "--allow-empty", "-m", message)
 
 
+@pytest.mark.linux_only("the close-issues workflow runs it on ubuntu-latest, its only caller")
 def test_publishing_closes_each_open_issue_the_release_fixes_once(tmp_path: Path) -> None:
     # Bug: the commit range starts at the wrong tag (so #5, fixed in v1 and reopened, is closed again, or this
     # release's issues are missed), a bare mention or a pull request gets closed, one unreadable number stops the
@@ -61,23 +64,23 @@ def test_publishing_closes_each_open_issue_the_release_fixes_once(tmp_path: Path
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    (bin_dir / "fake_gh.py").write_text(FAKE_GH)
-    (bin_dir / "gh").write_text(f'#!/bin/sh\nexec "{sys.executable}" "{bin_dir / "fake_gh.py"}" "$@"\n')
+    (bin_dir / "fake_gh.py").write_text(FAKE_GH, encoding="utf-8")
+    (bin_dir / "gh").write_text(f'#!/bin/sh\nexec "{sys.executable}" "{bin_dir / "fake_gh.py"}" "$@"\n', encoding="utf-8")
     (bin_dir / "gh").chmod(0o755)
     # #6 does not exist; #7 is a pull request; #8 was closed by hand.
     issues = {"3": {"state": "open"}, "4": {"state": "open"}, "5": {"state": "open"},
               "7": {"state": "open", "pull_request": {}}, "8": {"state": "closed"},
               "9": {"state": "open"}, "10": {"state": "open"}}
-    (bin_dir / "issues.json").write_text(json.dumps(issues))
+    (bin_dir / "issues.json").write_text(json.dumps(issues), encoding="utf-8")
 
     run_env = {**GIT_ENV, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "GITHUB_REPOSITORY": "o/r"}
     other = subprocess.run([sys.executable, str(SCRIPT), "tools", URL.replace("v2.0.0", "tools")], cwd=repo,
-                             env=run_env, capture_output=True, text=True)
-    assert other.returncode == 0 and json.loads((bin_dir / "issues.json").read_text()) == issues
+                             env=run_env, capture_output=True, text=True, encoding="utf-8")
+    assert other.returncode == 0 and json.loads((bin_dir / "issues.json").read_text(encoding="utf-8")) == issues
     runs = [subprocess.run([sys.executable, str(SCRIPT), "v2.0.0", URL], cwd=repo, env=run_env,
-                           capture_output=True, text=True) for _ in range(2)]
+                           capture_output=True, text=True, encoding="utf-8") for _ in range(2)]
 
-    after = json.loads((bin_dir / "issues.json").read_text())
+    after = json.loads((bin_dir / "issues.json").read_text(encoding="utf-8"))
     closed = {n: issue.get("comments") for n, issue in after.items() if issue["state"] == "closed"}
     assert closed == {"3": [f"Fixed in v2.0.0: {URL}"], "4": [f"Fixed in v2.0.0: {URL}"], "8": None}
     # The missing #6 fails the run, so a mistyped number is seen, after the other issues are closed.

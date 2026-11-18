@@ -11,7 +11,7 @@ from typing import Callable, Iterable
 from wozmod.discs.common import DiscError
 from wozmod.discs.iso9660 import Iso9660
 from wozmod.discs.xdvdfs import Xdvdfs
-from wozmod.permissions import staging_folder
+from wozmod.platform import staging_folder
 
 from .inventory import DONORS, Donor, DonorFile
 

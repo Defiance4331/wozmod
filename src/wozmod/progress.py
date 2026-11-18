@@ -12,6 +12,8 @@ import threading
 import time
 from dataclasses import dataclass
 
+from wozmod import platform
+
 # Typical seconds of a full install (measured with the packaged program). Text, voices and art run at the
 # same time: that block lasts as long as its slowest stage, and each stage counts by its own share of it.
 CHECK, DISCS, PLACE = 1, 12, 2  # the input checks now run during the disc reads
@@ -191,18 +193,7 @@ def enable_ansi(stream) -> bool:
     """True when the stream is a terminal that understands ANSI cursor codes (Windows 10 consoles need a switch)."""
     if not stream.isatty() or os.environ.get("TERM") == "dumb":
         return False
-    if os.name == "nt":
-        try:
-            import ctypes
-
-            kernel = ctypes.windll.kernel32
-            handle = kernel.GetStdHandle(-11 if stream is sys.stdout else -12)
-            mode = ctypes.c_uint32()
-            return bool(kernel.GetConsoleMode(handle, ctypes.byref(mode))
-                        and kernel.SetConsoleMode(handle, mode.value | 0x0004))
-        except (AttributeError, OSError):
-            return False
-    return True
+    return platform.console_ansi(stream)
 
 
 class TerminalView:

@@ -61,27 +61,25 @@ print("compose imported without font tools")
 """
     environment = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
     result = subprocess.run([sys.executable, "-c", script], cwd=tmp_path,
-                            env=environment, capture_output=True, text=True, timeout=10)
+                            env=environment, capture_output=True, text=True, timeout=10, encoding="utf-8")
     assert result.returncode == 0, result.stderr
     assert result.stdout == "compose imported without font tools\n"
 
 
 @pytest.mark.skipif(os.environ.get("WOZMOD_ART_COMPOSE") != "1", reason="set WOZMOD_ART_COMPOSE=1 (about a minute)")
-def test_the_install_art_build_writes_only_the_player_files(tmp_path):
+def test_the_install_art_build_writes_only_the_player_files(tmp_path, built):
     """Bug: the player's art build still writes a developer file beside wozmod/ (the LZP2 cache, a review folder,
     manifest.json): hundreds of MB the install writes and hashes for nothing."""
     from pathlib import Path
-
-    from wozmod.art.compose import compose
 
     game, donors, bundle = (Path(os.environ.get(name, "")) for name in ("WOZMOD_GAME", "WOZMOD_DONORS",
                                                                          "WOZMOD_LETTERING"))
     if not ((game / "LINKDATA1.BIN").is_file() and (donors / "wo2-x360/linkdata_ens.idx").is_file()
             and bundle.is_file()):
         pytest.skip("set WOZMOD_GAME, WOZMOD_DONORS (the installer's donors folder) and WOZMOD_LETTERING")
-    stems = {"wo1-x360": donors / "wo1-x360/linkdata_ens", "wo2-x360": donors / "wo2-x360/linkdata_ens", "text": donors}
-    compose(game, stems, bundle, tmp_path / "art")
-    assert sorted(p.relative_to(tmp_path / "art").as_posix() for p in (tmp_path / "art").rglob("*")
-                  if p.parent.name != "entries") == [
+    art = built("art", tmp_path)
+    listed = {folder: sorted(p.relative_to(art / folder).as_posix() for p in (art / folder).rglob("*")
+                             if p.parent.name != "entries") for folder in ("staging", "out")}
+    assert listed == {"staging": ["wozmod"], "out": [
         "wozmod", "wozmod/entries", "wozmod/glyphs.bin", "wozmod/hires.bin", "wozmod/prompts-playstation-hires.bin",
-        "wozmod/prompts-playstation.bin", "wozmod/prompts-xbox-hires.bin", "wozmod/prompts-xbox.bin"]
+        "wozmod/prompts-playstation.bin", "wozmod/prompts-xbox-hires.bin", "wozmod/prompts-xbox.bin"]}

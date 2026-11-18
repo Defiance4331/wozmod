@@ -165,13 +165,13 @@ def main(argv: list[str] | None = None) -> int:
     two.add_argument("tour", type=Path)
     two.add_argument("structure", type=Path)
     args = parser.parse_args(argv)
-    report = json.loads(args.tour.read_text())
+    report = json.loads(args.tour.read_text(encoding="utf-8"))
     if args.action == "learn":
         structure = {stop["name"]: learn(stop["screen"]) for stop in report["stops"]}
-        args.output.write_text(json.dumps(structure, indent=1) + "\n")
+        args.output.write_text(json.dumps(structure, indent=1) + "\n", encoding="utf-8")
         print(f"{sum(map(len, structure.values()))} relations over {len(structure)} screens")
         return 0
-    structure, found = json.loads(args.structure.read_text()), 0
+    structure, found = json.loads(args.structure.read_text(encoding="utf-8")), 0
     for stop in report["stops"]:
         for v in check(stop["screen"], structure.get(stop["name"], [])):
             found += 1

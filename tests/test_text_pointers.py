@@ -24,7 +24,7 @@ def test_no_pointer_lands_on_a_donor_placeholder_record():
     from wozmod.text.resolver import DonorResolver
 
     resolver = DonorResolver(Path(os.environ["WOZMOD_DONORS"]))
-    placeholders = {row["key"] for row in json.loads(TABLE.read_text())["rows"] if "ref" in row
+    placeholders = {row["key"] for row in json.loads(TABLE.read_text(encoding="utf-8"))["rows"] if "ref" in row
                     and re.fullmatch(r"\s*\d*\s*dummy\s*", resolver.resolve_row(row), re.IGNORECASE)}
     assert placeholders - PLACEHOLDER_STOCK == set()
 
@@ -37,7 +37,7 @@ def test_every_string_pointer_starts_at_a_donor_string():
     from wozmod.text.resolver import DonorResolver
 
     resolver, mid = DonorResolver(Path(os.environ["WOZMOD_DONORS"])), []
-    for row in json.loads(TABLE.read_text())["rows"]:
+    for row in json.loads(TABLE.read_text(encoding="utf-8"))["rows"]:
         for ref in [row.get("ref"), *(edit[2] for edit in row.get("edits", []) if isinstance(edit[2], list))]:
             match ref:
                 case [donor, "pe", int(at)]:
@@ -67,7 +67,7 @@ def test_rows_that_insert_a_donor_string_read_as_they_did():
     from wozmod.text.resolver import DonorResolver
 
     resolver = DonorResolver(Path(os.environ["WOZMOD_DONORS"]))
-    rows = {row["key"]: row for row in json.loads(TABLE.read_text())["rows"]
+    rows = {row["key"]: row for row in json.loads(TABLE.read_text(encoding="utf-8"))["rows"]
             if any(isinstance(edit[2], list) for edit in row.get("edits", []))}
     assert set(rows) == set(EDIT_POINTER_TEXT)
     built = {key: hashlib.sha256(resolver.resolve_row(row).encode()).hexdigest() for key, row in rows.items()}
@@ -86,7 +86,7 @@ def test_the_real_table_builds_from_the_shipped_rows(tmp_path):
     rows, pairs, parts = resolved_text(Path(os.environ["WOZMOD_GAME"]), DonorResolver(Path(os.environ["WOZMOD_DONORS"])),
                                        TABLE)
     write_table(pairs, parts, tmp_path / "table.bin")
-    assert len(rows) == len(json.loads(TABLE.read_text())["rows"])
+    assert len(rows) == len(json.loads(TABLE.read_text(encoding="utf-8"))["rows"])
 
 
 # Western number minus Japanese number. The first Dynasty Warriors was a fighting game, so the Japanese
@@ -101,7 +101,7 @@ def test_series_titles_use_the_western_number():
     # the official title down by one or a pointer paired to the title with the same digit.
     import unicodedata
 
-    from wozmod.text.psp_exe import EXE_STRING
+    from wozmod.game_files import STRING as EXE_STRING
     from wozmod.text.resolver import DonorResolver
     from wozmod.text.keys import stock_key
 
@@ -112,7 +112,7 @@ def test_series_titles_use_the_western_number():
         if keyed := stock_key(match.group()):
             stock[keyed[0]] = keyed[1].decode("cp932")
     wrong, checked = [], 0
-    for row in json.loads(TABLE.read_text())["rows"]:
+    for row in json.loads(TABLE.read_text(encoding="utf-8"))["rows"]:
         title = re.match(rf"({'|'.join(SERIES_OFFSET)})(?: (\d))?\b", resolver.resolve_row(row))
         if title is None:
             continue
@@ -151,7 +151,7 @@ def test_each_shown_notice_and_spoken_line_takes_the_donor_record_its_command_sh
     psp = {o: parse_script(decoded_member(members[m])) for o, m in PSP_STAGE_MEMBERS.items()}
     joins = stage_joins(moz, wo1_scripts(folders.folder("wo1-x360") / "linkdata_ens"),
                         wo2_x360(folders.folder("wo2-x360") / "linkdata_ens").scripts(), psp)
-    rows = {row["key"]: row for row in json.loads(TABLE.read_text())["rows"]}
+    rows = {row["key"]: row for row in json.loads(TABLE.read_text(encoding="utf-8"))["rows"]}
     resolver = DonorResolver(Path(os.environ["WOZMOD_DONORS"]))
 
     sites, backs, claims = [], {}, {}
@@ -176,7 +176,7 @@ def test_each_shown_notice_and_spoken_line_takes_the_donor_record_its_command_sh
                     claims.setdefault((*site, joined), set()).add(key)
     # A reviewed site keeps its row although the join disputes it (data/text/context_exceptions.json, check "notice");
     # an entry whose site no longer fails is stale.
-    reviewed = {e["context"] for e in json.loads((TABLE.parent / "context_exceptions.json").read_text())["exceptions"]
+    reviewed = {e["context"] for e in json.loads((TABLE.parent / "context_exceptions.json").read_text(encoding="utf-8"))["exceptions"]
                 if e["check"] == "notice"}
     wrong, excepted = [], set()
     for name, key, ref, own, joined, context in sites:
@@ -233,7 +233,7 @@ def test_each_briefing_takes_the_donor_string_its_stage_shows():
     split, late, early = moz(0x548C4F, 5), moz(0x548C56, 3), moz(0x548C5B, 3)
     x360_shift = ppc(0x822B05D0) - ppc(0x822B05D4)
     psp_split, psp_late, psp_script = mips(0x2111CC, 10), mips(0x2111DC, 9), mips(0x1524E4, 9)
-    rows = {row["key"]: row for row in json.loads(TABLE.read_text())["rows"]}
+    rows = {row["key"]: row for row in json.loads(TABLE.read_text(encoding="utf-8"))["rows"]}
     resolver = DonorResolver(donors)
     blocks = mesc_blocks(archive(game / "LINKDATA1").read([4190])[4190])
     stages = [*range(early, early + 28), *range(split, split + 12)]

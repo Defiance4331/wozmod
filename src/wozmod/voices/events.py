@@ -4,17 +4,9 @@ The stock event files hold each line's subtitle window as Koei authored it for t
 voice the installer writes a copy of each event file whose windows end with the English clip, to
 wozmod/captions/voice/<4251 + event>.bin, which the runtime serves only while the voices are English.
 
-An event file starts with u32 sub-scene count and the sub-scene offsets. A sub-scene is a chain of records the
-runner (0x49D9A0) executes: u32 offset of the next record from the sub-scene start | u8 type | u8 sub | u8 field
-count n | n field types | u8 data offset (from byte 7) | n field sizes | data. A gate (type 0 sub 0, one float) whose
-value is above the clock stops the chain for this frame; the clock counts one a frame (60 a second) from 0. Type 0
-sub 1 is the sub-scene length. Type 5 is text: sub 5 speaks a line (field 1 is the line record's offset from the
-sub-scene start: u32 mask, u16 line index, u16 lip size, the text to its NUL), sub 1 clears it, sub 0 sets a place
-caption. Type 8 sub 1 or 2 opens a conditional block and type 8 sub 0 closes it. The draw reads the line the last
-speak stored until a clear or the next speak, so a window runs from its speak's tick to the next text record's.
-
-The retime only relinks the chain: it moves a line's clear, or adds one (and a gate when no record has its tick),
-appended at the end of the file. Line records and every other record keep their offsets and their ticks.
+The retime only relinks the event file's record chain (formats.events): it moves a line's clear, or adds one (and a
+gate when no record has its tick), appended at the end of the file. Line records and every other record keep their
+offsets and their ticks.
 """
 
 from __future__ import annotations
@@ -27,17 +19,16 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-TICKS_PER_SECOND = 60
+from wozmod.formats.events import CLEAR, EVENT_TICKS, SPEAK, Record, record_chain, tick_of
+
 # Seconds a subtitle stays after the English clip stops being audible: Koei's own median margin over the Japanese
 # clip in the WO2 events (0.48 s), and it covers a voice that starts up to 0.3 s after its speak record.
 SUBTITLE_PAD = 0.5
 AUDIBLE_RATE = 16_000  # Hz of the mono s16le PCM audible_end reads
 AUDIBLE_FLOOR_DB = -30.0  # a 10 ms frame is audible when its peak is within this of the clip's peak
 
-SPEAK, CLEAR, CAPTION = 5, 1, 0
 GATE = bytes([0, 0, 1, 6, 5, 0, 0, 0])  # type 0 sub 0, one float field at +12: 16 bytes with the float
 CLEAR_RECORD = bytes([5, 1, 0, 0])  # type 5 sub 1, no fields: 8 bytes with the link
-_FIELD = {0: "B", 1: "H", 2: "I", 3: "B", 4: "H", 5: "I", 6: "f", 7: "I", 8: "I"}
 
 
 def audible_end(pcm: bytes, rate: int = AUDIBLE_RATE) -> float:
@@ -69,27 +60,8 @@ def subtitle_window(stock: tuple[int, int], donor: tuple[int, int] | None, audib
     if donor is not None and donor != stock:
         start, end = donor
     else:
-        start, end = stock[0], stock[0] + math.ceil((audible + SUBTITLE_PAD) * TICKS_PER_SECOND)
+        start, end = stock[0], stock[0] + math.ceil((audible + SUBTITLE_PAD) * EVENT_TICKS)
     return start, min(end, math.floor(limit))
-
-def tick_of(gate: float) -> int:
-    """The clock value (frame) at which a record behind this gate value runs: the clock is 0, 1, 2 and so on."""
-    return max(0, math.ceil(gate))
-
-
-@dataclass(eq=False)  # a record is itself: two clears with the same fields are two records
-class Record:
-    at: int | None  # absolute offset in the file; None for an added record until it is written
-    kind: int
-    sub: int
-    fields: tuple
-    tick: int  # the frame it runs at
-    depth: int  # how many conditional blocks it is inside (the block's own open and close records count as in)
-    new: bytes | None = None  # the bytes of an added record, link field included
-
-    @property
-    def text(self) -> bool:
-        return self.kind == 5 and self.sub in (SPEAK, CLEAR, CAPTION)
 
 
 @dataclass
@@ -100,34 +72,6 @@ class Retimed:
     started: dict[tuple[int, int], tuple[int, int]] = field(default_factory=dict)  # (stock start, donor start)
     # why a line Koei retimed in the donor cannot start at the donor's tick: it keeps its start and ends with its clip
     unshown: dict[tuple[int, int], str] = field(default_factory=dict)
-
-
-def _records(data: bytes, base: int, order: str = "<") -> list[Record]:
-    """A sub-scene's record chain from base; ValueError when the chain leaves data, loops or holds a record no event
-    file has (text.contexts.event_file tells event files from other archive entries by this)."""
-    records, at, gate, depth, seen = [], base, 0.0, 0, set()
-    while True:
-        if at in seen or not 0 <= at <= len(data) - 8:
-            raise ValueError("event record chain leaves the file or loops")
-        seen.add(at)
-        following, kind, sub, n = *struct.unpack_from(order + "I", data, at), data[at + 4], data[at + 5], data[at + 6]
-        if kind == 0xFF:
-            records.append(Record(at, kind, sub, (), tick_of(gate), depth))
-            return records
-        if kind > 0x20 or n > 16 or at + 8 + 2 * n > len(data):
-            raise ValueError("not an event record")
-        types, start, sizes = data[at + 7:at + 7 + n], data[at + 7 + n], data[at + 8 + n:at + 8 + 2 * n]
-        values, p = [], at + 7 + start
-        for kind_of, size in zip(types, sizes, strict=True):
-            values.append(struct.unpack_from(order + _FIELD.get(kind_of, "H"), data, p)[0])
-            p += size
-        if kind == 0 and sub == 0:
-            gate = values[0]
-        opens = kind == 8 and sub in (1, 2)
-        depth += opens
-        records.append(Record(at, kind, sub, tuple(values), tick_of(gate), depth))
-        depth -= kind == 8 and sub == 0 and depth > 0
-        at = base + following
 
 
 def _line(data: bytes, base: int, speak: Record, order: str = "<") -> tuple[int, bytes]:
@@ -194,7 +138,7 @@ def scenes(data: bytes, byte_order: str = "<") -> list[Scene]:
     found = []
     count = struct.unpack_from(byte_order + "I", data)[0]
     for base in struct.unpack_from(f"{byte_order}{count}I", data, 4):
-        order = _records(data, base, byte_order)
+        order = record_chain(data, base, byte_order)
         lines = frozenset(_line(data, base, r, byte_order)[0] for r in order if r.kind == 5 and r.sub == SPEAK)
         found.append(Scene(lines, _windows(data, base, order, _length(order), byte_order)))
     return found
@@ -226,7 +170,7 @@ def donor_windows(stock: bytes, donors: list[list[Scene]]) -> dict[tuple[int, in
 
 def _retime_scene(data: bytes, base: int, sub: int, holds: dict[int, float], done: Retimed,
                   donor: dict[tuple[int, int], tuple[int, int]]) -> list[Record]:
-    order = _records(data, base)
+    order = record_chain(data, base)
     length = _length(order)
     stock = _windows(data, base, order, length)
     spoken = []  # (speak, line index, stock window, shows text) of each line the English voice retimes
@@ -376,4 +320,4 @@ def event_line_indices(data: bytes) -> set[int]:
     """The line index of every speak record of a stock event file."""
     count = struct.unpack_from("<I", data)[0]
     return {_line(data, base, r)[0] for base in struct.unpack_from(f"<{count}I", data, 4)
-            for r in _records(data, base) if r.kind == 5 and r.sub == SPEAK}
+            for r in record_chain(data, base) if r.kind == 5 and r.sub == SPEAK}

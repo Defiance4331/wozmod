@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 import sys
 from pathlib import Path
+
+from wozmod import platform
 
 # The files and folders under root() that the release bundles (packaging/wozmod.spec reads this list).
 PACKAGED = ("data/art", "data/text", "data/movies.json", "data/stock_pieces.json", "data/true_rate", "runtime")
@@ -19,5 +20,5 @@ def root() -> Path:
 
 def ffmpeg() -> str | None:
     """The bundled ffmpeg when the release ships one, else the ffmpeg on PATH (None when neither)."""
-    bundled = root() / "ffmpeg/bin" / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+    bundled = root() / "ffmpeg/bin" / platform.executable("ffmpeg")
     return str(bundled) if bundled.is_file() else shutil.which("ffmpeg")

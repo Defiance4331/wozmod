@@ -373,7 +373,7 @@ def timing_failures(stock: dict[int, bytes], served: dict[int, bytes], clips: di
 
 
 @REAL
-def test_every_english_voiced_event_line_ends_with_its_clip(tmp_path):
+def test_every_english_voiced_event_line_ends_with_its_clip(tmp_path, built):
     """Bug: any window on the real stock events that still cuts its English line or lingers past the pad (the
     clip of another line measured, the WO1 and WO2 voice bases swapped), a cutscene record that runs at another
     tick, a line that gains or loses its window, or a window Koei retimed in the donor sub-scene the stock one was
@@ -383,19 +383,17 @@ def test_every_english_voiced_event_line_ends_with_its_clip(tmp_path):
     from wozmod.donors import DonorsFolder
     from wozmod.formats.linkdata import archive
     from wozmod.text.script_alignment import EVENTS, donor_event_entries, wo2_x360
-    from wozmod.voices import build_voice_banks
     from wozmod.voices.events import EVENT_KEY, FOLDER
 
-    build_voice_banks(Path(os.environ["WOZMOD_GAME"]), Path(os.environ["WOZMOD_DONORS"]), Path(os.environ["WOZMOD_SPEECH"]),
-                      tmp_path)
-    raw = (tmp_path / "voice/Voice.bin").read_bytes()
+    banks = built("voices", tmp_path) / "out/wozmod"
+    raw = (banks / "voice/Voice.bin").read_bytes()
     clips = {}
     for i in range(struct.unpack_from("<I", raw)[0]):
         offset, size = struct.unpack_from("<II", raw, 4 + 8 * i)
         if size:
             clips[i] = raw[offset:offset + size]
     stock = archive(Path(os.environ["WOZMOD_GAME"]) / "LINKDATA2").read([o for r, _, _ in EVENTS for o in r])
-    served = {o: (p.read_bytes() if (p := tmp_path / FOLDER / f"{EVENT_KEY + o}.bin").exists() else data)
+    served = {o: (p.read_bytes() if (p := banks / FOLDER / f"{EVENT_KEY + o}.bin").exists() else data)
               for o, data in stock.items()}
     folders = DonorsFolder(Path(os.environ["WOZMOD_DONORS"]))
     donors = {"wo1-x360": archive(folders.folder("wo1-x360") / "linkdata_ens").read(donor_event_entries("wo1-x360")),

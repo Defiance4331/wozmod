@@ -16,7 +16,7 @@ def compose(stock, donors, bundle, output_dir, squish=True, jobs=None) -> Path:
     to the donors folder the menu words resolve from. Raises build.ArtError for a donor archive that fails its pin.
 
     The installer always squishes. squish=False is the developer oracle and needs a
-    bundle rendered with full_width=True. jobs is the worker process count (default: CPU count).
+    bundle rendered with full_width=True. jobs is the worker count (default: CPU count).
     """
     recipe_bytes = RECIPE.read_bytes()
     recipe = json.loads(recipe_bytes)
