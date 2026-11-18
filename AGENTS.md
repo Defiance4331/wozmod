@@ -82,7 +82,9 @@ rebuilds the art even when nothing it reads has changed, before a release.
 any worktree, holds `work/.machine.lock`, it waits and says who holds it. Run a
 dev install, an art build or a benchmark the same way, through
 `python3 tools/machine_lock.py COMMAND`, and give a run that may wait a long
-timeout (a full run takes about 26 minutes). Stop only runs you started.
+timeout (a full run takes about 26 minutes). A game launch and a test run wait
+in turn while a heavy run has the machine, and a heavy run waits for running
+games and test runs to end. Stop only runs you started.
 `work/machine-lock.log` keeps each heavy run's minutes and CPU minutes. Hand back a
 change players see with the
 `evidence/contact-sheet.html` that `tools/run_check.py` writes: each capture beside

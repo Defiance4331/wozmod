@@ -7,6 +7,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -42,3 +43,58 @@ def test_a_heavy_run_waits_for_another_worktrees_and_keeps_its_exit_status(linke
         first.kill()
         if (tmp_path / "orphan").exists():
             os.kill(int((tmp_path / "orphan").read_text()), signal.SIGKILL)
+
+
+def _start(target) -> threading.Event:
+    done = threading.Event()
+    threading.Thread(target=lambda: target() or done.set(), daemon=True).start()
+    return done
+
+
+def test_a_game_and_a_heavy_run_wait_for_each_other(monkeypatch, tmp_path):
+    """Bugs: a game launches while a benchmark holds the machine, so the game takes CPU the benchmark measures; or a
+    heavy run starts while a game is up; or two games no longer run at once."""
+    import checkout
+    import machine_lock
+
+    (tmp_path / "work").mkdir()
+    monkeypatch.setattr(checkout, "REPO", tmp_path)
+    monkeypatch.delenv(machine_lock.HELD, raising=False)
+    heavy, _ = machine_lock.take((machine_lock.HEAVY,), "bench", 0.01)
+    games = []
+    game = _start(lambda: games.append(machine_lock.share(0.01)))
+    assert not game.wait(0.3)  # the game waits for the benchmark
+    os.close(heavy)
+    assert game.wait(2)
+    assert _start(lambda: games.append(machine_lock.share(0.01))).wait(2)  # a second game beside the first
+    after = []
+    run = _start(lambda: after.append(machine_lock.claim("install", 0.01)))
+    assert not run.wait(0.3)  # the heavy run waits for both games
+    os.close(games[0])
+    assert not run.wait(0.3)
+    os.close(games[1])
+    assert run.wait(2)
+    os.close(after[0])
+
+
+def test_games_started_one_after_another_do_not_keep_a_waiting_heavy_run_out(monkeypatch, tmp_path):
+    """Bug: a game check starts its next game while the last is still up, so the machine is never free of games
+    and the benchmark waiting for it never starts."""
+    import checkout
+    import machine_lock
+
+    (tmp_path / "work").mkdir()
+    monkeypatch.setattr(checkout, "REPO", tmp_path)
+    monkeypatch.delenv(machine_lock.HELD, raising=False)
+    first = machine_lock.share(0.01)
+    claimed = []
+    run = _start(lambda: claimed.append(machine_lock.claim("bench", 0.01)))
+    time.sleep(0.2)  # the heavy run is waiting for the first game
+    later = []
+    game = _start(lambda: later.append(machine_lock.share(0.01)))
+    assert not game.wait(0.3)  # the next game queues behind the waiting heavy run
+    os.close(first)
+    assert run.wait(2) and not game.is_set()
+    os.close(claimed[0])
+    assert game.wait(2)
+    os.close(later[0])

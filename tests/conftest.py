@@ -23,6 +23,7 @@ import checkout
 import pytest
 
 RUNTIME = Path(__file__).resolve().parents[1] / "runtime"
+MACHINE = pytest.StashKey[int | None]()  # the run's shared hold on the machine lock
 CONFIG = checkout.config()
 REQUIRE_INPUTS = os.environ.get("WOZMOD_REQUIRE_INPUTS") == "1"
 INPUTS = checkout.inputs()
@@ -38,6 +39,12 @@ tempfile.tempdir = None  # read TMPDIR again
 
 def pytest_configure(config) -> None:
     config.addinivalue_line("markers", "slow_first: a test of 2 s or more, started before the others")
+    if not hasattr(config, "workerinput"):  # once per run, in the process that hands out the tests
+        import machine_lock
+
+        # Six workers beside a benchmark skew its numbers: wait while a heavy run has the machine, and hold it
+        # shared while this run lasts.
+        config.stash[MACHINE] = machine_lock.share(what="this test run")
     if not REQUIRE_INPUTS:
         return
     if not CONFIG.is_file():

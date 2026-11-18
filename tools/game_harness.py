@@ -1444,10 +1444,7 @@ def ended(root: Path) -> str | None:
     return f"the run has ended: {describe_exit(record)}; last actions: {last}"
 
 
-# Two games may run at once across the checkout and all its worktrees: every run holds one of these, in the main
-# checkout's work/, for its whole life, and writes its name and start into it so a waiting launch can say who holds
-# what.
-SLOTS = (".game-run.lock", ".game-run.1.lock")
+SLOTS = machine_lock.SLOTS  # two games at once, machine-wide
 # Each slot's own Steam runtime in the main checkout's template, so two games never share one. A run binds its slot's
 # writable: pressure-vessel hard-links the runtime into its var/, which through an overlay copied 16k files into every
 # run. Make one with cp -a --reflink=always _template/steamrt _template/steamrt-1.
@@ -1471,12 +1468,17 @@ def run(root: Path, args: argparse.Namespace) -> int:
     launcher = local_path(root, "launch.sh")
     if not launcher.is_file():
         raise ValueError("prepare and review a run-local launch.sh first")
-    lock, slot = take_slot(root.name)  # every launch, so no game runs outside the two-game limit
+    machine = machine_lock.share()  # no game beside a heavy run (a benchmark, an install), nor one beside a game
     try:
-        write_json(root / "slot.json", {"slot": slot, "time": time.time()})  # run_check: the boot clock starts here
-        return launch_in_slot(root, args, game, launcher, slot)
+        lock, slot = take_slot(root.name)  # every launch, so no game runs outside the two-game limit
+        try:
+            write_json(root / "slot.json", {"slot": slot, "time": time.time()})  # run_check: the boot clock starts here
+            return launch_in_slot(root, args, game, launcher, slot)
+        finally:
+            os.close(lock)
     finally:
-        os.close(lock)
+        if machine is not None:
+            os.close(machine)
 
 
 AUDIO_DAEMONS = ("pipewire", "wireplumber", "pipewire-pulse")

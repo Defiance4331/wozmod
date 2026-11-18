@@ -1586,6 +1586,24 @@ def test_two_games_at_once_each_run_their_own_writable_steam_runtime(tmp_path, m
         assert command[bind:bind + 3] == ["--bind", str(template / runtime), str(template / runtime)]
 
 
+def test_a_game_launch_waits_while_a_heavy_run_has_the_machine(tmp_path, monkeypatch):
+    """Bug: a launch takes only a game slot, so a game check starts beside a benchmark holding the machine lock and
+    skews its numbers."""
+    monkeypatch.setattr(checkout, "REPO", tmp_path)
+    monkeypatch.delenv(harness.machine_lock.HELD, raising=False)
+    launched = threading.Event()
+    monkeypatch.setattr(harness, "launch_in_slot", lambda *arguments: launched.set() or 0)
+    root = tmp_path / "work/runtime-tests/run"
+    _staged(root / "game")
+    (root / "launch.sh").write_text("exit 0\n", encoding="utf-8")
+    bench = harness.machine_lock.claim("bench", 0.01)
+    threading.Thread(target=harness.main, args=(["run", "--root", str(root), "--game", str(root / "game"),
+                                                 "--target", harness.TARGET],), daemon=True).start()
+    assert not launched.wait(0.5)
+    os.close(bench)
+    assert launched.wait(5)
+
+
 def test_a_resend_loop_sends_nothing_when_its_screen_is_up_already(monkeypatch):
     """Bug: after `win` on a stage with no victory event the results are up at once, and the Escape meant to skip the
     event lands on the results screen."""
