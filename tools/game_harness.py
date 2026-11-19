@@ -2106,6 +2106,14 @@ STORY_LIST_CURSOR = 23
 # item, so the step reads where the cursor is (run 2026-10-30_1220-rc-ng1: 6 of 9 on save new-game).
 CAMP_STATE, CAMP_CURSOR, CAMP_ITEMS = 0xC268D8, 0x18, 0x1EB4
 CAMP_NEXT_STEP = {"pick": "camp next"}  # filled by route: the camp cursor moves to NEXT
+# Story Mode's story select (0x59F1D0, a copy of Free Mode's 0x58AF90 with its own state) keeps its state at [0xC5D54C]:
+# the cursor's column at +0xC4 (0 the main stories, Shu first; 1 Story Z), the story under the cursor at +0x44, the
+# stories of each column at +0xE0 (five a column) and their counts at +0xD4. It opens on the story the game remembers
+# (0x801A9C, which Return and each Up or Down set): after a check plays a Wei chapter, the main menu's Return opens it on
+# Wei. Left and Right swap the column and keep each column's row; Up and Down wrap. Edges from story-select count their
+# keys from Shu.
+STORY_SELECT, STORY_COLUMN, STORY_UNDER_CURSOR, STORY_TABLE, STORY_COUNTS = 0xC5D54C, 0xC4, 0x44, 0xE0, 0xD4
+STORY_FIRST_STEP = {"pick": "story first"}  # filled by route: the story select cursor moves to Shu
 
 
 # The weapon discard list (FUN_00584510, state 2 or 6 at +0x7C) opens when a battle's drop goes to an officer who holds 8
@@ -2234,7 +2242,9 @@ ROUTE_EDGES = [
     ("menu@option", "options", ["Return"]),
     ("options", "game-settings", ["Return"]),
     ("game-settings", "menu@option", ["Escape", "Escape"]),
-    ("menu@story", "story-select", ["Return"]),
+    # the select opens on the story last entered or played; the camp edges back put the cursor on Shu by its texture
+    ("menu@story", "story-select", [(["Return"], {**ROUTE_SCREENS["story-select"], "gap": ARRIVE_GAP}),
+                                    (STORY_FIRST_STEP, None)]),
     ("story-select", "story-camp", ["Return"]),
     ("story-camp", "story-select", ["Escape"]),
     ("story-select", "menu@story", ["Escape"]),
@@ -2745,6 +2755,19 @@ def pick_camp_next(root: Path, label: str, before: dict | None = None) -> None:
         raise RuntimeError(f"the camp cursor is on item {cursor}, not NEXT ({items - 1})")
 
 
+def pick_story_first(root: Path, label: str, before: dict | None = None) -> None:
+    """Move the story select cursor to Shu, the first main story, from wherever it opened, and check the game's own
+    cursor."""
+    state = peek_u32(root, STORY_SELECT)
+    if peek_u32(root, state + STORY_COLUMN):
+        drive_step(root, ["Left"], None, None, label, quick=True, before=before)
+    stories = [peek_u32(root, state + STORY_TABLE + 4 * row) for row in range(peek_u32(root, state + STORY_COUNTS))]
+    row = stories.index(peek_u32(root, state + STORY_UNDER_CURSOR))
+    drive_step(root, wrapped(-row, len(stories), "Down", "Up"), None, None, label, quick=True)
+    if (cursor := (peek_u32(root, state + STORY_COLUMN), peek_u32(root, state + STORY_UNDER_CURSOR))) != (0, stories[0]):
+        raise RuntimeError(f"the story select cursor is on column {cursor[0]}, story {cursor[1]}, not Shu ({stories[0]})")
+
+
 def pick_dream(root: Path, stage: int, label: str, before: dict | None = None) -> None:
     """Move the Dream select cursor to the stage's scenario, from wherever it is, and check the game's own cursor."""
     drive_step(root, dream_keys(stage, dream_cursor(root)), None, None, label, quick=True, before=before)
@@ -2818,6 +2841,9 @@ def route(root: Path, target: str, stage: int | None = None, movie: int | None =
                     continue
                 if keys is CAMP_NEXT_STEP:
                     pick_camp_next(root, f"{source} -> {destination}", seen)
+                    continue
+                if keys is STORY_FIRST_STEP:
+                    pick_story_first(root, f"{source} -> {destination}", seen)
                     continue
                 if keys is MOVIE_STEP:
                     pick_movie(root, DEFAULT_MOVIE if movie is None else movie, f"{source} -> {destination}", seen)

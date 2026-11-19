@@ -648,6 +648,37 @@ def test_route_library_reaches_every_screen_and_back_to_the_menu():
                                                                           "options"]
 
 
+def test_story_first_step_puts_the_story_select_cursor_on_shu_from_wherever_it_opened(monkeypatch):
+    """Bugs: the select opens on the story last played (Wei after a check's Wei chapter), and the main menu's Return
+    sends the camp edges' keys from that row, into the wrong camp; a step that walks the column it opened in never
+    leaves Story Z; Up and Down swapped walk past Shu. A fake select with the stock rules (0x59F1D0: Left and Right swap
+    the column and keep each column's row, Up and Down wrap), started from every column and row."""
+    state, stories = 0x5000, [[0, 1, 2, 3], [5, 6, 7, 8, 4]]  # the main stories, Shu first; Story Z, its special last
+    for column in (0, 1):
+        for row in range(len(stories[column])):
+            at = {"column": column, "rows": [row if column == 0 else 0, row if column == 1 else 0]}
+
+            def peek(root, address, at=at):
+                c = at["column"]
+                return {harness.STORY_SELECT: state, state + harness.STORY_COLUMN: c,
+                        state + harness.STORY_UNDER_CURSOR: stories[c][at["rows"][c]],
+                        state + harness.STORY_COUNTS: len(stories[0]),
+                        **{state + harness.STORY_TABLE + 4 * r: s for r, s in enumerate(stories[0])}}[address]
+
+            def press(root, keys, *args, at=at, **kwargs):
+                for key in keys:
+                    c = at["column"]
+                    if key in ("Left", "Right"):
+                        at["column"] = 1 - c
+                    else:
+                        at["rows"][c] = (at["rows"][c] + (1 if key == "Down" else -1)) % len(stories[c])
+
+            monkeypatch.setattr(harness, "peek_u32", peek)
+            monkeypatch.setattr(harness, "drive_step", press)
+            harness.pick_story_first(Path("run"), "menu@story -> story-select")
+            assert (at["column"], at["rows"][0]) == (0, 0), (column, row)
+
+
 def test_discard_step_fills_the_played_officers_eight_weapon_slots_and_drops_one_per_officer(monkeypatch):
     """Bugs: a wrong officer stride or slot offset fills another officer's weapons, so the drop is simply stored and the
     discard list never opens; a copy with no skill squares draws no pips; a drop for the played officer alone (what a
