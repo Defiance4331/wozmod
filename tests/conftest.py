@@ -88,11 +88,12 @@ def pytest_configure(config) -> None:
     config.addinivalue_line("markers", "real_windows(reason): skipped but on Windows itself (not Wine), with the reason "
                             "(what Wine cannot show), which is required")
     if os.name == "posix" and not hasattr(config, "workerinput"):  # once, before the workers start: they inherit it
-        import machine_lock
+        # Six workers beside a benchmark skew its numbers: a parallel run waits its turn and holds the machine
+        # shared while it lasts. A run in one process (-n0, the commit hook's checks) is too light to skew one.
+        if getattr(config.option, "numprocesses", None) not in (None, 0):
+            import machine_lock
 
-        # Six workers beside a benchmark skew its numbers: wait while a heavy run has the machine, and hold it
-        # shared while this run lasts.
-        config.stash[MACHINE] = machine_lock.share(what="this test run")
+            config.stash[MACHINE] = machine_lock.share(what="this test run")
         config.stash[DISPLAY] = _private_display()
     if not REQUIRE_INPUTS:
         return

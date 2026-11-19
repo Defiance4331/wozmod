@@ -101,3 +101,42 @@ def test_games_started_one_after_another_do_not_keep_a_waiting_heavy_run_out(mon
     os.close(claimed[0])
     assert game.wait(2)
     os.close(later[0])
+
+
+def test_a_run_that_began_waiting_first_goes_in_first(monkeypatch, tmp_path):
+    """Bug: a benchmark that asks for the machine again right after each of its runs goes ahead of a test run
+    waiting since the run before, so the test run (or a commit's checks) waits for the whole sequence."""
+    import checkout
+    import machine_lock
+
+    (tmp_path / "work").mkdir()
+    monkeypatch.setattr(checkout, "REPO", tmp_path)
+    monkeypatch.delenv(machine_lock.HELD, raising=False)
+    run_1 = machine_lock.claim("bench r1", 0.01)
+    tests, benches = [], []
+    test = _start(lambda: tests.append(machine_lock.share(0.01, "a test run")))
+    time.sleep(0.2)  # the test run is in line
+    bench = _start(lambda: benches.append(machine_lock.claim("bench r2", 0.01)))
+    time.sleep(0.2)  # the benchmark's next run is in line behind it
+    os.close(run_1)
+    assert test.wait(2) and not bench.wait(0.3)
+    os.close(tests[0])
+    assert bench.wait(2)
+    os.close(benches[0])
+
+
+def test_a_run_that_died_waiting_does_not_hold_up_the_line(monkeypatch, tmp_path):
+    """Bug: a run killed while it waited leaves its ticket, and every later run waits behind it forever."""
+    import checkout
+    import machine_lock
+
+    (tmp_path / "work").mkdir()
+    monkeypatch.setattr(checkout, "REPO", tmp_path)
+    monkeypatch.delenv(machine_lock.HELD, raising=False)
+    line = tmp_path / "work" / machine_lock.LINE
+    line.mkdir()
+    (line / f"{0:020d}-1-heavy").write_text("a killed benchmark", encoding="utf-8")  # no process holds it
+    got = []
+    assert _start(lambda: got.append(machine_lock.claim("install", 0.01))).wait(2)
+    os.close(got[0])
+    assert list(line.iterdir()) == []

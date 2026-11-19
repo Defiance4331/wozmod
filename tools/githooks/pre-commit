@@ -4,4 +4,4 @@
 for file in $(git diff --cached --name-only --diff-filter=ACMR -- '*.py'); do
   git show ":$file" | uv run -q ruff check -q --stdin-filename "$file" - || exit 1
 done
-exec uv run -q pytest -q -p no:cacheprovider tests/test_repository_hygiene.py
+exec uv run -q pytest -q -n0 -p no:cacheprovider tests/test_repository_hygiene.py  # a few tests: one process

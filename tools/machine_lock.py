@@ -7,9 +7,10 @@
 runs COMMAND with the machine to itself: it waits for every other heavy run and every running game to end first
 (saying who holds the machine), holds the lock for COMMAND's life, and exits with COMMAND's status. tools/verify.py
 takes it this way; run a dev install, an art build or a benchmark this way too. A game launch (game_harness.py
-run) and a test run (tests/conftest.py) wait in turn while a heavy run holds the machine or waits for it. A heavy run beside another, or beside a game,
-slows both, skews a benchmark's numbers and makes time limits (the install budget, Wine boot timeouts) fail for no
-fault of the code.
+run) and a parallel test run (tests/conftest.py) hold it shared, beside each other. Every run waits in one line,
+first come, first served: a run goes in once every run that began waiting before it has. A heavy run beside
+another, or beside a game, slows both, skews a benchmark's numbers and makes time limits (the install budget, Wine
+boot timeouts) fail for no fault of the code.
 
 Each lock is a flock on a file the kernel releases when its holder exits, so a crashed or killed run never leaves the
 machine locked. The descriptor is not inherited, so a process COMMAND leaves behind (a wineserver) cannot hold it.
@@ -27,10 +28,14 @@ import subprocess
 import sys
 import time
 
+from pathlib import Path
+
 from checkout import work
 
 HEAVY = ".machine.lock"  # a heavy run holds it exclusively; each running game holds it shared
-QUEUE = ".machine.queue"  # a heavy run holds it while it waits, so games started one after another cannot starve it
+# The line of runs waiting for the machine: one ticket file per run, named by when it began to wait, locked by its run.
+# First come, first served, so neither a stream of games nor a benchmark's back-to-back runs can keep the others out.
+LINE = ".machine.line"
 HELD = "WOZMOD_MACHINE_LOCK"  # set for COMMAND, so a heavy run inside one runs without waiting for itself
 # Two games may run at once across the checkout and all its worktrees: every run holds one of these, in the main
 # checkout's work/, for its whole life, and writes its name and start into it so a waiting launch can say who holds
@@ -55,41 +60,76 @@ def take(names: tuple[str, ...], holder: str = "", poll: float = 1.0) -> tuple[i
         time.sleep(poll)
 
 
+def _alive(ticket: Path) -> bool:
+    """Whether the run that wrote ticket still waits: it holds the ticket locked while it does. A dead run's ticket is
+    removed here, so a crashed run never blocks the line."""
+    try:
+        fd = os.open(ticket, os.O_RDONLY | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    finally:
+        os.close(fd)
+    ticket.unlink(missing_ok=True)
+    return False
+
+
+def _wait_turn(alone: bool, holder: str, poll: float) -> int:
+    """Wait in line for the machine, first come first served, then hold it: alone (a heavy run) or shared (a game or
+    a test run, beside the shared runs next to it in line). A run goes in when no run that began waiting before it
+    still waits (a shared run: no heavy one), and the runs on the machine allow it. Returns the held descriptor."""
+    line = work() / LINE
+    line.mkdir(exist_ok=True)
+    name = f"{time.monotonic_ns():020d}-{os.getpid()}-{'heavy' if alone else 'shared'}"
+    # Written under a hidden name, locked, then renamed: no one sees the ticket before its owner holds it.
+    draft = line / f".{name}"
+    ticket = os.open(draft, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    fcntl.flock(ticket, fcntl.LOCK_EX)
+    os.write(ticket, holder.encode("utf-8"))
+    os.rename(draft, line / name)
+    told = False
+    try:
+        while True:
+            ahead = [t for t in sorted(line.iterdir()) if not t.name.startswith(".") and t.name < name and _alive(t)]
+            if not (ahead if alone else [t for t in ahead if t.name.endswith("-heavy")]):
+                machine = os.open(work() / HEAVY, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+                try:
+                    fcntl.flock(machine, (fcntl.LOCK_EX if alone else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    os.close(machine)
+                else:
+                    if alone:
+                        os.ftruncate(machine, 0)
+                        os.pwrite(machine, json.dumps({"run": holder, "since": time.time()}).encode(), 0)
+                    return machine
+            if not told:
+                busy = (holders((HEAVY,)) or [f"the game {game}" for game in holders(SLOTS)]
+                        or [t.read_text(encoding="utf-8", errors="replace") for t in ahead[:1]] or ["a running game or test run"])
+                print(f"machine_lock: {holder} waits for the machine, held by {busy[0]}", file=sys.stderr,
+                      flush=True)
+                told = True
+            time.sleep(poll)
+    finally:
+        (line / name).unlink(missing_ok=True)
+        os.close(ticket)
+
+
 def claim(holder: str, poll: float = 1.0) -> int:
-    """For a heavy run: wait until no other heavy run and no game holds the machine, saying who does, then hold it
-    exclusively. The descriptor stays open, so the lock lasts until the process ends."""
-    busy = holders((HEAVY,)) or [f"the game {game}" for game in holders(SLOTS)]
-    if busy:
-        print(f"machine_lock: waiting for the machine, held by {', '.join(busy)}", file=sys.stderr, flush=True)
-    queue, _ = take((QUEUE,), holder, poll)  # ahead of any game that has not started yet
-    fd, _ = take((HEAVY,), holder, poll)  # once every running game has ended
-    os.close(queue)
-    return fd
+    """For a heavy run: wait in line, saying who has the machine, then hold it alone. The descriptor stays open, so
+    the lock lasts until the process ends."""
+    return _wait_turn(True, holder, poll)
 
 
 def share(poll: float = 1.0, what: str = "the game") -> int | None:
-    """For a game launch or a test run (what): wait until no heavy run holds or waits for the machine, then hold it
-    shared, which other games and test runs may too, so no heavy run starts beside it. The descriptor (None inside a
-    heavy run, which already has the machine) stays open, so the lock lasts until the process ends."""
+    """For a game launch or a test run (what): wait in line, then hold the machine shared, beside other games and
+    test runs, so no heavy run starts beside it. The descriptor (None inside a heavy run, which already has the
+    machine) stays open, so the lock lasts until the process ends."""
     if os.environ.get(HELD):
         return None
-    told = False
-    while True:
-        queue = os.open(work() / QUEUE, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
-        machine = os.open(work() / HEAVY, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
-        try:
-            fcntl.flock(queue, fcntl.LOCK_SH | fcntl.LOCK_NB)
-            fcntl.flock(machine, fcntl.LOCK_SH | fcntl.LOCK_NB)
-            os.close(queue)
-            return machine
-        except BlockingIOError:
-            os.close(queue)
-            os.close(machine)
-        if not told:
-            busy = holders((HEAVY,)) or holders((QUEUE,)) or ["a heavy run"]
-            print(f"machine_lock: {what} waits for the machine, held by {busy[0]}", file=sys.stderr, flush=True)
-            told = True
-        time.sleep(poll)
+    return _wait_turn(False, f"{what} (pid {os.getpid()})", poll)
 
 
 def holders(names: tuple[str, ...]) -> list[str]:
