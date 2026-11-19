@@ -3,7 +3,7 @@
     uv sync --extra native --group build
     uv run python packaging/build.py --assets DIR --speech SPEECH
 
-DIR holds the release d3d9.dll and lettering.zip (see packaging/release_assets.py). SPEECH is the speech model folder
+DIR holds the release d3d9.dll and lettering.zip: work/release-assets/, where packaging/release_assets.py makes them. SPEECH is the speech model folder
 (voices/phones.py MODEL, PocketSphinx's US English model); the zip carries it, so an install needs nothing more.
 Run it on the platform you build for: PyInstaller cannot cross-build.
 """

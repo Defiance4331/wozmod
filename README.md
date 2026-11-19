@@ -254,23 +254,27 @@ Python 3.14 or later, which uv installs if it is missing. In the repository fold
 Without `--extra native`, or with `WOZMOD_NATIVE=0`, wozmod uses its slower
 Python code, and builds the same files.
 
-To build the release zip for your system, run
-`uv sync --extra native --group build`, then
-`uv run python packaging/build.py --assets <folder with d3d9.dll and lettering.zip> --speech <speech model folder>`.
-`packaging/release_assets.py` makes those two files and puts them on a draft
-GitHub release for the tag. Make that draft first: pushing a `v*` tag runs
-the release workflow in `.github/workflows/`, which takes the two files from
-the draft, builds the zips for Windows and Linux, and then takes the two
-files off the draft, so the release holds only the zips. Publishing the draft
-then closes each issue that a commit since the previous release names on a
-`Reported in #N` line, with a comment that links the release.
+Releases are built on the developer machine: the DLL build reads the stock game, the lettering render needs
+FontForge, Cairo and NumPy, and the proven ffmpeg lives in `work/release-assets/`
+(`packaging/ffmpeg/README.md`). Run `uv sync --extra native --group build`, then:
+
+1. `uv run python packaging/release_assets.py --build --game <stock folder> --donors <donors folder>` makes
+   `d3d9.dll` and `lettering.zip` in `work/release-assets/` and writes their pins in `packaging/pins.json`, which
+   the release commit carries.
+2. `uv run python packaging/build.py --assets work/release-assets --speech <speech model folder>` builds the Linux
+   zip, and `packaging/build_windows.sh work/release-assets` the Windows one (below). Both go to
+   `build/packaging/`.
+3. `gh release create <tag> --draft build/packaging/wozmod-*.zip` makes the draft release with both zips.
+
+Publishing the draft then closes each issue that a commit since the previous release names on a
+`Reported in #N` line, with a comment that links the release (`.github/workflows/close-issues.yml`).
 
 ### Build the Windows zip on Linux
 
 `packaging/build_windows.sh <folder with d3d9.dll and lettering.zip>` builds
 the Windows zip on Linux, under Wine, with no GitHub workflow. It built the
 published v0.1.0 Windows zip. The header of the script lists what it needs
-(Wine, uv, rustup, curl and MinGW). The zip goes to `build/packaging/`.
+(Wine, uv, rustup, curl and MinGW).
 
 ## Legal
 

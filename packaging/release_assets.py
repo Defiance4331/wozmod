@@ -1,19 +1,19 @@
-"""Put d3d9.dll and lettering.zip on the draft release of a tag, where the release workflow fetches them.
+"""Make the release d3d9.dll and lettering.zip in work/release-assets/ and write their pins.
 
-The workflow packs both into each zip, then takes them off the draft: the published release holds only the zips.
+Releases are built on the developer machine: the DLL build reads the stock game, the lettering render needs
+FontForge, Cairo and NumPy, and work/release-assets/ also holds the proven ffmpeg (packaging/ffmpeg/README.md), none of
+which a hosted runner has. Run this first, then packaging/build.py and packaging/build_windows.sh, which take all
+three from work/release-assets/:
 
-CI cannot build these two files: the DLL build reads the stock game, and the lettering render needs
-FontForge, Cairo and NumPy. Run this on the developer machine, before you push the tag:
-
-    uv run python packaging/release_assets.py --tag v0.1.0 --dll PATH --lettering PATH
-    uv run python packaging/release_assets.py --tag v0.1.0 --build --game "<stock Musou Orochi Z folder>" \
+    uv run python packaging/release_assets.py --build --game "<stock Musou Orochi Z folder>" \
         --donors "<donors folder, as the installer lays it out>"
+    uv run python packaging/release_assets.py --dll PATH --lettering PATH
 
---build renders both files first (MinGW, Fedora's mingw32-gcc, for the DLL, the system python3 with FontForge, Cairo
-and NumPy for the lettering, which reads the menu words from the donors). It then writes both files' pins in
-packaging/pins.json (packaging/pins.py), which the release commit carries: a release pins what it ships
-(installer decision 55). A changed DLL pin needs a play-test of that DLL before the release. Add --dry-run to write the
-pins without uploading.
+--build renders both files (MinGW, Fedora's mingw32-gcc, for the DLL, the system python3 with FontForge, Cairo and
+NumPy for the lettering, which reads the menu words from the donors); --dll and --lettering take files made before.
+Either way both land in work/release-assets/ and their pins in packaging/pins.json (packaging/pins.py), which the
+release commit carries: a release pins what it ships (installer decision 55). A changed DLL pin needs a play-test of
+that DLL before the release.
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -50,35 +49,27 @@ def build(game: Path, donors: Path, folder: Path) -> tuple[Path, Path]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--tag", required=True, help="the release tag, for example v0.1.0")
     parser.add_argument("--dll", type=Path)
     parser.add_argument("--lettering", type=Path)
     parser.add_argument("--build", action="store_true", help="render both files first (needs --game and --donors)")
     parser.add_argument("--game", type=Path, help="the stock Musou Orochi Z folder, for --build")
     parser.add_argument("--donors", type=Path, help="the donors folder the menu words resolve from, for --build")
-    parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix="wozmod-assets-") as scratch:
-        if args.build:
-            if args.game is None or args.donors is None:
-                parser.error("--build needs --game and --donors")
-            dll, lettering = build(args.game, args.donors, Path(scratch))
-        elif args.dll and args.lettering:
-            # gh names an asset after its file, so copy under the release names
-            dll, lettering = Path(scratch, "d3d9.dll"), Path(scratch, "lettering.zip")
-            shutil.copyfile(args.dll, dll)
-            shutil.copyfile(args.lettering, lettering)
-        else:
-            parser.error("give --dll and --lettering, or --build with --game")
-        pins.write_assets(dll, lettering)
-        print(f"pinned in {pins.PINS}: {dll}, {lettering}")
-        if args.dry_run:
-            return 0
-        if subprocess.run(["gh", "release", "view", args.tag], capture_output=True).returncode:
-            subprocess.run(["gh", "release", "create", args.tag, "--draft", "--title", args.tag,
-                            "--notes", ""], check=True)
-        subprocess.run(["gh", "release", "upload", args.tag, dll, lettering,
-                        "--clobber"], check=True)
+    folder = pins.release_assets()
+    folder.mkdir(parents=True, exist_ok=True)
+    if args.build:
+        if args.game is None or args.donors is None:
+            parser.error("--build needs --game and --donors")
+        dll, lettering = build(args.game, args.donors, folder)
+    elif args.dll and args.lettering:
+        dll, lettering = folder / "d3d9.dll", folder / "lettering.zip"
+        for source, target in ((args.dll, dll), (args.lettering, lettering)):
+            if source.resolve() != target.resolve():
+                shutil.copyfile(source, target)
+    else:
+        parser.error("give --dll and --lettering, or --build with --game and --donors")
+    pins.write_assets(dll, lettering)
+    print(f"{dll} and {lettering}, pinned in {pins.PINS}")
     return 0
 
 
