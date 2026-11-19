@@ -35,8 +35,8 @@ from wozmod.runtime.build import build_dll
 
 DEFAULT_SPEC = prepare_run.REPO / "data/checks/layout.toml"
 START_WAIT = 300  # seconds from taking a game slot until the game answers the test mailbox
-SLOT_WAIT = 1800  # seconds a launch waits for one of the two game slots
-SLOT_REPORT = 30  # seconds between the waiting launch's reports of who holds the slots
+SLOT_WAIT = 1800  # seconds a launch waits for the machine and one of the two game slots
+SLOT_REPORT = 30  # seconds between the waiting launch's reports of what it waits for
 IDLE = 900  # a game left up with --to stops after this long with no command
 STOP_WAIT = 60  # seconds for the supervisor to end after stop
 RETRIES = 2  # fresh runs after one that ended before the game started
@@ -64,15 +64,16 @@ def launch(root: Path, pad: str | None = None, size: str | None = None, video: b
 
 
 def wait_slot(root: Path, proc: subprocess.Popen, seconds: float = SLOT_WAIT, report: float = SLOT_REPORT) -> bool:
-    """True once the run holds a game slot; meanwhile say every ``report`` seconds who holds them. False when the run
-    ended first or the wait ran out."""
+    """True once the run holds a game slot; meanwhile say every ``report`` seconds what it waits for: the machine
+    (held by a heavy run, or by runs ahead in line) before a slot, then the slots' holders. False when the run ended
+    first or the wait ran out."""
     deadline, reported = time.monotonic() + seconds, time.monotonic()
     while not (root / "slot.json").is_file():
         if proc.poll() is not None or time.monotonic() >= deadline:
             return False
         if time.monotonic() - reported >= report:
-            print("run_check: waiting for a game slot, held by " + (", ".join(harness.slot_holders()) or "nobody now"),
-                  file=sys.stderr)
+            print("run_check: waiting for " + (harness.machine_lock.waits(proc.pid) or "a game slot, held by "
+                                               + (", ".join(harness.slot_holders()) or "nobody now")), file=sys.stderr)
             reported = time.monotonic()
         time.sleep(0.5)
     return True

@@ -1,7 +1,7 @@
 """Export this machine's input paths, so tests that need stock or donor files run instead of skipping.
 
 The paths live in the `[tests]` table of the main checkout's `work/harness.toml` (ignored, per machine; a linked
-worktree reads the main checkout's; `WOZMOD_HARNESS_CONFIG` names another file). A variable already set in the
+checkout reads the main checkout's; `WOZMOD_HARNESS_CONFIG` names another file). A variable already set in the
 environment wins.
 
 With WOZMOD_REQUIRE_INPUTS=1 (tools/verify.py) the run refuses to start without the config or one of its
@@ -153,6 +153,20 @@ def pytest_runtest_makereport(item, call):
         if all(os.environ.get(name) for name in re.findall(r"WOZMOD_[A-Z0-9_]+", reason)):
             report.outcome = "failed"
             report.longrepr = f"skipped although WOZMOD_REQUIRE_INPUTS=1 and every switch it names is set: {reason}"
+
+
+@pytest.hookimpl(wrapper=True, tryfirst=True)  # around the terminal reporter's, so after its count line
+def pytest_sessionfinish(session):
+    """End the output with the failed and errored tests' ids, so `pytest -q | tail -1` names what to rerun instead
+    of only counting it. A run with none adds nothing."""
+    result = yield
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    if reporter is not None and not hasattr(session.config, "workerinput"):
+        named = [f"{kind}: " + " ".join(dict.fromkeys(report.nodeid for report in reporter.stats.get(kind, [])))
+                 for kind in ("failed", "error") if reporter.stats.get(kind)]
+        if named:
+            reporter.write_line("; ".join(named))
+    return result
 
 
 @pytest.fixture(scope="session")

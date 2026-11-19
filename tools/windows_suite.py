@@ -6,7 +6,7 @@
 runs pytest on DIR (default: this checkout) with the Windows CPython of packaging/windows-build.json, on a private
 virtual display (Xvfb), and writes OUT (default DIR/work/windows-suite/) junit.xml, pytest.log and summary.txt. It
 exits non-zero when a test fails or errors. Each run gets its own copy of the Windows environment (copy on write), so
-runs from several worktrees at once share nothing they write.
+runs from several checkouts at once share nothing they write.
 
 The Windows environment is a Wine prefix with that Python, the packages uv.lock pins (the dev group), the native
 codecs cross-built for Windows from DIR/native/, and a full Windows ffmpeg on PATH (all pinned in

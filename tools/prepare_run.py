@@ -4,7 +4,7 @@
 The run gets links to the stock backup's files, reflinks of the install's d3d9.dll and wozmod/ folder (checked
 against the installer's record), an overlay folder over the template Proton prefix, a seeded save
 and a record of the mod files (game.sha256, and their stamps in fixtures.json), which game_harness.py run checks with
-verify_copy before each launch. Runs, caches and saves live in the main checkout's work/, from any worktree; machine
+verify_copy before each launch. Runs, caches and saves live in the main checkout's work/, from any checkout; machine
 paths come from its ignored work/harness.toml.
 """
 

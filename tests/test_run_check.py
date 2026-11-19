@@ -567,6 +567,44 @@ def test_boot_clock_starts_once_the_run_holds_a_slot_and_the_wait_names_the_hold
     assert tools.run_check.harness.slot_holders() == []
 
 
+def test_a_launch_waiting_behind_a_heavy_run_names_the_machine_lock_and_who_is_ahead(tools, tmp_path, monkeypatch,
+                                                                                     capsys):
+    """Bugs: a launch queued for the machine (behind a benchmark, or the first-come line) reports that it waits for a
+    game slot "held by nobody now"; or it counts shared runs ahead of it, which it would go in beside, as waits."""
+    import subprocess
+    import sys
+
+    lock = tools.run_check.harness.machine_lock
+    monkeypatch.setattr(lock, "work", lambda: tmp_path / "work")
+    monkeypatch.delenv(lock.HELD, raising=False)
+    (tmp_path / "work").mkdir()
+    heavy = lock.claim("bench", 0.01)
+    shared, install = [], []
+    threading.Thread(target=lambda: shared.append(lock.share(0.01, "a test run")), daemon=True).start()
+    time.sleep(0.2)
+    threading.Thread(target=lambda: install.append(lock.claim("install", 0.01)), daemon=True).start()
+    time.sleep(0.2)
+    launch = subprocess.Popen([sys.executable, "-c", (  # the game harness's run(): in line for the machine
+        f"import sys, time; sys.path.insert(0, {str(Path(lock.__file__).parent)!r}); import machine_lock; "
+        f"machine_lock.work = lambda: __import__('pathlib').Path({str(tmp_path / 'work')!r}); "
+        "machine_lock.share(0.01); time.sleep(30)")], env={k: v for k, v in os.environ.items() if k != lock.HELD})
+    try:
+        root = tmp_path / "work/runtime-tests/r1"
+        root.mkdir(parents=True)
+        assert tools.run_check.wait_slot(root, launch, 1.5, 0.5) is False
+    finally:
+        launch.kill()
+        launch.wait()
+        os.close(heavy)
+        for waiter in (shared, install):  # each goes in once the one before it leaves
+            deadline = time.monotonic() + 5
+            while not waiter and time.monotonic() < deadline:
+                time.sleep(0.01)
+            os.close(waiter[0])
+    said = [line for line in capsys.readouterr().err.splitlines() if line.startswith("run_check:")]
+    assert said and set(said) == {"run_check: waiting for the machine, held by bench (0 min); 1 run(s) wait ahead"}
+
+
 def test_entries_dir_swaps_each_rebuilt_entry_over_the_installed_one(tools, tmp_path, monkeypatch):
     """Bug: a rebuilt menu-art entry goes in under the wrong installed path, so the run quietly shows the old art."""
     built = tmp_path / "entries"

@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import tarfile
 import time
 from pathlib import Path
 
@@ -46,7 +45,7 @@ def repo(tmp_path, monkeypatch) -> Path:
     root = tmp_path / "repo"
     root.mkdir()
     _git("init", "-q", "-b", "main", cwd=root)
-    (root / ".gitignore").write_text("work/\n.worktrees/\n", encoding="utf-8")
+    (root / ".gitignore").write_text("work/\n", encoding="utf-8")
     (root / "tracked.txt").write_text("one\n", encoding="utf-8")
     _git("add", ".", cwd=root)
     _git("commit", "-q", "-m", "first", cwd=root)
@@ -143,52 +142,11 @@ def test_a_dry_run_lists_candidates_and_deletes_nothing(repo, capsys):
     assert run.is_dir() and "work/runtime-tests/old" in capsys.readouterr().out
 
 
-def _worktree(repo: Path, name: str) -> Path:
-    path = repo / ".worktrees" / name
+def _linked(repo: Path, name: str) -> Path:
+    """A linked checkout of main, beside repo."""
+    path = repo.parent / name
     _git("worktree", "add", "-q", "--detach", str(path), "main", cwd=repo)
     return path
-
-
-def test_a_removed_worktree_can_be_rebuilt_from_its_archive(repo, tmp_path):
-    # Bug: the worktree is removed before (or without) archiving its tracked edits, staged files, untracked files
-    # or handbacks, so restoring the archive does not give back what was there.
-    tree = _worktree(repo, "dirty")
-    (tree / "tracked.txt").write_text("one\nedited\n", encoding="utf-8")
-    (tree / "staged.txt").write_text("staged\n", encoding="utf-8")
-    _git("add", "staged.txt", cwd=tree)
-    (tree / "notes").mkdir()
-    (tree / "notes/untracked.bin").write_bytes(bytes(range(256)))
-    (tree / "work/handbacks").mkdir(parents=True)
-    (tree / "work/handbacks/h.md").write_text("handback\n", encoding="utf-8")
-    (tree / "work/build").mkdir()  # ignored and rebuildable: not archived
-    (tree / "work/build/big").write_bytes(b"0" * 1000)
-    wanted = {p.relative_to(tree).as_posix(): p.read_bytes() for p in tree.rglob("*")
-              if p.is_file() and ".git" not in p.relative_to(tree).parts and "work" not in p.relative_to(tree).parts}
-    archives = tmp_path / "archives"
-    assert _clean(repo, "--only", "worktrees", "--keep-days", "0", "--archive", str(archives)) == 0
-    assert not tree.exists() and str(tree) not in _git("worktree", "list", cwd=repo)
-    saved = next(archives.glob("worktree-archive-*/dirty"))
-    rebuilt = _worktree(repo, "rebuilt")
-    _git("apply", "--index", str(saved / "changes.patch"), cwd=rebuilt)
-    with tarfile.open(saved / "untracked.tar.gz") as tar:
-        tar.extractall(rebuilt, filter="data")
-    got = {p.relative_to(rebuilt).as_posix(): p.read_bytes() for p in rebuilt.rglob("*")
-           if p.is_file() and ".git" not in p.relative_to(rebuilt).parts}
-    assert got == wanted
-    assert (saved / "handbacks/h.md").read_text(encoding="utf-8") == "handback\n"
-
-
-def test_a_worktree_with_a_commit_not_in_main_is_kept(repo, tmp_path):
-    # Bug: the ancestry check runs the wrong way (main in HEAD), so a worktree whose only copy of a commit is its
-    # detached HEAD is removed, and a worktree behind main is kept.
-    ahead, behind = _worktree(repo, "ahead"), _worktree(repo, "behind")
-    (ahead / "new.txt").write_text("new\n", encoding="utf-8")
-    _git("add", "new.txt", cwd=ahead)
-    _git("commit", "-q", "-m", "unmerged", cwd=ahead)
-    (repo / "tracked.txt").write_text("two\n", encoding="utf-8")
-    _git("commit", "-q", "-am", "main moves on", cwd=repo)
-    assert _clean(repo, "--only", "worktrees", "--keep-days", "0", "--archive", str(tmp_path / "a")) == 0
-    assert ahead.is_dir() and not behind.exists()
 
 
 # A step_keys module whose one key is the SHA-256 of the tree's data.txt, as tools/verify.py's KEYS reads it.
@@ -200,8 +158,8 @@ def keys():
 
 
 def test_only_reference_builds_no_live_tree_keys_are_listed(repo):
-    # Bug: a live worktree's reference build is listed for deletion: its key is worked out from its HEAD instead of
-    # its files as they are now, or the worktrees are left out and only main's keys are kept; or an old build, an
+    # Bug: a live linked checkout's reference build is listed for deletion: its key is worked out from its HEAD instead
+    # of its files as they are now, or the linked checkouts are left out and only main's keys are kept; or an old build, an
     # environment no tree uses, or what a stopped run left is never listed.
     import hashlib
 
@@ -211,7 +169,7 @@ def test_only_reference_builds_no_live_tree_keys_are_listed(repo):
         (repo / name).write_text(text, encoding="utf-8")
     _git("add", ".", cwd=repo)
     _git("commit", "-q", "-m", "keys", cwd=repo)
-    edited = _worktree(repo, "edited")
+    edited = _linked(repo, "edited")
     (edited / "data.txt").write_text("edited\n", encoding="utf-8")  # not committed
     environment = verify.venv_folder(repo, _git("rev-parse", "main^{tree}", cwd=repo).strip())
     (environment / "bin").mkdir(parents=True)

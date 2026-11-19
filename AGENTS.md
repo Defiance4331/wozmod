@@ -51,7 +51,7 @@ copies.
   donor movies.
 - Launch the game whenever a task needs it, in a disposable copy under `work/`,
   through `tools/run_check.py` or `tools/game_harness.py run --slot` (two games
-  at most, across all worktrees).
+  at most on the machine, from any checkout).
   Touch a live installation only when the user names its path and the operation.
 - Test in the game against one install per checkout: `work/install/`, a
   reflink copy of the stock game that `wozmod install` wrote into. Reinstall
@@ -60,13 +60,14 @@ copies.
   `--file`. Do not make another install per task or per round: each one
   costs about 3 GB of disk.
 - When the disk needs it, `tools/cleanup.py` lists old game test runs, stale
-  caches, older packaging rounds, worktrees already in main and reference
-  builds (`work/verify/`) that no live checkout uses; `--delete`
+  caches, older packaging rounds and reference builds (`work/verify/`) that no
+  live checkout uses; `--delete`
   removes them slowly. Run it by hand only, never from a hook or a timer.
 
 ## Testing
 
-Run `uv run pytest -q` (6 workers by default; `-n0` for one). Bugs worth naming
+Run `uv run pytest -q` (6 workers by default; `-n0` for one); after a failure
+its last line names each failed and errored test. Bugs worth naming
 here are a shifted offset, a dropped translation row, and an edit over the wrong
 stock bytes. Synthetic bytes in
 `tmp_path` cover formats and patch logic. Use stock or donor files only for
@@ -93,9 +94,12 @@ against main's build. Before a release, run `tools/verify.py release`: everythin
 failing when a run skipped or left out a test. verify judges with its own code
 and checklist from the merge base with main, so an edit to either takes effect
 once it is on main. `ref`, `release` and `--triggered` run with the machine to
-itself: while another heavy run, from any worktree, holds `work/.machine.lock`,
-they wait and say who holds it. Run a dev install, an art build or a benchmark
-the same way, through `python3 tools/machine_lock.py COMMAND`, and give a run
+itself: while another heavy run, from any checkout, holds `work/.machine.lock`,
+they wait and say who holds it. Run a dev install or an art build the same way,
+through `python3 tools/machine_lock.py COMMAND`. Run a benchmark through
+`python3 tools/bench.py NAME=COMMAND NAME=COMMAND...`: it runs the arms in turn
+(5 runs each by default), takes the lock around each run alone so waiting runs
+go in between, and prints each arm's median and range. Give a run
 that may wait a long timeout (a release takes about 40 minutes). Game launches
 and parallel test runs hold the machine shared, beside each other, and every
 run waits in one line, first come, first served: a benchmark's next run cannot

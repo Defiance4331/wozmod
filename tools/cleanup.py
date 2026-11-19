@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""List the rebuildable state of the main checkout's work/ and .worktrees/, and delete it with --delete.
+"""List the rebuildable state of the main checkout's work/, and delete it with --delete.
 
     uv run python tools/cleanup.py [--only KIND,...] [--skip KIND,...] [--keep-days N] [--keep-runs K] [--delete]
 
@@ -10,19 +10,17 @@ busy or btrfs is stalled in a commit, so a large delete does not freeze the desk
 
 Kinds:
   runs             game test runs in work/runtime-tests/ older than --keep-days, except the newest --keep-runs
-  worktrees        linked worktrees in .worktrees/ whose HEAD is in main and that are older than --keep-days; their
-                   uncommitted changes, untracked files and work/handbacks/ are archived first (--archive)
   lettering-cache  work/lettering-cache/ renderer folders, except the newest
   install-e2e      work/install-e2e* copies the install test left behind
   packages         work/package/ rounds (NAME, NAME-r2, NAME-r3...), except each name's newest round
   verify           tools/verify.py's reference builds (work/verify/builds/STEP/KEY) whose step key is not the key of
-                   main or of any checkout (the main one or a worktree, as it is now, or its merge base with main), the
+                   main or of any checkout (the main one or a linked one, as it is now, or its merge base with main), the
                    Python environments (work/verify/venvs/) none of those uses, and what a stopped run left; all of it
                    is kept while any run (a heavy one, a test run, a game) holds work/.machine.lock
 
 It never touches a path work/harness.toml or work/winvm/compose.yml names, work/install, work/donors, the VM storage,
-the run template, work/handbacks, work/archive, or anything outside the checkout, and it keeps anything a running
-process uses (its working folder or a path in its command line).
+the run template, work/handbacks, work/archive, or anything outside the checkout's work/, and it keeps anything a
+running process uses (its working folder or a path in its command line).
 """
 
 from __future__ import annotations
@@ -31,11 +29,9 @@ import argparse
 import fcntl
 import os
 import re
-import shutil
 import stat
 import subprocess
 import sys
-import tarfile
 import tempfile
 import time
 import tomllib
@@ -45,7 +41,7 @@ from pathlib import Path
 import checkout
 import verify
 
-KINDS = ("runs", "worktrees", "lettering-cache", "install-e2e", "packages", "verify")
+KINDS = ("runs", "lettering-cache", "install-e2e", "packages", "verify")
 DAY = 86400
 CHUNK = 2000  # entries removed between two looks at the disk
 DISK = "nvme0n1"  # the drive work/ is on; btrfs reports no device per file, so it is named here
@@ -175,9 +171,8 @@ def refusal(path: Path, repo: Path, guarded: list[Path], table: list[tuple[int, 
     """Why path must not be deleted, or ''."""
     root = repo.resolve()
     for form in {Path(os.path.abspath(path)), path.resolve()}:
-        if not form.is_relative_to(root) or form in (root, root / "work", root / ".worktrees") \
-                or form.is_relative_to(root / ".git"):
-            return "outside the checkout's work/ and .worktrees/"
+        if not form.is_relative_to(root / "work") or form == root / "work":
+            return "outside the checkout's work/"
         for guard in guarded:
             if form == guard or form.is_relative_to(guard) or guard.is_relative_to(form):
                 return f"protected: {guard}"
@@ -215,36 +210,6 @@ def runs(repo: Path, keep_days: float, keep_runs: int, now: float) -> list[Item]
             item.kept, item.quiet = f"among the newest {keep_runs}", True
         elif ages[run] < keep_days * DAY:
             item.kept, item.quiet = f"newer than {keep_days:g} days", True
-        items.append(item)
-    return items
-
-
-def worktrees(repo: Path, keep_days: float, now: float) -> list[Item]:
-    listing = git("worktree", "list", "--porcelain", cwd=repo).stdout.decode()
-    items = []
-    for block in listing.strip().split("\n\n"):
-        fields = dict((line.split(" ", 1) + [""])[:2] for line in block.splitlines())
-        path = Path(fields["worktree"])
-        if not path.is_relative_to(repo / ".worktrees") or not path.is_dir():
-            continue
-        head = fields.get("HEAD", "")
-        gitdir = Path(git("rev-parse", "--absolute-git-dir", cwd=path).stdout.decode().strip())
-        status = git("--no-optional-locks", "status", "--porcelain", "-z", "--untracked-files=all", cwd=path).stdout.split(b"\0")
-        dirty = [os.fsdecode(e[3:]) for e in status if e]
-        # its last commit or checkout, or its newest edit; not the index, which any git status rewrites
-        age = now - max([changed(gitdir / n) for n in ("HEAD", "logs/HEAD")]
-                        + [changed(path / name) for name in dirty])
-        untracked = sum(1 for e in status if e.startswith(b"??"))
-        stat_line = git("diff", "--shortstat", "HEAD", cwd=path).stdout.decode().strip() or "no changes"
-        why = (f"HEAD {head[:9]} is in main; {stat_line}; {untracked} untracked file(s); archived first"
-               if dirty else f"HEAD {head[:9]} is in main; clean")
-        item = Item("worktrees", path, why, age)
-        if "locked" in fields:
-            item.kept = "locked (git worktree unlock it first)"
-        elif git("merge-base", "--is-ancestor", head, "main", cwd=repo, check=False).returncode != 0:
-            item.kept = f"HEAD {head[:9]} is not in main"
-        elif age < keep_days * DAY:
-            item.kept, item.quiet = f"changed in the last {keep_days:g} days", True
         items.append(item)
     return items
 
@@ -366,8 +331,6 @@ def plan(repo: Path, kinds: set[str], keep_days: float, keep_runs: int,
     items = []
     if "runs" in kinds:
         items += runs(repo, keep_days, keep_runs, now)
-    if "worktrees" in kinds:
-        items += worktrees(repo, keep_days, now)
     if "lettering-cache" in kinds:
         items += caches(repo, now)
     if "install-e2e" in kinds:
@@ -411,9 +374,9 @@ def measure(path: Path) -> tuple[int, int, int, bool]:
     return size, entries, linked, complete
 
 
-def remove_tree(path: Path, keep: frozenset[str] = frozenset()) -> None:
-    """Delete path (or, with keep, its contents except those top-level names), CHUNK entries at a time with pace()
-    before each. Folders without u+rwx (overlayfs leaves its work folders at mode 000) get it first."""
+def remove_tree(path: Path) -> None:
+    """Delete path, CHUNK entries at a time with pace() before each. Folders without u+rwx (overlayfs leaves its work
+    folders at mode 000) get it first."""
     order: list[tuple[str, bool]] = []
 
     def visit(folder: str) -> None:
@@ -423,8 +386,6 @@ def remove_tree(path: Path, keep: frozenset[str] = frozenset()) -> None:
         with os.scandir(folder) as listing:
             entries = list(listing)
         for entry in entries:
-            if folder == str(path) and entry.name in keep:
-                continue
             if entry.is_dir(follow_symlinks=False):
                 visit(entry.path)
             else:
@@ -435,53 +396,16 @@ def remove_tree(path: Path, keep: frozenset[str] = frozenset()) -> None:
         order.append((str(path), False))
     else:
         visit(str(path))
-        if keep:
-            order.pop()  # path itself stays
     for start in range(0, len(order), CHUNK):
         pace()
         for name, folder in order[start:start + CHUNK]:
             os.rmdir(name) if folder else os.unlink(name)
 
 
-def archive(worktree: Path, folder: Path) -> None:
-    """Save what removing worktree would lose: HEAD, status, the diff from HEAD, untracked files and handbacks."""
-    folder.mkdir(parents=True)
-    head = git("rev-parse", "HEAD", cwd=worktree).stdout.decode().strip()
-    branch = git("branch", "--show-current", cwd=worktree).stdout.decode().strip()
-    (folder / "HEAD").write_text(f"{head}\n{branch}\n" if branch else f"{head}\n", encoding="utf-8")
-    (folder / "status.txt").write_bytes(git("status", "--short", cwd=worktree).stdout)
-    (folder / "changes.patch").write_bytes(git("diff", "--binary", "HEAD", cwd=worktree).stdout)
-    names = [os.fsdecode(n) for n in
-             git("ls-files", "-z", "--others", "--exclude-standard", cwd=worktree).stdout.split(b"\0") if n]
-    if names:
-        with tarfile.open(folder / "untracked.tar.gz", "w:gz") as tar:
-            for name in names:
-                tar.add(worktree / name, arcname=name, recursive=False)
-    if (worktree / "work/handbacks").is_dir():
-        shutil.copytree(worktree / "work/handbacks", folder / "handbacks", symlinks=True)
-
-
-def archive_root(repo: Path) -> Path:
-    """[cleanup] archive in harness.toml, else work/archive."""
-    config = Path(os.environ.get("WOZMOD_HARNESS_CONFIG", repo / "work/harness.toml"))
-    table = tomllib.loads(config.read_text(encoding="utf-8")) if config.is_file() else {}
-    return Path(table.get("cleanup", {}).get("archive", repo / "work/archive"))
-
-
-def delete(item: Item, repo: Path, archives: Path) -> str:
+def delete(item: Item, repo: Path) -> str:
     """Delete one candidate after checking it again; returns what was done."""
     if reason := refusal(item.path, repo, protected(repo), processes()):
         return f"kept: {reason}"
-    if item.kind == "worktrees":
-        folder = archives / item.path.name
-        number = 1
-        while folder.exists():
-            number += 1
-            folder = archives / f"{item.path.name}-{number}"
-        archive(item.path, folder)
-        remove_tree(item.path, keep=frozenset({".git"}))
-        git("worktree", "remove", "--force", str(item.path), cwd=repo)
-        return f"archived to {folder}, removed"
     if item.kind == "verify":  # out of verify's sight first: a build or environment it finds is whole
         item.path = item.path.rename(item.path.with_name(item.path.name + ".deleting"))
     remove_tree(item.path)
@@ -529,12 +453,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--only", default=",".join(KINDS), metavar="KIND,...", help="only these kinds (default: all)")
     parser.add_argument("--skip", default="", metavar="KIND,...", help="leave these kinds out")
     parser.add_argument("--keep-days", type=float, default=7, metavar="N",
-                        help="keep runs and worktrees changed in the last N days (default 7)")
+                        help="keep runs and failed verify builds changed in the last N days (default 7)")
     parser.add_argument("--keep-runs", type=int, default=10, metavar="K",
                         help="always keep the newest K runs (default 10)")
-    parser.add_argument("--archive", type=Path, metavar="DIR",
-                        help="where removed worktrees are archived (default: [cleanup] archive in harness.toml, "
-                             "else work/archive), in a worktree-archive-DATE folder")
     parser.add_argument("--repo", type=Path, default=checkout.main_checkout(), help=argparse.SUPPRESS)
     parser.add_argument("--delete", action="store_true", help="delete the candidates (default: only list them)")
     args = parser.parse_args(argv)
@@ -559,12 +480,11 @@ def main(argv: list[str] | None = None) -> int:
         except BlockingIOError:
             print("cleanup: another cleanup is deleting; two at once stall the disk", file=sys.stderr)
             return 1
-        archives = (args.archive or archive_root(repo)) / f"worktree-archive-{time.strftime('%Y-%m-%d')}"
         failed = 0
         for item in candidates:
             start = time.monotonic()
             try:
-                done = delete(item, repo, archives)
+                done = delete(item, repo)
             except (OSError, subprocess.CalledProcessError) as error:
                 done, failed = f"failed: {error}", failed + 1
             print(f"{item.path.relative_to(repo)}: {done} ({time.monotonic() - start:.0f} s)", flush=True)

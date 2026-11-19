@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Benchmark commands against each other, taking the machine lock around each measured run alone.
+
+    python3 tools/bench.py [--runs N] NAME=COMMAND NAME=COMMAND [NAME=COMMAND...]
+
+runs the arms in turn (A, B, A, B...) N times each (default 5). Each run waits in the machine's line and holds the
+lock (tools/machine_lock.py) only while it runs, so the game and test runs that queued meanwhile go in between two
+runs, and alternating spreads any drift in the machine over every arm. COMMAND is a shell command line. Prints, per
+arm, the median and range of wall time over its passed runs and how many failed; exits 1 when any run failed.
+"""
+
+from __future__ import annotations
+
+import argparse
+import statistics
+import sys
+
+import machine_lock
+
+
+def arm(text: str) -> tuple[str, str]:
+    name, sep, command = text.partition("=")
+    if not sep or not name or not command:
+        raise argparse.ArgumentTypeError(f"{text!r} is not NAME=COMMAND")
+    return name, command
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--runs", type=int, default=5, metavar="N", help="runs per arm (default 5)")
+    parser.add_argument("arms", nargs="+", type=arm, metavar="NAME=COMMAND")
+    args = parser.parse_args(argv)
+    if len(args.arms) < 2 or len({name for name, _ in args.arms}) < len(args.arms):
+        parser.error("give two or more arms with different names")
+    times: dict[str, list[float]] = {name: [] for name, _ in args.arms}
+    failed = dict.fromkeys(times, 0)
+    for round_ in range(1, args.runs + 1):
+        for name, command in args.arms:
+            status, seconds = machine_lock.run(["sh", "-c", command])
+            print(f"bench: {name} run {round_}: {seconds:.2f} s, exit {status}", file=sys.stderr, flush=True)
+            if status:
+                failed[name] += 1
+            else:
+                times[name].append(seconds)
+    for name, passed in times.items():
+        spread = (f"median {statistics.median(passed):.2f} s, range {min(passed):.2f}-{max(passed):.2f} s"
+                  if passed else "no passed run")
+        print(f"{name}: {spread}, {failed[name]} of {args.runs} failed")
+    return 1 if any(failed.values()) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

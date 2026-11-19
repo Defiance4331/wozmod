@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Machine-wide locks in the main checkout's work/, shared by the checkout and all its worktrees: the two game slots
+"""Machine-wide locks in the main checkout's work/, shared by every checkout of the repo: the two game slots
 (game_harness.py) and the heavy-run lock.
 
     python3 tools/machine_lock.py COMMAND [ARG...]
 
 runs COMMAND with the machine to itself: it waits for every other heavy run and every running game to end first
 (saying who holds the machine), holds the lock for COMMAND's life, and exits with COMMAND's status. tools/verify.py
-takes it this way; run a dev install, an art build or a benchmark this way too. A game launch (game_harness.py
+takes it this way; run a dev install or an art build this way too. A benchmark goes through tools/bench.py, which
+takes the lock around each measured run alone, so the runs waiting between them go in. A game launch (game_harness.py
 run) and a parallel test run (tests/conftest.py) hold it shared, beside each other. Every run waits in one line,
 first come, first served: a run goes in once every run that began waiting before it has. A heavy run beside
 another, or beside a game, slows both, skews a benchmark's numbers and makes time limits (the install budget, Wine
@@ -37,8 +38,8 @@ HEAVY = ".machine.lock"  # a heavy run holds it exclusively; each running game h
 # First come, first served, so neither a stream of games nor a benchmark's back-to-back runs can keep the others out.
 LINE = ".machine.line"
 HELD = "WOZMOD_MACHINE_LOCK"  # set for COMMAND, so a heavy run inside one runs without waiting for itself
-# Two games may run at once across the checkout and all its worktrees: every run holds one of these, in the main
-# checkout's work/, for its whole life, and writes its name and start into it so a waiting launch can say who holds
+# Two games may run at once on the machine, from any checkout: every run holds one of these, in the main checkout's
+# work/, for its whole life, and writes its name and start into it so a waiting launch can say who holds
 # what.
 SLOTS = (".game-run.lock", ".game-run.1.lock")
 
@@ -106,15 +107,32 @@ def _wait_turn(alone: bool, holder: str, poll: float) -> int:
                         os.pwrite(machine, json.dumps({"run": holder, "since": time.time()}).encode(), 0)
                     return machine
             if not told:
-                busy = (holders((HEAVY,)) or [f"the game {game}" for game in holders(SLOTS)]
-                        or [t.read_text(encoding="utf-8", errors="replace") for t in ahead[:1]] or ["a running game or test run"])
-                print(f"machine_lock: {holder} waits for the machine, held by {busy[0]}", file=sys.stderr,
+                print(f"machine_lock: {holder} waits for the machine, held by {_busy(ahead)}", file=sys.stderr,
                       flush=True)
                 told = True
             time.sleep(poll)
     finally:
         (line / name).unlink(missing_ok=True)
         os.close(ticket)
+
+
+def _busy(ahead: list[Path]) -> str:
+    """Who has the machine, for a run waiting behind the tickets ahead: the heavy run, else a game, else the first
+    run ahead in line."""
+    return (holders((HEAVY,)) or [f"the game {game}" for game in holders(SLOTS)]
+            or [t.read_text(encoding="utf-8", errors="replace") for t in ahead[:1]] or ["a running game or test run"])[0]
+
+
+def waits(pid: int) -> str:
+    """What the process pid, waiting in the machine's line, waits for: who holds the machine and how many runs that
+    go before it wait ahead (a shared run waits only for heavy ones). '' when pid is not in line."""
+    line = work() / LINE
+    tickets = [t for t in sorted(line.iterdir()) if not t.name.startswith(".") and _alive(t)] if line.is_dir() else []
+    mine = next((t for t in tickets if t.name.split("-")[1] == str(pid)), None)
+    if mine is None:
+        return ""
+    ahead = [t for t in tickets if t.name < mine.name and (mine.name.endswith("-heavy") or t.name.endswith("-heavy"))]
+    return f"the machine, held by {_busy(ahead)}" + (f"; {len(ahead)} run(s) wait ahead" if ahead else "")
 
 
 def claim(holder: str, poll: float = 1.0) -> int:
@@ -155,25 +173,44 @@ def holders(names: tuple[str, ...]) -> list[str]:
     return held
 
 
+def run(command: list[str]) -> tuple[int, float]:
+    """Run command with the machine to itself: wait in line, hold the lock for its life, log its row, then free the
+    machine. Inside a heavy run it runs at once. Returns its exit status (negative: the signal that ended it) and the
+    seconds it ran, not counting the wait."""
+    if os.environ.get(HELD):
+        start = time.monotonic()
+        return subprocess.run(command).returncode, time.monotonic() - start
+    line = " ".join(command)
+    fd = claim(f"{line} (pid {os.getpid()}, in {os.getcwd()})")
+    try:
+        before = resource.getrusage(resource.RUSAGE_CHILDREN)  # cumulative: a second run in this process subtracts it
+        start, began = time.time(), time.monotonic()
+        child = subprocess.Popen(command, env={**os.environ, HELD: "1"})
+        # stopping this stops COMMAND, then frees the machine; after it the old handlers come back, so a stop between
+        # two of a bench's runs stops the bench
+        kept = {sig: signal.signal(sig, lambda number, _frame: child.send_signal(number))
+                for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+        try:
+            status = child.wait()
+        finally:
+            for sig, handler in kept.items():
+                signal.signal(sig, handler)
+        seconds = time.monotonic() - began
+        used = resource.getrusage(resource.RUSAGE_CHILDREN)
+        cpu = used.ru_utime + used.ru_stime - before.ru_utime - before.ru_stime
+        with (work() / "machine-lock.log").open("a", encoding="utf-8") as log:
+            log.write(f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(start))}\t{seconds / 60:.1f}\t"
+                      f"{cpu / 60:.1f}\t{status}\t{line}\n")
+    finally:
+        os.close(fd)
+    return status, seconds
+
+
 def main(command: list[str]) -> int:
     if not command:
         print(__doc__.strip(), file=sys.stderr)
         return 2
-    if os.environ.get(HELD):
-        return subprocess.run(command).returncode
-    line = " ".join(command)
-    holder = f"{line} (pid {os.getpid()}, in {os.getcwd()})"
-    fd = claim(holder)
-    start = time.time()
-    child = subprocess.Popen(command, env={**os.environ, HELD: "1"})
-    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):  # stopping this stops COMMAND, then frees the machine
-        signal.signal(sig, lambda number, _frame: child.send_signal(number))
-    status = child.wait()
-    used = resource.getrusage(resource.RUSAGE_CHILDREN)
-    with (work() / "machine-lock.log").open("a", encoding="utf-8") as log:
-        log.write(f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(start))}\t{(time.time() - start) / 60:.1f}\t"
-                  f"{(used.ru_utime + used.ru_stime) / 60:.1f}\t{status}\t{line}\n")
-    os.close(fd)
+    status, _ = run(command)
     return status if status >= 0 else 128 - status
 
 
