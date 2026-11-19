@@ -16,6 +16,7 @@ boot timeouts) fail for no fault of the code.
 Each lock is a flock on a file the kernel releases when its holder exits, so a crashed or killed run never leaves the
 machine locked. The descriptor is not inherited, so a process COMMAND leaves behind (a wineserver) cannot hold it.
 Each finished heavy run appends a row to work/machine-lock.log: start, minutes held, CPU minutes used, exit, command.
+-h or --help prints this; any other option before COMMAND is refused, since no command starts with one.
 """
 
 from __future__ import annotations
@@ -207,8 +208,12 @@ def run(command: list[str]) -> tuple[int, float]:
 
 
 def main(command: list[str]) -> int:
-    if not command:
-        print(__doc__.strip(), file=sys.stderr)
+    if command[:1] in (["-h"], ["--help"]):
+        print(__doc__.strip())
+        return 0
+    if not command or command[0].startswith("-"):  # an option, never a command: it would wait in line, then not start
+        print(f"machine_lock: {command[0]} is not an option; give the command to run" if command else __doc__.strip(),
+              file=sys.stderr)
         return 2
     status, _ = run(command)
     return status if status >= 0 else 128 - status

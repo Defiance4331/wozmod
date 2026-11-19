@@ -140,3 +140,27 @@ def test_a_run_that_died_waiting_does_not_hold_up_the_line(monkeypatch, tmp_path
     assert _start(lambda: got.append(machine_lock.claim("install", 0.01))).wait(2)
     os.close(got[0])
     assert list(line.iterdir()) == []
+
+
+def test_an_option_before_the_command_is_answered_at_once_and_never_waits_in_line(monkeypatch, tmp_path, capsys):
+    """Bug: `machine_lock.py --help`, or an option the tool does not take, is read as the command to run, so it waits
+    in the machine's line behind every heavy run and only then fails to start."""
+    import checkout
+    import machine_lock
+
+    (tmp_path / "work").mkdir()
+    monkeypatch.setattr(checkout, "REPO", tmp_path)
+    monkeypatch.delenv(machine_lock.HELD, raising=False)
+    held = machine_lock.claim("a benchmark", 0.01)  # whatever waits for the machine now waits until the test ends
+    rows = [(["--help"], 0, "out", "tools/machine_lock.py COMMAND"), (["-h"], 0, "out", "tools/machine_lock.py COMMAND"),
+            (["--runs", "5", "true"], 2, "err", "--runs")]
+    wrong = []
+    try:
+        for argv, status, stream, said in rows:
+            got = []
+            answered = _start(lambda argv=argv: got.append(machine_lock.main(argv))).wait(2)
+            if not answered or got != [status] or said not in getattr(capsys.readouterr(), stream):
+                wrong.append((argv, answered, got))
+    finally:
+        os.close(held)
+    assert wrong == []
