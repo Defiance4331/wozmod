@@ -38,17 +38,23 @@ class InstallError(Exception):
 
 
 GIB = 1 << 30
-PARENT_MEMORY = 4 * GIB  # the art stage's main process peaks at 3.2-3.7 GB whatever the worker count
-WORKER_MEMORY = GIB // 2  # one art worker plus its share of the ffmpeg batches, measured at about 0.25 GB
+# What the whole install holds (every process it starts, all steps side by side), measured on Windows 11 and Linux in
+# 2026-11: at one worker it peaks at 4.32 GiB (Windows, committed) and 4.52 GiB (Linux, resident), rounded up here; most
+# of it is what the art and voices steps load, which fewer workers cannot shrink. A worker is a thread in each step, so
+# one more adds only its own work: one ffmpeg in the voices step (89 MiB on Windows, 75 MiB on Linux) and its art
+# thread's share; seven workers peaked 0.67 GiB (Windows) and 0.71 GiB (Linux) above one.
+INSTALL_MEMORY = 46 * GIB // 10
+WORKER_MEMORY = GIB // 8
 
 
 def default_workers(cpus: int, memory: tuple[int, int] | None) -> int:
-    """Workers that leave the player one core and a quarter of RAM (at least 2 GiB) free."""
+    """Workers that leave the player one core and a quarter of RAM (at least 2 GiB) free, beside what the install
+    needs at one worker; never fewer than one."""
     workers = max(1, cpus - 1)
     if memory:
         total, available = memory
-        spare = available - max(total // 4, 2 * GIB) - PARENT_MEMORY
-        workers = min(workers, max(1, spare // WORKER_MEMORY))
+        spare = available - max(total // 4, 2 * GIB) - INSTALL_MEMORY
+        workers = min(workers, 1 + max(0, spare // WORKER_MEMORY))
     return workers
 
 

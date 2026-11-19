@@ -629,8 +629,9 @@ def english_voice_bank(clips: dict[int, bytes]) -> bytes:
     """Assemble an indexed bank of validated mono 48 kHz clips: every stock voice id, then any voice slot past them
     (wozmod.voices.maps.voice_slots)."""
     ids = max(MOZ_VOICE_IDS, max(clips, default=0) + 1)
-    table, body = bytearray(_aligned_size(4 + 8 * ids)), bytearray()
+    table = bytearray(_aligned_size(4 + 8 * ids))
     struct.pack_into("<I", table, 0, ids)
+    parts, at = [table], len(table)  # joined once at the end: the bank (about 1 GB) is built in a single copy
     for moz_id, data in sorted(clips.items()):
         ogg = parse_kovs_record(data, ordinal=moz_id)[2]
         if (ogg.sample_rate, ogg.channels) != (48_000, 1) or len(data) > SLOT_BYTES:
@@ -638,9 +639,10 @@ def english_voice_bank(clips: dict[int, bytes]) -> bytes:
         decoded, last = _vorbis_decoded_samples(data)
         if not 0 <= decoded - ogg.sample_count <= last:  # the game stops a clip at its declared length
             raise VoiceBankError(f"voice id {moz_id} declares {ogg.sample_count} samples but holds {decoded}")
-        struct.pack_into("<II", table, 4 + 8 * moz_id, len(table) + len(body), len(data))
-        body += data + bytes(_aligned_size(len(data)) - len(data))
-    return bytes(table + body)
+        struct.pack_into("<II", table, 4 + 8 * moz_id, at, len(data))
+        parts += [data, bytes(_aligned_size(len(data)) - len(data))]
+        at += _aligned_size(len(data))
+    return b"".join(parts)
 
 
 SE_BANKS = 122
@@ -884,10 +886,11 @@ def english_se_bank(seidx: bytes, se: bytes, wo1_hdx: bytes, wo1_bdx: Path, wo2_
                 tiers[disc] += 1
     converted = iter(_pcm16([job for entries in work.values() for job in entries], jobs))
     banks = {moz: se_bank(stock[moz][0], [(*next(converted), volume) for volume in volumes[moz]]) for moz in work}
-    table, body = bytearray(_aligned_size(4 + 16 * SE_BANKS)), bytearray()
+    table = bytearray(_aligned_size(4 + 16 * SE_BANKS))
     struct.pack_into("<I", table, 0, SE_BANKS)
+    parts, at = [table], len(table)  # joined once at the end, as english_voice_bank does
     for moz, (header, data) in sorted(banks.items()):
-        at = len(table) + len(body)
         struct.pack_into("<4I", table, 4 + 16 * moz, at, len(header), at + _aligned_size(len(header)), len(data))
-        body += header + bytes(_aligned_size(len(header)) - len(header)) + data + bytes(_aligned_size(len(data)) - len(data))
-    return bytes(table + body), tiers
+        parts += [header, bytes(_aligned_size(len(header)) - len(header)), data, bytes(_aligned_size(len(data)) - len(data))]
+        at += _aligned_size(len(header)) + _aligned_size(len(data))
+    return b"".join(parts), tiers
