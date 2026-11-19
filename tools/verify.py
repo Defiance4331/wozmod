@@ -22,11 +22,13 @@ It also prints the rows of tools/verify_checks.toml that the diff from the merge
 ref STEP...: per step (text, voices, art), the reference build of this tree's step key in work/verify/builds/STEP/KEY/
 (out/, staging/, the read gate's trace.jsonl and unread.json, build.log, build.json), reused while the key exists,
 made with the read gate enforcing; its diff.txt against the merge base's build of the same step; then the slow tests
-that read it (the checklist's [readers]). A row whose run has `ref STEP` items runs its tests with those readers.
+that read it (the checklist's [readers]). The triggered rows whose run has `ref STEP` items share one such run, with
+their tests: each tree is exported once, each step built or reused once, each reader run once.
 
 release: everything, strict (a missing input fails): the slow suite (with the release pins against fresh builds,
-tests/test_release_pins.py), the reference builds and their readers, the timed install alone, and the Windows run. It fails when a run skipped a test for a reason other than a system mark
-(linux_only, real_windows), or left out a test a full collection finds: a narrowed test set.
+tests/test_release_pins.py), the reference builds and their readers (the end-to-end install among them, kept from
+the builds), the first install, timed alone, and the Windows run. It fails when a run skipped a test for a reason
+other than a system mark (linux_only, real_windows), or left out a test a full collection finds: a narrowed test set.
 
 Verdicts are local git notes (refs/notes/verify) on the tree object, one JSON line per run; logs and junit files are
 in the main checkout's work/verify/runs/TREE/. The judge (this file and tools/verify_checks.toml) runs from the merge
@@ -60,7 +62,7 @@ STEPS = ("text", "voices", "art")
 # The slow switches (tests/*.py skipif). A switch a tree adds and this list lacks makes release fail as narrowed.
 SWITCHES = ("ART_COMPOSE", "ART_WORDS", "ASR", "AUDIO", "CONTEXTS", "EVENT_TIMING", "FONT_FACE_SOURCE",
             "FONT_GEOMETRY", "INSTALL_E2E", "LIPS", "MOVIE_CAPTIONS", "RELEASE_PINS", "RUNTIME_COMPILE", "SHOUT_BANKS",
-            "STEP_KEYS", "STOCK_PIECES", "TEXT_ROOM")
+            "STOCK_PIECES", "TEXT_ROOM")
 ELSEWHERE = ("Linux only", "Windows only")  # how a system mark's skip starts (tests/conftest.py SYSTEM_MARKS)
 E2E = "tests/test_install_e2e.py"
 PYTEST = ("-q", "-p", "no:cacheprovider", "-rs")
@@ -577,29 +579,48 @@ def references(repo: Path, tree: str, base: str, steps: list[str], tests: list[s
 # Checklist rows
 
 
+def split(row: dict) -> tuple[list[str], list[str]]:
+    """A row's run: the steps of its `ref STEP` items, and its pytest items."""
+    steps = [word for item in row["run"] if item.startswith("ref ") for word in item.split()[1:]]
+    return steps, [item for item in row["run"] if not item.startswith("ref ")]
+
+
+def checks(rows: list[dict]) -> list[dict]:
+    """What --triggered runs for rows, in their order: each row without `ref STEP` items as a pytest run of its own,
+    and the rows with them as one references run, where the first of them stands, of every step they name, with their
+    tests. Each check: the rows it stands for, its steps (none for a pytest run), its tests."""
+    shared = [row for row in rows if split(row)[0]]
+    found = []
+    for row in rows:
+        if row not in shared:
+            found.append({"rows": [row["name"]], "steps": [], "tests": split(row)[1]})
+        elif row is shared[0]:
+            steps = {step for each in shared for step in split(each)[0]}
+            found.append({"rows": [each["name"] for each in shared], "steps": [step for step in STEPS if step in steps],
+                          "tests": list(dict.fromkeys(test for each in shared for test in split(each)[1]))})
+    return found
+
+
 def run_rows(repo: Path, tree: str, base: str, rows: list[dict], rerun: bool) -> bool:
+    """Run checks(rows), recording each row's verdict."""
     ok = True
-    for row in sorted(rows, key=lambda row: row.get("alone", False)):
-        check = f"row {row['name']}"
-        if not rerun and (found := recorded(repo, tree, check)):
-            print(f"{row['name']}: {found['verdict']} (recorded {found['at']}): {found['summary']}")
-            ok &= found["verdict"] == "pass"
+    for check in checks(rows):
+        if not rerun and all(found := [recorded(repo, tree, f"row {name}") for name in check["rows"]]):
+            for name, entry in zip(check["rows"], found, strict=True):
+                print(f"{name}: {entry['verdict']} (recorded {entry['at']}): {entry['summary']}")
+                ok &= entry["verdict"] == "pass"
             continue
-        steps = [word for item in row["run"] if item.startswith("ref ") for word in item.split()[1:]]
-        tests = [item for item in row["run"] if not item.startswith("ref ")]
-        verdict, summary = "pass", []
-        if steps:  # the row's tests run with the readers, against the reference builds
-            for found in references(repo, tree, base, steps, tests):
-                verdict = found["verdict"] if verdict == "pass" else verdict
-                summary.append(found["summary"])
-        elif tests:
-            found = pytest(repo, runs(repo, tree) / "rows" / re.sub(r"\W+", "-", row["name"]),
-                           [*(["-n0"] if row.get("alone") else []), *tests], environment(repo, True), LIVE)
-            verdict = found["verdict"] if verdict == "pass" else verdict
-            summary.append(found["summary"])
-        print(f"{row['name']}: {verdict}: {'; '.join(summary)}", flush=True)
-        record(repo, tree, {"check": check, "verdict": verdict, "summary": "; ".join(summary),
-                            "judge": os.environ[JUDGED], "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+        if check["steps"]:  # the rows' tests run with the readers, against the reference builds
+            done = references(repo, tree, base, check["steps"], check["tests"])
+        else:
+            done = [pytest(repo, runs(repo, tree) / "rows" / re.sub(r"\W+", "-", check["rows"][0]), check["tests"],
+                           environment(repo, True), LIVE)]
+        verdict = "pass" if all(found["verdict"] == "pass" for found in done) else "fail"
+        summary = "; ".join(found["summary"] for found in done)
+        for name in check["rows"]:
+            print(f"{name}: {verdict}: {summary}", flush=True)
+            record(repo, tree, {"check": f"row {name}", "verdict": verdict, "summary": summary,
+                                "judge": os.environ[JUDGED], "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
         ok &= verdict == "pass"
     return ok
 
@@ -612,8 +633,7 @@ def release(repo: Path, tree: str, base: str, extra: list[str]) -> bool:
     env = environment(repo, True)
     every = collected(repo, env, LIVE)
     # the readers, and the tests of the rows that run with the reference builds (they read them too)
-    bound = list(dict.fromkeys(item for row in checklist(repo).get("row", []) if any(i.startswith("ref ") for i in row["run"])
-                               for item in row["run"] if not item.startswith("ref ")))
+    bound = list(dict.fromkeys(test for row in checklist(repo).get("row", []) if split(row)[0] for test in split(row)[1]))
     readers = [node for nodes in checklist(repo).get("readers", {}).values() for node in nodes] + bound
     reads = lambda name: any(within(node, name) for node in readers)
     e2e = lambda name: within(E2E, name)
@@ -689,7 +709,7 @@ def main(argv: list[str]) -> int:
         found = windows_run(repo, argv[1], [], int(argv[2]))
         return 0 if found["verdict"] == "pass" else 1
     mode = argv[0] if argv[:1] and argv[0] in ("ref", "release") else None
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     if mode is None:
         for flag, about in (("--triggered", "also run the checklist rows the diff triggers"),
                             ("--wait", "wait for the Windows verdict and exit on both"),

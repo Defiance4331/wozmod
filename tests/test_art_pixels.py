@@ -121,6 +121,18 @@ def test_a_face_read_from_a_row_is_the_one_the_old_loops_read(case) -> None:
     assert _digest(state) == FACES[case]
 
 
+
+def test_drawing_on_a_rendered_face_row_leaves_the_face_unchanged() -> None:
+    # Bug: Face.render hands out the stock row the face keeps, so a caller that draws on it (a recipe's "drop" in
+    # build.payload) changes it for every later render, on whichever worker thread renders it next: an entry's bytes
+    # then depend on what the other workers built first. No worker-count comparison sees it unless two entries that
+    # share the row happen to run at once.
+    face = faces.Face([(_letters(), "ace mn", faces.FILLS["yellow"], 3, None)], 0, False)
+    row, _ = face.render("ace mn")
+    before = _sha(row)
+    row.putdata([(0, 0, 0, 0)] * (row.width * row.height))
+    assert ("ace mn" in face.rows, _sha(face.render("ace mn")[0])) == (True, before)
+
 def test_only_strokes_keeps_the_pixels_of_the_strokes_it_names() -> None:
     # Bug: a kept stroke's share loses the pixels another share's box overlaps, or the slice of strokes is off by one.
     row = _mottled(13, 16, 9, clear=0.25)

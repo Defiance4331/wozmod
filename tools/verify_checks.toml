@@ -3,9 +3,9 @@
 #
 # Each row: when the diff from the merge base touches a path matching one of `paths` (fnmatch: `*` also matches `/`),
 # tools/verify.py prints the row, and `tools/verify.py --triggered` runs it under the machine lock: `run` is pytest
-# paths or node ids (strict, every slow switch on), or `ref STEP` (a reference build and its readers). `alone` runs
-# the row by itself, on one worker, after the others (a time budget). `from` cites the incident or commit behind it;
-# a row with nothing to cite does not belong here. Prune a row whose check has not gone red in a long while.
+# paths or node ids (strict, every slow switch on), or `ref STEP` (a reference build and its readers, run with the
+# row's tests: name the steps they read). `from` cites the incident or commit behind it; a row with nothing to cite
+# does not belong here. Prune a row whose check has not gone red in a long while.
 
 [[row]]
 name = "runtime builds"
@@ -18,52 +18,48 @@ timed out in the release run. The DLL pin is no longer checked here: the release
 compares it with a fresh build (installer decision 55; it changed in 18 commits from 11-05 to 11-19)."""
 
 [[row]]
-name = "the install end to end, timed"
+name = "the install end to end"
 paths = ["src/wozmod/install/*", "src/wozmod/donors/*", "src/wozmod/discs/*", "src/wozmod/platform/*",
          "src/wozmod/__main__.py", "src/wozmod/window.py", "packaging/*"]
-run = ["tests/test_install_e2e.py"]
-alone = true
-from = """tools/verify.sh ran it last and alone, for its 300 s budget. 25b6ae9 (file access on Windows) and 8f20076 (the
-smaller download) changed install/, donors/ and packaging/; units 4a and 4b proved the read gate on it."""
-
-[[row]]
-name = "step keys and stock pieces"
-paths = ["src/wozmod/install/*", "src/wozmod/game_files.py", "tools/stock_pieces.py", "data/stock_pieces.json"]
-run = ["ref text", "ref voices", "ref art"]
-from = """The stale stock-pieces call: tools/stock_pieces.py called _voice_banks with 4 of its 5 arguments and nothing ran
-it (work/handbacks/slow-survey.md); the references' readers hold the record to what the builds read. 9259ead changed
-tests/test_step_keys.py and tests/test_stock_pieces.py."""
-
-[[row]]
-name = "worker-count independence"
-paths = ["src/wozmod/*", "native/*", "tests/step_run.py", "tests/test_step_keys.py"]
 run = ["ref text", "ref voices", "ref art",
-       "tests/test_step_keys.py::test_a_step_writes_the_same_bytes_with_any_worker_count_and_environment"]
-from = """Unit 6 (work/handbacks/unit-6-delete.md, left open 2): the check triggered only on install/*, while a step's
-worker-count bugs come from its own code (a worker that changes what the donors hold, per-worker state) or the native
-module's threads. ordered_map and tests/test_workers.py rule out the finishing-order join, not those
-(work/handbacks/unit-6b-ordered-map.md)."""
+       "tests/test_install_e2e.py::test_the_dll_accepts_every_file_the_install_wrote",
+       "tests/test_install_e2e.py::test_a_second_install_keeps_every_step_and_leaves_the_files_of_the_first",
+       "tests/test_install_e2e.py::test_a_changed_step_key_rebuilds_only_that_step_and_the_same_files",
+       "tests/test_install_e2e.py::test_install_lists_every_file_it_wrote_and_uninstall_restores_the_stock_folder"]
+from = """25b6ae9 (file access on Windows) and 8f20076 (the smaller download) changed install/, donors/ and packaging/;
+units 4a and 4b proved the read gate on it. It installs over the reference builds' steps, as an update keeps them: a
+first install with its release files took 301 of its 376 s (run of 2026-11-20 00:51, tree 93634494). The first
+install, timed, is tools/verify.py release's, alone: in the 84 verify runs the machine-lock log held on 2026-11-17,
+its time budget was 7 of the 22 red ones, none a product bug."""
 
 [[row]]
 name = "reference builds and their readers"
-paths = ["src/*", "data/*", "native/*", "uv.lock", "pyproject.toml"]
+paths = ["src/*", "data/*", "native/*", "uv.lock", "pyproject.toml", "tools/stock_pieces.py"]
 run = ["ref text", "ref voices", "ref art"]
 from = """The hybrid plan, unit 5: one build per step key, its trace, and its byte diff against main's. Unit 2 (D6) needs
 the voices output byte-identical to main's. A build is reused while its step key holds, so an edit outside a step's
-closure costs only the key."""
+closure costs only the key. The stale stock-pieces call: tools/stock_pieces.py called _voice_banks with 4 of its 5
+arguments and nothing ran it (work/handbacks/slow-survey.md); the readers hold the record to what the builds read.
+9259ead changed tests/test_stock_pieces.py."""
 
 [[row]]
 name = "menu art and lettering"
 paths = ["src/wozmod/art/*", "src/wozmod/fonts/*", "data/art/*"]
-run = ["tests/test_art_build.py", "tests/test_fonts_rendering.py", "tests/test_fonts_face_source.py",
-       "tests/test_repository_hygiene.py"]
-from = """e348400: the release run failed in test_fonts_face_source after the Latin font cells changed, and in the
-official-English check after an art build's state leaked. 487f927 and 2c360a0 changed the menu art build."""
+run = ["ref art", "tests/test_art_build.py", "tests/test_fonts_rendering.py", "tests/test_fonts_face_source.py"]
+from = """e348400: the release run failed in test_fonts_face_source after the Latin font cells changed. 487f927 and
+2c360a0 changed the menu art build."""
+
+[[row]]
+name = "no official English in the tracked files"
+paths = ["src/wozmod/art/*", "src/wozmod/fonts/*", "data/art/*"]
+run = ["tests/test_repository_hygiene.py"]
+from = """e348400: the release run failed in the official-English check after an art build's state leaked. It reads the
+checkout's tracked files (git), so it runs in the checkout, not beside the reference builds."""
 
 [[row]]
 name = "voices, effects and Dream movies"
 paths = ["src/wozmod/voices/*", "src/wozmod/formats/audio.py", "src/wozmod/formats/pmf.py", "native/*"]
-run = ["tests/test_voices_lips.py", "tests/test_dream_events.py", "tests/test_dream_movies.py",
+run = ["ref voices", "tests/test_voices_lips.py", "tests/test_dream_events.py", "tests/test_dream_movies.py",
        "tests/test_formats_audio.py", "tests/test_shout_banks.py", "tests/test_runtime_edits.py"]
 from = """9259ead (the Dream cutscenes in English) changed test_voices_lips and test_dream_movies. #11 (88e0639) changed
 the effect banks and tests/test_runtime_edits.py (the sound pool test). f19a297 changed test_shout_banks."""

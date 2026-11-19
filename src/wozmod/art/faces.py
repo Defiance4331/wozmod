@@ -332,8 +332,9 @@ class Face:
 
         if self.optical:
             return self.optical_render(text)
-        if text in self.rows:
-            return self.rows[text]
+        if text in self.rows:  # a copy: a caller may draw on it, and every worker thread renders from this face
+            row, baseline = self.rows[text]
+            return row.copy(), baseline
         placed, x, previous, spaces, marked = [], 0.0, None, 0, False
         for char in text:
             if char in "{}":

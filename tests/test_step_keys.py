@@ -1,20 +1,18 @@
 """The install step keys (wozmod.install.step_keys): a step's key changes with exactly what its output depends on.
 
-The fast tests build a small repository in tmp_path. The slow one (WOZMOD_STEP_KEYS=1, about 20 minutes) builds the
-three steps on the real inputs again with other worker counts and in another environment, to settle what the keys
-assume: the worker count and every environment variable but the WOZMOD_* ones leave the output alone. What a step
-reads (bundled files, disc members, modules, programs) the read gate holds to the key's manifest in every build from
-source (install/gate.py, tests/test_gate.py).
+The tests build a small repository in tmp_path. What the keys assume, that neither the worker count nor the
+environment changes a step's output, is held elsewhere: install/steps.py fixes every worker's environment
+(tests/test_steps.py), workers.ordered_map joins in hand-out order (tests/test_workers.py), the speech threads decode
+each line as a fresh decoder would (tests/test_voices_phones.py), and a partial menu art build on one worker in
+another environment writes the install build's entries (tests/test_art_build.py). What a step reads (bundled files,
+disc members, modules, programs) the read gate holds to the key's manifest in every build from source
+(install/gate.py, tests/test_gate.py).
 """
-
 from __future__ import annotations
 
 import dataclasses
-import hashlib
 import json
 import os
-import subprocess
-import sys
 import textwrap
 from pathlib import Path
 
@@ -286,60 +284,3 @@ def test_the_text_and_art_keys_hold_no_voices_module():
     voices = {step: [m for m in found[step].modules if m.split(".")[:2] == ["wozmod", "voices"]] for step in ("text", "art")}
     assert voices == {"text": [], "art": []}
 
-
-# Slow: each step built once more on the real inputs, with other worker counts and in another environment, against
-# its reference build (WOZMOD_STEP_KEYS=1).
-
-REAL = pytest.mark.skipif(
-    os.environ.get("WOZMOD_STEP_KEYS") != "1"
-    or not all(os.environ.get(v) for v in ("WOZMOD_GAME", "WOZMOD_DONORS", "WOZMOD_LETTERING", "WOZMOD_SPEECH")),
-    reason="set WOZMOD_STEP_KEYS=1, WOZMOD_GAME, WOZMOD_DONORS, WOZMOD_LETTERING and WOZMOD_SPEECH (about 20 minutes)")
-RUN = Path(__file__).with_name("step_run.py")
-# The other build's worker count per step: one, but two for the voices (one voice worker took 18 of the fixture's
-# 21 minutes; two are the fewest whose finishing order can differ from the order the work was handed out). The
-# reference build runs the installer's default count. ordered_map joins in hand-out order (tests/test_workers.py);
-# this catches what it cannot: a worker that changes what the others read, or the native module's own threads.
-FEW = {"text": 1, "voices": 2, "art": 1}
-
-
-@pytest.fixture(scope="module")
-def other_builds(tmp_path_factory, built):
-    """(each step's reference build, the same step built in a fresh Python with FEW workers in another locale, time
-    zone, hash seed and working folder). A frozen release ignores PYTHONHASHSEED (PyInstaller starts Python isolated),
-    so packaging/wozmod.spec pins its seed as a run-time option."""
-    base = tmp_path_factory.mktemp("step-keys")
-    other = {**os.environ, "LC_ALL": "C", "LANG": "C", "TZ": "Pacific/Kiritimati", "PYTHONHASHSEED": "4242",
-             "PYTHONUTF8": "0", "TMPDIR": str(base)}
-    other.pop("WOZMOD_JOBS", None)
-    runs = {}
-    for step in steps.STEPS:
-        (base / step).mkdir()
-        with (base / step / "run.log").open("w", encoding="utf-8") as log:
-            runs[step] = subprocess.Popen([sys.executable, str(RUN), step, str(base / step), str(FEW[step])], cwd=base,
-                                          env=other, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
-    references = {step: built(step, tmp_path_factory.mktemp(f"reference-{step}")) for step in steps.STEPS}
-    failed = {step: (base / step / "run.log").read_text(errors="replace", encoding="utf-8")[-4000:]
-              for step, run in runs.items() if run.wait() != 0}
-    assert failed == {}
-    return {step: (references[step], base / step) for step in steps.STEPS}
-
-
-def _tree(folder: Path) -> dict[str, str]:
-    out = folder / "out"
-    return {p.relative_to(out).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
-            for p in sorted(out.rglob("*")) if p.is_file()}
-
-
-@REAL
-@pytest.mark.slow_first
-def test_a_step_writes_the_same_bytes_with_any_worker_count_and_environment(other_builds):
-    """Bug: a step's output depends on the worker count (results joined in finishing order) or on something outside
-    its key (the locale's code page, the time zone, set or dict order under another hash seed, the working folder),
-    so two players with the same key hold different files, and a kept step is not what this release builds."""
-    differ = {}
-    for step, (reference, other) in other_builds.items():
-        first, second = _tree(reference), _tree(other)
-        assert first, f"{step} wrote nothing"
-        if first != second:
-            differ[step] = sorted(name for name in first.keys() | second.keys() if first.get(name) != second.get(name))[:6]
-    assert differ == {}

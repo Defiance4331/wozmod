@@ -821,22 +821,32 @@ def test_art_data_names_no_warriors_orochi_pc_art():
 # and conftest.py, the game and donor folders, and both Pythons with what they load (the font Python's fontforge, cairo
 # and freetype are system packages, so the package database counts). Each full run checks the module list again
 # through the bytecode the build leaves behind.
+# 4077 holds dark plates (the RECORD labels); 4069 and 4060 draw the most face lettering (97 and 45 rows).
+PARTIAL = (4077, 4069, 4060)
+
+
 @pytest.mark.skipif(os.environ.get("WOZMOD_ART_COMPOSE") != "1", reason="set WOZMOD_ART_COMPOSE=1 (an art build)")
 def test_a_partial_build_writes_the_entries_the_install_build_writes(tmp_path, built):
-    # Bug: a stage after the entry build changes an entry (the hires pass once cleaned the dark plates in place), so the
-    # entries a partial build hands a test run (`run_check.py --entries-dir`) differ from the ones players get. 4077
-    # holds dark plates (the RECORD labels).
+    # Bugs: a stage after the entry build changes an entry (the hires pass once cleaned the dark plates in place), so
+    # the entries a partial build hands a test run (`run_check.py --entries-dir`) differ from the ones players get; or
+    # an entry depends on the worker count (which thread drew it) or on the locale, time zone, hash seed or working
+    # folder. The partial build runs on one worker in another environment; the install build on the installer's
+    # count, in a worker's fixed one.
     game, donors = (Path(os.environ.get(name, "")) for name in ("WOZMOD_GAME", "WOZMOD_DONORS"))
     if not (game / "LINKDATA1.BIN").is_file() or not (donors / "wo2-x360/linkdata_ens.idx").is_file():
         pytest.skip("set WOZMOD_GAME and WOZMOD_DONORS (the installer's donors folder)")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    other = {**os.environ, "LC_ALL": "C", "LANG": "C", "TZ": "Pacific/Kiritimati", "PYTHONHASHSEED": "4242",
+             "PYTHONUTF8": "0"}
     partial = subprocess.run([sys.executable, "-m", "wozmod.art.build", "--game", str(game),
                               "--wo1-x360-donor", str(donors / "wo1-x360/linkdata_ens"),
                               "--wo2-x360-donor", str(donors / "wo2-x360/linkdata_ens"), "--text-donors", str(donors),
-                              "--entries", "4077", "--entries-dir", str(tmp_path / "partial")],
-                             capture_output=True, text=True, encoding="utf-8")
+                              "--entries", *map(str, PARTIAL), "--entries-dir", str(tmp_path / "partial"), "--jobs", "1"],
+                             capture_output=True, text=True, encoding="utf-8", cwd=elsewhere, env=other)
     assert partial.returncode == 0, partial.stdout[-2000:] + partial.stderr[-4000:]
-    install = built("art", tmp_path / "art") / "out/wozmod/entries/4077.bin"
-    assert (tmp_path / "partial/4077.bin").read_bytes() == install.read_bytes()
+    install = built("art", tmp_path / "art") / "out/wozmod/entries"
+    assert [n for n in PARTIAL if (tmp_path / f"partial/{n}.bin").read_bytes() != (install / f"{n}.bin").read_bytes()] == []
 
 
 def test_every_spacing_table_key_is_a_word_its_face_draws() -> None:

@@ -1,8 +1,13 @@
-"""Full install and uninstall into a copy of the stock game from the real disc images (about 5 minutes).
+"""Install and uninstall into a copy of the stock game from the real disc images.
 
-Run with WOZMOD_INSTALL_E2E=1 and the inputs below. The release files (d3d9.dll, lettering.zip) are built from this
-checkout first, as packaging/release_assets.py builds them (about a minute), so the install also checks their pins
-against what the checkout builds. The game copy goes in work/install-e2e/, not pytest's tmp_path:
+Run with WOZMOD_INSTALL_E2E=1 and the inputs below. Under tools/verify.py, which names the reference builds of this
+tree's steps (WOZMOD_REFERENCE_TEXT, _VOICES, _ART), the game copy starts as a player's update does when nothing in
+those steps changed: their files in place, recorded with their keys. The install keeps them, so these tests check its
+own work (the checks, the movies, the DLL, placing the files, the record) in about a minute; tools/verify.py runs
+them so, but for the time budget. Otherwise it is a first install that builds every step (about 5 minutes), as
+tools/verify.py release runs it, alone: with the release files (d3d9.dll, lettering.zip) built from this checkout
+first, as packaging/release_assets.py builds them (about a minute), the release's ffmpeg and no font tools. The game
+copy goes in work/install-e2e/, not pytest's tmp_path:
 /tmp is often RAM, where a 7 GB copy cannot be a reflink. It is removed when the tests end or are stopped; a copy left
 by a run killed outright (SIGKILL) is removed when the next run starts. WOZMOD_INSTALL_BUDGET (seconds, default
 300) is the time the install may take with the default WOZMOD_JOBS.
@@ -28,6 +33,8 @@ import pytest
 from wozmod.__main__ import main
 
 REPO = Path(__file__).resolve().parents[1]
+REFERENCES = {step: os.environ.get(f"WOZMOD_REFERENCE_{step.upper()}") for step in ("text", "voices", "art")}
+KEPT = all(REFERENCES.values())  # the install keeps the reference builds' steps
 INPUTS = {"wo1-x360": "WOZMOD_WO1_X360_ISO", "wo2-x360": "WOZMOD_WO2_X360_ISO", "wo2-psp": "WOZMOD_WO2_PSP_ISO",
           "x360-tool": "WOZMOD_X360_TOOL", "psp-tool": "WOZMOD_PSP_TOOL"}
 
@@ -41,13 +48,17 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def release_files(tmp_path_factory) -> dict[str, Path]:
-    """d3d9.dll and lettering.zip built from this checkout by the release's own build, and the speech model folder
-    the release carries, by installer flag."""
+    """By installer flag: d3d9.dll built from this checkout by the release's own build, the speech model folder the
+    release carries, and lettering.zip: built the same way, or, when the install keeps the art step, the one its
+    reference build read (WOZMOD_LETTERING), as the art key names it."""
     spec = importlib.util.spec_from_file_location("release_assets", REPO / "packaging/release_assets.py")
     release_assets = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(release_assets)
-    dll, lettering = release_assets.build(Path(os.environ["WOZMOD_GAME"]), Path(os.environ["WOZMOD_DONORS"]),
-                                          tmp_path_factory.mktemp("release"))
+    game, folder = Path(os.environ["WOZMOD_GAME"]), tmp_path_factory.mktemp("release")
+    if KEPT:
+        dll, lettering = release_assets.build_dll(game, folder), Path(os.environ["WOZMOD_LETTERING"])
+    else:
+        dll, lettering = release_assets.build(game, Path(os.environ["WOZMOD_DONORS"]), folder)
     return {"dll": dll, "lettering": lettering, "speech": Path(os.environ["WOZMOD_SPEECH"])}
 
 
@@ -70,8 +81,9 @@ def release_ffmpeg(tmp_path_factory) -> Path:
 
 
 @pytest.fixture(scope="module")
-def installed(release_files, release_ffmpeg):
-    """One install into a copy of the stock game: (game copy, install command, seconds, log lines, _snapshot)."""
+def installed(request, release_files):
+    """One install into a copy of the stock game, keeping the reference builds' steps when KEPT: (game copy, install
+    command, seconds, log lines, _snapshot)."""
     import fcntl  # POSIX-only, so imported here: the module still collects on Windows
 
     folder = REPO / "work/install-e2e"
@@ -82,9 +94,18 @@ def installed(release_files, release_ffmpeg):
         folder.mkdir()
         stopped = signal.signal(signal.SIGTERM, signal.default_int_handler)  # a stopped run cleans up too
         path = os.environ["PATH"]
-        os.environ["PATH"] = f"{release_ffmpeg}{os.pathsep}{path}"  # every install here runs the release's ffmpeg
+        if not KEPT:  # the steps it builds run the release's ffmpeg (a kept step's key names the one found)
+            os.environ["PATH"] = f"{request.getfixturevalue('release_ffmpeg')}{os.pathsep}{path}"
         try:
-            game, command, seconds, log = _install(folder / "game", release_files)
+            game = folder / "game"
+            subprocess.run(["cp", "-a", "--reflink=auto", os.environ["WOZMOD_GAME"], str(game)], check=True)
+            if KEPT:
+                _lay_references(game, release_files["lettering"])
+            game, command, seconds, log = _install(game, release_files, force=KEPT)
+            # Bug: a kept step's files or record are not the ones an install writes, so the install builds the step
+            # again (and these tests then take the full install's time for checks of the install's own work).
+            assert not KEPT or [line.split(": ")[1].split(" ")[0] for line in _install_log()[:3]] == ["kept"] * 3, (
+                _install_log()[:3])
             yield game, command, seconds, log, _snapshot(game)
         finally:
             os.environ["PATH"] = path
@@ -104,20 +125,36 @@ def _install_log() -> list[str]:
     return remembered.settings_path().with_name("install.log").read_text(encoding="utf-8").splitlines()
 
 
-def _install(game: Path, release_files: dict[str, Path], copy: bool = True):
-    if copy:
-        subprocess.run(["cp", "-a", "--reflink=auto", os.environ["WOZMOD_GAME"], str(game)], check=True)
+def _lay_references(game: Path, lettering: Path) -> None:
+    """Each step's reference build in the game copy, with the install record a player's update finds: each step's key
+    and files, each file's SHA-256 (install._write_manifest)."""
+    from wozmod import install
+    from wozmod.install import step_keys
+
+    keys, steps, files = step_keys.keys(lettering=lettering), {}, {}
+    for step, folder in REFERENCES.items():
+        made, out = json.loads((Path(folder) / "build.json").read_text(encoding="utf-8")), Path(folder) / "out"
+        assert made["key"] == keys[step]["key"], f"{folder} is the {step} build of another tree"
+        subprocess.run(["cp", "-r", "--reflink=auto", f"{out}/.", str(game)], check=True)
+        names = sorted(p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file())
+        files |= {name: install._sha256(game / name) for name in names}
+        steps[step] = {"key": made["key"], "parts": keys[step]["parts"], "files": names}
+    install._write_manifest(game, files, steps=steps)
+
+
+def _install(game: Path, release_files: dict[str, Path], force: bool = False):
     command = ["install", "--game", str(game)]
     for flag, variable in INPUTS.items():
         command += [f"--{flag}", os.environ[variable]]
     for flag, path in release_files.items():
         command += [f"--{flag}", str(path)]
     start = time.perf_counter()
-    # as on a player's machine: no font tools (build.FONT_PYTHON), whatever this machine has. Bug: the art stage
-    # makes the glyph outlines with FontForge through the system Python, which players do not have, so every install
-    # from a release zip stops at the art stage (this install then fails, and every test here with it).
-    font_tools = dict(os.environ, WOZMOD_FONT_PYTHON=str(game.parent / "no-font-python"))
-    run = subprocess.run([sys.executable, "-m", "wozmod", *command, *([] if copy else ["--force"])], capture_output=True,
+    # A first install builds the art as on a player's machine: no font tools (build.FONT_PYTHON), whatever this
+    # machine has. Bug: the art stage makes the glyph outlines with FontForge through the system Python, which players
+    # do not have, so every install from a release zip stops at the art stage (this install then fails, and every
+    # test here with it). A kept art step reads the setting as the reference build did: its key holds it.
+    font_tools = dict(os.environ, **({} if KEPT else {"WOZMOD_FONT_PYTHON": str(game.parent / "no-font-python")}))
+    run = subprocess.run([sys.executable, "-m", "wozmod", *command, *(["--force"] if force else [])], capture_output=True,
                          text=True, encoding="utf-8", env=font_tools)
     seconds = time.perf_counter() - start
     assert run.returncode == 0, run.stderr
@@ -199,7 +236,7 @@ def test_a_second_install_keeps_every_step_and_leaves_the_files_of_the_first(ins
     # Bug: a reinstall with nothing changed rebuilds a step (its key is not stable from one run to the next), recopies
     # the movies, or moves or rewrites a kept file. WOZMOD_UPDATE_BUDGET (seconds, default 60) is the time it may take.
     game, _, _, _, fresh = installed
-    _, _, seconds, _ = _install(game, release_files, copy=False)
+    _, _, seconds, _ = _install(game, release_files, force=True)
     log = _install_log()
     with capsys.disabled():
         print(f"\nreinstall with nothing changed: {seconds:.0f} s; " + "; ".join(log[:5]))
@@ -217,7 +254,7 @@ def test_a_changed_step_key_rebuilds_only_that_step_and_the_same_files(installed
     record = json.loads((game / "wozmod/install.json").read_text(encoding="utf-8"))
     record["steps"]["text"]["key"] = "0" * 64
     (game / "wozmod/install.json").write_text(json.dumps(record), encoding="utf-8")
-    _install(game, release_files, copy=False)
+    _install(game, release_files, force=True)
     log = _install_log()
     assert [line.split(": ")[1] for line in log[:3]] == ["built", "kept", "kept"]
     assert {name: digest for name, (digest, _) in _snapshot(game).items()} == {

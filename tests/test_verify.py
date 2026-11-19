@@ -129,6 +129,18 @@ def test_a_row_triggers_on_a_matching_path_anywhere_below_its_folder_and_every_r
     assert [row["name"] for row in real["row"] if not (row["paths"] and row["run"] and row["from"].strip())] == []
 
 
+def test_a_triggered_run_exports_and_builds_once_for_all_the_rows_that_read_the_reference_builds():
+    # Bug: each row with `ref` items exports both trees and reruns every reader again (three times a run before
+    # 2026-11-20), or a step or test one of them names is left out of the shared run.
+    rows = [{"name": "install", "run": ["ref text", "ref art", "tests/test_e2e.py::test_a"]},
+            {"name": "plain", "run": ["tests/test_p.py"]},
+            {"name": "voices", "run": ["ref voices", "tests/test_v.py"]},
+            {"name": "references", "run": ["ref text", "tests/test_e2e.py::test_a"]}]
+    assert [(c["rows"], c["steps"], c["tests"]) for c in verify.checks(rows)] == [
+        (["install", "voices", "references"], ["text", "voices", "art"], ["tests/test_e2e.py::test_a", "tests/test_v.py"]),
+        (["plain"], [], ["tests/test_p.py"])]
+
+
 TESTS = """
 import pytest
 

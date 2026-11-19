@@ -66,54 +66,33 @@ copies.
 
 ## Testing
 
-Run `uv run pytest -q` (6 workers by default; `-n0` for one); after a failure
-its last line names each failed and errored test. Bugs worth naming
-here are a shifted offset, a dropped translation row, and an edit over the wrong
-stock bytes. Synthetic bytes in
+Run `uv run pytest -q`. Bugs worth naming here are a shifted offset, a dropped
+translation row, and an edit over the wrong stock bytes. Synthetic bytes in
 `tmp_path` cover formats and patch logic. Use stock or donor files only for
 what synthetic bytes cannot show, and skip when they are absent. Slow tests run
 only behind a `WOZMOD_<NAME>=1` skipif. Input paths come from `[tests]` in
-the main checkout's `work/harness.toml` (see `tests/conftest.py`). A test that
-cannot run on one system carries `linux_only(reason)` or `real_windows(reason)`
-(`SYSTEM_MARKS` in `tests/conftest.py`), so both systems collect the same tests.
+the main checkout's `work/harness.toml`. A test that cannot run on one system
+carries `linux_only(reason)` or `real_windows(reason)`, so both systems collect
+the same tests.
 
-Before handing back a change, run `tools/verify.py`. It runs the fast suite on
-Linux in about 30 s, strictly (a missing input fails instead of skipping), and
-exits on that verdict: a hand-back needs only it. It also starts the same suite
-under Windows Python in the background (about 2 minutes; `--wait` waits for it).
-Landing on main needs both verdicts: the `reference-transaction` hook refuses to
-move main to a commit whose tree lacks either, and names the command that
-records them, `tools/verify.py --commit REV --wait` (the exact tree REV holds,
-whatever the checkout's untracked files). Verdicts are local git notes on the
-tree, so an unchanged tree reuses them. It also lists the slow checks your diff from main triggers
-(`tools/verify_checks.toml`, each row citing the incident behind it): run them
-with `tools/verify.py --triggered` before handing back a change to the runtime,
-the art or the install. `tools/verify.py ref STEP...` builds an install step
-(text, voices, art) once per step key, with its read trace and a byte diff
-against main's build. Before a release, run `tools/verify.py release`: everything,
-failing when a run skipped or left out a test. verify judges with its own code
-and checklist from the merge base with main, so an edit to either takes effect
-once it is on main. `ref`, `release` and `--triggered` run with the machine to
-itself: while another heavy run, from any checkout, holds `work/.machine.lock`,
-they wait and say who holds it. Run a dev install or an art build the same way,
-through `python3 tools/machine_lock.py COMMAND`. Run a benchmark through
-`python3 tools/bench.py NAME=COMMAND NAME=COMMAND...`: it runs the arms in turn
-(once each by default; `--runs N` for a difference near run-to-run noise), takes
-the lock around each run alone so waiting runs go in between, and prints each
-arm's time. Give a run
-that may wait a long timeout (a release takes about 40 minutes). Game launches
-and parallel test runs hold the machine shared, beside each other. Heavy runs
-and games wait in one line, first come, first served: a benchmark's next run
-cannot go ahead of a game already waiting. A test run goes ahead of the heavy
-runs and games waiting, except a heavy run whose turn has come (it waits only
-for the runs already on the machine), so test runs cannot keep one out. A test
-run in one process (`-n0`, the commit hook's checks) does not wait. Stop only
-runs you started.
-`work/machine-lock.log` keeps each heavy run's minutes and CPU minutes. Hand back a
-change players see with the
-`evidence/contact-sheet.html` that `tools/run_check.py` writes: each capture beside
-its PASS/FAIL rows. The hooks in `tools/githooks/` lint each
-commit and gate main (`git config core.hooksPath tools/githooks` on a new clone).
+`tools/verify.py` judges a change (its `--help` says how):
+
+- Before handing back a change, run `tools/verify.py`; the hand-back needs its
+  Linux verdict. Main moves only to a tree with passing Linux and Windows
+  verdicts, which the `reference-transaction` hook enforces.
+- Before handing back a change to the runtime, the art or the install, run
+  `tools/verify.py --triggered`: the slow checks its diff triggers
+  (`tools/verify_checks.toml`, each row citing the incident behind it).
+- Before a release, run `tools/verify.py release`.
+
+Heavy runs take the machine one at a time. Run a dev install or an art build
+through `python3 tools/machine_lock.py COMMAND`, and a benchmark through
+`python3 tools/bench.py`. Give a run that may wait for the machine a long
+timeout (a release takes about 40 minutes), and stop only runs you started.
+Hand back a change players see with the `evidence/contact-sheet.html` that
+`tools/run_check.py` writes. On a new clone, run
+`git config core.hooksPath tools/githooks`, so the hooks lint each commit and
+gate main.
 
 ## Commits
 
