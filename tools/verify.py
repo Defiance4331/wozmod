@@ -24,8 +24,8 @@ ref STEP...: per step (text, voices, art), the reference build of this tree's st
 made with the read gate enforcing; its diff.txt against the merge base's build of the same step; then the slow tests
 that read it (the checklist's [readers]). A row whose run has `ref STEP` items runs its tests with those readers.
 
-release: everything, strict (a missing input fails): the slow suite, the reference builds and their readers, the
-timed install alone, and the Windows run. It fails when a run skipped a test for a reason other than a system mark
+release: everything, strict (a missing input fails): the slow suite (with the release pins against fresh builds,
+tests/test_release_pins.py), the reference builds and their readers, the timed install alone, and the Windows run. It fails when a run skipped a test for a reason other than a system mark
 (linux_only, real_windows), or left out a test a full collection finds: a narrowed test set.
 
 Verdicts are local git notes (refs/notes/verify) on the tree object, one JSON line per run; logs and junit files are
@@ -59,8 +59,8 @@ MAIN = "main"
 STEPS = ("text", "voices", "art")
 # The slow switches (tests/*.py skipif). A switch a tree adds and this list lacks makes release fail as narrowed.
 SWITCHES = ("ART_COMPOSE", "ART_WORDS", "ASR", "AUDIO", "CONTEXTS", "EVENT_TIMING", "FONT_FACE_SOURCE",
-            "FONT_GEOMETRY", "INSTALL_E2E", "LIPS", "MOVIE_CAPTIONS", "RUNTIME_COMPILE", "SHOUT_BANKS", "STEP_KEYS",
-            "STOCK_PIECES", "TEXT_ROOM")
+            "FONT_GEOMETRY", "INSTALL_E2E", "LIPS", "MOVIE_CAPTIONS", "RELEASE_PINS", "RUNTIME_COMPILE", "SHOUT_BANKS",
+            "STEP_KEYS", "STOCK_PIECES", "TEXT_ROOM")
 ELSEWHERE = ("Linux only", "Windows only")  # how a system mark's skip starts (tests/conftest.py SYSTEM_MARKS)
 E2E = "tests/test_install_e2e.py"
 PYTEST = ("-q", "-p", "no:cacheprovider", "-rs")

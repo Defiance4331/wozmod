@@ -11,7 +11,7 @@ holds the step to) and the toolchain, in parts the install log compares:
   Python, its packages, the codec's binary and the ffmpeg found.
 - The player's part, one per input the step function takes: the game folder by the stock pieces the step reads (the
   installer checks them before any step runs), the discs by the pins of the members and decrypted programs it reads,
-  lettering.zip and the speech model by their pins; and the values of the settings it reads.
+  lettering.zip by its bytes and the speech model by its pins; and the values of the settings it reads.
 
 Copied movies have no step key: each is a donor member copied whole, so its pin (data/movies.json) is its key. The
 Dream movies the voices step builds (voices/dream_movies.py) are that step's files.
@@ -103,7 +103,8 @@ def release_toolchain(root: Path, platform_name: str) -> dict:
             "native": {p.relative_to(native).as_posix(): _file_digest(p) for p in manifest.files(native)
                        if "target" not in p.relative_to(native).parts},
             "rustc": rust_compiler(native),
-            "ffmpeg": json.loads((root / "packaging/ffmpeg.json").read_text(encoding="utf-8"))[platform_name]["sha256"],
+            "ffmpeg": json.loads((root / "packaging/pins.json").read_text(encoding="utf-8"))
+            ["ffmpeg"][platform_name]["sha256"],
             "platform": platform_name}
 
 
@@ -135,10 +136,22 @@ def _donor_pins(found: Manifest) -> dict:
     return pins
 
 
-def _lettering_pin() -> str:
-    from wozmod.install import LETTERING
+def lettering_file(root: Path | None = None) -> Path:
+    """The lettering.zip a step build gets where its install names none: the release's own, else a checkout's
+    WOZMOD_LETTERING (steps.Inputs.environment)."""
+    bundled = Path(root or resources.root()) / "lettering.zip"
+    if bundled.is_file() or "WOZMOD_LETTERING" not in os.environ:
+        return bundled
+    return Path(os.environ["WOZMOD_LETTERING"])
 
-    return LETTERING[1]
+
+def _lettering(lettering: Path) -> str:
+    """The bytes of the lettering.zip the install gives the step: a checkout's need not be the release's (decision 55),
+    so its pin would keep the art built from another one."""
+    try:
+        return _file_digest(lettering)
+    except OSError as error:
+        raise StepKeyError(f"{lettering} cannot be read ({error.strerror}), so the art step has no key") from None
 
 
 def _speech_pins() -> str:
@@ -147,17 +160,17 @@ def _speech_pins() -> str:
     return key(MODEL)
 
 
-# How the player's part covers each input a step function takes (manifest.INPUTS).
-PLAYER_INPUTS: dict[str, Callable[[Manifest], object]] = {
-    "game": _stock_pieces,
-    "donors": _donor_pins,
-    "lettering": lambda found: _lettering_pin(),
-    "speech": lambda found: _speech_pins(),
+# How the player's part covers each input a step function takes (manifest.INPUTS), given the install's lettering.zip.
+PLAYER_INPUTS: dict[str, Callable[[Manifest, Path], object]] = {
+    "game": lambda found, lettering: _stock_pieces(found),
+    "donors": lambda found, lettering: _donor_pins(found),
+    "lettering": lambda found, lettering: _lettering(lettering),
+    "speech": lambda found, lettering: _speech_pins(),
 }
 
 
-def player_part(found: Manifest) -> dict:
-    return {"inputs": {name: PLAYER_INPUTS[name](found) for name in found.inputs},
+def player_part(found: Manifest, lettering: Path) -> dict:
+    return {"inputs": {name: PLAYER_INPUTS[name](found, lettering) for name in found.inputs},
             "environment": {name: os.environ.get(name) for name in found.environment}}
 
 
@@ -169,10 +182,11 @@ def _live_toolchain() -> str:
     return json.dumps(live_toolchain())
 
 
-def documents(root: Path | None = None, toolchain: dict | None = None) -> dict[str, dict]:
+def documents(root: Path | None = None, toolchain: dict | None = None, lettering: Path | None = None) -> dict[str, dict]:
     """Per step, its key document {"mod": the mod part (a digest when shipped), "player": the player's part}.
 
-    A release reads its mod parts from its shipped step_keys.json; a checkout works them out from its source."""
+    A release reads its mod parts from its shipped step_keys.json; a checkout works them out from its source. lettering:
+    the install's lettering.zip (lettering_file where it names none)."""
     root = Path(root or resources.root())
     shipped = root / manifest.SHIPPED
     mods = None
@@ -185,7 +199,8 @@ def documents(root: Path | None = None, toolchain: dict | None = None) -> dict[s
     if mods is None:
         toolchain = toolchain if toolchain is not None else json.loads(_live_toolchain())
         mods = {step: mod_part(each, root, toolchain) for step, each in found.items()}
-    return {step: {"mod": mods[step], "player": player_part(each)} for step, each in found.items()}
+    lettering = lettering or lettering_file(root)
+    return {step: {"mod": mods[step], "player": player_part(each, lettering)} for step, each in found.items()}
 
 
 def step_key(document: dict) -> dict:
@@ -196,9 +211,9 @@ def step_key(document: dict) -> dict:
     return {"key": key(parts), "parts": parts}
 
 
-def keys(root: Path | None = None, toolchain: dict | None = None) -> dict[str, dict]:
+def keys(root: Path | None = None, toolchain: dict | None = None, lettering: Path | None = None) -> dict[str, dict]:
     """Per step, its step_key."""
-    return {step: step_key(document) for step, document in documents(root, toolchain).items()}
+    return {step: step_key(document) for step, document in documents(root, toolchain, lettering).items()}
 
 
 def movie_keys() -> dict[str, str]:

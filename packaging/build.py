@@ -21,6 +21,8 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "packaging"))
+import pins  # noqa: E402  packaging/pins.py: the release pins and where the proven ffmpeg is
 OUT = ROOT / "build/packaging"
 WINDOWS = sys.platform == "win32"
 PLATFORM = "windows" if WINDOWS else "linux"
@@ -36,16 +38,14 @@ def sha256(path: Path) -> str:
 
 
 def prepare_ffmpeg() -> Path:
-    """Our own static ffmpeg (packaging/ffmpeg/), as packaging/ffmpeg.json pins it. On Linux this builds it when it is
-    not there yet; for Windows, packaging/build_windows.sh builds it on the Linux host, because the build cannot run
-    under Wine."""
-    pin = json.loads((ROOT / "packaging/ffmpeg.json").read_text(encoding="utf-8"))[PLATFORM]
-    program = OUT / "ffmpeg" / PLATFORM / pin["file"]
-    if not WINDOWS and (not program.is_file() or sha256(program) != pin["sha256"]):
-        subprocess.run(["bash", str(ROOT / "packaging/ffmpeg/build.sh"), PLATFORM, str(program.parent)], check=True)
-    if not program.is_file() or sha256(program) != pin["sha256"]:
-        raise SystemExit(f"{program} is missing or is not the build packaging/ffmpeg.json pins: packaging/ffmpeg/"
-                         "build.sh builds it on Fedora; a new compiler needs a new pin (packaging/ffmpeg/README.md)")
+    """Our own static ffmpeg (packaging/ffmpeg/), the proven program packaging/pins.json pins: on Linux from the
+    main checkout's work/release-assets/, for Windows as packaging/build_windows.sh staged it from there (Wine cannot
+    reach the main checkout's work/ by its path). Built only when its recipe changes (installer decision 56)."""
+    if not WINDOWS:
+        return pins.release_ffmpeg(PLATFORM)
+    program = OUT / "ffmpeg" / PLATFORM / pins.ffmpeg_pin(PLATFORM)["file"]
+    if problem := pins.ffmpeg_problem(PLATFORM, program):
+        raise SystemExit(f"{problem}; packaging/build_windows.sh stages it")
     return program
 
 
@@ -79,13 +79,11 @@ def add_speech_model(source: Path, stage: Path) -> None:
 
 
 def check_assets(assets: Path) -> None:
-    sys.path.insert(0, str(ROOT / "src"))
-    from wozmod.install import DLL, LETTERING
-
-    for name, (size, digest) in (("d3d9.dll", DLL), ("lettering.zip", LETTERING)):
-        path = assets / name
+    for name in ("d3d9.dll", "lettering.zip"):
+        path, (size, digest) = assets / name, pins.asset_pin(name)
         if not path.is_file() or path.stat().st_size != size or sha256(path) != digest:
-            raise SystemExit(f"{path} is missing or not the file pinned in src/wozmod/install/__init__.py")
+            raise SystemExit(f"{path} is missing or not the file pinned in {pins.PINS}: "
+                             "packaging/release_assets.py makes both files and writes their pins")
 
 
 def write_step_keys(folder: Path) -> Path:

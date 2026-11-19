@@ -26,9 +26,6 @@ RECORD_FORMAT = 2  # 1: files only; 2: also each step's key and files, and each 
 RUNTIME_FILES = ("wozmod/settings.ini", "wozmod/runtime.log", "wozmod/runtime.crash.log")  # written by the game, not by the installer
 
 # The game folder is checked piece by piece: only the parts of the stock files the build reads (install/stock.py).
-# Release assets built by us; a release updates both pins with the files it ships.
-LETTERING = (13_185_750, "ce55bdf8ddac774f144424003e6659e9aebb9bbfaf411a7854c30b61c27bf84f")
-DLL = (311_834, "495a0513e8d20337b066cb0cecd37ea3fceadcb5315d9e08e4305a8b6c490199")
 
 _MOD_PATH = re.compile(r"d3d9\.dll|wozmod(/[A-Za-z0-9_][A-Za-z0-9_.-]*)+")
 
@@ -73,15 +70,6 @@ def _sha256(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def _pinned(path: Path, pin: tuple[int, str]) -> str | None:
-    """None when the file matches its pin, else what is wrong with it."""
-    if not path.is_file():
-        return "missing"
-    if path.stat().st_size != pin[0] or _sha256(path) != pin[1]:
-        return "not the supported file (wrong size or SHA-256)"
-    return None
-
-
 @dataclass(frozen=True)
 class Input:
     """A path the player gives, and how the command line, the setup window and the install name it."""
@@ -117,8 +105,8 @@ INPUTS = {
                                 "The decrypted program inside its default.xex (about 17 MB). Use it instead of the program above."),
     "wo2-psp-file": _decrypted("wo2-psp", "psp-tool", "EBOOT", "EBOOT.BIN",
                            "The decrypted PSP_GAME/SYSDIR/EBOOT.BIN. Use it instead of the program above."),
-    "lettering": Input("lettering.zip", None),  # for development: the release lettering bundle
-    "dll": Input("d3d9.dll", None),  # for development: the release d3d9.dll
+    "lettering": Input("lettering.zip", None),  # for development: a lettering bundle, such as the release's
+    "dll": Input("d3d9.dll", None),  # for development: a d3d9.dll, such as this checkout's release build
     "speech": Input("Speech model folder", None),  # PocketSphinx's US English model (voices.phones.MODEL)
 }
 RELEASE_FILES = ("lettering", "dll", "speech")  # what the release download gives the install, beside the program
@@ -284,17 +272,14 @@ def check_input(name: str, path: Path | str) -> str | None:
         if problem := model_problem(path):
             return f"{problem}. Download wozmod again."
         return None
-    pin = {"lettering": LETTERING, "dll": DLL}[name]
-    if wrong := _pinned(path, pin):
-        return "File not found. Download wozmod again." if wrong == "missing" else "Not the file that goes with this release. Download wozmod again."
-    return None
+    return None if path.is_file() else "File not found. Download wozmod again."  # lettering.zip, d3d9.dll
 
 
 def _shipped_dll() -> Path | None:
-    """The release's d3d9.dll, which the window and the packaged command line install; None where it is absent or
-    not the pinned one (a development checkout)."""
+    """The release's d3d9.dll, which the window and the packaged command line install; None where there is none (a
+    development checkout)."""
     path = resources.root() / "d3d9.dll"
-    return None if _pinned(path, DLL) else path
+    return path if path.is_file() else None
 
 
 def _game_check(path: Path, rebuilt=STEPS, dll: Path | None = None) -> tuple[str | None, Verdict | None]:
@@ -527,14 +512,14 @@ def _changed_parts(old: dict, new: dict) -> str:
     return ", ".join(parts) or "its key"
 
 
-def plan_reuse(game: Path, log=print) -> Reuse:
+def plan_reuse(game: Path, lettering: Path, log=print) -> Reuse:
     """Decide which steps and movies this install keeps from the last one: a step whose key is the recorded one and
     whose recorded files are all still intact, and a movie whose pin is the recorded one and whose file is intact.
     Everything else is built. An install recorded before step keys, on another platform or with steps the record
     cannot vouch for builds everything."""
     game = Path(game)
     try:
-        keys = {**step_keys.keys(), "movies": step_keys.movie_keys()}
+        keys = {**step_keys.keys(lettering=lettering), "movies": step_keys.movie_keys()}
     except (step_keys.StepKeyError, OSError, ValueError) as error:
         log(f"wozmod keeps nothing from the last install: its step keys cannot be made ({error})")
         return Reuse({}, {}, STEPS, (), None, dict.fromkeys(STEPS, "built: no step keys"))
@@ -758,7 +743,7 @@ def install(game: Path, inputs: dict[str, Path], force: bool = False, log=print,
     try:
         progress.begin("check")
         started = time.monotonic()
-        reuse = plan_reuse(game, log)
+        reuse = plan_reuse(game, inputs["lettering"], log)
         _start_log(reuse, time.monotonic() - started)
         checker = ThreadPoolExecutor(1)  # hashing the inputs overlaps with reading the discs; nothing but the build folder changes meanwhile
         check = checker.submit(check_inputs, game, inputs, log, reuse.rebuilt)

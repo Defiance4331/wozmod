@@ -131,9 +131,9 @@ def test_cancel_at_any_stage_leaves_the_game_folder_as_it_was(game, stage):
 
     progress = Progress(cancel_when)
     if stage == "place":
-        installer.install(game, {}, log=lambda _: None, progress=progress)
+        installer.install(game, {"lettering": game.parent / "lettering.zip"}, log=lambda _: None, progress=progress)
         assert (game / "wozmod/install.json").is_file() and (game / "d3d9.dll").read_bytes() == b"dll"
     else:
         with pytest.raises(Cancelled):
-            installer.install(game, {}, log=lambda _: None, progress=progress)
+            installer.install(game, {"lettering": game.parent / "lettering.zip"}, log=lambda _: None, progress=progress)
         assert _tree(game) == before

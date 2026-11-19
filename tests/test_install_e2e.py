@@ -26,7 +26,6 @@ from pathlib import Path
 import pytest
 
 from wozmod.__main__ import main
-from wozmod.install import check_input
 
 REPO = Path(__file__).resolve().parents[1]
 INPUTS = {"wo1-x360": "WOZMOD_WO1_X360_ISO", "wo2-x360": "WOZMOD_WO2_X360_ISO", "wo2-psp": "WOZMOD_WO2_PSP_ISO",
@@ -54,27 +53,25 @@ def release_files(tmp_path_factory) -> dict[str, Path]:
 
 @pytest.fixture(scope="module")
 def release_ffmpeg(tmp_path_factory) -> Path:
-    """A folder whose ffmpeg is the one the release carries (packaging/ffmpeg.json), built when it is missing.
-    Bug: the install runs this machine's ffmpeg, so its time is not a player's (Fedora's, with 287 shared libraries
-    loaded at every start, made the full install 410 s instead of 280)."""
-    spec = importlib.util.spec_from_file_location("build", REPO / "packaging/build.py")
-    build = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(build)
+    """A folder whose ffmpeg is the one the release carries: the proven program in work/release-assets/, checked
+    against packaging/pins.json (installer decision 56). Bug: the install runs this machine's ffmpeg, so its time
+    is not a player's (Fedora's, with 287 shared libraries loaded at every start, made the full install 410 s instead
+    of 280). Bug: it rebuilt the pinned program, so after a compiler update every fresh worktree's timed install failed
+    on bytes the recipe did not change."""
+    spec = importlib.util.spec_from_file_location("pins", REPO / "packaging/pins.py")
+    pins = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pins)
+    program = pins.release_assets() / pins.ffmpeg_pin("linux")["file"]
+    if problem := pins.ffmpeg_problem("linux", program):
+        pytest.skip(problem)  # a failure where inputs are required (WOZMOD_REQUIRE_INPUTS)
     folder = tmp_path_factory.mktemp("ffmpeg")
-    (folder / "ffmpeg").symlink_to(build.prepare_ffmpeg())
+    (folder / "ffmpeg").symlink_to(program)
     return folder
 
 
 @pytest.fixture(scope="module")
 def installed(release_files, release_ffmpeg):
     """One install into a copy of the stock game: (game copy, install command, seconds, log lines, _snapshot)."""
-    # Bug: the checkout builds another d3d9.dll or lettering.zip than the one its pin names (the runtime or the
-    # lettering changed and the pin did not), so a release from it refuses its own files. The installer would say
-    # so only after the game copy (6 to 60 s): check them first.
-    wrong = [f"the {path.name} this checkout builds: {problem} Refresh its pin in wozmod.install"
-             for name, path in release_files.items() if (problem := check_input(name, path))]
-    if wrong:
-        pytest.fail("\n".join(wrong), pytrace=False)
     import fcntl  # POSIX-only, so imported here: the module still collects on Windows
 
     folder = REPO / "work/install-e2e"

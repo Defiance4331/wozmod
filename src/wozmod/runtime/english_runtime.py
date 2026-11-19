@@ -308,7 +308,7 @@ def data_header(exe: bytes, edits: list[tuple[int, str, list[tuple[int, bytes, b
 
 
 def compile_dll(output: Path, header: str, defines: tuple[str, ...] = ()) -> None:
-    """Compile with MinGW (Fedora's mingw32-gcc; the DLL pin follows its updates)."""
+    """Compile with MinGW (Fedora's mingw32-gcc; the release build pins what it builds, packaging/pins.py)."""
     flags = ["-std=c11", "-O2", "-Wall", "-Werror", "-shared", "-static-libgcc",
              "-fno-asynchronous-unwind-tables", *(f"-D{d}" for d in defines),
              f"-Wl,--no-insert-timestamp,--kill-at,--disable-dynamicbase,--image-base,{DLL_BASE:#x}",

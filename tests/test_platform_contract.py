@@ -178,7 +178,7 @@ def test_programs_started_after_lower_priority_run_nicer_in_the_batch_policy():
     # with the art step's long serial stages and the install takes longer.
     seen = subprocess.run([sys.executable, "-c", PRIORITY], capture_output=True, encoding="utf-8", check=True,
                           env={**os.environ, "PYTHONPATH": str(SOURCE)}).stdout.split()
-    assert seen == [str(os.nice(0) + 10), str(os.SCHED_BATCH)]
+    assert seen == [str(min(os.nice(0) + 10, 19)), str(os.SCHED_BATCH)]  # Linux stops at 19: a run started nicer
 
 
 def test_files_that_already_have_their_folders_permissions_are_left_alone(tmp_path):

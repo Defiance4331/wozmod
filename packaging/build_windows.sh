@@ -9,8 +9,8 @@
 # naming the speech model folder (voices/phones.py MODEL), which the zip carries and the Windows phones are checked with.
 # Everything it sets up lives in WOZMOD_WIN_WORK (default work/windows-build) and is reused next time:
 # a Wine prefix, Windows CPython (with Tcl/Tk), the locked Python packages and the cross-built Rust codecs.
-# Downloads are pinned: Python below, packages in uv.lock (with hashes). ffmpeg is our own build (packaging/ffmpeg/),
-# made here on the Linux host and checked against packaging/ffmpeg.json; it also needs what packaging/ffmpeg/build.sh needs.
+# Downloads are pinned: Python below, packages in uv.lock (with hashes). ffmpeg is our own build (packaging/ffmpeg/), the
+# proven program in the main checkout's work/release-assets/, checked against packaging/pins.json.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -110,13 +110,11 @@ x86_64-w64-mingw32-windres "$LAUNCHER/launcher.rc" -O coff -o "$LAUNCHER/launche
 x86_64-w64-mingw32-gcc -Os -s -municode -mwindows -Wall -Wextra -Werror -Wl,--no-insert-timestamp \
   -o "$LAUNCHER/wozmod-setup.exe" "$ROOT/packaging/setup_launcher.c" "$LAUNCHER/launcher.res"
 
-# 5. Our Windows ffmpeg, built here because its build cannot run under Wine; build.py checks it against its pin
+# 5. Our Windows ffmpeg: the proven program in the main checkout's work/release-assets/, checked against its pin here
+# and staged where build.py under Wine finds it (packaging/pins.py; built only when its recipe changes)
 FFMPEG_DIR=$ROOT/build/packaging/ffmpeg/windows
-read -r FFMPEG_FILE FFMPEG_SHA256 < <(python3 -c \
-  "import json; p = json.load(open('$ROOT/packaging/ffmpeg.json'))['windows']; print(p['file'], p['sha256'])")
-if [ "$(sha256sum "$FFMPEG_DIR/$FFMPEG_FILE" 2>/dev/null | cut -d' ' -f1)" != "$FFMPEG_SHA256" ]; then
-  "$ROOT/packaging/ffmpeg/build.sh" windows "$FFMPEG_DIR"
-fi
+FFMPEG=$(python3 -I "$ROOT/packaging/pins.py" windows)
+rm -rf "$FFMPEG_DIR" && mkdir -p "$FFMPEG_DIR" && cp "$FFMPEG" "$FFMPEG_DIR/"
 
 # 6. The zip: the same packaging/build.py as on Linux, now with Windows as sys.platform. Its step keys name the
 # compiler that cross-built the codecs in step 3, which cannot run under Wine, so it is passed in.

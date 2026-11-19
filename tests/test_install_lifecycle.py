@@ -17,10 +17,6 @@ REAL_BUILD = installer._build
 BUILT = {"text": {"wozmod/table.bin": b"table"}, "voices": {}, "art": {"wozmod/entries/4059.bin": b"entry"}}
 
 
-def _pin(data: bytes) -> tuple[int, str]:
-    return len(data), hashlib.sha256(data).hexdigest()
-
-
 def _tree(root: Path) -> dict[str, bytes | None]:
     return {p.relative_to(root).as_posix(): p.read_bytes() if p.is_file() else None for p in root.rglob("*")}
 
@@ -63,8 +59,6 @@ def test_every_missing_or_wrong_input_is_named_and_no_right_one(game, tmp_path, 
     inputs["wo1-x360"].write_bytes(b"not a disc image")
     inputs["lettering"].write_bytes(b"bundle")
     inputs["dll"].write_bytes(b"dll")
-    monkeypatch.setattr(installer, "LETTERING", _pin(b"bundle"))
-    monkeypatch.setattr(installer, "DLL", _pin(b"dll"))
     monkeypatch.setattr(guard_report, "refused_features", lambda exe, dll: [])  # the stand-in DLL has no guard list
 
     with pytest.raises(InstallError) as caught:
@@ -82,9 +76,7 @@ def test_a_wrong_download_is_named_before_the_game_folder_is_hashed(game, tmp_pa
     # first wrong one is named.
     inputs = _inputs(tmp_path)
     (game / "LINKDATA1.BIN").write_bytes(b"patched archive")
-    inputs["lettering"].write_bytes(b"other bundle")
     (inputs["speech"] / "model").unlink()
-    monkeypatch.setattr(installer, "DLL", _pin(b"dll"))
     hashed = []
     monkeypatch.setattr(installer, "_sha256", lambda path, real=installer._sha256: hashed.append(path) or real(path))
 
@@ -92,10 +84,20 @@ def test_a_wrong_download_is_named_before_the_game_folder_is_hashed(game, tmp_pa
         install(game, inputs)
 
     assert str(caught.value).splitlines() == [
-        "lettering.zip: Not the file that goes with this release. Download wozmod again.",
+        "lettering.zip: File not found. Download wozmod again.",
         "d3d9.dll: File not found. Download wozmod again.",
         "Speech model folder: model is missing. Download wozmod again."]
     assert not [path for path in hashed if path.is_relative_to(game)]
+
+
+def test_an_install_takes_a_dll_and_lettering_that_no_pin_names(tmp_path):
+    """Bug: an install from a checkout refuses the checkout's own d3d9.dll or lettering.zip because a runtime or
+    lettering change moved it off the release pin, which only the release build writes (decision 55: the DLL pin
+    changed in 18 commits in two weeks for that alone)."""
+    own = tmp_path / "own"
+    own.write_bytes(b"this checkout's build")
+    assert [installer.check_input(name, own) for name in ("dll", "lettering")] == [None, None]
+    assert installer.check_input("dll", tmp_path / "none") == "File not found. Download wozmod again."
 
 
 def test_the_notes_of_the_game_check_reach_the_player_once_the_files_are_placed(game, tmp_path, monkeypatch):

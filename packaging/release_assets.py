@@ -10,14 +10,15 @@ FontForge, Cairo and NumPy. Run this on the developer machine, before you push t
         --donors "<donors folder, as the installer lays it out>"
 
 --build renders both files first (MinGW, Fedora's mingw32-gcc, for the DLL, the system python3 with FontForge, Cairo
-and NumPy for the lettering, which reads the menu words from the donors). Both files must match the sizes and SHA-256 pinned in
-src/wozmod/install/__init__.py; the script stops otherwise. Add --dry-run to check without uploading.
+and NumPy for the lettering, which reads the menu words from the donors). It then writes both files' pins in
+packaging/pins.json (packaging/pins.py), which the release commit carries: a release pins what it ships
+(installer decision 55). A changed DLL pin needs a play-test of that DLL before the release. Add --dry-run to write the
+pins without uploading.
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import os
 import shutil
 import subprocess
@@ -25,22 +26,26 @@ import sys
 import tempfile
 from pathlib import Path
 
-from wozmod.install import DLL, LETTERING
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import pins  # noqa: E402  packaging/pins.py, beside this file
 
 
-def check(path: Path, pin: tuple[int, str]) -> None:
-    size, digest = pin
-    if not path.is_file() or path.stat().st_size != size or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
-        raise SystemExit(f"{path} is not the file pinned in src/wozmod/install/__init__.py; "
-                         "rebuild it, or update the pin together with the release")
+def build_dll(game: Path, folder: Path) -> Path:
+    """The release d3d9.dll, from the stock executable, in folder."""
+    subprocess.run([sys.executable, "-m", "wozmod.runtime", "--game", str(game), "--output-dir", str(folder)], check=True)
+    return folder / "d3d9.dll"
+
+
+def build_lettering(donors: Path, folder: Path) -> Path:
+    """The release lettering.zip, with the menu words from the donors, in folder."""
+    subprocess.run([sys.executable, "-m", "wozmod.art", "render", str(folder / "lettering.zip"),
+                    "--text-donors", str(donors), "--jobs", str(os.cpu_count() or 4)], check=True)
+    return folder / "lettering.zip"
 
 
 def build(game: Path, donors: Path, folder: Path) -> tuple[Path, Path]:
-    """Render d3d9.dll (from the stock executable) and lettering.zip into folder (tests/test_install_e2e.py too)."""
-    subprocess.run([sys.executable, "-m", "wozmod.runtime", "--game", str(game), "--output-dir", str(folder)], check=True)
-    subprocess.run([sys.executable, "-m", "wozmod.art", "render", str(folder / "lettering.zip"),
-                    "--text-donors", str(donors), "--jobs", str(os.cpu_count() or 4)], check=True)
-    return folder / "d3d9.dll", folder / "lettering.zip"
+    """Render d3d9.dll and lettering.zip into folder (tests/test_install_e2e.py too)."""
+    return build_dll(game, folder), build_lettering(donors, folder)
 
 
 def main() -> int:
@@ -65,9 +70,8 @@ def main() -> int:
             shutil.copyfile(args.lettering, lettering)
         else:
             parser.error("give --dll and --lettering, or --build with --game")
-        check(dll, DLL)
-        check(lettering, LETTERING)
-        print(f"both files match their pins: {dll}, {lettering}")
+        pins.write_assets(dll, lettering)
+        print(f"pinned in {pins.PINS}: {dll}, {lettering}")
         if args.dry_run:
             return 0
         if subprocess.run(["gh", "release", "view", args.tag], capture_output=True).returncode:

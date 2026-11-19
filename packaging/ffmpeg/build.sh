@@ -4,7 +4,7 @@
 #   packaging/ffmpeg/build.sh linux|windows OUT_DIR
 #
 # OUT_DIR gets the program (ffmpeg-<VERSION>-linux or ffmpeg-<VERSION>-windows.exe), its SHA-256 and size for
-# packaging/ffmpeg.json, and the four source archives it was built from (packaging/FFMPEG-NOTICE.txt). The work happens in
+# packaging/pins.json, and the four source archives it was built from (packaging/FFMPEG-NOTICE.txt). The work happens in
 # work/ffmpeg-build/<target>/, rebuilt from scratch on every run. Needs, on Fedora: gcc, glibc-static, nasm, make,
 # pkg-config, autoconf, automake, libtool, curl, and for Windows ucrt64-gcc, ucrt64-winpthreads-static and wine.
 #

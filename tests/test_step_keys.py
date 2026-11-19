@@ -34,7 +34,6 @@ REPO = {
         from wozmod.lib import helper
         from wozmod.version import __version__ as VERSION
 
-        DLL = (2, "dll pin")
         NICE = 10
 
         def _text_table(game, donors, out):
@@ -74,7 +73,8 @@ REPO = {
     "runtime/english_runtime.c": "int x;",
     "uv.lock": "lock",
     "native/src/lib.rs": "fn main() {}",
-    "packaging/ffmpeg.json": json.dumps({"linux": {"sha256": "ff"}, "windows": {"sha256": "fw"}}),
+    "packaging/pins.json": json.dumps({"d3d9.dll": {"size": 2, "sha256": "dl"}, "lettering.zip": {"size": 2, "sha256": "le"},
+                                       "ffmpeg": {"linux": {"sha256": "ff"}, "windows": {"sha256": "fw"}}}),
 }
 
 
@@ -116,12 +116,13 @@ def test_each_step_key_changes_with_exactly_the_inputs_its_output_depends_on(tmp
     """Bug: an input drops out of a step's key, so a stale step stays installed (a donor pin or the speech model
     changes and the old voices are kept); or one leaks into the wrong key, so a caption edit or a DLL-only release
     rebuilds the voices for minutes."""
-    import wozmod.install as installer
     from wozmod.voices import phones
 
     root = _repo(tmp_path)
     install, pieces, table = root / "src/wozmod/install/__init__.py", root / "data/stock_pieces.json", root / "data/text/table.json"
     toolchain = {"python": "3.14.0", "ffmpeg": "8.1"}
+    lettering = tmp_path / "lettering.zip"  # the install's own, which need not be the release's (decision 55)
+    lettering.write_bytes(b"bundle")
     edits = {
         "a stock piece only the text reads": ({"text"}, lambda: _edit(pieces, '"aa"', '"ab"')),
         "a stock entry the voices and the art read": ({"voices", "art"}, lambda: _edit(pieces, '"bb"', '"bc"')),
@@ -130,7 +131,8 @@ def test_each_step_key_changes_with_exactly_the_inputs_its_output_depends_on(tmp
         "a disc member all three read": (STEPS, lambda: _repin_member(monkeypatch, "wo2-x360", "linkdata_ens.idx")),
         "a dub schedule only the text reads": ({"text"}, lambda: _repin_member(monkeypatch, "wo1-x360", "linkdata_fns/369.bin")),
         "a decrypted program": ({"text", "art"}, lambda: _repin_program(monkeypatch, "wo2-psp")),
-        "the lettering bundle": ({"art"}, lambda: monkeypatch.setattr(installer, "LETTERING", (1, "other bundle"))),
+        "the lettering bundle": ({"art"}, lambda: lettering.write_bytes(b"other bundle")),
+        "the DLL and lettering pins, which an install does not check": (set(), lambda: _edit(root / "packaging/pins.json", '"dl"', '"dm"')),
         "the speech model": ({"voices"}, lambda: monkeypatch.setattr(phones, "MODEL", {"en-us/mdef": (1, "other")})),
         # The voices read the translation for the words a Dream scene line's mouth says (voices.phones.shown_lines).
         "a translation's English": ({"text", "voices"}, lambda: table.write_text(_table([ROWS[0], {**ROWS[1], "en": "Other"}]), encoding="utf-8")),
@@ -142,7 +144,6 @@ def test_each_step_key_changes_with_exactly_the_inputs_its_output_depends_on(tmp
         "the movie list": ({"text"}, lambda: (root / "data/movies.json").write_text("[1]", encoding="utf-8")),
         "a define the text and the art read": ({"text", "art"}, lambda: (root / "runtime/shared.h").write_text("#define SITE 0x11\n", encoding="utf-8")),
         "the runtime's own C (a DLL-only release)": (set(), lambda: (root / "runtime/english_runtime.c").write_text("", encoding="utf-8")),
-        "the DLL pin": (set(), lambda: _edit(install, '"dll pin"', '"new dll pin"')),
         "the version": (set(), lambda: _edit(root / "src/wozmod/version.py", "1", "2")),
         "a module imported inside a function": ({"voices"}, lambda: _edit(root / "src/wozmod/deep.py", "import os", "import os  # x")),
         "a package's __init__": ({"voices"}, lambda: _edit(root / "src/wozmod/voices/__init__.py", "run", "run  # x")),
@@ -160,7 +161,7 @@ def test_each_step_key_changes_with_exactly_the_inputs_its_output_depends_on(tmp
     }
 
     def keys():
-        return {step: found["key"] for step, found in step_keys.keys(root, dict(toolchain)).items()}
+        return {step: found["key"] for step, found in step_keys.keys(root, dict(toolchain), lettering).items()}
 
     wrong = []
     for name, (expected, edit) in edits.items():
@@ -228,16 +229,15 @@ def test_the_shipped_keys_are_the_ones_the_release_source_gives_and_follow_the_p
     """Bug: step_keys.json leaves out part of a key or of a manifest (a step's inputs, modules or bundled files), so a
     release whose piece record or lettering.zip changed keeps the steps built from the old ones, or its read gate holds
     a step to another manifest than its key hashes."""
-    import wozmod.install as installer
-
     root = _repo(tmp_path)
+    (root / "lettering.zip").write_bytes(b"bundle")  # the release's own, beside its data/
     live = step_keys.keys(root, step_keys.release_toolchain(root, "linux"))
     live_manifests = manifest.manifests(root)
     (root / manifest.SHIPPED).write_text(json.dumps(step_keys.shipped_document(root, "linux")), encoding="utf-8")
     (root / "src").rename(root / "no-source")  # a release has no source tree
     assert step_keys.keys(root) == live
     assert manifest.manifests(root) == live_manifests
-    monkeypatch.setattr(installer, "LETTERING", (1, "other bundle"))
+    (root / "lettering.zip").write_bytes(b"other bundle")
     monkeypatch.setenv("WOZMOD_NATIVE", "0")
     _edit(root / "data/stock_pieces.json", '"aa"', '"ab"')
     changed = step_keys.keys(root)

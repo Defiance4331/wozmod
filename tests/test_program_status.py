@@ -67,8 +67,6 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(donors, "read_disc_member", lambda image, donor, member: Path(image).read_bytes())
     release = tmp_path / "release"
     release.write_bytes(b"r")
-    monkeypatch.setattr(installer, "LETTERING", (1, hashlib.sha256(b"r").hexdigest()))
-    monkeypatch.setattr(installer, "DLL", installer.LETTERING)
     monkeypatch.setattr(installer.resources, "ffmpeg", lambda: "ffmpeg")
     monkeypatch.setattr(cli, "install", lambda game, inputs, **_: installer.check_inputs(game, inputs))  # no build
     paths = {"release": str(release), "game": str(tmp_path / "no game"),
