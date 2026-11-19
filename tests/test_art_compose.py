@@ -60,8 +60,10 @@ assert not any(name.split(".")[0] in blocked for name in sys.modules)
 print("compose imported without font tools")
 """
     environment = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+    # The timeout only stops a hung import: the import itself takes seconds under Windows Python in Wine on a busy
+    # machine (0.2 s on Linux), and a test run starts at the lowest priority (tools/machine_lock.py background()).
     result = subprocess.run([sys.executable, "-c", script], cwd=tmp_path,
-                            env=environment, capture_output=True, text=True, timeout=10, encoding="utf-8")
+                            env=environment, capture_output=True, text=True, timeout=120, encoding="utf-8")
     assert result.returncode == 0, result.stderr
     assert result.stdout == "compose imported without font tools\n"
 

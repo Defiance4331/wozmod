@@ -11,7 +11,9 @@ takes the lock around each measured run alone, so the runs waiting between them 
 run) and a parallel test run (tests/conftest.py) hold it shared, beside each other. Every run waits in one line,
 first come, first served: a run goes in once every run that began waiting before it has. A heavy run beside
 another, or beside a game, slows both, skews a benchmark's numbers and makes time limits (the install budget, Wine
-boot timeouts) fail for no fault of the code.
+boot timeouts) fail for no fault of the code. Every run that holds the machine runs at the lowest CPU and disk priority
+(background()), so whatever the user is doing on this machine meanwhile, such as playing or streaming a game, goes
+first; on an otherwise idle machine that costs nothing.
 
 Each lock is a flock on a file the kernel releases when its holder exits, so a crashed or killed run never leaves the
 machine locked. The descriptor is not inherited, so a process COMMAND leaves behind (a wineserver) cannot hold it.
@@ -21,6 +23,7 @@ Each finished heavy run appends a row to work/machine-lock.log: start, minutes h
 
 from __future__ import annotations
 
+import ctypes
 import fcntl
 import json
 import os
@@ -142,10 +145,24 @@ def claim(holder: str, poll: float = 1.0) -> int:
     return _wait_turn(True, holder, poll)
 
 
+# ioprio_set(2) by machine: the idle disk class for the calling thread (IOPRIO_WHO_PROCESS 1, who 0 = this thread).
+IOPRIO_SET = {"x86_64": 251, "aarch64": 30, "i686": 289}
+IDLE_CLASS = 3 << 13
+
+
+def background() -> None:
+    """Put the calling thread, and so every process it starts from now on, at the lowest CPU priority (nice 19) and
+    in the idle disk class. Linux keeps both per thread and a new process takes them from the thread that starts it."""
+    os.setpriority(os.PRIO_PROCESS, 0, 19)
+    if (number := IOPRIO_SET.get(os.uname().machine)) is not None:
+        ctypes.CDLL(None, use_errno=True).syscall(number, 1, 0, IDLE_CLASS)
+
+
 def share(poll: float = 1.0, what: str = "the game") -> int | None:
     """For a game launch or a test run (what): wait in line, then hold the machine shared, beside other games and
     test runs, so no heavy run starts beside it. The descriptor (None inside a heavy run, which already has the
     machine) stays open, so the lock lasts until the process ends."""
+    background()
     if os.environ.get(HELD):
         return None
     return _wait_turn(False, f"{what} (pid {os.getpid()})", poll)
@@ -186,6 +203,7 @@ def run(command: list[str]) -> tuple[int, float]:
     try:
         before = resource.getrusage(resource.RUSAGE_CHILDREN)  # cumulative: a second run in this process subtracts it
         start, began = time.time(), time.monotonic()
+        background()  # COMMAND and all it starts inherit it
         child = subprocess.Popen(command, env={**os.environ, HELD: "1"})
         # stopping this stops COMMAND, then frees the machine; after it the old handlers come back, so a stop between
         # two of a bench's runs stops the bench
