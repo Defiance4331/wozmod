@@ -1947,7 +1947,9 @@ ROUTE_SCREENS = {
     "options-controller-buttons": {"caller": "0x5983cb"},  # Button Settings: each action's name (its key 0x598418)
     "options-graphics": {"caller": "0x56cb92"},  # the resolution row's size label
     "options-advanced": {"texture": "4069.14|4069.15", "quad_caller": "0x56bff8"},  # the preset row's plates
-    "story-select": {"texture": "4082.0|4082.4"},  # two columns: 4082.0 with the cursor in the left one (Shu), 4082.4 in the right (Z)
+    # 4082.30 is drawn on every cursor row (Shu, Wei, Wu, the others, Z) and on no camp screen; the per-row
+    # cursor textures (4082.0 to .4) come and go with the row. Proved by run 2026-11-19_1245-route-fix-rows.
+    "story-select": {"texture": "4082.30"},
     "story-camp": {"texture": "4060.39"},  # Shu; the camp menu plate, which its submenus do not draw
     "camp-officers": {"caller": "0x54335f"},
     "camp-weapons": {"texture": "4060.36"},

@@ -993,7 +993,13 @@ def test_route_fingerprints_tell_the_screens_apart_that_share_textures():
         return {"textures": [{"texture": t} for t in textures], "texts": [{"caller": c, "x": 0} for c in callers]}
 
     screens = harness.ROUTE_SCREENS
-    assert harness.shows(drawn("4082.0"), screens["story-select"]) and harness.shows(drawn("4082.4"), screens["story-select"])
+    # Bug: story-select is not recognised when the cursor is on a middle row (Wei), which draws 4082.1 and neither
+    # 4082.0 nor 4082.4. Frames read from run 2026-11-19_1245-route-fix-rows (the cursor texture beside the common ones).
+    common = ["4082.10", "4082.28", "4082.30", "4079.102"]
+    for cursor in ("4082.0", "4082.1", "4082.2", "4082.3", "4082.4"):
+        assert harness.shows(drawn(cursor, *common), screens["story-select"]), cursor
+    camp = drawn("4060.39", "4060.33", "4079.102")
+    assert not harness.shows(camp, screens["story-select"])
     panel, course = drawn("4098.11"), drawn("4098.11", callers=["0x5a6774"])
     assert harness.shows(panel, screens["vs-team-select"]) and not harness.shows(course, screens["vs-team-select"])
     assert harness.shows(course, screens["vs-course"]) and not harness.shows(panel, screens["vs-course"])
