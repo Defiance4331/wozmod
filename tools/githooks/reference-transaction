@@ -1,0 +1,8 @@
+#!/bin/sh
+# Gate main: a commit lands on main only once its tree has a passing Linux and a passing Windows verdict
+# (AGENTS.md, section Testing). Git runs this for every ref update, in each state of the transaction; it reads
+# nothing but the prepared state's lines, and starts Python (tools/verify.py, which decides) only when main moves.
+[ "$1" = prepared ] || exit 0
+updates=$(cat)
+case $updates in *" refs/heads/main"*) ;; *) exit 0 ;; esac
+printf '%s\n' "$updates" | python3 "$(dirname "$0")/../verify.py" _gate

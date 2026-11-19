@@ -181,3 +181,42 @@ def test_a_run_a_signal_stopped_is_no_verdict(tmp_path):
     killed = ["sh", "-c", "kill -TERM $$", "sh"]  # stands in for the Python that runs pytest
     with pytest.raises(SystemExit, match="stopped by signal 15; nothing is recorded"):
         verify.pytest(tmp_path, tmp_path / "out", [], dict(os.environ), killed)
+
+
+def test_a_commit_run_tests_the_commits_own_tree_not_the_checkout(tmp_path, monkeypatch):
+    # Bug: --commit runs the suite in the checkout (or imports the checkout's code), so an uncommitted edit or an
+    # untracked test decides the verdict recorded for the commit's tree; or it records under the checkout's tree.
+    repo = _repository(tmp_path / "repo", {"src/thing.py": "VALUE = 1\n",
+                                           "tests/test_thing.py": "import thing\n\ndef test_value():\n"
+                                                                  "    assert thing.VALUE == 1\n"})
+    for name in ("machine_lock.py", "checkout.py"):  # the shared machine lock it takes, from the checkout's tools/
+        (repo / "tools").mkdir(exist_ok=True)
+        shutil.copy2(REPO / "tools" / name, repo / "tools" / name)
+    # This test run holds the machine already: waiting for it again would wait behind a heavy run that waits for us.
+    monkeypatch.setenv("WOZMOD_MACHINE_LOCK", "1")
+    committed = _git(repo, "rev-parse", "HEAD^{tree}").strip()
+    (repo / "src/thing.py").write_text("VALUE = 2\n", encoding="utf-8")
+    (repo / "tests/test_untracked.py").write_text("def test_red():\n    assert False\n", encoding="utf-8")
+    monkeypatch.setenv(verify.JUDGED, "tree")
+    monkeypatch.setattr(verify, "venv", lambda repo, tree, folder: [sys.executable])  # the tree's environment
+    found = verify.linux(repo, committed, rerun=False, exact=True)
+    assert (found["verdict"], found["summary"].split(" (")[0], verify.recorded(repo, committed, "linux")["verdict"],
+            verify.recorded(repo, verify.tree_id(repo), "linux")) == ("pass", "1 passed", "pass", None), found
+
+
+def test_a_hand_back_exits_on_the_linux_verdict_and_wait_on_both(tmp_path):
+    # Bug: the default mode fails a hand-back on the Windows verdict (as before this was decided), or --wait passes
+    # with a red Windows verdict, which main would then refuse.
+    repo = _repository(tmp_path / "repo", {"tools/verify.py": (REPO / "tools/verify.py").read_text(encoding="utf-8")})
+    tree = verify.tree_id(repo)
+    for check, verdict in (("linux", "pass"), ("windows", "fail")):
+        verify.record(repo, tree, {"check": check, "verdict": verdict, "summary": "1 passed", "at": "then",
+                                   "judge": "tree"})
+    env = {name: value for name, value in os.environ.items() if not name.startswith("WOZMOD_")}
+    codes = {}
+    for flags in ((), ("--wait",)):
+        run = subprocess.run([sys.executable, "tools/verify.py", *flags], cwd=repo, env=env, capture_output=True,
+                             encoding="utf-8")
+        assert "Windows: fail" in run.stdout, run.stdout + run.stderr
+        codes[flags] = run.returncode
+    assert codes == {(): 0, ("--wait",): 1}

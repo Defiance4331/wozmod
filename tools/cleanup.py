@@ -18,7 +18,7 @@ Kinds:
   verify           tools/verify.py's reference builds (work/verify/builds/STEP/KEY) whose step key is not the key of
                    main or of any checkout (the main one or a worktree, as it is now, or its merge base with main), the
                    Python environments (work/verify/venvs/) none of those uses, and what a stopped run left; all of it
-                   is kept while a heavy run holds work/.machine.lock
+                   is kept while any run (a heavy one, a test run, a game) holds work/.machine.lock
 
 It never touches a path work/harness.toml or work/winvm/compose.yml names, work/install, work/donors, the VM storage,
 the run template, work/handbacks, work/archive, or anything outside the checkout, and it keeps anything a running
@@ -95,12 +95,13 @@ def user(path: Path, table: list[tuple[int, list[str]]]) -> int | None:
 
 
 def held(lock: Path) -> bool:
-    """Whether another process holds this flock file."""
+    """Whether another process holds this flock file, exclusively or shared: a test run, a game or the background
+    Windows run holds work/.machine.lock shared while it uses an export or an environment."""
     if not lock.is_file():
         return False
     with lock.open("rb") as handle:
         try:
-            fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return True
         fcntl.flock(handle, fcntl.LOCK_UN)
@@ -352,7 +353,7 @@ def verify_state(repo: Path, keep_days: float, now: float) -> list[Item]:
         else:
             item = Item("verify", path, "what a stopped verify run or cleanup left", age)
         if lock and not item.kept:
-            item.kept = "a heavy run holds work/.machine.lock"
+            item.kept = "a run holds work/.machine.lock"
         items.append(item)
     return items
 

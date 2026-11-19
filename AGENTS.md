@@ -77,10 +77,14 @@ cannot run on one system carries `linux_only(reason)` or `real_windows(reason)`
 (`SYSTEM_MARKS` in `tests/conftest.py`), so both systems collect the same tests.
 
 Before handing back a change, run `tools/verify.py`. It runs the fast suite on
-Linux in about 30 s, strictly (a missing input fails instead of skipping), then
-the same suite under Windows Python in the background (about 2 minutes; `--wait`
-waits for it). Verdicts are local git notes on the tree, so an unchanged tree
-reuses them. It also lists the slow checks your diff from main triggers
+Linux in about 30 s, strictly (a missing input fails instead of skipping), and
+exits on that verdict: a hand-back needs only it. It also starts the same suite
+under Windows Python in the background (about 2 minutes; `--wait` waits for it).
+Landing on main needs both verdicts: the `reference-transaction` hook refuses to
+move main to a commit whose tree lacks either, and names the command that
+records them, `tools/verify.py --commit REV --wait` (the exact tree REV holds,
+whatever the checkout's untracked files). Verdicts are local git notes on the
+tree, so an unchanged tree reuses them. It also lists the slow checks your diff from main triggers
 (`tools/verify_checks.toml`, each row citing the incident behind it): run them
 with `tools/verify.py --triggered` before handing back a change to the runtime,
 the art or the install. `tools/verify.py ref STEP...` builds an install step
@@ -101,7 +105,7 @@ commit hook's checks) does not wait. Stop only runs you started.
 change players see with the
 `evidence/contact-sheet.html` that `tools/run_check.py` writes: each capture beside
 its PASS/FAIL rows. The hooks in `tools/githooks/` lint each
-commit (`git config core.hooksPath tools/githooks` on a new clone).
+commit and gate main (`git config core.hooksPath tools/githooks` on a new clone).
 
 ## Commits
 

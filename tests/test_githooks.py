@@ -1,13 +1,22 @@
-"""The commit-msg hook keeps commit messages to the changelog format in AGENTS.md."""
+"""The commit-msg hook keeps commit messages to the changelog format in AGENTS.md, and the reference-transaction hook
+lets main move only to a commit whose tree has passing Linux and Windows verdicts (tools/verify.py)."""
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
-HOOK = Path(__file__).resolve().parents[1] / "tools/githooks/commit-msg"
+if sys.platform == "linux":  # it imports fcntl, so elsewhere it cannot load
+    import verify
+
+REPO = Path(__file__).resolve().parents[1]
+HOOK = REPO / "tools/githooks/commit-msg"
+GATE = "tools/githooks/reference-transaction"
 WHY = "Players who are not developers could not tell what to pick."
 GOOD = ["- Add -v/--version, and show the version in the window's corner.",
         "- Say why Install is disabled, and what to do after an error."]
@@ -51,4 +60,123 @@ def test_commit_msg_hook_accepts_the_changelog_format_and_refuses_the_rest(tmp_p
         run = subprocess.run(["sh", str(HOOK), str(path)], capture_output=True, text=True, encoding="utf-8")
         if (run.returncode == 0) != accepted:
             wrong.append(f"{name}: exit {run.returncode} {run.stderr.strip()}")
+    assert wrong == []
+
+
+
+def _git(repo: Path, *arguments: str, check: bool = True) -> subprocess.CompletedProcess:
+    env = {name: value for name, value in os.environ.items() if not name.startswith(("GIT_", "WOZMOD_"))}
+    return subprocess.run(["git", *arguments], cwd=repo, check=check, capture_output=True, encoding="utf-8", env=env)
+
+
+def _identify(repo: Path) -> None:
+    _git(repo, "config", "user.email", "test@example.invalid")
+    _git(repo, "config", "user.name", "test")
+
+
+def _commit(repo: Path, name: str) -> subprocess.CompletedProcess:
+    (repo / name).write_text(name, encoding="utf-8")
+    _git(repo, "add", "-A")
+    return _git(repo, "commit", "-q", "-m", name, check=False)
+
+
+def _gated(root: Path) -> Path:
+    """A clone of an upstream whose main holds one commit, with the gate (and the verify.py it runs) installed as in
+    ours: core.hooksPath tools/githooks. Upstream then gets a commit the clone has not fetched; no tree has a verdict."""
+    upstream = root / "upstream"
+    _git(root, "init", "-q", "-b", "main", str(upstream))
+    _identify(upstream)
+    for name in ("tools/verify.py", GATE):
+        (upstream / name).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO / name, upstream / name)
+    (upstream / ".gitignore").write_text("work/\n", encoding="utf-8")
+    _commit(upstream, "base.txt")
+    repo = root / "repo"
+    _git(root, "clone", "-q", str(upstream), str(repo))
+    _commit(upstream, "upstream.txt")
+    _identify(repo)
+    _git(repo, "config", "core.hooksPath", "tools/githooks")
+    return repo
+
+
+def _verdicts(repo: Path, tree: str, **checks: str) -> None:
+    for check, verdict in checks.items():
+        verify.record(repo, tree, {"check": check, "verdict": verdict, "summary": "1 passed", "at": "then"})
+
+
+def _rev(repo: Path, rev: str) -> str:
+    return _git(repo, "rev-parse", rev).stdout.strip()
+
+
+GATED = pytest.mark.linux_only("the gate is a POSIX shell hook that runs tools/verify.py, which locks with fcntl")
+
+
+@GATED
+def test_main_moves_only_to_a_commit_whose_tree_has_a_passing_linux_and_windows_verdict(tmp_path):
+    # Bug: main moves to a commit whose tree has no Windows verdict, or a red one (the gate reads only the Linux
+    # verdict, or any record of a check rather than its latest); a reset slips past a gate that watches only
+    # commits; or the refusal does not name the tree and the verdict, nor the command that records it.
+    repo = _gated(tmp_path)
+    (repo / "a.txt").write_text("a", encoding="utf-8")
+    _git(repo, "add", "-A")
+    tree = _git(repo, "write-tree").stdout.strip()
+    wrong = []
+    for name, checks, accepted, says in [
+            ("no verdicts", {}, False, ["no Linux verdict; no Windows verdict", f"--commit {tree} --wait\n"]),
+            ("Linux only", {"linux": "pass"}, False, [f"{tree} has no Windows verdict.", f"--commit {tree} --wait\n"]),
+            ("a red Windows verdict", {"windows": "fail"}, False, [f"{tree} has a red Windows verdict",
+                                                                  f"--commit {tree} --wait --rerun"]),
+            ("a Windows pass after it", {"windows": "pass"}, True, [])]:
+        _verdicts(repo, tree, **checks)
+        run = _git(repo, "commit", "-q", "-m", "a", check=False)
+        if (run.returncode == 0) != accepted or not all(text in run.stderr for text in says):
+            wrong.append(f"{name}: exit {run.returncode} {run.stderr.strip()}")
+    verified = _rev(repo, "main")
+    _git(repo, "checkout", "-q", "-b", "feature")
+    _commit(repo, "c.txt")
+    _git(repo, "checkout", "-q", "main")
+    reset = _git(repo, "reset", "-q", "--hard", "feature", check=False)
+    if reset.returncode == 0 or _rev(repo, "main") != verified:
+        wrong.append(f"a reset to an unverified commit: exit {reset.returncode}")
+    assert wrong == []
+
+
+@GATED
+def test_upstream_commits_unchanged_trees_and_deleting_main_pass_the_gate(tmp_path):
+    # Bug: a pull of an upstream commit is refused (no local verdict, as no one ran verify on it), also when one fetch
+    # moves main and origin/main together, before origin/main holds it; a re-stamped commit (the post-commit hook
+    # rebuilds HEAD with UTC dates: a new commit, main's tree) is refused; or deleting main fails in the gate.
+    repo = _gated(tmp_path)
+    wrong = []
+
+    def moves(name: str, *command: str) -> None:
+        if (run := _git(repo, *command, check=False)).returncode:
+            wrong.append(f"{name}: {run.stderr.strip()}")
+
+    moves("a pull", "pull", "-q", "--ff-only", "origin", "main")
+    _commit(tmp_path / "upstream", "later.txt")
+    _git(repo, "checkout", "-q", "-b", "other")
+    moves("a fetch into main", "fetch", "-q", "origin", "main:main")
+    restamp = _git(repo, "commit-tree", _rev(repo, "main^{tree}"), "-p", _rev(repo, "main^"), "-m", "re-stamped")
+    moves("a re-stamp", "update-ref", "refs/heads/main", restamp.stdout.strip())
+    moves("deleting main", "branch", "-q", "-D", "main")
+    assert wrong == []
+
+
+@GATED
+def test_the_gate_lets_every_other_ref_move(tmp_path):
+    # Bug: the gate checks more than main (a branch whose name starts main, any branch, the notes), so it blocks a
+    # commit on a feature branch or a verdict landing in refs/notes/verify, or it fails on a symbolic ref (HEAD).
+    repo = _gated(tmp_path)
+    wrong = []
+    for name in ("feature", "main-old"):
+        _git(repo, "checkout", "-q", "-b", name)
+        if (run := _commit(repo, f"{name}.txt")).returncode:
+            wrong.append(f"a commit on {name}: {run.stderr.strip()}")
+    tree = _rev(repo, "HEAD^{tree}")
+    _verdicts(repo, tree, linux="pass")
+    if verify.recorded(repo, tree, "linux") is None:
+        wrong.append("the verdict never landed in refs/notes/verify")
+    if (run := _git(repo, "checkout", "-q", "main", check=False)).returncode:
+        wrong.append(f"a checkout of main: {run.stderr.strip()}")
     assert wrong == []

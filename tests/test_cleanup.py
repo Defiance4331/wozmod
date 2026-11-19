@@ -226,3 +226,17 @@ def test_only_reference_builds_no_live_tree_keys_are_listed(repo):
     found = cleanup.plan(repo, {"verify"}, 7, 10, table=[], now=NOW)
     assert sorted(i.path.relative_to(repo / "work/verify").as_posix() for i in found if not i.kept) == sorted([
         f"builds/text/{key('gone\n')}", f"builds/text/{key('gone')}.partial", stale.relative_to(repo / "work/verify").as_posix()])
+
+
+def test_what_verify_left_is_kept_while_a_run_holds_the_machine_shared(repo):
+    # Bug: cleanup probes the machine lock shared, so it sees only heavy runs, and deletes an export or an environment
+    # a test run or the background Windows run (which hold it shared) is using.
+    import fcntl
+
+    _folder(repo / "work/verify/trees/0123456789abcdef.4242", 30)
+    (repo / "work/.machine.lock").write_bytes(b"")
+    with open(repo / "work/.machine.lock", "rb") as lock:
+        fcntl.flock(lock, fcntl.LOCK_SH)
+        held = cleanup.plan(repo, {"verify"}, 7, 10, table=[], now=NOW)
+    free = cleanup.plan(repo, {"verify"}, 7, 10, table=[], now=NOW)
+    assert [i.kept for i in held] == ["a run holds work/.machine.lock"] and [i.kept for i in free] == [""]
