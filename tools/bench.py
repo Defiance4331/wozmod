@@ -3,10 +3,12 @@
 
     python3 tools/bench.py [--runs N] NAME=COMMAND NAME=COMMAND [NAME=COMMAND...]
 
-runs the arms in turn (A, B, A, B...) N times each (default 5). Each run waits in the machine's line and holds the
+runs the arms in turn (A, B, A, B...) N times each (default 1). Each run waits in the machine's line and holds the
 lock (tools/machine_lock.py) only while it runs, so the game and test runs that queued meanwhile go in between two
 runs, and alternating spreads any drift in the machine over every arm. COMMAND is a shell command line. Prints, per
-arm, the median and range of wall time over its passed runs and how many failed; exits 1 when any run failed.
+arm, the wall time of its passed run (of several: their median and range) and how many failed; exits 1 when any
+run failed. One run shows only a difference well above the machine's run-to-run noise (Windows installs have
+varied 801 to 863 s, about 7%); for a smaller one, give --runs 5 or more.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ def arm(text: str) -> tuple[str, str]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--runs", type=int, default=5, metavar="N", help="runs per arm (default 5)")
+    parser.add_argument("--runs", type=int, default=1, metavar="N", help="runs per arm (default 1)")
     parser.add_argument("arms", nargs="+", type=arm, metavar="NAME=COMMAND")
     args = parser.parse_args(argv)
     if len(args.arms) < 2 or len({name for name, _ in args.arms}) < len(args.arms):
@@ -43,8 +45,10 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 times[name].append(seconds)
     for name, passed in times.items():
-        spread = (f"median {statistics.median(passed):.2f} s, range {min(passed):.2f}-{max(passed):.2f} s"
-                  if passed else "no passed run")
+        if len(passed) > 1:
+            spread = f"median {statistics.median(passed):.2f} s, range {min(passed):.2f}-{max(passed):.2f} s"
+        else:
+            spread = f"{passed[0]:.2f} s" if passed else "no passed run"
         print(f"{name}: {spread}, {failed[name]} of {args.runs} failed")
     return 1 if any(failed.values()) else 0
 

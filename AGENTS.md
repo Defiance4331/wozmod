@@ -98,8 +98,9 @@ itself: while another heavy run, from any checkout, holds `work/.machine.lock`,
 they wait and say who holds it. Run a dev install or an art build the same way,
 through `python3 tools/machine_lock.py COMMAND`. Run a benchmark through
 `python3 tools/bench.py NAME=COMMAND NAME=COMMAND...`: it runs the arms in turn
-(5 runs each by default), takes the lock around each run alone so waiting runs
-go in between, and prints each arm's median and range. Give a run
+(once each by default; `--runs N` for a difference near run-to-run noise), takes
+the lock around each run alone so waiting runs go in between, and prints each
+arm's time. Give a run
 that may wait a long timeout (a release takes about 40 minutes). Game launches
 and parallel test runs hold the machine shared, beside each other, and every
 run waits in one line, first come, first served: a benchmark's next run cannot
