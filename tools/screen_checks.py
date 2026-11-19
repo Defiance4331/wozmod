@@ -32,7 +32,7 @@ from wozmod.runtime.english_runtime import DLL_BASE
 from wozmod.runtime.latin_font import width as _table_width
 from wozmod.runtime.runtime_edits import SAFE_LEFT, SAFE_RIGHT
 
-LAYOUT_W = 1280
+LAYOUT_W, LAYOUT_H = 1280, 720
 TEXT_H = 28  # one glyph row, layout px
 LINE_PITCH = 36  # baseline step of a wrapped line, layout px
 CJK = re.compile(r"[\u3000-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uff00-\uffef]")
@@ -686,7 +686,7 @@ HEARD = {"lines_in_english", "movie_voice"}
 INK_WIDTH = {"text_clear_of_quad", "text_clear_of_text", "text_within_edge", "text_within_box", "text_box",
              "text_within_safe_area"}
 SCREEN_KEYS = {"name", "route", "fixture", "battle", "movie", "script", "spawn", "keys", "notice", "wait", "lip_test", "listen",
-               "assert"}
+               "assert", "crop"}  # crop: [x0, y0, x1, y1] layout px, the region an A/B contact sheet shows
 
 
 # ---- spec and runner -------------------------------------------------------
@@ -698,6 +698,10 @@ def load_spec(path: Path) -> list[dict]:
         extra = set(sc) - SCREEN_KEYS
         if extra or "name" not in sc or "route" not in sc:
             raise ValueError(f"screen {sc.get('name')!r}: needs name and route, unknown keys {sorted(extra)}")
+        crop = sc.get("crop", [0, 0, LAYOUT_W, LAYOUT_H])
+        if not (len(crop) == 4 and all(isinstance(v, int) for v in crop)
+                and 0 <= crop[0] < crop[2] <= LAYOUT_W and 0 <= crop[1] < crop[3] <= LAYOUT_H):
+            raise ValueError(f"screen {sc['name']!r}: crop is [x0, y0, x1, y1] in layout px, inside {LAYOUT_W}x{LAYOUT_H}")
         if set(sc.get("listen", {})) - {"seconds", "scene", "stock"} or ("listen" in sc and "seconds" not in sc["listen"]):
             raise ValueError(f"screen {sc['name']!r}: listen takes seconds, an optional scene and stock")
         if sc.get("listen", {}).get("stock") and "scene" not in sc["listen"]:

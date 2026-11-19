@@ -605,6 +605,92 @@ def test_a_launch_waiting_behind_a_heavy_run_names_the_machine_lock_and_who_is_a
     assert said and set(said) == {"run_check: waiting for the machine, held by bench (0 min); 1 run(s) wait ahead"}
 
 
+def test_ab_runs_a_on_the_install_as_it_stands_and_b_with_the_swaps_and_exits_on_b(tools, tmp_path, monkeypatch):
+    """Bugs: a swap leaks into run A, so both sides show the working build; B is staged without its swaps; A's FAIL
+    rows (the state the swap fixes) fail the A/B run."""
+    spec = tmp_path / "spec.toml"
+    spec.write_text('[[screen]]\nname = "s"\nroute = "menu"\n[[screen.assert]]\nkind = "no_cjk"\n', encoding="utf-8")
+    seen = {}
+
+    def run(args, stage):
+        root = stage(args.name)
+        (root / "evidence").mkdir(parents=True)
+        (root / "evidence/check-report.json").write_text(json.dumps({"spec": str(spec), "rows": [
+            {"screen": "s", "assertion": "no_cjk", "ok": args.name.endswith("-b"), "numbers": {}, "capture": None}]}), encoding="utf-8")
+        seen[args.name] = (args.dll, args.file, args.art)
+        return 0 if args.name.endswith("-b") else 1
+
+    dll, file = tmp_path / "test.dll", ["wozmod/table.bin=new.bin"]
+    args = SimpleNamespace(spec=spec, name="x", dll=dll, file=file, art=tmp_path / "art", to=None, ab="install",
+                           setting=[])
+    code = tools.run_check.ab(args, run, stage=lambda name: tmp_path / name)
+    assert code == 0
+    assert seen == {"x-a": (None, [], None), "x-b": (dll, file, tmp_path / "art")}
+    assert (tmp_path / "x-b/evidence/ab-sheet.html").is_file()
+
+
+def test_ab_stock_runs_a_as_the_stock_game_whatever_language_the_caller_set(tools, tmp_path):
+    """Bug: --ab stock stages A with the mod's art still served, so A still draws English lettering from hires.bin
+    over the stock texture (runtime/english_runtime.c:2800), or a caller's language.text=english is read first.
+    The runtime reads the first [language] text= of settings.ini; japanese turns off its hires rows and entries."""
+    spec = tmp_path / "spec.toml"
+    spec.write_text('[[screen]]\nname = "s"\nroute = "menu"\n', encoding="utf-8")
+    texts = {}
+
+    def run(args, stage):
+        ini = tools.prepare_run.settings_ini(args.setting)
+        texts[args.name[-1]] = next((line.split("=")[1] for line in ini.splitlines() if line.startswith("text=")), None)
+        return 0
+
+    args = SimpleNamespace(spec=spec, name="x", dll=None, file=["wozmod/entries/1.bin=n.bin"], art=None, to=None,
+                           ab="stock", setting=["language.text=english", "display.fps=120"])
+    tools.run_check.ab(args, run, stage=lambda name: tmp_path / name)
+    assert texts == {"a": "japanese", "b": "english"}
+
+
+def test_ab_sheet_pairs_each_screens_a_and_b_captures_by_name_cropped_in_layout_px(tmp_path):
+    """Bugs: the A and B images trade places; pairs are matched by position, so a screen run A never reached shifts
+    every later pair; the crop box is read as capture px on a 2x capture and shows a quarter of the region."""
+    import base64
+    import io
+
+    import contact_sheet
+    from PIL import Image
+
+    def capture(path: Path, corner: str) -> str:
+        image = Image.new("RGB", (2560, 1440), "red")  # a 2x capture of the 1280x720 layout
+        image.paste(corner, (0, 0, 1280, 720))  # the layout's top-left quarter
+        image.save(path)
+        return str(path)
+
+    def report(folder: Path, captures: dict[str, str]) -> Path:
+        folder.mkdir()
+        rows = [{"screen": n, "assertion": "ink", "ok": True, "numbers": {}, "capture": c} for n, c in captures.items()]
+        (folder / "check-report.json").write_text(json.dumps({"spec": "layout.toml", "rows": rows}), encoding="utf-8")
+        return folder
+
+    a = report(tmp_path / "a", {"late": capture(tmp_path / "a.png", "green")})
+    b = report(tmp_path / "b", {"early": capture(tmp_path / "b1.png", "blue"), "late": capture(tmp_path / "b2.png", "blue")})
+    page = contact_sheet.write_ab(a, b, {"late": [0, 0, 640, 360]}).read_text(encoding="utf-8")
+
+    def images(section: str) -> list[tuple[tuple[int, int], tuple[int, int, int]]]:
+        found = []
+        for data in section.split("src='data:image/jpeg;base64,")[1:]:
+            image = Image.open(io.BytesIO(base64.b64decode(data.split("'")[0])))
+            found.append((image.size, image.getpixel((image.width // 2, image.height // 2))))
+        return found
+
+    def near(pixel, colour) -> bool:
+        return all(abs(p - c) < 40 for p, c in zip(pixel, colour, strict=True))
+
+    early, late = page.split("<section>")[1:]
+    assert "<h2>early</h2>" in early and "this run did not reach the screen" in early.split("<figure>")[1]
+    [(size, pixel)] = images(early)  # B only, uncropped: the centre is outside the corner
+    assert size == (960, 540) and near(pixel, (255, 0, 0))
+    (a_size, a_pixel), (b_size, b_pixel) = images(late)  # the crop: the corner alone, A before B
+    assert a_size == b_size == (960, 540) and near(a_pixel, (0, 128, 0)) and near(b_pixel, (0, 0, 255))
+
+
 def test_entries_dir_swaps_each_rebuilt_entry_over_the_installed_one(tools, tmp_path, monkeypatch):
     """Bug: a rebuilt menu-art entry goes in under the wrong installed path, so the run quietly shows the old art."""
     built = tmp_path / "entries"

@@ -10,6 +10,11 @@ as one (about 4 s), since a release build answers no route or check.
 With --to SCREEN [--stage N] it routes the game there instead and leaves it running for hand commands
 (`game_harness.py ACTION --root RUN`); `game_harness.py stop --root RUN` ends it, or its 30-minute limit does.
 
+With --ab it runs the spec twice, A on the install as it stands (--ab stock: as the stock game, the runtime's Japanese
+text setting, which serves none of the mod's menu art or lettering) and B with the --dll, --file, --entries-dir or --art
+swaps, and writes B's evidence/ab-sheet.html: each screen's A and B captures side by side, cropped to the screen's
+`crop` box ([x0, y0, x1, y1] layout px) when its check names one. It exits on B's result.
+
 SPEC defaults to data/checks/layout.toml. Running this launches the game under the machine-wide lock (two games at most).
 It also writes evidence/contact-sheet.html: each capture beside its rows, for review.
 Exit 1 on any FAIL row, a run that did not end by our stop, or a game that never started.
@@ -218,6 +223,33 @@ def staged_run(args: argparse.Namespace, dll: Path | None, to: str | None, spec:
     return 0 if up and result == 0 and reason == "stopped" else 1
 
 
+# The player's setting under which the runtime serves the stock game's text and art: no loose menu-art entry but the
+# font, no hires.bin lettering, no glyphs (runtime/english_runtime.c, `english`).
+STOCK = "language.text=japanese"
+
+
+def ab(args: argparse.Namespace, run=run_check, stage=prepare_run.prepare) -> int:
+    """Run the spec on the install as it stands, or as the stock game with ``args.ab`` stock (A), then with the swaps
+    (B), and write B's A/B sheet; exit on B's result, since A shows the state the swaps change."""
+    roots: dict[str, Path] = {}
+    codes = {}
+    a = {"dll": None, "file": [], "art": None}
+    if args.ab == "stock":  # a language.text the caller gave would be read first, so it goes
+        a["setting"] = [s for s in args.setting if not s.startswith("language.text=")] + [STOCK]
+    for side, unswapped in (("a", a), ("b", {})):
+        def staged(*given, side=side, **named):  # the run directory of this side's last start
+            roots[side] = stage(*given, **named)
+            return roots[side]
+        codes[side] = run(argparse.Namespace(**{**vars(args), **unswapped, "name": f"{args.name}-{side}"}),
+                          stage=staged)
+    if not all(side in roots and (roots[side] / "evidence/check-report.json").is_file() for side in "ab"):
+        print("run_check: --ab: a run wrote no check report, so there is no A/B sheet", file=sys.stderr)
+        return 1
+    crops = {sc["name"]: sc["crop"] for sc in screen_checks.load_spec(args.spec) if "crop" in sc}
+    print(f"ab sheet: {contact_sheet.write_ab(roots['a'] / 'evidence', roots['b'] / 'evidence', crops)}")
+    return codes["b"]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("spec", type=Path, nargs="?", default=DEFAULT_SPEC, help="check file (default layout.toml)")
@@ -250,6 +282,9 @@ def main(argv: list[str] | None = None) -> int:
                         "`game_harness.py video NAME --seconds N` records at full speed")
     parser.add_argument("--size", metavar="WxH", help="render the game at this listed display size (saved as the "
                         "player's choice) instead of 1080p upscaled")
+    parser.add_argument("--ab", nargs="?", const="install", choices=("install", "stock"),
+                        help="run the spec without the swaps (A: the install, or stock: the stock game's text and "
+                             "art), then with them (B), and write B's evidence/ab-sheet.html: each pair side by side")
     parser.add_argument("--name", default="check", help="label in the run directory name")
     parser.add_argument("--to", metavar="SCREEN", help="instead of a spec: route to this screen (game_harness.py "
                         "route) and leave the game running")
@@ -263,8 +298,11 @@ def main(argv: list[str] | None = None) -> int:
         if not built:
             parser.error(f"--entries-dir {args.entries_dir} holds no <ordinal>.bin")
         args.file += [f"wozmod/entries/{entry.name}={entry}" for entry in built]
+    if args.ab and (args.to or not (args.dll or args.file or args.art)):
+        parser.error("--ab compares a spec's screens without and with a swap: give --dll, --file, --entries-dir or "
+                     "--art, and no --to")
     try:
-        return run_check(args)
+        return ab(args) if args.ab else run_check(args)
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         print(f"run_check: {exc}", file=sys.stderr)
         return 1
