@@ -83,7 +83,7 @@ def verdicts(contexts: list, heard: Callable[[object], str | None]) -> dict[str,
         by_key.setdefault(context.key, []).append(context)
     found = {}
     for context in contexts:
-        if context.voice and (words := heard(context)) is not None:
+        if context.banked and (words := heard(context)) is not None:
             others = {o.id: o.text for o in by_key.get(context.key, []) if o is not context}
             others |= {n: by_id[n].text for n in context.neighbours if n in by_id}
             found[context.id] = verdict(words, context.text, others)
@@ -136,7 +136,7 @@ def main() -> int:
     model = WhisperModel(snapshot_download(SETTINGS["model"], revision=SETTINGS["revision"]),
                          compute_type=SETTINGS["compute_type"])
     digests, new = {}, 0
-    for clip in dict.fromkeys(c.voice for c in found if c.voice and (not wanted or c.voice_id in wanted)):
+    for clip in dict.fromkeys(c.banked for c in found if c.banked and (not wanted or c.voice_id in wanted)):
         riff = clip_riff(world, clip)
         digest = hashlib.sha256(riff).hexdigest()
         cached = cache / f"{digest}.txt"

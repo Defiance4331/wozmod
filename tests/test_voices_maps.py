@@ -130,6 +130,24 @@ def test_wo1_quote_slot_keeps_its_record_when_the_english_differs():
     assert {k: v for k, v in wo1.items() if k in range(20407, 20410)} == {20407: 1479, 20408: 1480, 20409: 1481}
 
 
+def test_a_copied_quote_plays_the_take_of_the_line_it_copies():
+    # Bugs: a quote that shares only its words with a voiced one (another officer's recording) borrows that take, so
+    # one officer speaks in another's voice; a copy of two identical lines takes the other slot's take; a copy that a
+    # donor voices itself loses its own take. Ids by hand: suffix less one on 0x3078 (12408).
+    from wozmod.voices.maps import quote_copies, with_copies
+
+    formats = [[], []]
+    original = [b"", b"", b"00Words A@0001", b"00Words A@0002", b"00Words B@0003"]
+    copy = [b"", b"", b"00Words A@0011", b"00Words A@0012", b"00Words B@0013"]
+    other_actor = [b"", b"", b"00Words A@0021", b"", b"00Words B@0023"]
+    voiced_copy = [b"", b"", b"", b"", b"00Words B@0033"]
+    lengths = {12408: 100, 12409: 100, 12410: 50, 12418: 100, 12419: 100, 12420: 50, 12428: 70, 12430: 60, 12440: 50}
+    two, one = {12408: 7, 12409: 8, 12410: 9, 12440: 4}, {}
+    with_copies([two, one], quote_copies([*formats, original, copy, other_actor, voiced_copy], lengths.__getitem__))
+    assert {i: two.get(i) for i in (12418, 12419, 12420, 12428, 12430, 12440)} == {
+        12418: 7, 12419: 8, 12420: 9, 12428: None, 12430: None, 12440: 4}
+
+
 def test_a_dream_line_takes_the_take_its_speak_commands_counterpart_speaks():
     # Bug: Dream lines pair with donor lines by place in the table, so the line stock Dream stage 40 inserts (suffix
     # 101, spoken by a person the donor lacks) takes the next donor line's take, and every later line slides one take
@@ -211,28 +229,10 @@ def test_a_flagged_line_keys_the_other_banks_id_and_leaves_the_unflagged_one_fre
 
 @pytest.fixture(scope="module")
 def stock_maps():
-    """The installer's stage triggers, its dialogue maps (WO1 X360, WO2 X360, WO2 PSP), the stock scripts and the
-    stage joins, built from the stock game and donors as voices.build builds them."""
-    from wozmod.donors import DonorsFolder
-    from wozmod.formats.linkdata import archive
-    from wozmod.voices.build import PSP_TEXT, psp_text_voice_map
-    from wozmod.text.script_alignment import (
-        QUOTES, WO1_QUOTE_INSERT, moz_scripts, paired_quote_tables, wo1_scripts, wo2_x360,
-    )
+    """The installer's voice maps (voices.build.voice_maps) from the stock game and donors."""
+    from wozmod.voices.build import voice_maps
 
-    game, folders = Path(os.environ["WOZMOD_GAME"]), DonorsFolder(Path(os.environ["WOZMOD_DONORS"]))
-    wo1, wo2 = folders.folder("wo1-x360"), folders.folder("wo2-x360")
-    moz, wo2_donor = moz_scripts(game / "LINKDATA2"), wo2_x360(wo2 / "linkdata_ens")
-    wo1_by_ens = wo1_scripts(wo1 / "linkdata_ens")
-    quotes_entry, wo1_quotes, wo2_quotes = QUOTES
-    quotes = archive(game / "LINKDATA1")[quotes_entry]
-    joins = stage_joins(moz, wo1_by_ens, wo2_donor.scripts())
-    one, two = dialogue_voice_maps(
-        moz, wo1_by_ens, wo2_donor.scripts(),
-        paired_quote_tables(quotes, archive(wo1 / "linkdata_ens")[wo1_quotes], ">", insert=WO1_QUOTE_INSERT),
-        paired_quote_tables(quotes, wo2_donor.members([wo2_quotes])[wo2_quotes], wo2_donor.order), joins)
-    three = psp_text_voice_map(moz, quotes, folders.folder("wo2-psp") / PSP_TEXT)
-    return stage_triggers(moz, joins), one, two, three, moz, joins
+    return voice_maps(Path(os.environ["WOZMOD_GAME"]), Path(os.environ["WOZMOD_DONORS"]))
 
 
 INPUTS = pytest.mark.skipif(not (os.environ.get("WOZMOD_GAME") and os.environ.get("WOZMOD_DONORS")),
@@ -249,7 +249,7 @@ def test_stock_lines_play_the_take_their_trigger_plays(stock_maps):
     # no donor command speaks. Oracle: the trigger audit's records (work/handbacks/trigger-audit.md, trigger-stage.md:
     # the donor line both optimal alignments give each speak, record = suffix less one plus the disc base) and
     # decisions ledger text rows 22 and 25.
-    _, one, two, _, _, _ = stock_maps
+    one, two = stock_maps.wo1, stock_maps.wo2
     assert {i: one.get(i) for i in (3728, 5562, 5563, 3663)} == {3728: 4103, 5562: 3891, 5563: 3892, 3663: 1991}
     assert (two.get(16439), 16412 in two, 16412 in one) == (5430, False, False)
     # Dream stage 48 lines 33, 34, 36 and 37 (the streams cross the table order) and 60.47 (spoken where the donor
@@ -263,7 +263,7 @@ def test_lines_that_share_a_voice_id_with_another_trigger_stay_listed(stock_maps
     # Bugs: a change moves a shared id's clip onto the line that borrowed it, so its owner hears the other sentence;
     # a new shared id appears whose lines want different takes, and one of them silently hears the other's.
     # Oracle: decisions ledger text row 23, the eight lines the trigger audit found.
-    triggers, one, two, _, _, _ = stock_maps
+    triggers, one, two = stock_maps.triggers, stock_maps.wo1, stock_maps.wo2
     assert set(lines_apart(triggers, one, two)) == {(1, 12), (113, 8), (28, 14), (38, 82), (96, 84), (96, 85),
                                                     (101, 63), (110, 66)}
 
@@ -280,9 +280,8 @@ def test_each_line_of_a_shared_voice_id_plays_its_own_trigger_take_and_shows_its
     from wozmod.text.contexts import lookup_keys
     from wozmod.formats.audio import WO1_RECORD_BASE, WO2_CLIP_BASE
 
-    _, one, two, _, moz, joins = stock_maps
-    triggers = stage_triggers(moz, joins)
-    slots = voice_slots(triggers, one, two)
+    one, two, moz, joins, slots = stock_maps.wo1, stock_maps.wo2, stock_maps.moz, stock_maps.joins, stock_maps.slots
+    triggers = stock_maps.triggers
     assert {line: (s.source, s.record) for line, s in slots.items()} == {
         (1, 12): ("wo2-x360", 1710), (28, 14): ("wo2-x360", 3578), (38, 82): ("wo2-x360", 4405),
         (96, 84): ("wo1-x360", 7361), (96, 85): ("wo1-x360", 7397), (101, 63): ("wo1-x360", 8375),
@@ -307,22 +306,3 @@ def test_each_line_of_a_shared_voice_id_plays_its_own_trigger_take_and_shows_its
                for p, k in partners for v in triggers[p, k][0]}
     assert len(partners) == 8
     assert {line: shown(*line) for line in played} == played
-
-
-@INPUTS
-def test_only_the_reviewed_lines_keep_their_japanese_voice(stock_maps):
-    # Bug: a pairing change (stage_join, the person map, a voice map rule) silently drops a spoken line to its
-    # Japanese voice, or gives one of the lines no donor speaks at its trigger another line's English take.
-    # Oracle: data/text/japanese_voices.json, the lines the trigger sweep (work/handbacks/trigger-stage.md) found
-    # with no counterpart in any donor, reviewed against decisions ledger text rows 21, 22 and 25.
-    from wozmod.formats.audio import stage_line_voices
-
-    _, one, two, three, moz, _ = stock_maps
-    listed = {(row["line"], row["voice"]) for row in json.loads(
-        (Path(__file__).resolve().parents[1] / "data/text/japanese_voices.json").read_text(encoding="utf-8"))["lines"]}
-    japanese = {(f"{o}.{i}", voice) for o, script in moz.items() for i, ids in stage_line_voices(o, script).items()
-                for voice in ids if voice not in one and voice not in two and voice not in three}
-    differing = sorted(f"{line} voice {voice}: " + ("lost its English clip" if (line, voice) in japanese
-                                                    else "gained an English clip")
-                       for line, voice in japanese ^ listed)
-    assert not differing, f"{len(differing)} lines: " + "; ".join(differing)

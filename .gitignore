@@ -40,3 +40,6 @@ work/
 # Native codec build output
 native/target/
 *.so
+
+# Voice coverage reference: game text, never published (tools/voice_reference.py)
+/reference/

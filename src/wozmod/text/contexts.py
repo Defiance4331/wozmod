@@ -42,6 +42,7 @@ from wozmod.text.movie_captions import (
 from wozmod.text.narration_voices import VOICE_KEYED, camp_lines_drawn, line_voices
 from wozmod.text.psp_alignment import PSP_EVENT_CAPTIONS, PSP_MOVIE_CAPTIONS, joined_cue_text, psp_line_cues
 from wozmod.text.script_alignment import NARRATION, X360_ENS, quote_slot_read
+from wozmod.text.keys import english_voice_form, event_voice_form
 from wozmod.text.stock import stage_line_form
 
 
@@ -74,16 +75,17 @@ def served_entry(mod: Path, key: int, mode: str) -> bytes | None:
 
 
 def lookup_keys(kind: str, raw: bytes, voice_id: int | None = None,
-                line: tuple[int, int] | None = None) -> tuple[bytes, ...]:
+                line: tuple[int, int] | None = None, english_voice: bool = False) -> tuple[bytes, ...]:
     """The keys the runtime looks a stock text up by, in order. raw is the drawn text, or for a script line or
     quote the line without its two-digit prefix and with its suffix. An event subtitle, or a still event's line
-    (VOICE_KEYED_MESC), is tried with "@V" and its four-digit voice id first (runtime/event_line.h); pass voice_id
-    only for those. A stage line a speak command shows, line (stage, dialog line), is tried with them first
-    (stock.stage_line_form, runtime spoken_text)."""
+    (VOICE_KEYED_MESC), is tried with "@V" and its four-digit voice id first (runtime/event_line.h), and under the
+    English voice (english_voice) with "@E" and the id before that; pass voice_id only for those. A stage line a
+    speak command shows, line (stage, dialog line), is tried with them first (stock.stage_line_form, runtime
+    spoken_text)."""
     if not LOOKUP_HOOKS[kind]:
         return ()
     if kind in ("event", "mesc") and voice_id is not None:
-        return (raw + b"@V%04d" % voice_id, raw)
+        return (*((english_voice_form(raw, voice_id),) if english_voice else ()), event_voice_form(raw, voice_id), raw)
     if kind in ("stage", "quote") and re.search(rb"@[0-9]+$", raw):
         own = (stage_line_form(raw, *line),) if kind == "stage" and line is not None else ()
         return (*own, raw, quote_text(b"00" + raw))
@@ -91,9 +93,9 @@ def lookup_keys(kind: str, raw: bytes, voice_id: int | None = None,
 
 
 def shown_text(table: bytes, kind: str, raw: bytes, voice_id: int | None = None,
-               line: tuple[int, int] | None = None) -> tuple[bytes, bytes | None]:
+               line: tuple[int, int] | None = None, english_voice: bool = False) -> tuple[bytes, bytes | None]:
     """(what the player reads, the key that matched or None) for a stock text, as the runtime looks it up."""
-    keys = lookup_keys(kind, raw, voice_id, line)
+    keys = lookup_keys(kind, raw, voice_id, line, english_voice)
     for key in keys:
         if key and (english := table_lookup(table, key)) is not None:
             return english, key
@@ -135,6 +137,7 @@ class DonorLine:
 
 
 Clip = tuple[str, int]  # (donor, record in that donor's voice bank)
+DREAM_SCENE = "wo2-psp-movie"  # a Clip donor: the take cut from the WO2 PSP movie of event (its record) 402-413
 
 
 def _line(donor: str, pointer: tuple, raw: bytes) -> DonorLine | None:
@@ -236,6 +239,12 @@ class Context:
     def text(self) -> str:
         return decode_english(self.shown, "replace")
 
+    @property
+    def banked(self) -> Clip | None:
+        """The clip that plays when a donor voice bank holds it: not the stock take, nor a Z Dream scene's take, which
+        the installer cuts from a movie (DREAM_SCENE)."""
+        return self.voice if self.voice and self.voice[0] != DREAM_SCENE else None
+
 
 DonorCues = tuple[tuple[str, str, int], list[tuple[int, int, str | None]]]
 
@@ -299,49 +308,36 @@ class World:
         return {m: d if m == PSP_QUOTES else decoded_member(d) for m, d in members.items()}
 
     @cached_property
-    def _dialogue(self) -> tuple[dict[str, dict[int, int]], dict]:
-        # The same calls as voices.build.build_voice_banks (keep in step with it).
-        from wozmod.text.script_alignment import (
-            QUOTES, WO1_QUOTE_INSERT, moz_scripts, paired_quote_tables, stage_joins, wo1_scripts, wo2_x360,
-        )
-        from wozmod.voices.build import PSP_TEXT, psp_text_voice_map
-        from wozmod.voices.maps import dialogue_voice_maps, slot_records, stage_triggers, voice_slots
-        wo1, wo2 = self.folders.folder("wo1-x360"), self.folders.folder("wo2-x360")
-        moz = moz_scripts(self.stock / "LINKDATA2")
-        wo2_donor = wo2_x360(wo2 / "linkdata_ens")
-        quotes_entry, wo1_quotes, wo2_quotes = QUOTES
-        quotes = archive(self.stock / "LINKDATA1")[quotes_entry]
-        wo1_by_ens, wo2_by_member = wo1_scripts(wo1 / "linkdata_ens"), wo2_donor.scripts()
-        joins = stage_joins(moz, wo1_by_ens, wo2_by_member)
-        one, two = dialogue_voice_maps(
-            moz, wo1_by_ens, wo2_by_member,
-            paired_quote_tables(quotes, self.wo1_ens[wo1_quotes], ">", insert=WO1_QUOTE_INSERT),
-            paired_quote_tables(quotes, wo2_donor.members([wo2_quotes])[wo2_quotes], wo2_donor.order), joins)
-        slots = voice_slots(stage_triggers(moz, joins), one, two)
-        three = psp_text_voice_map(moz, quotes, self.folders.folder("wo2-psp") / PSP_TEXT)
-        return ({"wo1-x360": one | slot_records(slots, "wo1-x360"), "wo2-x360": two | slot_records(slots, "wo2-x360"),
-                 "wo2-psp": three}, slots)
+    def _dialogue(self):
+        from wozmod.voices.build import voice_maps
+        return voice_maps(self.stock, self.donors)
 
     @property
     def maps(self) -> dict[str, dict[int, int]]:
         """Stock voice id (or voice slot) -> record, per donor: the installer's own maps."""
-        return self._dialogue[0]
+        return self._dialogue.by_donor
 
     @property
     def slots(self) -> dict:
         """(stage, line) -> the line's voice slot (voices.maps.voice_slots), as the installer writes them."""
-        return self._dialogue[1]
+        return self._dialogue.slots
 
     @cached_property
     def voices(self) -> dict[int, Clip]:
         """The donor clip the English voice bank holds for each voice id, chosen as the installer chooses it (the
-        installer also drops a WO1 clip as long as the stock take, which needs the converted clip: not modelled)."""
+        installer also drops a WO1 clip as long as the stock take, which needs the converted clip: not modelled). A Z
+        Dream scene line (events 402-413) plays its take cut from the WO2 PSP movie of the scene (DREAM_SCENE, the
+        scene's event ordinal), which the installer places by sound: a line it cannot place keeps its stock take,
+        not modelled."""
+        from wozmod.voices.dream_events import DREAM_EVENTS, scene_lines
         wo1, wo2 = self.folders.folder("wo1-x360"), self.folders.folder("wo2-x360")
         psp = self.folders.folder("wo2-psp") / "PSP_GAME/USRDIR/sound/voice_na.bns"
-        return donor_voice_choice(dialogue_banks(
+        chosen = donor_voice_choice(dialogue_banks(
             self.maps["wo1-x360"], (wo1 / "linkdata_ans.idx").read_bytes(), wo1 / "link_vodat.bdx",
             self.maps["wo2-x360"], (wo2 / "linkdata_ans.idx").read_bytes(), wo2 / "link_vodat.bdx",
             (self.maps["wo2-psp"], psp)))
+        return chosen | {line.voice: (DREAM_SCENE, o) for o in DREAM_EVENTS
+                         for line in scene_lines(o, self.linkdata2[o])}
 
     @cached_property
     def banks(self) -> dict[str, tuple[list[tuple[int, int]], Path]]:
@@ -432,9 +428,9 @@ class World:
 
     # --- contexts -----------------------------------------------------------------------------------------------
 
-    def _shown(self, kind: str, raw: bytes, voice_id: int | None = None,
-               line: tuple[int, int] | None = None) -> tuple[bytes, bytes | None, dict | None]:
-        shown, key = shown_text(self.table, kind, raw, voice_id, line)
+    def _shown(self, kind: str, raw: bytes, voice_id: int | None = None, line: tuple[int, int] | None = None,
+               english_voice: bool = False) -> tuple[bytes, bytes | None, dict | None]:
+        shown, key = shown_text(self.table, kind, raw, voice_id, line, english_voice)
         keyed = hashlib.sha256(key.decode("cp932").encode("cp932")).hexdigest() if key else None
         return shown, key, self.rows.get(keyed) if keyed else None
 
@@ -512,7 +508,7 @@ class World:
                     continue
                 voice_id = event_voice(ordinal, w.index)
                 clip, lines = self.clip_lines(voice_id, mode)
-                shown, key, row = self._shown("event", raw, voice_id)
+                shown, key, row = self._shown("event", raw, voice_id, english_voice=mode == "english")
                 found.append(Context(ids[k], "event", mode, raw, voice_id, clip, shown, key, row,
                                      lines or psp_lines.get(w.index, ()),
                                      Window(w.start, w.end, w.end_by, w.in_block),
@@ -624,7 +620,8 @@ class World:
         for entry, voices in self.narration_voices.items():
             for position, raw, voice_id in drawn_mesc_lines(entry, linkdata1[entry], voices):
                 clip, lines = self.clip_lines(voice_id, mode)
-                shown, key, row = self._shown("mesc", raw, voice_id if entry in VOICE_KEYED_MESC else None)
+                shown, key, row = self._shown("mesc", raw, voice_id if entry in VOICE_KEYED_MESC else None,
+                                              english_voice=mode == "english")
                 found.append(Context(f"mesc{entry}.{position}", "mesc", mode, raw, voice_id, clip, shown, key, row,
                                      lines))
         return found

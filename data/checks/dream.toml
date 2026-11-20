@@ -7,11 +7,15 @@
 # game started the same line's stock clip in the first (tools/voice_checks.py). Each listen runs the sub-scene's
 # length (403: 69.2 s, 408: 31.5, 410: 69.4, 411: 83.0, from the stock event files), up to 2.3 s for the scene to
 # start, and about 4 s with no caption after it. `require` names the lines that kept their Japanese until commit
-# 7f7e835. The movie screens play movie200 and movie201 from the Gallery; `movie_voice` expects the file and the
-# language the voice setting picks.
+# 7f7e835, and in events 405, 406 and 409 the five WO2 PSP takes whose subtitle under the English voice is the PSP
+# caption the take speaks (no assert reads a caption's words: those were held to the reference by hand). The movie
+# screens play movie200 and movie201 from the Gallery; `movie_voice` expects the file and the language the voice
+# setting picks.
 # Red runs: `--setting language.voice=japanese` turns every event row red (Japanese voices; the movie rows then
 # expect the stock files and Japanese, and pass); `--file wozmod/movie/voice/movie200.wmv=<stock movie200.wmv>`
 # turns movie200's row red. Runs: green 2026-11-16_1054-rf2-dream; red _1123-rf2-dream-ja, _1121-rf2-movie200-stock.
+# Events 405, 406, 409: green 2026-11-20_1154-dsub-a-en2 (405 missed its lag bound by 4 ms once; green
+# alone in _1238-dsub-a-en405).
 
 [[screen]]
 name = "event-403"
@@ -24,6 +28,26 @@ listen = { seconds = 76, scene = 1, stock = true }
   require = ["0xc25"]  # line 306
 
 [[screen]]
+name = "event-405"
+route = "battle"
+battle = 135
+listen = { seconds = 90, scene = 1, stock = true }
+
+  [[screen.assert]]
+  kind = "lines_in_english"
+  require = ["0xc33"]  # line 320: a WO2 PSP take, its subtitle that PSP caption (the `@E` row)
+
+[[screen]]
+name = "event-406"
+route = "battle"
+battle = 136
+listen = { seconds = 90, scene = 1, stock = true }
+
+  [[screen.assert]]
+  kind = "lines_in_english"
+  require = ["0xc3b", "0xc3d", "0xc3e"]  # lines 328, 330, 331: the same
+
+[[screen]]
 name = "event-408"
 route = "battle"
 battle = 138
@@ -31,6 +55,16 @@ listen = { seconds = 40, scene = 1, stock = true }
 
   [[screen.assert]]
   kind = "lines_in_english"
+
+[[screen]]
+name = "event-409"
+route = "battle"
+battle = 139
+listen = { seconds = 90, scene = 1, stock = true }
+
+  [[screen.assert]]
+  kind = "lines_in_english"
+  require = ["0xbeb"]  # line 248: the same
 
 [[screen]]
 name = "event-410"

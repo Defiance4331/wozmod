@@ -116,6 +116,29 @@ def test_no_context_shows_our_text_where_a_donor_line_exists(contexts) -> None:
     _verdict("C3", failing, checked)
 
 
+def test_only_moz_original_lines_keep_their_japanese_voice(world, contexts) -> None:
+    # Bug: a pairing change (a stage join, a quote table or slot, a voice map rule) leaves a line a donor recorded on
+    # its stock Japanese take: officers 92 and 93's battle quotes 2-15 (quote94.2 to quote95.15), MOZ's copies of
+    # officers 105 and 106's, played Japanese under their official X360 subtitles until voices.maps.quote_copies.
+    # Oracle: decisions ledger text row 46, a line keeps Japanese only when MOZ wrote it; a line whose subtitle is a
+    # donor's own line, word for word a line that donor records (World.by_clip), exists in that donor. The donor's
+    # recordings, not the voice maps, are the test; a line our text or an unvoiced PSP line covers passes, and so
+    # does a generic phrase another donor happens to record. The rule is tools/voice_reference.py's verdict, the one
+    # its reference shows when a player's report is checked.
+    import voice_reference
+
+    recorded = voice_reference.recorded_lines(world)
+    failing, checked = {}, 0
+    for context in contexts["english"]:
+        if context.voice_id is None or context.voice is not None:
+            continue
+        checked += 1
+        if (why := voice_reference.verdict(context, recorded)).startswith("japanese REPLACED"):
+            failing[f"{context.id} english"] = f"japanese voice {context.voice_id}; {_row(context)}; {why}"
+    assert checked > 300, f"only {checked} contexts keep their Japanese voice: the Japanese lines were dropped"
+    _verdict("C6", failing, checked)
+
+
 def test_every_subtitle_window_covers_its_voice(world, contexts) -> None:
     # Bugs: under the English voice a movie runs the stock caption schedule (an English line cut short, a cue split
     # in two on the Xbox 360 shown joined), the WO1 dub schedule loses its 25-to-29.97 scale, a schedule is served
@@ -156,8 +179,8 @@ def test_every_subtitle_window_covers_its_voice(world, contexts) -> None:
             for c, (got, want) in enumerate(zip(cues, expected, strict=False)):
                 if got != want:
                     failing[f"{slot}.c{c} {mode}"] = f"schedule: shown {got} where {what} has {want}"
-    english = [c for c in contexts["english"] if c.kind == "event" and c.window and c.voice]
-    ends = audible_ends(world, {c.voice for c in english})
+    english = [c for c in contexts["english"] if c.kind == "event" and c.window and c.banked]
+    ends = audible_ends(world, {c.banked for c in english})
     skipped = Counter()
     for context in contexts["japanese"]:
         if context.kind == "event" and context.window and context.stock_window:
@@ -177,7 +200,7 @@ def test_every_subtitle_window_covers_its_voice(world, contexts) -> None:
                 failing[f"{context.id} english"] = (f"donor window: shown {got} where the donor scene, retimed by "
                                                     f"Koei, has {(donor.start, donor.end)}")
             continue
-        heard, shown_for = ends[context.voice], (window.end - window.start) / EVENT_TICKS
+        heard, shown_for = ends[context.banked], (window.end - window.start) / EVENT_TICKS
         if shown_for < heard and window.end_by == "clear":
             failing[f"{context.id} english"] = (f"cut: shown {shown_for:.2f} s, the English clip is heard for "
                                                 f"{heard:.2f} s")
@@ -222,7 +245,13 @@ def test_contexts_cover_every_subtitle_and_every_english_clip(world, contexts) -
     voiced = {c.voice_id for found in contexts.values() for c in found if c.voice_id is not None}
     unspoken = {stage_voice(int(c.id[5:].split(".")[0]), int(suffix.group(1)), 0) for c in contexts["english"]
                 if c.kind == "stage" and c.voice_id is None and (suffix := re.search(rb"@([0-9]+)$", c.stock))}
-    blocks = {"select voices": range(0, 96), "unspoken stage lines": unspoken}
+    from wozmod.formats.audio import event_voice
+    from wozmod.formats.events import event_scenes
+    from wozmod.voices.dream_events import DREAM_EVENTS
+
+    wordless = {event_voice(o, w.index) for o in DREAM_EVENTS for w in event_scenes(world.linkdata2[o]).windows
+                if not w.text.strip(b" \n\x81\x40")}  # a Z Dream scene's voiced sound: a take with no subtitle
+    blocks = {"select voices": range(0, 96), "unspoken stage lines": unspoken, "wordless Z Dream lines": wordless}
     for base, _, count in (*WO1_NARRATION_VOICES, *WO2_NARRATION_VOICES, PSP_BRIEFING_VOICES):
         blocks[f"narration ids {base}+"] = range(base, base + count)
     for name, (base, _, count) in (("WO1 event", WO1_EVENT_VOICES), ("WO2 event", WO2_EVENT_VOICES)):
@@ -258,7 +287,7 @@ def test_no_reviewed_voice_shows_a_neighbours_line(world, contexts) -> None:
         return cached.read_text(encoding="utf-8") if cached.is_file() else None
 
     found = asr_audit.verdicts(contexts["english"], heard)
-    stale = [c.id for c in contexts["english"] if c.voice and c.id not in found]
+    stale = [c.id for c in contexts["english"] if c.banked and c.id not in found]
     assert not stale, f"{len(stale)} voiced contexts play a clip with no transcript: run tools/asr_audit.py ({stale[:20]})"
     failing = {f"{where} english": f"crossed: the clip's words score higher on {best}"
                for where, (kind, best, _) in found.items() if kind == "crossed"}

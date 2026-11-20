@@ -19,3 +19,9 @@ def event_voice_form(text: bytes, voice: int) -> bytes:
     """An event, narration page or still event line with its voice id, as the runtime looks it up before the text alone
     (runtime event_line)."""
     return text + b"@V%04d" % voice
+
+
+def english_voice_form(text: bytes, voice: int) -> bytes:
+    """The same line as the English voice looks it up first: the row of the words its English take says, where they
+    differ from the Japanese take's (runtime event_line; decisions ledger, text row 47)."""
+    return text + b"@E%04d" % voice

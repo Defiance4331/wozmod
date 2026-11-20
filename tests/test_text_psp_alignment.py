@@ -148,13 +148,22 @@ def test_every_psp_caption_row_points_at_the_cues_shown_at_its_line(psp_inputs):
     # Bug: a row paired by position (the k-th sorted line to cue k, movie cue k to cue k), which drifts where the
     # stock speaks a higher line index first, adds a line the PSP does not caption or splits a sentence: the row
     # shows a neighbour's caption. Expected: every table row that points at a PSP event or movie caption points at
-    # the cues the time join (psp_line_cues, overlapping_cues) gives one of the places showing its stock string.
+    # the cues the time join (psp_line_cues, overlapping_cues) gives one of the places showing its stock string. An
+    # event line is also shown by its voice keys ("@V", and "@E" under the English voice: runtime event_line), which
+    # name that one line.
+    from wozmod.formats.audio import event_voice
+    from wozmod.text.keys import english_voice_form, event_voice_form
+
     game, fns = psp_inputs
     members = {*PSP_EVENT_CAPTIONS.values(), *PSP_MOVIE_CAPTIONS.values()}
     joins: dict[str, list] = {}
     for pair in paired_psp_rows(game, fns):
         if pair.ref[2] in members and pair.ref[3] == "captions":
-            joins.setdefault(stock_key(pair.stock)[0], []).append(pair)
+            forms = [pair.stock]
+            if pair.location[2] == "event" and (voice := event_voice(pair.location[1], pair.location[3])) is not None:
+                forms += [event_voice_form(pair.stock, voice), english_voice_form(pair.stock, voice)]
+            for form in forms:
+                joins.setdefault(stock_key(form)[0], []).append(pair)
     rows = json.loads((REPO / "data/text/table.json").read_text(encoding="utf-8"))["rows"]
     failing = [(row["key"][:12], row["ref"], [(p.location, p.ref) for p in joins.get(row["key"], [])])
                for row in rows if (ref := row.get("ref")) and ref[:2] == ["wo2-psp", "fns"] and ref[2] in members

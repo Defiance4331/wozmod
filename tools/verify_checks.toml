@@ -70,11 +70,14 @@ the effect banks and tests/test_runtime_edits.py (the sound pool test). f19a297 
 
 [[row]]
 name = "text room and subtitle contexts"
-paths = ["src/wozmod/text/*", "data/text/*", "src/wozmod/runtime/text_table.py", "src/wozmod/runtime/camp_plate.py"]
+paths = ["src/wozmod/text/*", "data/text/*", "src/wozmod/runtime/text_table.py", "src/wozmod/runtime/camp_plate.py",
+         "src/wozmod/voices/*"]
 run = ["tests/test_text_room.py", "tests/test_text_boxes.py", "tests/test_camp_plate.py",
        "tests/test_subtitle_contexts.py"]
 from = """79ae6c0 (long English text crashed the game) and 56af5a5 changed test_text_room; 02611ef changed the battle
-text boxes; 963fc58 changed test_subtitle_contexts."""
+text boxes; 963fc58 changed test_subtitle_contexts. The voice maps decide which lines keep Japanese: officers 92
+and 93's 28 copied battle quotes played Japanese under official subtitles until the copy rule (decisions ledger,
+text row 46), which only the subtitle contexts' Japanese-voice check sees."""
 
 # The slow tests that read a step's reference build (tests/conftest.py, the built fixture) instead of building the
 # step themselves. tools/verify.py ref runs them against the build it made, and so does a row's `ref`, with the row's

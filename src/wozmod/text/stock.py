@@ -6,15 +6,14 @@ from collections import ChainMap
 from pathlib import Path
 
 from wozmod import game_files
-from wozmod.formats.audio import MOZ_EVENT_LINES, WO1_EVENT_VOICES, WO2_EVENT_VOICES
+from wozmod.formats.audio import event_voice
 from wozmod.formats.pe import pointer_strings
 from wozmod.formats.scripts import EVENT_TEXT, event_lines, mesc_blocks, quote_tables, quote_text
 
-from .keys import event_voice_form, stock_key
+from .keys import english_voice_form, event_voice_form, stock_key
 from .build import NAME_PARTS, NAME_TABLE, TableBuildError
 from .inventory import EVENTS, inventory
 from .narration_voices import VOICE_KEYED, line_voices
-from .script_alignment import EVENTS as PAIRED_EVENTS
 from .script_alignment import QUOTES, moz_scripts
 
 
@@ -23,14 +22,6 @@ def stage_line_form(text: bytes, stage: int, line: int) -> bytes:
     before the line alone (runtime spoken_text, voice_slots.h): two lines can carry one string yet play different
     takes (wozmod.voices.maps.voice_slots), and each needs its own row."""
     return text + b"@L%d.%d" % (stage, line)
-
-
-def event_voices(linkdata2) -> dict[int, tuple[int, int]]:
-    """Stock event ordinal to (voice id of line 0, voiced line count): the voice start adds a line's index to its
-    story's base."""
-    blocks = {"wo1-x360": WO1_EVENT_VOICES, "wo2-x360": WO2_EVENT_VOICES}
-    return {o: (blocks[source][0], MOZ_EVENT_LINES[source]) for ordinals, source, _ in PAIRED_EVENTS for o in ordinals
-            if o in linkdata2}
 
 
 def stock_strings(stock: Path) -> ChainMap:
@@ -51,15 +42,14 @@ def stock_strings(stock: Path) -> ChainMap:
         for value in source:
             add(value)
     linkdata2 = game_files.archive(stock / "LINKDATA2")
-    for data in linkdata2.read(o for o in EVENTS if o in linkdata2).values():
-        for value in event_lines(data).values():
+    for ordinal, data in linkdata2.read(o for o in EVENTS if o in linkdata2).items():
+        for index, value in event_lines(data).items():
             add(value)
+            if (voice := event_voice(ordinal, index)) is not None:  # the Z Dream scenes too, as the runtime keys them
+                add(event_voice_form(value, voice))
+                add(english_voice_form(value, voice))
         for match in EVENT_TEXT.finditer(data):
             add(match.group(1) or match.group(2))
-    for ordinal, (base, count) in event_voices(linkdata2).items():
-        for index, value in event_lines(linkdata2[ordinal]).items():
-            if index < count:
-                add(event_voice_form(value, base + index))
     linkdata1 = game_files.archive(stock / "LINKDATA1")
     exe = game_files.exe(stock)
     for entry in (e for e in VOICE_KEYED if e in linkdata1):
@@ -67,6 +57,7 @@ def stock_strings(stock: Path) -> ChainMap:
         if lines := [line for block in mesc_blocks(data) for line in block]:
             for value, voice in zip(lines, line_voices(exe, entry, data), strict=True):
                 add(event_voice_form(value, voice))
+                add(english_voice_form(value, voice))
     for stage, script in moz_scripts(stock / "LINKDATA2").items():
         for record in script.notices.records:  # every record, also those no command shows (the inventory's are shown)
             add(record.text_bytes)

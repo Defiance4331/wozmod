@@ -40,62 +40,62 @@
   {
    "context": "event405.1.320",
    "check": "C1",
-   "reason": "the PSP line differs in meaning from the Japanese voice these scenes keep, so the row stays authored",
-   "ledger": "donors.md row 7, text.md row 16"
+   "reason": "under the Japanese voice the row stays authored, since the PSP line differs in meaning from the Japanese take; under the English voice its @E row shows the PSP line the English take says",
+   "ledger": "text.md rows 16 and 47"
   },
   {
    "context": "event405.1.320",
    "check": "C3",
-   "reason": "the PSP line differs in meaning from the Japanese voice these scenes keep, so the row stays authored",
-   "ledger": "donors.md row 7, text.md row 16"
+   "reason": "under the Japanese voice the row stays authored, since the PSP line differs in meaning from the Japanese take; under the English voice its @E row shows the PSP line the English take says",
+   "ledger": "text.md rows 16 and 47"
   },
   {
    "context": "event406.1.328",
    "check": "C1",
-   "reason": "the PSP line differs in meaning from the Japanese voice these scenes keep, so the row stays authored",
-   "ledger": "donors.md row 7, text.md row 16"
+   "reason": "under the Japanese voice the row stays authored, since the PSP line differs in meaning from the Japanese take; under the English voice its @E row shows the PSP line the English take says",
+   "ledger": "text.md rows 16 and 47"
   },
   {
    "context": "event406.1.328",
    "check": "C3",
-   "reason": "the PSP line differs in meaning from the Japanese voice these scenes keep, so the row stays authored",
-   "ledger": "donors.md row 7, text.md row 16"
+   "reason": "under the Japanese voice the row stays authored, since the PSP line differs in meaning from the Japanese take; under the English voice its @E row shows the PSP line the English take says",
+   "ledger": "text.md rows 16 and 47"
   },
   {
    "context": "event406.1.330",
    "check": "C1",
-   "reason": "the PSP line differs in meaning from the Japanese voice these scenes keep, so the row stays authored",
-   "ledger": "donors.md row 7, text.md row 16"
+   "reason": "under the Japanese voice the row stays authored, since the PSP line differs in meaning from the Japanese take; under the English voice its @E row shows the PSP line the English take says",
+   "ledger": "text.md rows 16 and 47"
   },
   {
    "context": "event406.1.330",
    "check": "C3",
-   "reason": "the PSP line differs in meaning from the Japanese voice these scenes keep, so the row stays authored",
-   "ledger": "donors.md row 7, text.md row 16"
+   "reason": "under the Japanese voice the row stays authored, since the PSP line differs in meaning from the Japanese take; under the English voice its @E row shows the PSP line the English take says",
+   "ledger": "text.md rows 16 and 47"
   },
   {
    "context": "event406.1.331",
    "check": "C1",
-   "reason": "the PSP line differs in meaning from the Japanese voice these scenes keep, so the row stays authored",
-   "ledger": "donors.md row 7, text.md row 16"
+   "reason": "under the Japanese voice the row stays authored, since the PSP line differs in meaning from the Japanese take; under the English voice its @E row shows the PSP line the English take says",
+   "ledger": "text.md rows 16 and 47"
   },
   {
    "context": "event406.1.331",
    "check": "C3",
-   "reason": "the PSP line differs in meaning from the Japanese voice these scenes keep, so the row stays authored",
-   "ledger": "donors.md row 7, text.md row 16"
+   "reason": "under the Japanese voice the row stays authored, since the PSP line differs in meaning from the Japanese take; under the English voice its @E row shows the PSP line the English take says",
+   "ledger": "text.md rows 16 and 47"
   },
   {
    "context": "event409.1.248",
    "check": "C1",
-   "reason": "the PSP line differs in meaning from the Japanese voice these scenes keep, so the row stays authored",
-   "ledger": "donors.md row 7, text.md row 16"
+   "reason": "under the Japanese voice the row stays authored, since the PSP line differs in meaning from the Japanese take; under the English voice its @E row shows the PSP line the English take says",
+   "ledger": "text.md rows 16 and 47"
   },
   {
    "context": "event409.1.248",
    "check": "C3",
-   "reason": "the PSP line differs in meaning from the Japanese voice these scenes keep, so the row stays authored",
-   "ledger": "donors.md row 7, text.md row 16"
+   "reason": "under the Japanese voice the row stays authored, since the PSP line differs in meaning from the Japanese take; under the English voice its @E row shows the PSP line the English take says",
+   "ledger": "text.md rows 16 and 47"
   },
   {
    "context": "stage41.notice49",

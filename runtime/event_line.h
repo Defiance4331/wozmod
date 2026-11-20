@@ -3,7 +3,8 @@
 
 /* A subtitle's key with its voice: the text, "@V" and the four-digit voice id (wozmod.text.stock.event_voice_form).
    A line whose text another line shares, but whose voice says other words, has a row keyed this way; the runtime
-   tries it before the text alone. Returns key, or 0 when the id has more than four digits or the key would not fit
+   tries it before the text alone, and under the English voice "@E" with the same id before both (event_line): the
+   row of the words the line's English take says, where they differ from the Japanese take's. Returns key, or 0 when the id has more than four digits or the key would not fit
    in size bytes. */
 static inline char *voice_key(const char *s, unsigned int voice, char *key, unsigned int size)
 {

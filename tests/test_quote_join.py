@@ -49,14 +49,11 @@ def files():
 
 @pytest.fixture(scope="module")
 def maps(files):
-    """The installer's two X360 voice maps, built as voices.build builds them."""
-    from wozmod.text.script_alignment import WO1_QUOTE_INSERT, paired_quote_tables, wo1_scripts
-    from wozmod.voices.maps import dialogue_voice_maps
+    """The installer's two X360 voice maps (voices.build.voice_maps)."""
+    from wozmod.voices.build import voice_maps
 
-    return dialogue_voice_maps(
-        files["moz"], wo1_scripts(files["wo1_dir"] / "linkdata_ens"), files["wo2_donor"].scripts(),
-        paired_quote_tables(files["stock"], files["wo1"], ">", insert=WO1_QUOTE_INSERT),
-        paired_quote_tables(files["stock"], files["wo2"], files["wo2_donor"].order))
+    found = voice_maps(files["game"], Path(os.environ["WOZMOD_DONORS"]))
+    return found.wo1, found.wo2
 
 
 def test_quote_voices_and_rows_follow_the_slot_the_quote_pickers_read(files, maps) -> None:

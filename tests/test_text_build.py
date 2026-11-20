@@ -19,8 +19,8 @@ from wozmod.text.stock import resolve_stock_ref, stock_strings
 
 TABLE = Path(__file__).resolve().parents[1] / "data/text/table.json"
 # The shipped table's rows: their count and the SHA-256 of their sorted keys, one per line.
-ROW_COUNT = 23927
-ROW_KEYS_SHA256 = "c42c606facb4804b0be6a52cdc8974e568fef45003b122ed2b463378c382d3eb"
+ROW_COUNT = 23934
+ROW_KEYS_SHA256 = "cd833e5cb9200a487daf779d9fe1db17612ea9e3a11d68c4613b1f0c9dcfcd6c"
 
 
 def test_shipped_table_is_valid_and_keeps_every_row() -> None:
@@ -96,10 +96,13 @@ def synthetic_stock(tmp_path: Path) -> tuple[Path, list[bytes]]:
     event += bytes(-len(event) % 16) + b"\xff" * 4 + chr(0x3042).encode("cp932") + b"\0"
     voiced = _token("voiced")  # a WO2 event line with a voice: index 5, voice id 0xAF3 + 5
     event += bytes(-(len(event) - 12) % 16) + b"\xff" * 4 + struct.pack("<HH", 5, 32) + voiced + b"\0"
+    dream = _token("dream")  # a Z Dream scene line (event 402): index 241, voice id 0xAF3 + 241
+    dream_event = bytes(12) + b"\xff" * 4 + struct.pack("<HH", 241, 32) + dream + b"\0"
     _archive(stock, 2, {
         0: script,
         145: struct.pack("<III", 1, 1, 2) + values["caption"] + b"\0",
         177: event + b"\xff" * 4 + values["event"] + b"\0",
+        402: dream_event,
     })
     quote = _spans([
         _strings(b"33" + values["format"]),
@@ -109,12 +112,14 @@ def synthetic_stock(tmp_path: Path) -> tuple[Path, list[bytes]]:
     _archive(stock, 1, {4071: _mesc(values["narration"]), 4084: quote, 4190: _mesc(values["briefing"])})
     (stock / "OROCHI_Z.exe").write_bytes(_stock_pe(values["name"], values["unmapped"], values["message"]))
     return stock, [*values.values(), values["officer"] + b"@1234", indexed, chr(0x3042).encode("cp932"), voiced,
-                   voiced + b"@V2808", values["dialog"] + b"@0001@L0.0"]
+                   voiced + b"@V2808", voiced + b"@E2808", dream + b"@V3044", dream + b"@E3044",
+                   values["dialog"] + b"@0001@L0.0"]
 
 
 def test_stock_catalog_does_not_drop_archive_keys_or_quote_voice_suffixes(synthetic_stock) -> None:
     # Bugs: a dropped archive key; a quote or stage line listed without its @NNNN voice suffix; an event line not
-    # listed with its "@V" voice id, so a row keyed by an event line's voice cannot build; a spoken stage line not
+    # listed with its "@V" voice id, or its "@E" English-voice form, so a row keyed by an event line's voice cannot
+    # build (a Z Dream scene's lines were left out: the five English-voice rows of text row 47); a spoken stage line not
     # listed with its stage and line, so the own row of a line that shares its string (voice slots) cannot build.
     stock, values = synthetic_stock
     catalog = stock_strings(stock)

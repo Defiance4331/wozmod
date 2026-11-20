@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import struct
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from wozmod.donors import WO1_X360, WO2_X360
@@ -11,10 +12,10 @@ from wozmod.formats.audio import (
     MOZ_VOICE_IDS, PSP_BRIEFING_VOICES, PSP_CLIP_BASE, PSP_SELECT_VOICES, WO1_EVENT_VOICES, WO1_NARRATION_VOICES,
     WO1_RECORD_BASE, WO1_STAGES, WO1_SUFFIX_BASE, WO2_CLIP_BASE, WO2_EVENT_VOICES, WO2_NARRATION_VOICES,
     WO2_NEW_OFFICER_SELECT_VOICES, WO2_SELECT_VOICES, WO2_STAGES, WO2_SUFFIX_BASE, block_voice_map, quote_slots,
-    slot_voice_map, stage_line_voices,
+    slot_voice_map, stage_line_voices, _suffix, quote_voice,
 )
 from wozmod.formats.scripts import Script
-from wozmod.text.script_alignment import DREAM_SCRIPTS, StageJoin, _voices, stage_joins
+from wozmod.text.script_alignment import DREAM_SCRIPTS, StageJoin, _voices, quote_slot_read, stage_joins
 
 
 # The story stages each mode runs, with the id base its speak commands default to and the record base of the donor
@@ -157,6 +158,36 @@ def dialogue_voice_maps(
     wo2 |= {i: clip for i, clip in slot_voice_map(slots, WO2_CLIP_BASE).items()
             if wo2.get(i, clip) == clip}
     return wo1, wo2
+
+
+def quote_copies(tables: list[list[bytes]], length: Callable[[int], int]) -> dict[int, tuple[int, ...]]:
+    """Each stock quote voice id whose line copies other quotes, with their voice ids, same slot first: the same words
+    and the same recording, which a copy keeps to the sample (length gives a stock take's sample count). MOZ copies
+    officers 105 and 106's quotes 2-15, words and takes, into officers 92 and 93's tables (stock tables 107, 108 and
+    94, 95), whose donor slots are empty: the copies take the English of the lines they copy (decisions ledger, text
+    row 46)."""
+    by_words: dict[bytes, list[tuple[int, int]]] = defaultdict(list)
+    for t, table in enumerate(tables):
+        for k, line in enumerate(table):
+            if quote_slot_read(t, k) and (s := _suffix(line)):
+                by_words[line[2:line.rindex(b"@")]].append((k, quote_voice(s)))
+    found = {}
+    for lines in by_words.values():
+        for k, voice in lines:
+            same = sorted({(slot != k, other) for slot, other in lines if other != voice and length(other) == length(voice)})
+            if same:
+                found[voice] = tuple(other for _, other in same)
+    return found
+
+
+def with_copies(maps: list[dict[int, int]], copies: dict[int, tuple[int, ...]]) -> None:
+    """Give each copy (quote_copies) no map voices the record of the first line it copies that a map voices, in the
+    donor order of maps, in place."""
+    for voice, originals in copies.items():
+        if not any(voice in mapping for mapping in maps):
+            mapping, original = next(((m, o) for o in originals for m in maps if o in m), (None, None))
+            if mapping is not None:
+                mapping[voice] = mapping[original]
 
 
 def psp_voice_map(moz: dict[int, Script], psp_stages: dict[int, Script],

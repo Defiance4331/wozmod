@@ -133,14 +133,17 @@ def test_each_text_hook_looks_up_the_key_the_context_model_uses(tmp_path: Path) 
     # (the Japanese voice served the English-voice schedule, or the voice folder losing to the other), or a still
     # event's or WO1 page's draw stops trying its line with the voice key (camp talk then shows the shared row's
     # English) while VOICE_KEYED_MESC says it does; a spoken stage line's own row (its stage and line) is not tried
-    # first, or is tried for a line parsed outside a speak (a quote), or for the other line of its string. The C
-    # under test is the runtime's own enrt_translate, text, event_line, overridden_part, spoken_text, voiced_line and
-    # served, compiled from english_runtime.c; page_voice, which reads the game's memory, is a stub.
+    # first, or is tried for a line parsed outside a speak (a quote), or for the other line of its string; under the
+    # English voice a line's "@E" row (the words its English take says) is not tried first, or is tried under the
+    # Japanese voice too. The C under test is the runtime's own enrt_translate, text, event_line, overridden_part,
+    # spoken_text, voiced_line and served, compiled from english_runtime.c; page_voice, which reads the game's memory,
+    # is a stub.
     if not (shutil.which("i686-w64-mingw32-gcc") and shutil.which("wine")):
         pytest.skip("i686-w64-mingw32-gcc or wine absent")
     source = layout.SOURCE  # runtime/shared.h, then english_runtime.c
     rows = {b"line@0012": b"Own wording", b"line": b"Shared wording", b"other": b"Other", b"quote": b"Quote",
-            b"line@V0942": b"Voiced wording", b"line@0012@L1.12": b"Line wording"}
+            b"line@V0942": b"Voiced wording", b"line@E0942": b"English take's wording",
+            b"line@0012@L1.12": b"Line wording"}
     stills = [(site, voice, text) for site, voice in (("STILL_DRAW", 942), ("STILL_Z_DRAW", 1480),
                                                       ("NARRATION_DRAW", 942))
               for text in (b"line", b"other")]
@@ -195,8 +198,9 @@ def test_each_text_hook_looks_up_the_key_the_context_model_uses(tmp_path: Path) 
         *(f'    puts(spoken("{line.decode()}", {stage}, {at}));' for line, (stage, at) in speaks),
         '    puts(shown("00line@0012"));  /* another parse (a quote) while the last speak said stage 1 line 12 */',
         *(f'    puts((const char *)text((u32)"{line[2:].decode()}", 1, &no_frame));' for line in lines),
-        *(f'    {{ static struct frame f = {{.ret = {site}}}; puts((const char *)text((u32)"{text.decode()}", 1, &f)); }}'
-          for site, _, text in stills),
+        *(f'    voice_saved = {japanese}; {{ static struct frame f = {{.ret = {site}}}; '
+          f'puts((const char *)text((u32)"{text.decode()}", 1, &f)); }}'
+          for japanese in (0, 1) for site, _, text in stills),
     ] + [line for held, mode in cases for line in (
         "    loose_count = 0;",
         *(f"    loose[loose_count++] = (struct loose){{4396, 1, {d}}};" for d, h in enumerate(held) if h),
@@ -213,14 +217,16 @@ def test_each_text_hook_looks_up_the_key_the_context_model_uses(tmp_path: Path) 
     got = out.decode().replace("\r", "").split("\n")
     voiced, got = got[:len(lines)], got[len(lines):]
     said, got = got[:len(speaks) + 1], got[len(speaks) + 1:]
-    drawn, still = got[:len(lines)], got[len(lines):len(lines) + len(stills)]
-    served = got[len(lines) + len(stills):-1]
+    drawn, still = got[:len(lines)], got[len(lines):len(lines) + 2 * len(stills)]
+    served = got[len(lines) + 2 * len(stills):-1]
     assert voiced == [contexts.shown_text(blob, "stage", line[2:])[0].decode() for line in lines]
     assert said == [*(contexts.shown_text(blob, "stage", line[2:], line=at)[0].decode() for line, at in speaks),
                     contexts.shown_text(blob, "quote", b"line@0012")[0].decode()]
     assert said[:2] == ["Line wording", "Own wording"]  # the model and the runtime could agree on no lookup at all
     assert drawn == [contexts.shown_text(blob, "event", line[2:])[0].decode() for line in lines]
-    assert still == [contexts.shown_text(blob, "mesc", text, voice)[0].decode() for _, voice, text in stills]
+    assert still == [contexts.shown_text(blob, "mesc", text, voice, english_voice=not japanese)[0].decode()
+                     for japanese in (0, 1) for _, voice, text in stills]
+    assert "English take's wording" in still and "Voiced wording" in still  # each voice reached its own row
     expected = []
     for held, mode in cases:
         mod = tmp_path / f"mod-{''.join(map(str, held))}"

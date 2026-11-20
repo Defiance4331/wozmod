@@ -8,7 +8,7 @@ import asr_audit
 
 
 def _context(where: str, text: str, voice, neighbours=()):
-    return SimpleNamespace(id=where, text=text, voice=voice, key=where.encode(), neighbours=neighbours)
+    return SimpleNamespace(id=where, text=text, voice=voice, banked=voice, key=where.encode(), neighbours=neighbours)
 
 
 def test_a_wordless_neighbour_is_no_rival_but_a_worded_one_is() -> None:

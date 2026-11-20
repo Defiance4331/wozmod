@@ -1925,6 +1925,7 @@ static FILETIME table_stamp;
 #define FONT_ENTRY 4059
 
 static void note(const char *s, u32 value);
+static void note_line(const char *s, const u32 *value);
 static int write_at(u32 va, const u8 *bytes, u32 n);
 
 static WCHAR *path(WCHAR *out, const WCHAR *name)
@@ -2110,6 +2111,15 @@ static const char *event_line(const char *s, u32 ret)
             return 0;
     } else if ((ret != 0x49DACE && ret != 0x49DB4C) || !event_line_key(s, VOICE_MODE, key, sizeof key))
         return 0;
+    if (!VOICES_JAPANESE) {  /* under the English voice, the row of the words its English take says ("@E"), first */
+        char *tag = key;
+        while (*tag)
+            tag++;
+        tag[-5] = 'E';
+        if ((en = enrt_translate(key)) != key)
+            return en;
+        tag[-5] = 'V';
+    }
     en = enrt_translate(key);
     return en == key ? 0 : en;
 }
@@ -2117,6 +2127,7 @@ static const char *event_line(const char *s, u32 ret)
 #define VOICE_PLAY ((void (__attribute__((thiscall)) *)(const u8 *, u32, u32, u32, u32))0x5D7BF0)
 static HANDLE voice_bank = INVALID_HANDLE_VALUE;
 static u32 *voice_table, voice_ids;
+static u32 japanese_noted[0x10000 / 32];  /* the voice ids logged as playing their stock take (hook 36) */
 #define READER_IDLE ((u32 (*)(void))0x5D0D20)  /* reaps a finished archive read; true when the reader is free */
 #define READER_FREE ((u32 (*)(u32))0x5D9AE0)  /* with 0: starts a queued job, else reaps; true when the reader is free */
 #define VOICE_START_BODY 0x513731  /* the voice start (0x513720) past its free check, ecx's slot pushed */
@@ -5416,6 +5427,17 @@ static int always(u32 id, struct frame *f, u32 *replace)
         slot = voice_slot(slots, slots_size, spoken_stage, spoken_line, f->arg[1]);
         if ((voice = english_voice(slot)))
             f->eax = id == 36 ? VOICE_TAG | voice[0] : voice[1], *replace = 1;
+        else if (id == 36 && !VOICES_JAPANESE && voice_bank != INVALID_HANDLE_VALUE && f->arg[1] < 0x10000
+                 && !(japanese_noted[f->arg[1] >> 5] & 1u << (f->arg[1] & 31))) {
+            /* Each voice id that plays its stock take under the English voice, once a session, so a player's log
+               names the line: tools/voice_reference.py why <id> says whether MOZ wrote it or its English is missing. */
+            char line[] = "voice stays Japanese: id 0000 stage 00 line";
+            japanese_noted[f->arg[1] >> 5] |= 1u << (f->arg[1] & 31);
+            put_hex(line + 25, f->arg[1], 4), put_hex(line + 36, VOICE_STAGE, 2);
+            if (spoken_line == NO_LINE)
+                line[38] = 0;
+            note_line(line, spoken_line == NO_LINE ? 0 : &spoken_line);
+        }
 #ifdef ENRT_LOG
         if (id == 36) {
             char line[] = "voice ja 0000 mode 0 stage 00 slot 0000";

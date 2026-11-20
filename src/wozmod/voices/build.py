@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from wozmod import game_files
 from wozmod.donors import WO1_X360, WO2_PSP, WO2_X360, DonorsFolder
 from wozmod.formats.audio import (
     WO1_EVENT_VOICES, WO2_EVENT_VOICES, VoiceBankError, decoded_clips, english_se_bank, english_voice_bank,
-    english_voice_clips,
+    english_voice_clips, parse_kovs_record,
 )
 from wozmod.formats.linkdata import archive, decoded_member, ps2_members
 from wozmod.formats.scripts import Script, parse_script
 from wozmod.text.resolver import DonorResolver
 from wozmod.text.script_alignment import (
-    EVENTS, PSP_QUOTE_INSERT, PSP_QUOTES, PSP_STAGE_MEMBERS, QUOTES, WO1_QUOTE_INSERT, donor_event_entries, moz_scripts,
+    EVENTS, StageJoin, PSP_QUOTE_INSERT, PSP_QUOTES, PSP_STAGE_MEMBERS, QUOTES, WO1_QUOTE_INSERT, donor_event_entries, moz_scripts,
     paired_quote_tables, stage_joins, wo1_scripts, wo2_x360,
 )
 
@@ -23,7 +24,10 @@ from .dream_events import DREAM_EVENTS, build_dream_events
 from .dream_movies import DREAM_MOVIES, build_dream_movies
 from .events import build_event_schedules
 from .lips import donor_lips, english_lips, lip_bank, stock_lips, wo1_fits, x360_fits
-from .maps import dialogue_voice_maps, psp_voice_map, slot_records, slot_table, stage_triggers, voice_slots
+from .maps import (
+    VoiceSlot, dialogue_voice_maps, psp_voice_map, quote_copies, slot_records, slot_table, stage_triggers, voice_slots,
+    with_copies,
+)
 
 
 VOICE_DONOR_FILES = (
@@ -42,6 +46,58 @@ def psp_text_voice_map(moz: dict[int, Script], quotes: bytes, fns: Path) -> dict
     psp = ps2_members(fns, [PSP_QUOTES, *PSP_STAGE_MEMBERS.values()])  # the quotes are stored unpacked
     return psp_voice_map(moz, {o: parse_script(decoded_member(psp[m])) for o, m in PSP_STAGE_MEMBERS.items()},
                          paired_quote_tables(quotes, psp[PSP_QUOTES], insert=PSP_QUOTE_INSERT))
+
+
+@dataclass(frozen=True)
+class VoiceMaps:
+    """The installer's dialogue voice maps, stock voice id (or voice slot) to donor record per donor, and the stock
+    scripts and stage joins they come from. Everything that asks which take a line plays reads these (voice_maps)."""
+
+    moz: dict[int, Script]
+    joins: dict[int, StageJoin]
+    triggers: dict[tuple[int, int], tuple[tuple[int, ...], str, int]]  # maps.stage_triggers
+    slots: dict[tuple[int, int], VoiceSlot]  # maps.voice_slots
+    wo1: dict[int, int]
+    wo2: dict[int, int]
+    psp: dict[int, int]
+
+    @property
+    def by_donor(self) -> dict[str, dict[int, int]]:
+        """The maps in the donor order the bank takes clips in: WO2 X360, WO1 X360, WO2 PSP."""
+        return {WO2_X360.name: self.wo2, WO1_X360.name: self.wo1, WO2_PSP.name: self.psp}
+
+
+def voice_maps(stock: Path, donors: Path) -> VoiceMaps:
+    """The dialogue voice maps from the stock game folder and the extracted donors folder: stage lines by trigger,
+    the fixed runs, the quote slots and their copies, the Dream lines and the voice slots."""
+    folders = DonorsFolder(Path(donors))
+    wo1, wo2, psp = folders.folder("wo1-x360"), folders.folder("wo2-x360"), folders.folder("wo2-psp")
+    moz = moz_scripts(Path(stock) / "LINKDATA2")
+    wo2_donor = wo2_x360(wo2 / "linkdata_ens")
+    wo1_ens = archive(wo1 / "linkdata_ens")
+    quotes_entry, wo1_quotes, wo2_quotes = QUOTES
+    quotes = game_files.archive(Path(stock) / "LINKDATA1")[quotes_entry]
+    wo2_tables = paired_quote_tables(quotes, wo2_donor.members([wo2_quotes])[wo2_quotes], wo2_donor.order)
+    wo1_by_ens, wo2_by_member = wo1_scripts(wo1 / "linkdata_ens"), wo2_donor.scripts()
+    joins = stage_joins(moz, wo1_by_ens, wo2_by_member)
+    one, two = dialogue_voice_maps(moz, wo1_by_ens, wo2_by_member,
+                                   paired_quote_tables(quotes, wo1_ens[wo1_quotes], ">", insert=WO1_QUOTE_INSERT),
+                                   wo2_tables, joins)
+    triggers = stage_triggers(moz, joins)
+    # A line that shares its voice id with a line whose trigger plays another take gets an id of its own.
+    slots = voice_slots(triggers, one, two)
+    one, two = one | slot_records(slots, WO1_X360.name), two | slot_records(slots, WO2_X360.name)
+    three = psp_text_voice_map(moz, quotes, psp / PSP_TEXT)
+    stock_voices = game_files.voices(Path(stock))
+    lengths: dict[int, int] = {}
+
+    def length(voice: int) -> int:
+        if voice not in lengths:
+            lengths[voice] = parse_kovs_record(stock_voices.clips([voice])[voice], ordinal=voice)[2].sample_count
+        return lengths[voice]
+
+    with_copies([two, one, three], quote_copies([ours for ours, _ in wo2_tables], length))
+    return VoiceMaps(moz, joins, triggers, slots, one, two, three)
 
 
 def said(clips: dict[int, bytes], sources: dict[int, str], donor_events: dict, stock_events: list[tuple[int, bytes]],
@@ -66,21 +122,11 @@ def build_voice_banks(stock: Path, donors: Path, speech: Path, output_dir: Path,
     stock, donors, speech, output_dir = Path(stock), Path(donors), Path(speech), Path(output_dir)
     folders = DonorsFolder(donors)
     wo1, wo2, psp = folders.folder("wo1-x360"), folders.folder("wo2-x360"), folders.folder("wo2-psp")
-    moz = moz_scripts(stock / "LINKDATA2")
+    maps = voice_maps(stock, donors)
+    one, two, three, slots = maps.wo1, maps.wo2, maps.psp, maps.slots
     wo2_donor = wo2_x360(wo2 / "linkdata_ens")
     linkdata1, linkdata2 = game_files.archive(stock / "LINKDATA1"), game_files.archive(stock / "LINKDATA2")
     wo1_ens = archive(wo1 / "linkdata_ens")
-    quotes_entry, wo1_quotes, wo2_quotes = QUOTES
-    quotes = linkdata1[quotes_entry]
-    wo1_tables = paired_quote_tables(quotes, wo1_ens[wo1_quotes], ">", insert=WO1_QUOTE_INSERT)
-    wo2_tables = paired_quote_tables(quotes, wo2_donor.members([wo2_quotes])[wo2_quotes], wo2_donor.order)
-    wo1_by_ens, wo2_by_member = wo1_scripts(wo1 / "linkdata_ens"), wo2_donor.scripts()
-    joins = stage_joins(moz, wo1_by_ens, wo2_by_member)
-    one, two = dialogue_voice_maps(moz, wo1_by_ens, wo2_by_member, wo1_tables, wo2_tables, joins)
-    # A line that shares its voice id with a line whose trigger plays another take gets an id of its own.
-    slots = voice_slots(stage_triggers(moz, joins), one, two)
-    one, two = one | slot_records(slots, WO1_X360.name), two | slot_records(slots, WO2_X360.name)
-    three = psp_text_voice_map(moz, quotes, psp / PSP_TEXT)
     stock_clips = game_files.voices(stock)
     clips, sources = english_voice_clips(
         one, (wo1 / "linkdata_ans.idx").read_bytes(), wo1 / "link_vodat.bdx",
