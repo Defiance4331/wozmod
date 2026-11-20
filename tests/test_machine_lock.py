@@ -104,8 +104,8 @@ def test_games_started_one_after_another_do_not_keep_a_waiting_heavy_run_out(mon
 
 
 def test_a_run_that_began_waiting_first_goes_in_first(monkeypatch, tmp_path):
-    """Bug: a benchmark that asks for the machine again right after each of its runs goes ahead of a test run
-    waiting since the run before, so the test run (or a commit's checks) waits for the whole sequence."""
+    """Bug: a benchmark that asks for the machine again right after each of its runs goes ahead of a game waiting
+    since the run before, so the game waits for the whole sequence."""
     import checkout
     import machine_lock
 
@@ -114,8 +114,8 @@ def test_a_run_that_began_waiting_first_goes_in_first(monkeypatch, tmp_path):
     monkeypatch.delenv(machine_lock.HELD, raising=False)
     run_1 = machine_lock.claim("bench r1", 0.01)
     tests, benches = [], []
-    test = _start(lambda: tests.append(machine_lock.share(0.01, "a test run")))
-    time.sleep(0.2)  # the test run is in line
+    test = _start(lambda: tests.append(machine_lock.share(0.01, "a game")))
+    time.sleep(0.2)  # the game is in line
     bench = _start(lambda: benches.append(machine_lock.claim("bench r2", 0.01)))
     time.sleep(0.2)  # the benchmark's next run is in line behind it
     os.close(run_1)
@@ -164,3 +164,38 @@ def test_an_option_before_the_command_is_answered_at_once_and_never_waits_in_lin
     finally:
         os.close(held)
     assert wrong == []
+
+
+def test_a_test_run_goes_ahead_of_a_waiting_heavy_run_until_that_runs_turn_comes(monkeypatch, tmp_path):
+    """Bugs: a short test run waits for every heavy run that began waiting before it (a 2-minute run behind a
+    40-minute release check); or test runs always go first, so a stream of them, each arriving while the one before
+    still runs, keeps a heavy run out for good."""
+    import checkout
+    import machine_lock
+
+    (tmp_path / "work").mkdir()
+    monkeypatch.setattr(checkout, "REPO", tmp_path)
+    monkeypatch.delenv(machine_lock.HELD, raising=False)
+    order, first_done = [], threading.Event()
+
+    def run(name, take, until=None):
+        held = take()
+        order.append(name)
+        if until:
+            until.wait(5)
+        os.close(held)
+
+    release_check = machine_lock.claim("a release check", 0.01)
+    install = _start(lambda: run("install", lambda: machine_lock.claim("an install", 0.01)))
+    time.sleep(0.2)  # the install waits for the release check
+    test_1 = _start(lambda: run("test 1", lambda: machine_lock.share(0.01, "test run 1", "test"), first_done))
+    time.sleep(0.2)  # test run 1 arrives behind it, while the release check still runs
+    os.close(release_check)
+    deadline = time.monotonic() + 2
+    while not order and time.monotonic() < deadline:
+        time.sleep(0.01)
+    test_2 = _start(lambda: run("test 2", lambda: machine_lock.share(0.01, "test run 2", "test")))
+    time.sleep(0.3)  # test run 2 arrives while test run 1 runs: the install's turn has come
+    first_done.set()
+    assert all(done.wait(2) for done in (test_1, install, test_2))
+    assert order == ["test 1", "install", "test 2"]

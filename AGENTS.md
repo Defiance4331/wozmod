@@ -102,10 +102,13 @@ through `python3 tools/machine_lock.py COMMAND`. Run a benchmark through
 the lock around each run alone so waiting runs go in between, and prints each
 arm's time. Give a run
 that may wait a long timeout (a release takes about 40 minutes). Game launches
-and parallel test runs hold the machine shared, beside each other, and every
-run waits in one line, first come, first served: a benchmark's next run cannot
-go ahead of a test run already waiting. A test run in one process (`-n0`, the
-commit hook's checks) does not wait. Stop only runs you started.
+and parallel test runs hold the machine shared, beside each other. Heavy runs
+and games wait in one line, first come, first served: a benchmark's next run
+cannot go ahead of a game already waiting. A test run goes ahead of the heavy
+runs and games waiting, except a heavy run whose turn has come (it waits only
+for the runs already on the machine), so test runs cannot keep one out. A test
+run in one process (`-n0`, the commit hook's checks) does not wait. Stop only
+runs you started.
 `work/machine-lock.log` keeps each heavy run's minutes and CPU minutes. Hand back a
 change players see with the
 `evidence/contact-sheet.html` that `tools/run_check.py` writes: each capture beside

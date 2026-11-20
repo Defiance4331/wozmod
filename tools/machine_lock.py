@@ -8,8 +8,10 @@ runs COMMAND with the machine to itself: it waits for every other heavy run and 
 (saying who holds the machine), holds the lock for COMMAND's life, and exits with COMMAND's status. tools/verify.py
 takes it this way; run a dev install or an art build this way too. A benchmark goes through tools/bench.py, which
 takes the lock around each measured run alone, so the runs waiting between them go in. A game launch (game_harness.py
-run) and a parallel test run (tests/conftest.py) hold it shared, beside each other. Every run waits in one line,
-first come, first served: a run goes in once every run that began waiting before it has. A heavy run beside
+run) and a test run (a parallel one in tests/conftest.py, verify's suite runs) hold it shared, beside each other.
+Heavy runs and games wait in one line, first come, first served: one goes in once every run that began waiting
+before it has. A test run is short and goes ahead of them, but not of a heavy run whose turn has come (_place), so a
+stream of test runs cannot keep a heavy run out. A heavy run beside
 another, or beside a game, slows both, skews a benchmark's numbers and makes time limits (the install budget, Wine
 boot timeouts) fail for no fault of the code. Every run that holds the machine runs at the lowest CPU and disk priority
 (background()), so whatever the user is doing on this machine meanwhile, such as playing or streaming a game, goes
@@ -32,6 +34,7 @@ import signal
 import subprocess
 import sys
 import time
+from typing import Literal
 
 from pathlib import Path
 
@@ -82,13 +85,34 @@ def _alive(ticket: Path) -> bool:
     return False
 
 
-def _wait_turn(alone: bool, holder: str, poll: float) -> int:
-    """Wait in line for the machine, first come first served, then hold it: alone (a heavy run) or shared (a game or
-    a test run, beside the shared runs next to it in line). A run goes in when no run that began waiting before it
-    still waits (a shared run: no heavy one), and the runs on the machine allow it. Returns the held descriptor."""
+Kind = Literal["heavy", "game", "test"]  # a heavy run holds the machine alone; a game or a test run, shared
+
+
+def _place(kind: Kind, line: Path) -> int:
+    """Where a new ticket of kind waits in line, which is sorted by it. A heavy run or a game waits where it arrives. A
+    test run goes ahead of the heavy runs waiting, except one whose turn has come: while a heavy run has the machine,
+    no waiting one's turn has come, and the test run takes the front of the line, to go in as soon as the machine is
+    free of heavy runs; otherwise the first heavy run waiting is next, waits only for the runs already on the machine,
+    and the test run waits right behind it. So a heavy run never waits for a test run that arrived after its turn
+    came, however many arrive."""
+    arrival = time.monotonic_ns()
+    if kind != "test":
+        return arrival
+    waiting = [t for t in sorted(line.iterdir())
+               if not t.name.startswith(".") and t.name.endswith("-heavy") and _alive(t)]
+    if not waiting:
+        return arrival
+    return 0 if holders((HEAVY,)) else int(waiting[0].name.split("-")[0]) + 1
+
+
+def _wait_turn(kind: Kind, holder: str, poll: float) -> int:
+    """Wait in line for the machine, then hold it: alone (a heavy run) or shared (a game or a test run, beside the
+    shared runs next to it in line). A run goes in when no run ahead of it in line (_place) still waits (for a shared
+    run: no heavy one), and the runs on the machine allow it. Returns the held descriptor."""
+    alone = kind == "heavy"
     line = work() / LINE
     line.mkdir(exist_ok=True)
-    name = f"{time.monotonic_ns():020d}-{os.getpid()}-{'heavy' if alone else 'shared'}"
+    name = f"{_place(kind, line):020d}-{os.getpid()}-{kind}"
     # Written under a hidden name, locked, then renamed: no one sees the ticket before its owner holds it.
     draft = line / f".{name}"
     ticket = os.open(draft, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
@@ -142,7 +166,7 @@ def waits(pid: int) -> str:
 def claim(holder: str, poll: float = 1.0) -> int:
     """For a heavy run: wait in line, saying who has the machine, then hold it alone. The descriptor stays open, so
     the lock lasts until the process ends."""
-    return _wait_turn(True, holder, poll)
+    return _wait_turn("heavy", holder, poll)
 
 
 # ioprio_set(2) by machine: the idle disk class for the calling thread (IOPRIO_WHO_PROCESS 1, who 0 = this thread).
@@ -158,14 +182,14 @@ def background() -> None:
         ctypes.CDLL(None, use_errno=True).syscall(number, 1, 0, IDLE_CLASS)
 
 
-def share(poll: float = 1.0, what: str = "the game") -> int | None:
-    """For a game launch or a test run (what): wait in line, then hold the machine shared, beside other games and
-    test runs, so no heavy run starts beside it. The descriptor (None inside a heavy run, which already has the
-    machine) stays open, so the lock lasts until the process ends."""
+def share(poll: float = 1.0, what: str = "the game", kind: Kind = "game") -> int | None:
+    """For a game launch or a test run (kind; what names it): wait in line, then hold the machine shared, beside other
+    games and test runs, so no heavy run starts beside it. The descriptor (None inside a heavy run, which already has
+    the machine) stays open, so the lock lasts until the process ends."""
     background()
     if os.environ.get(HELD):
         return None
-    return _wait_turn(False, f"{what} (pid {os.getpid()})", poll)
+    return _wait_turn(kind, f"{what} (pid {os.getpid()})", poll)
 
 
 def holders(names: tuple[str, ...]) -> list[str]:

@@ -312,7 +312,7 @@ def shared_machine(repo: Path, what: str) -> int | None:
         sys.path.insert(0, str(repo / "tools"))
     import machine_lock
 
-    return machine_lock.share(what=what)
+    return machine_lock.share(what=what, kind="test")
 
 
 def exported_path(folder: Path) -> dict:
