@@ -115,6 +115,9 @@ Changes:
 - Keep test counts, file lists, to-dos, hashes and how the work was organised
   (agents, branches, phases, migrations) in the agent's hand-back.
 - Work on a branch merges into main as one squashed commit in this format.
+- Do work in progress in a T3 worktree and bring it to main as a commit. The main
+  checkout holds only what has landed: git cannot fast-forward main over
+  uncommitted edits there, so they hold up every other session's landing.
 - A commit that fully fixes a GitHub issue ends with a line such as
   `Reported in #17` or `Reported in #16 and #17`. Publishing the release that
   holds it closes the issue with a link to the release. Never write `Fixes #17`:
