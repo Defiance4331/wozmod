@@ -59,29 +59,24 @@ checkout's tracked files (git), so it runs in the checkout, not beside the refer
 [[row]]
 name = "voices, effects and Dream movies"
 paths = ["src/wozmod/voices/*", "src/wozmod/formats/audio.py", "src/wozmod/formats/pmf.py", "native/*"]
-run = ["ref voices",
-       "tests/test_voices_lips.py::test_each_english_clip_gets_the_block_its_donor_plays_with_it_or_one_made_from_its_speech",
-       "tests/test_voices_lips.py::test_a_line_without_its_own_block_gets_the_shapes_its_sound_had_in_the_lines_with_one",
-       "tests/test_voices_lips.py::test_a_sound_shorter_than_any_run_of_the_known_mouths_does_not_change_the_mouth",
-       "tests/test_voices_lips.py::test_the_phones_choose_between_shapes_that_sound_alike",
-       "tests/test_voices_lips.py::test_every_track_runs_the_whole_of_a_long_line",
-       "tests/test_dream_events.py", "tests/test_dream_movies.py",
+run = ["ref voices", "tests/test_voices_lips.py", "tests/test_dream_events.py", "tests/test_dream_movies.py",
        "tests/test_formats_audio.py", "tests/test_shout_banks.py", "tests/test_runtime_edits.py"]
 from = """9259ead (the Dream cutscenes in English) changed test_voices_lips and test_dream_movies. #11 (88e0639) changed
-the effect banks and tests/test_runtime_edits.py (the sound pool test). f19a297 changed test_shout_banks. The lip tests
-are named one by one, not as the file: the learned-mouths test, 330 s, has the row below, and a file in this row would
-keep it here (tools/verify.py release also reads a row's tests as readers and leaves them out of its slow suite)."""
+the effect banks and tests/test_runtime_edits.py (the sound pool test). f19a297 changed test_shout_banks. The slow
+learned-mouths test, 330 s, is in tests/test_voices_lips_learned.py, which the row below runs."""
 
 [[row]]
 name = "lip-sync generator"
 paths = ["src/wozmod/voices/lips.py", "src/wozmod/voices/phones.py", "native/src/lips.rs", "native/src/speech.rs",
          "native/build.rs", "native/csrc/*", "native/patches/*", "native/Cargo.toml", "native/Cargo.lock",
-         "tests/test_voices_lips.py"]
-run = ["tests/test_voices_lips.py::test_learned_mouths_give_koeis_shapes_on_lines_they_did_not_learn_from"]
+         "tests/test_voices_lips.py", "tests/test_voices_lips_learned.py"]
+run = ["tests/test_voices_lips_learned.py"]
 from = """The owner's decision, 2026-11-20: run it only on lip-sync changes. The test reruns half the voices build,
 about 330 s, and scores the generated mouth shapes against Koei's. It ran on every voice change; it now runs when
-the code that makes the shapes changes: lips.py, phones.py, and the Rust they call (lips.rs for lip_shapes, speech.rs for aligned_phones and heard_phones, built with build.rs, csrc/,
-patches/ and the pinned crates). tools/verify.py release still runs it, in its slow suite."""
+the code that makes the shapes changes: lips.py, phones.py, and the Rust they call (lips.rs for lip_shapes, speech.rs
+for aligned_phones and heard_phones, built with build.rs, csrc/, patches/ and the pinned crates). It has a file of its
+own, so a lip test added to test_voices_lips.py joins the voices row with no list to keep. tools/verify.py release
+still runs it, in its slow suite."""
 
 [[row]]
 name = "text room and subtitle contexts"
