@@ -2002,8 +2002,9 @@ static void reload(void)
 
 
 /* An archive entry the installer wrote, by folder: wozmod/entries/<key>.bin (menu art, the font), wozmod/captions
- * (the movie caption schedules), or wozmod/captions/voice, whose schedule takes the place of the other while the
- * voices are English (the English-voice movies' own caption times). */
+ * (the movie caption schedules), or wozmod/captions/voice, served only while the voices are English, in place of the
+ * other folders' entry or the stock one: the English-voice movies' own caption times, the retimed event files and
+ * the stage scripts whose stand-in scenes the English voice closes (wozmod.voices.build.guarded_stages). */
 static struct loose { u32 key, size, dir; } *loose;
 static u32 loose_count;
 static const WCHAR *const loose_dirs[3] = {L"entries\\", L"captions\\", L"captions\\voice\\"};

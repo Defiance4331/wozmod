@@ -8,6 +8,7 @@ from wozmod.formats.scripts import (
     donor_text,
     event_lines,
     event_texts,
+    guarded,
     mesc_blocks,
     parse_script,
     quote_tables,
@@ -57,6 +58,22 @@ def test_parse_script_reads_each_events_conditions_and_each_placements_cast_in_b
         parsed = parse_script(script(_table(order=order), _table(b"00D@0001\0", order=order), order, events,
                                      conditions, (7, 300, 7)), order)
         assert (parsed.events, parsed.conditions, parsed.casts) == (events, conditions, (7, 300, 7))
+
+
+def test_a_guard_gates_its_own_event_alone_and_leaves_every_other_byte_where_the_game_reads_it():
+    # Bugs: the condition count byte left as it was (the game reads the old count and runs the event on part of its
+    # tree), the guard put on the next or previous event, its words in the wrong places (a "has run" test, or one the
+    # game does not test again at dequeue, so Dream 66.41 still plays after event 21), or the later event scripts or
+    # sections 2 and 3 left at their old offsets (the game reads commands or lines from the wrong bytes). Oracle: the
+    # synthetic writer, which lays every offset out itself, given the guarded conditions directly.
+    events = (((0x26, 7, 0, 0, 0, 0, 0, 0),), ((0x26, 9, 1, 0, 0, 0, 0, 0), (0x0A, 2, 0, 0, 0, 0, 0, 0)),
+              ((0x25, 0, 0, 0, 0, 0, 0, 0),))
+    root, leaf = (0xFF, (1, 0, 0, 0, 0, 0, 0, 0)), (0x13, (5, 0, 1, 1, 0, 0, 0, 0))
+    conditions = ((root, leaf), (root, leaf), (root, (0x11, (1, 1, 0, 0, 0, 0, 0, 0))))
+    tables = (_table(b"00N\0"), _table(b"00D@0001\0", b"00E@0002\0"))
+    closed = ((0xFF, (2, 0, 0, 0, 0, 0, 0, 0)), root, leaf, (0x11, (0, 0, 1, 0, 0, 0, 0, 0)))
+    assert guarded(script(*tables, "<", events, conditions, (7,)), {1: 0}) == \
+        script(*tables, "<", events, (conditions[0], closed, conditions[2]), (7,))
 
 
 def test_parse_script_rejects_invalid_section_headers_and_offsets():

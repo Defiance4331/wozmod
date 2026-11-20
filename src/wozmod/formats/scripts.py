@@ -116,6 +116,10 @@ def parse_script(data: bytes, order: str = "<") -> Script:
 # record in word 2 (MOZ 0x4F17E0, WO2 X360 0x821BCBA8, WO1 X360 0x821A077C).
 NOTICE = 0x25
 SPEAK = 0x26
+# Condition types (MOZ 0x4ECB80; work/handbacks/condition-0x23.md): all of and any of the next word 0 subtrees, "event
+# word 0 has run (word 1 = 1) or has not (0)", tested again when the event leaves the queue when word 2 is 1, and
+# "officer word 1 is (word 2 = 1) or is not (0) on the player's team".
+AND, OR, RAN, TEAM = 0xFF, 0xFE, 0x11, 0x23
 
 
 def script_events(data: bytes, order: str = "<") -> tuple[tuple[tuple[int, ...], ...], ...]:
@@ -146,6 +150,34 @@ def _event_scripts(data: bytes, order: str) -> list[tuple[tuple, tuple]]:
     except (struct.error, IndexError) as exc:
         raise ScriptError("event scripts are truncated") from exc
     return events
+
+
+def guarded(data: bytes, guards: dict[int, int], order: str = "<") -> bytes:
+    """A stock stage script with each event e of guards gated also on "event guards[e] has not run", tested again
+    when e leaves the queue (decisions ledger text row 51): e's conditions become all of its old root and that test.
+    That adds two conditions, 36 bytes, so section 1 keeps its 4-byte alignment and what follows e moves by 36 bytes:
+    the later event scripts (section 1 offsets) and sections 2 and 3 (the header's)."""
+    count, *sections = struct.unpack_from(f"{order}5I", data)
+    base = sections[1]
+    events = struct.unpack_from(f"{order}I", data, base)[0]
+    starts = list(struct.unpack_from(f"{order}{events}I", data, base + 12))
+    out, moved = bytearray(data), 0
+    for e in range(events):
+        starts[e] += moved
+        if e not in guards:
+            continue
+        at = base + starts[e]
+        conditions = out[at + 4]
+        if not conditions or conditions > 253:
+            raise ScriptError(f"event {e} has {conditions} conditions: no root to guard, or no room for the guard")
+        end = at + 6 + 18 * conditions
+        out[end:end] = struct.pack(f"{order}BB8H", RAN, 0, guards[e], 0, 1, 0, 0, 0, 0, 0)
+        out[at + 6:at + 6] = struct.pack(f"{order}BB8H", AND, 0, 2, 0, 0, 0, 0, 0, 0, 0)
+        out[at + 4] = conditions + 2
+        moved += 36
+    struct.pack_into(f"{order}{events}I", out, base + 12, *starts)
+    struct.pack_into(f"{order}5I", out, 0, count, *sections[:2], *(s + moved for s in sections[2:]))
+    return bytes(out)
 
 
 def placement_casts(data: bytes, order: str = "<") -> tuple[int, ...]:

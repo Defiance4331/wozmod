@@ -333,3 +333,27 @@ def test_each_line_of_a_shared_voice_id_plays_its_own_trigger_take_and_shows_its
                for p, k in partners for v in triggers[p, k][0]}
     assert len(partners) == 8
     assert {line: shown(*line) for line in played} == played
+
+
+@INPUTS
+@pytest.mark.slow_first
+def test_the_english_voice_closes_exactly_the_two_fallbacks_wo2s_team_leaves_open(stock_maps):
+    # Bugs: a stand-in derived for an event it must not touch (a guarded fallback such as Dream 44.3, 55.6 or 64.25, a
+    # scene for an officer outside WO2's team, a MOZ extra such as 49.41, or a restructured donor event whose lines play
+    # English), or one of the two missed, so 66.41 still plays after 66.10-12. Or a guard that cannot close its
+    # stand-in, which leaves the queue first (a lower index, or a higher kind: 0x4EEE60 queues by kind, then index).
+    # Oracle: the list the owner reviewed (decisions ledger text row 51), from the matcher prototype's detector and
+    # the in-game runs of work/handbacks/stage66-event-timing.md and fallbacks-48-58-game.md.
+    import struct
+
+    from wozmod import game_files
+
+    stand_ins = {(o, f): s for o, join in stock_maps.joins.items() for f, s in join.stand_ins.items()}
+    assert stand_ins == {(48, 57): 56, (66, 22): 21}
+    data = game_files.archive(Path(os.environ["WOZMOD_GAME"]) / "LINKDATA2").read([48, 66])
+
+    def kind(o, e):
+        base = struct.unpack_from("<5I", data[o])[2]
+        return data[o][base + struct.unpack_from("<I", data[o], base + 12 + 4 * e)[0] + 1]
+
+    assert all(f > s and kind(o, f) == kind(o, s) for (o, f), s in stand_ins.items())

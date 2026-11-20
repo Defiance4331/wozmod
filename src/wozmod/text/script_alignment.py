@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import struct
 from collections import Counter, defaultdict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 from functools import cached_property, partial
 from pathlib import Path
@@ -294,6 +294,12 @@ def _record_keys(script: Script, table: str, key: Callable[[tuple], object]) -> 
 
 def stage_join(moz: Script, donor: Script, persons: dict[int, int], team: frozenset[int] | None = None,
                wo1: bool = False) -> dict[tuple[str, int], int]:
+    """_stage_join's line pairs."""
+    return _stage_join(moz, donor, persons, team, wo1)[0]
+
+
+def _stage_join(moz: Script, donor: Script, persons: dict[int, int], team: frozenset[int] | None,
+                wo1: bool) -> tuple[dict[tuple[str, int], int], dict[int, int]]:
     """Pair a stock stage script's spoken lines with its donor script's: ("dialog", stock line) to donor line
     (decisions ledger text row 49). persons are the stock persons' donor persons, team the donor's fixed team (Dream
     stages 40-67, dream_teams), wo1 whether the donor is WO1 X360 (its condition types are numbered apart).
@@ -306,25 +312,28 @@ def stage_join(moz: Script, donor: Script, persons: dict[int, int], team: frozen
     four moments put on WO2 X360 line 5 and one on its line 8. A line only variants or MOZ's own events speak, and
     the table leaves unpaired, keeps its Japanese (Dream stage 60 line 54, spoken where WO2 X360 speaks line 27 only
     for teams without Ling Tong, so WO2's line 27 goes to MOZ's line 27, spoken at the moment WO2's team plays). A
-    line no command speaks pairs with nothing. Notices pair through notice_join."""
+    line no command speaks pairs with nothing. Notices pair through notice_join. Also returns the stock events that
+    stand in for a matched one and play beside it under the team (StageMoments.stand_ins)."""
     a, b = _record_keys(moz, "dialog", lambda c: persons.get(c[1], ("stock", c[1]))), \
         _record_keys(donor, "dialog", lambda c: c[1])
     table = {r: d for r, d in _record_pairs(a, b) if a[r] != ("unshown",)}
     notices = _notice_pairs(moz, donor, persons, table)
-    moments = StageMoments(moz, donor, persons, notices, team, wo1).line_moments()
+    matching = StageMoments(moz, donor, persons, notices, team, wo1)
+    moments = matching.line_moments()
     pairs = {r: d for r, (d, *more) in moments.items() if not more}
     spoken = defaultdict(set)  # donor line: the stock lines its moments speak it at
     for r, lines in moments.items():
         for d in lines:
             spoken[d].add(r)
     pairs |= {r: d for r, d in table.items() if r not in pairs and spoken[d] <= {r}}
-    return {("dialog", r): d for r, d in sorted(pairs.items())}
+    return {("dialog", r): d for r, d in sorted(pairs.items())}, matching.stand_ins(set(pairs))
 
 
 @dataclass(frozen=True)
 class StageJoin:
     """A stock stage script (stock) and its donor script (source, ENS or FNS ordinal), stage_join's line pairs with
-    it, and the stock persons' donor persons as person_map gives them."""
+    it, the stock persons' donor persons as person_map gives them, and the stock events that stand in for another
+    under the donor's team, to the event each stands in for (StageMoments.stand_ins)."""
 
     source: str
     entry: int
@@ -332,6 +341,7 @@ class StageJoin:
     pairs: dict[tuple[str, int], int]
     persons: dict[int, int]
     stock: Script
+    stand_ins: dict[int, int] = field(default_factory=dict)
 
     @cached_property
     def notices(self) -> dict[tuple[str, int], int]:
@@ -357,10 +367,12 @@ def stage_joins(moz: dict[int, Script], wo1: dict[int, Script], wo2: dict[int, S
     if (missing := sorted(o for o, (source, _, _) in paired.items() if o in dream and source == WO2_X360.name
                           and o not in (teams or {}))):
         raise ValueError(f"Dream stages {missing} pair with WO2 X360 but have no WO2 team (dream_teams)")
-    return {o: StageJoin(source, entry, d, stage_join(moz[o], d, persons[source],
-                                                      (teams or {}).get(o) if o in dream else None,
-                                                      source == WO1_X360.name), persons[source], moz[o])
-            for o, (source, entry, d) in paired.items()}
+    joins = {}
+    for o, (source, entry, d) in paired.items():
+        pairs, stand_ins = _stage_join(moz[o], d, persons[source], (teams or {}).get(o) if o in dream else None,
+                                       source == WO1_X360.name)
+        joins[o] = StageJoin(source, entry, d, pairs, persons[source], moz[o], stand_ins)
+    return joins
 
 
 # A notice pairs with the donor notice its command's counterpart shows. The counterparts come from an optimal

@@ -1,7 +1,11 @@
 import hashlib
 import struct
 
+from wozmod.formats.scripts import guarded, parse_script
+from wozmod.text.contexts import served_entry
+from wozmod.text.script_alignment import StageJoin
 from wozmod.voices import build_voice_banks
+from wozmod.voices.build import guarded_stages
 from synthetic import kovs, script, spans, strings, write_ens, write_ps2_archive, write_stock_archive
 
 
@@ -79,3 +83,19 @@ def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_unde
         (voiceidx, stock / "data/Sound/Voice/Voice.bin", donors / "wo2-psp")]  # the stock clips, through 4058
     assert sorted(scenes[0][2]) == list(range(402, 414))  # the stock event files of the scenes
     assert all(hashlib.sha256(p.read_bytes()).digest() == digest for p, digest in before.items())
+
+
+def test_a_guarded_stage_script_is_served_under_the_english_voice_alone(tmp_path):
+    # Bugs: the guarded script written where the runtime serves it under both voices (wozmod/captions or entries), so
+    # the Japanese voice loses Dream 66.41 too (decisions ledger text row 51 keeps stock behaviour there), or under
+    # another key than its stage's (the game loads stage s at key 4251 + s, 0x4F06D0). Oracle: contexts.served_entry,
+    # the runtime's served() as tests/test_text_contexts.py holds it to runtime/english_runtime.c.
+    root = (0xFF, (1, 0, 0, 0, 0, 0, 0, 0)), (0x13, (5, 0, 1, 1, 0, 0, 0, 0))
+    stock = script(strings(), strings(), "<", (((0x26, 7, 0, 0, 0, 0, 0, 0),),) * 2, (root, root))
+    parsed = parse_script(stock)
+    for name, data in guarded_stages({66: stock}, {66: StageJoin("wo2-x360", 0, parsed, {}, {}, parsed,
+                                                                 {1: 0})}).items():
+        (tmp_path / "wozmod" / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "wozmod" / name).write_bytes(data)
+    assert [served_entry(tmp_path, 4251 + 66, mode) for mode in ("japanese", "english")] == \
+        [None, guarded(stock, {1: 0})]

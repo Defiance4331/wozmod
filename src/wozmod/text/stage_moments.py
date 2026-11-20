@@ -29,7 +29,8 @@ Dream stages 40-67. WO2 X360 plays each Dream stage with a fixed team (script_al
 test no team; MOZ lets the player pick and gates events on the team. Under WO2's team a stock event whose gate fails
 cannot run: it is a variant, and matches nothing (Dream stage 60 event 19, spoken for teams without Ling Tong where
 WO2's team hears event 20). MOZ's fallbacks, events gated on an earlier event not having run, need no rule here: on
-the real scripts none that WO2's team closes would match a donor event. The story and Z Dream donors test the team
+the real scripts none that WO2's team closes would match a donor event. Two fallbacks WO2's team leaves open, played
+beside the scene they stand in for, are StageMoments.stand_ins. The story and Z Dream donors test the team
 themselves, so their stages have no fixed team.
 
 Chains. MOZ splits one donor event into a head with the donor's trigger (spoken or silent: the gameplay, a notice)
@@ -46,9 +47,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
-from wozmod.formats.scripts import NOTICE, SPEAK, Script
+from wozmod.formats.scripts import AND, NOTICE, OR, RAN, SPEAK, TEAM, Script
 
-AND, OR, RAN, TEAM = 0xFF, 0xFE, 0x11, 0x23
 # MOZ's condition type for each WO1 X360 one that differs.
 WO1_TYPES = {**{t: t - 1 for t in range(0xA, 0xF)}, **{t: t + 1 for t in range(0x10, 0x24)}}
 # The word that holds a unit (placement index): per command opcode, the word after the opcode's; per condition type
@@ -117,6 +117,15 @@ def _refolded(node: Node) -> Node:
     if node[0] in ("leaf", "true", "false"):
         return node
     return _folded(node[0], [_refolded(child) for child in node[1]])
+
+
+def _moment(node: Node) -> Node:
+    """A raw tree with its team tests and its "event k has not run" guards made true: the moment it waits for."""
+    if node[0] == "leaf":
+        return TRUE if node[1] == TEAM or (node[1] == RAN and node[2][1] == 0) else node
+    if node[0] in ("true", "false"):
+        return node
+    return _folded(node[0], [_moment(child) for child in node[1]])
 
 
 def _leaves(node: Node) -> list[Node]:
@@ -239,6 +248,7 @@ class StageMoments:
     def __init__(self, stock: Script, donor: Script, persons: dict[int, int], notices: dict[int, int],
                  team: frozenset[int] | None, wo1: bool) -> None:
         mine, donors = unit_labels(stock, donor, persons)
+        self._script, self._team = stock, team
         on_team = None if team is None else (lambda officer: persons.get(officer, ("stock", officer)) in team)
         self.stock = events(stock, lambda p: persons.get(p, ("stock", p)), notices.get, on_team, False, mine)
         self.donor = events(donor, lambda p: p, lambda r: r, None, wo1, donors)
@@ -493,6 +503,41 @@ class StageMoments:
         self._twins()
         self.matches = self._assign()
         self.chains = self._chains(self.matches)
+
+    def stand_ins(self, paired: set[int]) -> dict[int, int]:
+        """MOZ's fallbacks for a matched scene that the donor's team leaves open, so they play beside it (decisions
+        ledger text row 51): each fallback event to the stock event of the scene. paired holds the stock lines that
+        pair with a donor line (stage_join).
+
+        A fallback speaks only MOZ's own lines (none in paired), matches no donor event, and can run under the team.
+        It stands in for a matched stock event (whole, or a chain piece) that tests the team when the two wait for
+        the same moment (_moment: the triggers but for team tests and "has not run" guards): it plays for the teams
+        that event shuts out. A fallback is closed already, and left alone, when one of its "event k has not run"
+        guards, tested again at dequeue, names an earlier live event k waiting for the same moment, since k leaves the
+        queue first (Dream 44.3, 55.6, 64.25). Dream 66 event 22 (event 21's scene for teams without Huang Gai and
+        Hanzo, or with Gracia) and 48 event 57 (56's, for teams without cast 15) remain."""
+        if self._team is None:
+            return {}
+        raw = [normal(condition_tree(self._script.conditions[i] if i < len(self._script.conditions) else ()),
+                      None, False, {}) for i in range(len(self.stock))]
+        moments = [_moment(tree) for tree in raw]
+        scenes = set(self.matches) | {i for pieces in self.chains.values() for i, _ in pieces}
+        gated = [i for i in sorted(scenes)
+                 if self.stock[i].live and any(leaf[1] == TEAM for leaf in _leaves(raw[i]))]
+        found = {}
+        for f in self.stock:
+            if not f.live or not f.speaks or f.index in scenes or moments[f.index] == TRUE \
+                    or any(line in paired for _, line in f.speaks):
+                continue
+            if any((k := _ran(x)) is not None and x[2][1:3] == (0, 1) and k < f.index and self.stock[k].live
+                   and moments[k] == moments[f.index] for x in _leaves(raw[f.index])):
+                continue
+            stood = [i for i in gated if moments[i] == moments[f.index]]
+            if len(stood) > 1:
+                raise ValueError(f"event {f.index} stands in for several events: {stood}")
+            if stood:
+                found[f.index] = stood[0]
+        return found
 
     def line_moments(self) -> dict[int, set[int]]:
         """Each stock line a moment speaks, with the donor lines its moments speak there: the n-th speak of a matched

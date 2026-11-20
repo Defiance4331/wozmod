@@ -254,6 +254,7 @@ def retime_event(stock: bytes, holds: dict[int, float], donor: dict[tuple[int, i
 
 EVENT_KEY = 4251  # the runtime key of LINKDATA2 entry n is 4251 + n
 FOLDER = "captions/voice"  # below wozmod/: served in place of the stock entry only while the voices are English
+# (event files here, stage scripts in build.guarded_stages)
 
 
 def clip_pcm(clips: dict[int, bytes], jobs: int | None = None) -> dict[int, bytes]:

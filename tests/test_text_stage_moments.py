@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from wozmod.formats.scripts import Line, Script, Table
-from wozmod.text.script_alignment import stage_join
+from wozmod.text.script_alignment import _stage_join, stage_join
 
 AND, RAN, TEAM, KILLED = 0xFF, 0x11, 0x23, 0x30  # KILLED: any test the matching compares as a plain leaf
 
@@ -31,6 +31,11 @@ def _team(officer: int, on: bool) -> tuple:
 
 def _ran(event: int) -> tuple:
     return _leaf(RAN, event, 1, 0)
+
+
+def _not_run(event: int) -> tuple:
+    """Event has not run, tested again when the event that holds the test leaves the queue."""
+    return _leaf(RAN, event, 0, 1)
 
 
 def _speak(person: int, line: int) -> tuple:
@@ -107,6 +112,19 @@ def test_a_line_its_moments_put_on_two_donor_lines_takes_its_table_pair():
     donor = _stage(2, (A, (_speak(7, 0),)), (B, (_speak(7, 1),)))
     stock = _stage(1, (A, (_speak(7, 0),)), (B, (_speak(7, 0),)))
     assert _join(stock, donor) == {0: 0}
+
+
+def test_a_fallback_the_donor_team_leaves_open_stands_in_for_the_scene_it_shares_the_moment_with():
+    # Bugs: MOZ's fallback for the teams its scene shuts out is left open, so under the English voice it plays right
+    # after the donor's scene with WO2's team (Dream 66.41 after 66.10-12, decisions ledger text row 51); or a MOZ
+    # restructuring of a donor event, whose line plays English through the line table (Dream 50.45), is taken for a
+    # fallback and silenced. Stock event 1 is the fallback (its own guard names silent event 2, another moment);
+    # event 3 is closed by event 0 already; event 4 speaks the donor's line 1 on another trigger. Expected by hand.
+    donor = _stage(2, (A, (_speak(7, 0),)), (_leaf(KILLED + 1, 1), (_speak(8, 1),)))
+    stock = _stage(4, (_all(A, _team(44, True)), (_speak(7, 0),)), (_all(A, _not_run(2)), (_speak(9, 1),)),
+                   (B, ()), (_all(A, _not_run(0)), (_speak(9, 2),)), (_all(A, _team(44, True)), (_speak(8, 3),)))
+    pairs, stand_ins = _stage_join(stock, donor, {p: p for p in range(100)}, frozenset({44}), False)
+    assert (pairs[("dialog", 3)], stand_ins) == (1, {1: 0})
 
 
 @pytest.mark.skipif(not (os.environ.get("WOZMOD_GAME") and os.environ.get("WOZMOD_DONORS")),

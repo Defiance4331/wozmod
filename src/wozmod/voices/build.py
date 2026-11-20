@@ -11,8 +11,8 @@ from wozmod.formats.audio import (
     WO1_EVENT_VOICES, WO2_EVENT_VOICES, BankClips, VoiceBankError, decoded_clips, english_se_bank, english_voice_bank,
     english_voice_clips, parse_kovs_record,
 )
-from wozmod.formats.linkdata import archive, decoded_member, ps2_members
-from wozmod.formats.scripts import Script, parse_script
+from wozmod.formats.linkdata import LINKDATA2_FIRST, archive, decoded_member, ps2_members
+from wozmod.formats.scripts import Script, guarded, parse_script
 from wozmod.text.resolver import DonorResolver
 from wozmod.text.script_alignment import (
     EVENTS, StageJoin, PSP_QUOTE_INSERT, PSP_QUOTES, PSP_STAGE_MEMBERS, QUOTES, WO1_QUOTE_INSERT, donor_event_entries, moz_scripts,
@@ -22,7 +22,7 @@ from wozmod.text.script_alignment import (
 from . import phones
 from .dream_events import DREAM_EVENTS, build_dream_events
 from .dream_movies import DREAM_MOVIES, build_dream_movies
-from .events import build_event_schedules
+from .events import FOLDER, build_event_schedules
 from .lips import donor_lips, english_lips, lip_bank, stock_lips, wo1_fits, x360_fits
 from .maps import (
     VoiceSlot, dialogue_voice_maps, psp_voice_map, quote_copies, slot_records, slot_table, stage_triggers, voice_slots,
@@ -101,6 +101,14 @@ def voice_maps(stock: Path, donors: Path) -> VoiceMaps:
     return VoiceMaps(moz, joins, triggers, slots, one, two, three)
 
 
+def guarded_stages(stages: dict[int, bytes], joins: dict[int, StageJoin]) -> dict[str, bytes]:
+    """Each stock stage script in stages (by LINKDATA2 entry) with its stand-ins closed once the event each stands in
+    for has run (decisions ledger text row 51; StageJoin.stand_ins, formats.scripts.guarded), by its path below the
+    mod folder: the runtime serves it in place of the stock script only while the voices are English, so the Japanese
+    voice keeps every stock event."""
+    return {f"{FOLDER}/{LINKDATA2_FIRST + o}.bin": guarded(data, joins[o].stand_ins) for o, data in sorted(stages.items())}
+
+
 def said(clips: dict[int, bytes], sources: dict[int, str], donor_events: dict, stock_events: list[tuple[int, bytes]],
          resolver: DonorResolver) -> dict[int, str]:
     """The English each clip of an event line says, where it is known. A clip from an Xbox 360 disc says the donor's
@@ -117,8 +125,9 @@ def said(clips: dict[int, bytes], sources: dict[int, str], donor_events: dict, s
 
 
 def build_voice_banks(stock: Path, donors: Path, speech: Path, output_dir: Path, jobs: int | None = None) -> None:
-    """Write voice/Voice.bin, voice/Slots.bin, voice/Lips.bin and voice/SE.bin, and the English Dream movies in
-    movie/voice, below the supplied mod folder; speech is the PocketSphinx model folder (phones.MODEL) the generated
+    """Write voice/Voice.bin, voice/Slots.bin, voice/Lips.bin and voice/SE.bin, the English Dream movies in
+    movie/voice, and the retimed event files and guarded stage scripts (guarded_stages) in captions/voice, below the
+    supplied mod folder; speech is the PocketSphinx model folder (phones.MODEL) the generated
     mouths' phones come from; jobs caps the ffmpeg processes and the speech threads."""
     stock, donors, speech, output_dir = Path(stock), Path(donors), Path(speech), Path(output_dir)
     folders = DonorsFolder(donors)
@@ -169,6 +178,10 @@ def build_voice_banks(stock: Path, donors: Path, speech: Path, output_dir: Path,
                                   WO2_X360.name: (two, wo2_events.values(), wo2_donor.order, WO2_EVENT_VOICES[1:])},
                  stock_bases, DonorResolver(donors)), phones.Listener(speech, jobs))
         (destination / "Lips.bin").write_bytes(lip_bank(lips))
+    stages = linkdata2.read([o for o, join in maps.joins.items() if join.stand_ins])
+    for name, data in guarded_stages(stages, maps.joins).items():
+        (output_dir / name).parent.mkdir(parents=True, exist_ok=True)
+        (output_dir / name).write_bytes(data)
     seidx, se = linkdata1.read([4056, 4057]).values()
     bank, _ = english_se_bank(
         seidx, se, (wo1 / "link_sebank.hdx").read_bytes(), wo1 / "link_sebank.bdx",
