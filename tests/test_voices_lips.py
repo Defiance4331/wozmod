@@ -281,8 +281,8 @@ def test_learned_mouths_give_koeis_shapes_on_lines_they_did_not_learn_from(tmp_p
     class Captured(Exception):
         pass
 
-    def capture(*inputs):
-        raise Captured(inputs)
+    def capture(clips, *inputs):  # the clips are read from Voice.bin while the build holds it open: keep a copy
+        raise Captured((dict(clips), *inputs))
 
     monkeypatch.setattr(build, "english_lips", capture)
     with pytest.raises(Captured) as caught:

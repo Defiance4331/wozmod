@@ -8,7 +8,7 @@ from pathlib import Path
 from wozmod import game_files
 from wozmod.donors import WO1_X360, WO2_PSP, WO2_X360, DonorsFolder
 from wozmod.formats.audio import (
-    WO1_EVENT_VOICES, WO2_EVENT_VOICES, VoiceBankError, decoded_clips, english_se_bank, english_voice_bank,
+    WO1_EVENT_VOICES, WO2_EVENT_VOICES, BankClips, VoiceBankError, decoded_clips, english_se_bank, english_voice_bank,
     english_voice_clips, parse_kovs_record,
 )
 from wozmod.formats.linkdata import archive, decoded_member, ps2_members
@@ -142,28 +142,32 @@ def build_voice_banks(stock: Path, donors: Path, speech: Path, output_dir: Path,
         clips[voice], sources[voice] = record, WO2_PSP.name
     destination = output_dir / "voice"
     destination.mkdir(parents=True, exist_ok=True)
-    (destination / "Voice.bin").write_bytes(english_voice_bank(clips))
-    (destination / "Slots.bin").write_bytes(slot_table(slots))
-    stock_events = linkdata2.read([o for ordinals, _, _ in EVENTS for o in ordinals])
-    wo1_events = wo1_ens.read(donor_event_entries(WO1_X360.name))
-    wo2_events = wo2_donor.members(donor_event_entries(WO2_X360.name))
-    # Under the English voice each event subtitle ends with its English line: retimed event files, served by voice.
-    build_event_schedules(stock_events, clips, output_dir, jobs,
-                          {WO1_X360.name: (wo1_events, ">"), WO2_X360.name: (wo2_events, wo2_donor.order)})
-    # A line with no donor block gets its stock block stretched to the English clip: the Z Dream ones too (0xAF3 +
-    # index, formats.audio.event_voice).
-    stock_bases = ([(WO2_EVENT_VOICES[0] if source == WO2_X360.name else WO1_EVENT_VOICES[0], stock_events[o])
-                    for ordinals, source, _ in EVENTS for o in ordinals]
-                   + [(WO2_EVENT_VOICES[0], data) for _, data in sorted(dream_events.items())])
-    lips, _ = english_lips(clips, sources, stock_lips(stock_bases), {
-        "wo1-x360": (one, donor_lips(wo1_events.values(), ">", *WO1_EVENT_VOICES[1:]), wo1_fits),
-        "wo2-x360": (two, donor_lips(wo2_events.values(), wo2_donor.order, *WO2_EVENT_VOICES[1:]), x360_fits),
-        "wo2-psp": (three, {}, x360_fits),  # the PSP plays its scenes as movies: no voiced line has a lip block
-    }, lambda some, rate: decoded_clips(some, rate, jobs),
-        said(clips, sources, {WO1_X360.name: (one, wo1_events.values(), ">", WO1_EVENT_VOICES[1:]),
-                              WO2_X360.name: (two, wo2_events.values(), wo2_donor.order, WO2_EVENT_VOICES[1:])},
-             stock_bases, DonorResolver(donors)), phones.Listener(speech, jobs))
-    (destination / "Lips.bin").write_bytes(lip_bank(lips))
+    with open(destination / "Voice.bin", "wb") as out:
+        english_voice_bank(clips, out)
+    # The bank written, its clips are read back from it as needed: what follows reads the event lines' clips, and
+    # holding all of them (about 1 GB) to the end set the step's peak.
+    with BankClips(destination / "Voice.bin") as clips:
+        (destination / "Slots.bin").write_bytes(slot_table(slots))
+        stock_events = linkdata2.read([o for ordinals, _, _ in EVENTS for o in ordinals])
+        wo1_events = wo1_ens.read(donor_event_entries(WO1_X360.name))
+        wo2_events = wo2_donor.members(donor_event_entries(WO2_X360.name))
+        # Under the English voice each event subtitle ends with its English line: retimed event files, served by voice.
+        build_event_schedules(stock_events, clips, output_dir, jobs,
+                              {WO1_X360.name: (wo1_events, ">"), WO2_X360.name: (wo2_events, wo2_donor.order)})
+        # A line with no donor block gets its stock block stretched to the English clip: the Z Dream ones too (0xAF3 +
+        # index, formats.audio.event_voice).
+        stock_bases = ([(WO2_EVENT_VOICES[0] if source == WO2_X360.name else WO1_EVENT_VOICES[0], stock_events[o])
+                        for ordinals, source, _ in EVENTS for o in ordinals]
+                       + [(WO2_EVENT_VOICES[0], data) for _, data in sorted(dream_events.items())])
+        lips, _ = english_lips(clips, sources, stock_lips(stock_bases), {
+            "wo1-x360": (one, donor_lips(wo1_events.values(), ">", *WO1_EVENT_VOICES[1:]), wo1_fits),
+            "wo2-x360": (two, donor_lips(wo2_events.values(), wo2_donor.order, *WO2_EVENT_VOICES[1:]), x360_fits),
+            "wo2-psp": (three, {}, x360_fits),  # the PSP plays its scenes as movies: no voiced line has a lip block
+        }, lambda some, rate: decoded_clips(some, rate, jobs),
+            said(clips, sources, {WO1_X360.name: (one, wo1_events.values(), ">", WO1_EVENT_VOICES[1:]),
+                                  WO2_X360.name: (two, wo2_events.values(), wo2_donor.order, WO2_EVENT_VOICES[1:])},
+                 stock_bases, DonorResolver(donors)), phones.Listener(speech, jobs))
+        (destination / "Lips.bin").write_bytes(lip_bank(lips))
     seidx, se = linkdata1.read([4056, 4057]).values()
     bank, _ = english_se_bank(
         seidx, se, (wo1 / "link_sebank.hdx").read_bytes(), wo1 / "link_sebank.bdx",

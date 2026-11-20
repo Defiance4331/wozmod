@@ -162,11 +162,18 @@ struct Line {
     silent: Vec<bool>,
 }
 
-fn pcm(data: &[u8], what: &str) -> PyResult<Vec<f64>> {
+/// data, checked to be whole 16-bit samples (the check runs before the work, the samples are made per line in it).
+fn speech<'a>(data: &'a PyBackedBytes, what: &str) -> PyResult<&'a [u8]> {
     if data.len() % 2 != 0 {
         return Err(PyValueError::new_err(format!("{what}: {} bytes is not a whole number of 16-bit samples", data.len())));
     }
-    Ok(data.chunks_exact(2).map(|c| f64::from(i16::from_le_bytes([c[0], c[1]])) / 32768.0).collect())
+    Ok(data)
+}
+
+/// 16-bit little-endian samples as fractions of full scale. Made for one line at a time: eight bytes a sample, the
+/// event lines' speech held all at once was about 0.55 GB.
+fn pcm(data: &[u8]) -> Vec<f64> {
+    data.chunks_exact(2).map(|c| f64::from(i16::from_le_bytes([c[0], c[1]])) / 32768.0).collect()
 }
 
 /// Per lip frame 0..frames: the log mel bands of the window on its middle, less the line's median of each band
@@ -570,11 +577,11 @@ pub fn lip_shapes<'py>(
             return Err(PyValueError::new_err(format!("label {bad} is no shape 0 to {}", SHAPES - 1)));
         }
         let found = phones(aligned, heard, labels.len(), "known phones")?;
-        examples.push((pcm(speech, "known speech")?, labels.to_vec(), found));
+        examples.push((self::speech(speech, "known speech")?, labels.to_vec(), found));
     }
     let mut wanted = Vec::with_capacity(lines.len());
     for (speech, frames, aligned, heard) in &lines {
-        wanted.push((pcm(speech, "line speech")?, *frames, phones(aligned, heard, *frames, "line phones")?));
+        wanted.push((self::speech(speech, "line speech")?, *frames, phones(aligned, heard, *frames, "line phones")?));
     }
     let shapes = py.detach(|| {
         let silence = exp(silence / 10.0 * ln(10.0)); // a mean square, of full scale
@@ -582,7 +589,7 @@ pub fn lip_shapes<'py>(
         let known: Vec<(Line, Vec<u8>, &Phones)> = examples
             .iter()
             .filter(|(_, labels, _)| !labels.is_empty())
-            .map(|(samples, labels, found)| (line(&spectrum, samples, labels.len(), silence), labels.clone(), found))
+            .map(|(samples, labels, found)| (line(&spectrum, &pcm(samples), labels.len(), silence), labels.clone(), found))
             .collect();
         let (mut rows, mut targets) = (Vec::new(), Vec::new());
         let mut table_rows: [Vec<([u8; 3], usize)>; 2] = [Vec::new(), Vec::new()];
@@ -608,7 +615,7 @@ pub fn lip_shapes<'py>(
         wanted
             .iter()
             .map(|(samples, frames, [aligned, heard])| {
-                let speech = line(&spectrum, samples, *frames, silence);
+                let speech = line(&spectrum, &pcm(samples), *frames, silence);
                 let scores = model.scores(&speech);
                 let scores = match (aligned, heard) {
                     (Some(p), _) => with_phones(scores, &speech.silent, p, &tables[0], ALIGNED),

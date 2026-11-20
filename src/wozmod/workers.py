@@ -9,19 +9,22 @@ of the GIL, so threads run them side by side and share what the step has already
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Callable, Iterable, Iterator
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from typing import TypeVar
 
 T = TypeVar("T")
 R = TypeVar("R")
+_END = object()  # what next() gives once items has no more
 
 
 def ordered_map(fn: Callable[[T], R], items: Iterable[T], jobs: int,
                 done: Callable[[T], object] | None = None) -> Iterator[R]:
     """fn(item) for each item, at most jobs at once, yielded in items' order: each as soon as it and every item
-    before it are done. Each item's work starts as soon as items gives it, so a generator makes its next item while
-    the earlier ones run. An error is raised in items' order too: the first failing item's, once the items before it
+    before it are done. items is read as the workers come free, one item ahead of them: a generator makes its next
+    item while the earlier ones run, and at most jobs + 1 items are taken and not yet done. Each result is let go of
+    once it is yielded. An error is raised in items' order too: the first failing item's, once the items before it
     are done; the items after it that have not started never start.
 
     done(item), when given, runs here, one at a time, as each item finishes, in finishing order: for progress. It
@@ -30,32 +33,34 @@ def ordered_map(fn: Callable[[T], R], items: Iterable[T], jobs: int,
     """
     if type(jobs) is not int or jobs < 1:
         raise ValueError(f"jobs must be a whole number of 1 or more, not {jobs!r}")
+    taking = iter(items)
     with ThreadPoolExecutor(jobs) as pool:  # it starts a thread only for an item that finds none idle
-        taken, futures = [], []
+        given: deque[Future] = deque()  # taken and not yet yielded, in items' order
+        running: dict[Future, tuple[int, T]] = {}  # taken and not yet seen to finish: its place in items, the item
+        taken, failed = 0, None  # failed: the place of the first item in items' order seen to fail
         try:
-            for item in items:
-                taken.append(item)
-                futures.append(pool.submit(fn, item))
-            at = {future: n for n, future in enumerate(futures)}
-            pending, failed, given = set(futures), len(futures), 0
-            while given < len(futures):
-                if given == failed:
-                    futures[failed].result()  # raises its error
-                if futures[given] in pending:
-                    finished, pending = wait(pending, return_when=FIRST_COMPLETED)
-                    for future in sorted(finished, key=at.__getitem__):
-                        n = at[future]
-                        if future.cancelled() or n > failed:
-                            continue
+            while True:
+                if failed is None and len(running) <= jobs and (item := next(taking, _END)) is not _END:
+                    future = pool.submit(fn, item)
+                    given.append(future)
+                    running[future] = taken, item
+                    taken += 1
+                elif not given:
+                    return
+                elif given[0] not in running:
+                    yield given.popleft().result()  # raises its error
+                else:
+                    finished, _ = wait(running, return_when=FIRST_COMPLETED)
+                    for future in sorted(finished, key=lambda f: running[f][0]):
+                        n, item = running.pop(future)
+                        if future.cancelled() or failed is not None and n > failed:
+                            continue  # past the first failure: its error is what is raised, and no progress after
                         if future.exception() is not None:
                             failed = n
-                            for later in futures[n + 1:]:
+                            for later in list(given)[given.index(future) + 1:]:
                                 later.cancel()
                         elif done is not None:
-                            done(taken[n])
-                    continue
-                yield futures[given].result()
-                given += 1
+                            done(item)
         finally:
-            for future in futures:
+            for future in given:
                 future.cancel()

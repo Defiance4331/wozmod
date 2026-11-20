@@ -9,6 +9,7 @@ import sys
 import zlib
 from pathlib import Path
 from statistics import mode
+from typing import BinaryIO
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
@@ -928,13 +929,13 @@ def native_menu_art(entry: int, item: int, served: Image.Image, mapping: dict,
     })
     return art
 
-def hires_bin(entries: Path, vector: tuple, squeeze: bool = False, jobs: int = 1,
-              review: Path | None = None) -> bytes:
-    """The large-menu sheets. The texture encoding and the LZP2 packing of each sheet run on `jobs` threads while
-    the next sheet is drawn (the native codecs let go of the GIL); the bytes are the same.
+def hires_bin(entries: Path, vector: tuple, out: BinaryIO, squeeze: bool = False, jobs: int = 1,
+              review: Path | None = None) -> None:
+    """Write the large-menu sheets to out. The texture encoding of each sheet runs on `jobs` threads while the next
+    sheet is drawn (the native codecs let go of the GIL); the bytes are the same.
     vector is (the menu_textures mapping, the donors); review is the developer folder that keeps the per-sheet
     layout details. It reads the built entries and never changes them: the entry build cleans the dark plates."""
-    return hires_bank(list(ordered_map(_encoded, _hires_sheets(entries, vector, squeeze, review), jobs)))
+    hires_bank(list(ordered_map(_encoded, _hires_sheets(entries, vector, squeeze, review), jobs)), out)
 
 
 def _encoded(sheet: tuple[dict, Image.Image, int, int, int]) -> HiresRow:
@@ -947,10 +948,13 @@ def _hires_sheets(entries: Path, vector: tuple, squeeze: bool, review: Path | No
     parsed = {}
     extras = list(DARK) + sorted(HIRES_NATIVE_MENU)
     plates = HIRES + [(e, i, 0, 0, 0, 0) for e, i in extras]
+    last = {plate[0]: number for number, plate in enumerate(plates)}  # each entry's last plate
     for number, (entry, item, w, h, band, per_col) in enumerate(plates):
         scale = HIRES_SCALE
         report_progress("art", "drawing the large menu plates", 0.65 + 0.3 * number / len(plates),
                (number, len(plates)))
+        for done in [e for e in parsed if last[e] < number]:  # an entry no later plate reads is let go of
+            del parsed[done]
         if entry not in parsed:  # decode each entry once, however many of its items are used
             data = (entries / f"{entry}.bin").read_bytes()
             parsed[entry] = parse_texture_package(parse_lzp2(data).decoded if data[:4] == b"LZP2" else data)

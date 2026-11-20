@@ -311,3 +311,19 @@ def test_a_texture_resized_into_bgra8_keeps_every_pixel_and_says_bgra8() -> None
     assert second.pixel_format == textures.PIXEL_FORMAT_DXT1 and second.payload == bytes(8)
     with pytest.raises(TextureCodecError):
         g1t.with_texture_resized(0, 8, 8, rgba, 0x7F)
+
+
+def test_a_parsed_g1t_holds_its_bytes_once():
+    # Bug: each texture keeps its payload as a copy beside the G1T's own bytes, so the art step's donor textures and
+    # the entries the hi-res sheets read take twice their size (about 0.5 GB of the art step's peak in 2026-11).
+    import tracemalloc
+
+    source = _g1t(*[(textures.PIXEL_FORMAT_DXT5, 10, 10, bytes(1024 * 1024))] * 8)  # 8 MiB of payloads
+    tracemalloc.start()
+    try:
+        g1t = parse_g1t(source)
+        held = tracemalloc.get_traced_memory()[0]
+    finally:
+        tracemalloc.stop()
+    assert [len(texture.payload) for texture in g1t.textures] == [1024 * 1024] * 8
+    assert held < len(source) / 8, held  # the source itself is the caller's: parsing adds next to nothing

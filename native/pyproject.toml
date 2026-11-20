@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "wozmod-native"
-version = "0.4.0"
+version = "0.4.1"
 description = "Fast LZP2 and DXT5 codecs for wozmod (the Python codecs give the same bytes), its audio alignment, the mouth shapes it learns from speech, its stage-script stream alignments and the lettering faces' pixel loops."
 license = "GPL-3.0-or-later"
 requires-python = ">=3.14"

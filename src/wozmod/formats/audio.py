@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import math
+import mmap
 import os
 import re
 import struct
 import zlib
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import ExitStack
 from dataclasses import dataclass
+from itertools import batched
 from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO, NamedTuple
 
@@ -421,9 +425,12 @@ def kovs_ogg(record: bytes) -> bytes:
 FFMPEG_BATCH = 8
 
 
-def _ffmpeg_each(jobs: list[tuple[list[str], bytes, list[str]]], workers: int | None = None,
-                 label: str = "converting audio", span: tuple[float, float] = (0.0, 1.0)) -> list[bytes]:
-    """Run ffmpeg once per (input options, input bytes, output options) job, FFMPEG_BATCH jobs per process.
+def _ffmpeg_each(jobs: Iterable[tuple[list[str], bytes, list[str]]], count: int, workers: int | None = None,
+                 label: str = "converting audio", span: tuple[float, float] = (0.0, 1.0)) -> Iterator[bytes]:
+    """Run ffmpeg once per (input options, input bytes, output options) job, FFMPEG_BATCH jobs per process, and yield
+    each output in the jobs' order. jobs is read a batch at a time as a process comes free, so a generator makes each
+    job's input only when its batch starts and nothing holds all the inputs; each output is the caller's to keep or
+    drop. count is how many jobs there are.
 
     label and span say what the progress view shows: the part of the voices stage this call covers.
     """
@@ -432,8 +439,7 @@ def _ffmpeg_each(jobs: list[tuple[list[str], bytes, list[str]]], workers: int | 
 
     finished = [0]
 
-    def batch(start: int) -> list[bytes]:
-        part = jobs[start:start + FFMPEG_BATCH]
+    def batch(part: tuple[tuple[list[str], bytes, list[str]], ...]) -> list[bytes]:
         # On Windows a virus scanner can hold a new file, so the folder delete fails; a leftover folder is harmless.
         with tempfile.TemporaryDirectory(prefix="wozmod-ffmpeg-", ignore_cleanup_errors=True) as folder:
             command = [resources.ffmpeg() or "ffmpeg", "-hide_banner", "-loglevel", "error", "-filter_threads", "1"]
@@ -445,19 +451,19 @@ def _ffmpeg_each(jobs: list[tuple[list[str], bytes, list[str]]], workers: int | 
             platform.run_hidden(command, capture_output=True, check=True, stdin=subprocess.DEVNULL)  # never read the terminal
             return [Path(folder, f"{k}.out").read_bytes() for k in range(len(part))]
 
-    def progress(start: int) -> None:  # report() raises Cancelled when the player cancelled: no batch starts after
-        finished[0] += len(jobs[start:start + FFMPEG_BATCH])
-        report("voices", label, span[0] + (span[1] - span[0]) * finished[0] / len(jobs), (finished[0], len(jobs)))
+    def progress(part: tuple) -> None:  # report() raises Cancelled when the player cancelled: no batch starts after
+        finished[0] += len(part)
+        report("voices", label, span[0] + (span[1] - span[0]) * finished[0] / count, (finished[0], count))
 
-    starts = range(0, len(jobs), FFMPEG_BATCH)
-    return [out for part in ordered_map(batch, starts, workers or os.process_cpu_count(), progress) for out in part]
+    for outputs in ordered_map(batch, batched(jobs, FFMPEG_BATCH, strict=False), workers or os.process_cpu_count(), progress):
+        yield from outputs
 
 
 def decoded_clips(clips: dict[int, bytes], rate: int, jobs: int | None = None) -> dict[int, bytes]:
     """Each KOVS clip as 16-bit little-endian mono samples at rate."""
     ids = sorted(clips)
-    pcm = _ffmpeg_each([(["-f", "ogg"], kovs_ogg(clips[i]), ["-ac", "1", "-ar", str(rate), "-f", "s16le"]) for i in ids],
-                       jobs, "reading voices for lip sync", (0.85, 0.85))  # short: progress stays put
+    pcm = _ffmpeg_each(((["-f", "ogg"], kovs_ogg(clips[i]), ["-ac", "1", "-ar", str(rate), "-f", "s16le"]) for i in ids),
+                       len(ids), jobs, "reading voices for lip sync", (0.85, 0.85))  # short: progress stays put
     return dict(zip(ids, pcm, strict=True))
 
 
@@ -550,13 +556,7 @@ def donor_voice_clips(banks: list[tuple[str, dict[int, int], list[tuple[int, int
     """Convert the donor RIFF clips donor_voice_choice picks, with each clip's source. ffmpeg reads any RIFF codec
     the donors use (Xbox 360 XMA, PSP ATRAC3plus) and every clip leaves as 48 kHz mono Vorbis."""
     chosen = donor_voice_choice(banks)
-    riffs, sources = {}, {}
-    for source, _, records, bank in banks:
-        with bank.open("rb") as stream:
-            for moz_id, (picked, clip) in chosen.items():
-                if picked == source:
-                    data = _read_at(stream, *records[clip])
-                    riffs[moz_id], sources[moz_id] = (_psp_dialogue_riff(data) if source == "wo2-psp" else data), source
+    sources = {moz_id: source for source, *_ in banks for moz_id, (picked, _) in chosen.items() if picked == source}
     # The Ogg granule positions, which the game reads as the clip's length, come from the frame timestamps.
     # ffmpeg's RIFF reader packs two ATRAC3plus frames per packet but stamps one frame's duration, so the PSP
     # timestamps repeat and advance at half speed: asetpts numbers them by the decoded samples instead, rounded
@@ -572,21 +572,55 @@ def donor_voice_clips(banks: list[tuple[str, dict[int, int], list[tuple[int, int
             "" if span[1] is None else f":end_sample={span[1]}") + ","
         return trim + "asetpts=round(N/SR/TB)" + mono
 
-    return vorbis_records({i: (["-threads", "1", "-f", "wav"], riff, filters(riff)) for i, riff in riffs.items()},
-                          jobs, "converting voice clips", (0.1, 0.8)), sources
+    with ExitStack() as files:  # each clip is read from its bank only when its ffmpeg batch starts
+        streams = {source: (files.enter_context(bank.open("rb")), records) for source, _, records, bank in banks}
+
+        def job(moz_id: int) -> tuple[list[str], bytes, str]:
+            stream, records = streams[sources[moz_id]]
+            data = _read_at(stream, *records[chosen[moz_id][1]])
+            riff = _psp_dialogue_riff(data) if sources[moz_id] == "wo2-psp" else data
+            return ["-threads", "1", "-f", "wav"], riff, filters(riff)
+
+        return vorbis_records(OnDemand(list(sources), job), jobs, "converting voice clips", (0.1, 0.8)), sources
 
 
-def vorbis_records(sources: dict[int, tuple[list[str], bytes, str]], jobs: int | None = None,
+class OnDemand(Mapping):
+    """A mapping of keys to values make(key) builds afresh at each lookup and nothing keeps: inputs too large to
+    hold all at once (a step's donor clips), made one at a time as their work starts."""
+
+    def __init__(self, keys: list, make: Callable) -> None:
+        self._keys, self._make = dict.fromkeys(keys), make
+
+    def __getitem__(self, key):
+        if key not in self._keys:
+            raise KeyError(key)
+        return self._make(key)
+
+    def __iter__(self) -> Iterator:
+        return iter(self._keys)
+
+    def __len__(self) -> int:
+        return len(self._keys)
+
+
+def vorbis_records(sources: Mapping[int, tuple[list[str], bytes, str]], jobs: int | None = None,
                    label: str = "converting voice clips", span: tuple[float, float] = (0.0, 1.0)) -> dict[int, bytes]:
     """Each source, (ffmpeg input options, input bytes, audio filters), as the KOVS record of the 48 kHz mono Vorbis
     clip the voice bank takes, by voice id; jobs caps the ffmpeg processes, label and span are what the progress
-    view shows (_ffmpeg_each)."""
+    view shows (_ffmpeg_each). Each source is looked up once per encode, as its batch starts: a mapping that makes
+    its values on demand keeps the inputs out of memory."""
     def encode(moz_ids: list[int], quality: int, span: tuple[float, float]) -> dict[int, bytes]:
         def vorbis(audio_filters: str) -> list[str]:
             return ["-af", audio_filters, "-ar", "48000", "-c:a", "libvorbis", "-threads", "1", "-q:a", str(quality),
                     "-fflags", "+bitexact", "-flags:a", "+bitexact", "-f", "ogg"]
-        oggs = _ffmpeg_each([(sources[i][0], sources[i][1], vorbis(sources[i][2])) for i in moz_ids], jobs, label, span)
-        return dict(zip(moz_ids, map(kovs_record, oggs), strict=True))
+
+        def jobs_of():
+            for i in moz_ids:
+                before, data, audio_filters = sources[i]
+                yield before, data, vorbis(audio_filters)
+
+        oggs = _ffmpeg_each(jobs_of(), len(moz_ids), jobs, label, span)
+        return dict(zip(moz_ids, map(kovs_record, oggs), strict=True))  # each Ogg stream let go of once wrapped
 
     clips = encode(list(sources), WO2_VORBIS_QUALITY, span)
     # The game reads a clip whole into a SLOT_BYTES buffer: a clip that does not fit is encoded again, one step lower.
@@ -625,13 +659,14 @@ def _read_at(stream: BinaryIO, offset: int, size: int) -> bytes:
     return _read_exact(stream, size, "donor voice record")
 
 
-def english_voice_bank(clips: dict[int, bytes]) -> bytes:
-    """Assemble an indexed bank of validated mono 48 kHz clips: every stock voice id, then any voice slot past them
-    (wozmod.voices.maps.voice_slots)."""
+def english_voice_bank(clips: dict[int, bytes], out: BinaryIO) -> None:
+    """Write an indexed bank of validated mono 48 kHz clips to out: every stock voice id, then any voice slot past
+    them (wozmod.voices.maps.voice_slots). Every clip is checked before anything is written, and the clips are written
+    as they are, so the bank (about 1 GB) never sits in memory beside them."""
     ids = max(MOZ_VOICE_IDS, max(clips, default=0) + 1)
     table = bytearray(_aligned_size(4 + 8 * ids))
     struct.pack_into("<I", table, 0, ids)
-    parts, at = [table], len(table)  # joined once at the end: the bank (about 1 GB) is built in a single copy
+    at = len(table)
     for moz_id, data in sorted(clips.items()):
         ogg = parse_kovs_record(data, ordinal=moz_id)[2]
         if (ogg.sample_rate, ogg.channels) != (48_000, 1) or len(data) > SLOT_BYTES:
@@ -640,9 +675,40 @@ def english_voice_bank(clips: dict[int, bytes]) -> bytes:
         if not 0 <= decoded - ogg.sample_count <= last:  # the game stops a clip at its declared length
             raise VoiceBankError(f"voice id {moz_id} declares {ogg.sample_count} samples but holds {decoded}")
         struct.pack_into("<II", table, 4 + 8 * moz_id, at, len(data))
-        parts += [data, bytes(_aligned_size(len(data)) - len(data))]
         at += _aligned_size(len(data))
-    return b"".join(parts)
+    out.write(table)
+    for _, data in sorted(clips.items()):
+        out.write(data)
+        out.write(bytes(_aligned_size(len(data)) - len(data)))
+
+
+class BankClips(Mapping[int, bytes]):
+    """The clips of a voice bank file english_voice_bank wrote, by voice id in ascending order, each read from the
+    file when asked for: what later steps read of the bank without holding its 1 GB. Use it as a context manager;
+    the file stays mapped (read-only) until it closes."""
+
+    def __init__(self, path: Path) -> None:
+        with open(path, "rb") as stream:
+            self._map = mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ)
+        count = struct.unpack_from("<I", self._map)[0]
+        self._spans = {voice: span for voice in range(count)
+                       if (span := struct.unpack_from("<II", self._map, 4 + 8 * voice))[1]}
+
+    def __getitem__(self, voice: int) -> bytes:
+        at, size = self._spans[voice]
+        return self._map[at:at + size]
+
+    def __iter__(self) -> Iterator[int]:
+        return iter(self._spans)
+
+    def __len__(self) -> int:
+        return len(self._spans)
+
+    def __enter__(self) -> BankClips:
+        return self
+
+    def __exit__(self, *_) -> None:
+        self._map.close()
 
 
 SE_BANKS = 122
@@ -804,11 +870,13 @@ def _xma2_riff(packets: bytes, rate: int) -> bytes:
 def _pcm16(clips: list[tuple[str, bytes, int, int]], jobs: int | None) -> list[tuple[int, bytes]]:
     """Decode (donor, clip, donor rate, rate) donor clips once, X360 XMA2 or PSP ADPCM, to 16-bit mono PCM at the
     entry's rate."""
-    inputs = [(["-f", "vag"], _vag(clip, donor_rate)) if donor == "wo2-psp" else
-              (["-f", "wav"], _xma2_riff(clip, donor_rate)) for donor, clip, donor_rate, _ in clips]
-    pcms = _ffmpeg_each([(before, data, ["-ac", "1", "-ar", str(rate), "-f", "s16le"])
-                         for (before, data), (*_, rate) in zip(inputs, clips, strict=True)],
-                        jobs, "converting sound effects", (0.85, 1.0))
+    def jobs_of():  # each clip wrapped only when its batch starts
+        for donor, clip, donor_rate, rate in clips:
+            before, data = ((["-f", "vag"], _vag(clip, donor_rate)) if donor == "wo2-psp" else
+                            (["-f", "wav"], _xma2_riff(clip, donor_rate)))
+            yield before, data, ["-ac", "1", "-ar", str(rate), "-f", "s16le"]
+
+    pcms = _ffmpeg_each(jobs_of(), len(clips), jobs, "converting sound effects", (0.85, 1.0))
     return [(len(pcm) // 2, pcm) for pcm in pcms]
 
 

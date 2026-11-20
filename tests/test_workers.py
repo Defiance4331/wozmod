@@ -62,3 +62,26 @@ def test_items_that_finish_out_of_order_are_joined_in_hand_out_order():
         joined = list(ordered_map(slow_first, items, jobs, finished[jobs].append))
         assert joined == [f"piece {item}" for item in items], jobs
     assert finished[1] == items and finished[4] != items  # at 4 workers they did finish out of order
+
+
+def test_a_generator_is_read_only_as_far_ahead_as_the_workers():
+    # Bug: ordered_map takes every item before it yields the first result, so a generator's items (the art step's
+    # drawn hi-res sheets, about 30 MB each) all sit in memory at once: the step's peak grows with the item count.
+    for jobs in (1, 3):
+        made, finished, ahead = [0], [0], []
+
+        def items():
+            for item in range(12):
+                made[0] += 1
+                ahead.append(made[0] - finished[0])  # items made and not yet done, this one included
+                yield item
+
+        def work(item: int) -> int:
+            time.sleep(0.005)
+            return item
+
+        def done(_) -> None:
+            finished[0] += 1
+
+        assert list(ordered_map(work, items(), jobs, done)) == list(range(12))
+        assert max(ahead) == jobs + 1, (jobs, ahead)  # the workers' items and the one made while they run

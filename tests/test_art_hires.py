@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import struct
 
 import pytest
@@ -7,6 +8,13 @@ from PIL import Image
 
 from wozmod.art import hires
 from wozmod.art.hires import HIRES_PACKINGS, HiresError, HiresRow, hires_bank, read_hires_bank
+
+
+def bank(rows: list[HiresRow]) -> bytes:
+    """The bank file hires_bank writes for rows."""
+    out = io.BytesIO()
+    hires_bank(rows, out)
+    return out.getvalue()
 
 
 def blank_row(entry: int, w: int = 8, h: int = 8, band: int = 8) -> HiresRow:
@@ -47,13 +55,38 @@ def test_packed_bank_reads_back_every_rows_fields_flags_and_blocks():
             blocks.append([rng.randbytes((ew >> k) * (eh >> k)) for k in range(levels)])
         rows.append(HiresRow(4000 + n, n, w, h, band, per_col, blocks, overlay=n == 2, right_grow=n == 5,
                              minimum=n * 1000))
-    blob = hires_bank(rows)
+    blob = bank(rows)
     assert struct.unpack_from("<I", blob, 12)[0] > len(HIRES_PACKINGS)  # the shapes need a second sheet
     back = read_hires_bank(blob)
     assert len(back) == len(rows)
     failures = [(row.entry, field) for row, got in zip(rows, back, strict=True) for field in row.__dataclass_fields__
                 if getattr(row, field) != getattr(got, field)]
     assert not failures, failures
+
+
+def test_bank_is_written_a_sheet_at_a_time_not_built_whole_beside_the_blocks():
+    """Bug: the bank is assembled in memory (its sheets, then their join, then a copy of that) beside the rows'
+    blocks, so writing the release's 240 MB hires.bin holds several times that and sets the art step's peak."""
+    import tracemalloc
+
+    class Sink(io.RawIOBase):  # counts what is written and keeps none of it
+        size = 0
+
+        def write(self, data) -> int:
+            self.size += len(data)
+            return len(data)
+
+    rows = [blank_row(n, 680, 680, 680) for n in range(8)]  # 2040 texels a side at 3x: four to a 4096 sheet
+    given = sum(len(level) for row in rows for packing in row.blocks for level in packing)
+    sink = Sink()
+    tracemalloc.start()
+    try:
+        hires_bank(rows, sink)
+        held = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert sink.size > given  # four sheets, two per packing
+    assert held < given / 2, (held, given)  # one 16 MiB sheet level at a time
 
 
 def test_bank_takes_the_blocks_of_a_row_whose_height_is_not_whole_bands():
@@ -63,18 +96,18 @@ def test_bank_takes_the_blocks_of_a_row_whose_height_is_not_whole_bands():
 
     art = Image.new("RGBA", (16 * HIRES_SCALE, 256 * HIRES_SCALE), (200, 200, 200, 255))
     row = HiresRow(1, 2, 16, 256, 35, 0, hires_blocks(art, 16, 35, 0))
-    assert read_hires_bank(hires_bank([row])) == [row]
+    assert read_hires_bank(bank([row])) == [row]
 
 
 def test_packed_bank_refuses_levels_of_the_wrong_size_and_rows_past_the_uv_cap():
     """Blocks of another size would be spliced over a neighbour; a row past 4095 texels cannot be addressed."""
     # 8x8 stock texels: 24x24 at 3x, then 12x12; 16x16 at 2x
     with pytest.raises(HiresError, match="levels of"):
-        hires_bank([HiresRow(13, 5, 8, 8, 8, 0, [[bytes(24 * 24), bytes(16 * 16)], [bytes(16 * 16)]])])
+        bank([HiresRow(13, 5, 8, 8, 8, 0, [[bytes(24 * 24), bytes(16 * 16)], [bytes(16 * 16)]])])
     with pytest.raises(HiresError, match="levels of"):
-        hires_bank([HiresRow(13, 5, 8, 8, 8, 0, [[bytes(24 * 24), bytes(12 * 12)], [bytes(24 * 24)]])])
+        bank([HiresRow(13, 5, 8, 8, 8, 0, [[bytes(24 * 24), bytes(12 * 12)], [bytes(24 * 24)]])])
     with pytest.raises(HiresError, match="UV cap"):
-        hires_bank([HiresRow(13, 5, 1366, 8, 8, 0, [[bytes(4104 * 24), bytes(2052 * 12)], [bytes(2736 * 16)]])])
+        bank([HiresRow(13, 5, 1366, 8, 8, 0, [[bytes(4104 * 24), bytes(2052 * 12)], [bytes(2736 * 16)]])])
 
 
 def test_bank_writer_refuses_each_bank_the_runtime_refuses_whole_and_takes_one_at_each_bound(monkeypatch):
@@ -108,7 +141,7 @@ def test_bank_writer_refuses_each_bank_the_runtime_refuses_whole_and_takes_one_a
             for name, value in values.items():
                 patch.setattr(hires, name, value)
             try:
-                hires_bank(rows())
+                bank(rows())
                 got = "written"
             except HiresError:
                 got = "refused"

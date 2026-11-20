@@ -134,6 +134,11 @@ def test_native_dxt5_encoder_gives_the_python_blocks_on_every_image() -> None:
     assert wrong == []
 
 
+def texture(width: int, height: int, payload: bytes) -> textures.G1tTexture:
+    """A one-mip DXT5 texture of payload, behind its 8-byte header."""
+    return textures.G1tTexture(0, 0, 8 + len(payload), 1, textures.PIXEL_FORMAT_DXT5, width, height, 0, bytes(8) + payload)
+
+
 def test_native_dxt5_edit_keeps_and_encodes_the_same_blocks_as_python() -> None:
     # Bug: native copies a block the edit changed, or re-encodes one it did not, or reads the base's
     # blocks at the wrong stride when the new texture is wider than the base (a resized canvas).
@@ -143,7 +148,7 @@ def test_native_dxt5_edit_keeps_and_encodes_the_same_blocks_as_python() -> None:
         bw, bh = rng.choice((4, 8, 12, 20)), rng.choice((4, 8, 16))
         width, height = bw + 4 * rng.randrange(0, 3), bh + 4 * rng.randrange(0, 3)
         base_rgba = bytes(rng.choice((0, 80, 255)) if k % 4 != 3 else rng.choice((0, 255)) for k in range(bw * bh * 4))
-        base = textures.G1tTexture(0, 0, 0, 1, textures.PIXEL_FORMAT_DXT5, bw, bh, 0, textures._encode_dxt_python(8, base_rgba, bw, bh, None))
+        base = texture(bw, bh, textures._encode_dxt_python(8, base_rgba, bw, bh, None))
         shown = base.decode_rgba()
         rgba = bytearray(width * height * 4)
         for y in range(min(bh, height)):
@@ -160,7 +165,7 @@ def test_native_dxt5_edit_keeps_and_encodes_the_same_blocks_as_python() -> None:
 def test_native_dxt5_edit_does_not_borrow_a_base_block_from_beyond_the_base_edge() -> None:
     # Bug: a block one column past the base's width is compared with, and copied from, the base's next row.
     # An all-zero payload decodes to blank pixels, so a blank new area matches it by accident.
-    base = textures.G1tTexture(0, 0, 0, 1, textures.PIXEL_FORMAT_DXT5, 4, 8, 0, bytes(32))
+    base = texture(4, 8, bytes(32))
     rgba = bytes(8 * 8 * 4)
 
     expected = textures._encode_dxt_python(8, rgba, 8, 8, base)

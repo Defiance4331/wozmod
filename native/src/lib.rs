@@ -29,21 +29,26 @@ fn hash3(data: &[u8], at: usize) -> usize {
 /// Greedy parse: a run of 4+ equal bytes, else the longest (then nearest) back-reference, else literals.
 fn encode_stream(data: &[u8]) -> Vec<u8> {
     let n = data.len();
-    // prev[q] is the nearest earlier position with the same hash; a stop is a position where a token can start.
+    // The nearest earlier position with q's hash is q - back[q], when that is within the window (back[q] is 0 when
+    // none is): no match reaches further, so a 16-bit distance keeps the chains the walks follow at two bytes a
+    // position, not four. A stop is a position where a token can start.
     let mut head = vec![u32::MAX; 1 << HASH_BITS];
-    let mut prev = vec![u32::MAX; n];
+    let mut back = vec![0u16; n];
     let mut stop = vec![false; n];
+    let earlier = |back: &[u16], at: usize| (back[at] != 0).then(|| at - usize::from(back[at]));
     for q in 0..n.saturating_sub(2) {
         let bucket = hash3(data, q);
-        let mut source = head[bucket];
-        while source != u32::MAX && q - source as usize <= WINDOW {
-            if data[source as usize..source as usize + 3] == data[q..q + 3] {
+        let mut source = (head[bucket] != u32::MAX).then(|| head[bucket] as usize);
+        while let Some(s) = source.filter(|&s| q - s <= WINDOW) {
+            if data[s..s + 3] == data[q..q + 3] {
                 stop[q] = true;
                 break;
             }
-            source = prev[source as usize];
+            source = earlier(&back, s);
         }
-        prev[q] = head[bucket];
+        if head[bucket] != u32::MAX && q - head[bucket] as usize <= WINDOW {
+            back[q] = (q - head[bucket] as usize) as u16;
+        }
         head[bucket] = q as u32;
     }
     let mut start = 0;
@@ -69,9 +74,8 @@ fn encode_stream(data: &[u8]) -> Vec<u8> {
             }
             let (mut length, mut distance) = (0, 0);
             let limit = MAX_MATCH.min(n - pos);
-            let mut source = prev[pos];
-            while source != u32::MAX && pos - source as usize <= WINDOW {
-                let s = source as usize;
+            let mut source = earlier(&back, pos);
+            while let Some(s) = source.filter(|&s| pos - s <= WINDOW) {
                 let mut k = 0;
                 while k < limit && data[s + k] == data[pos + k] {
                     k += 1;
@@ -83,7 +87,7 @@ fn encode_stream(data: &[u8]) -> Vec<u8> {
                         break;
                     }
                 }
-                source = prev[s];
+                source = earlier(&back, s);
             }
             if length < 3 {
                 length = 0;

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+import io
 import struct
 from pathlib import Path
 
@@ -10,6 +11,13 @@ from PIL import Image
 from wozmod.art import vector
 from wozmod.formats.textures import G1T_HEADER, G1T_TEXTURE_HEADER, parse_g1t
 from wozmod.runtime.layout import DEFINES
+
+
+def hires_bin(entries: Path, vector_args: tuple, **options) -> bytes:
+    """The hires.bin vector.hires_bin writes."""
+    out = io.BytesIO()
+    vector.hires_bin(entries, vector_args, out, **options)
+    return out.getvalue()
 
 
 def test_option_sheet_bands_follow_the_order_the_runtime_draws_them() -> None:
@@ -84,7 +92,7 @@ def test_hires_bank_carries_the_option_sheet_as_an_entry_zero_row(monkeypatch, t
                         lambda scale, squeeze: Image.new("RGBA", (vector.OPTION_W * scale, rows_h * scale)))
     (entries / "4069.bin").write_bytes(b"package")
     mapping = {"faces": {}, "textures": [{"entry": 4069, "item": 2, "rows": [[{"text": "x"}]]}]}
-    blob = vector.hires_bin(entries, (mapping, {}))
+    blob = hires_bin(entries, (mapping, {}))
     rows = read_hires_bank(blob)
     scale = vector.HIRES_SCALE
     assert [(row.entry, row.item, row.w, row.h, row.band, row.per_col) for row in rows] == [

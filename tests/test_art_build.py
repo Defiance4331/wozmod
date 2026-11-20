@@ -8,6 +8,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 import re
+import io
 import struct
 
 import pytest
@@ -17,6 +18,13 @@ from wozmod.art import build, faces, imaging, lettering, vector
 from wozmod.fonts.word_key import word_key
 
 FILL, OUTLINE = (220, 180, 40, 255), (8, 4, 0, 255)
+
+
+def hires_bin(entries: Path, vector_args: tuple, **options) -> bytes:
+    """The hires.bin vector.hires_bin writes."""
+    out = io.BytesIO()
+    vector.hires_bin(entries, vector_args, out, **options)
+    return out.getvalue()
 
 
 class Texture:
@@ -359,13 +367,13 @@ def test_hires_bank_does_not_serialize_a_sheet_smaller_than_its_quad(monkeypatch
     monkeypatch.setattr(vector, "HELP_QUAD_WIDTH", {(4060, 0): 476})
     mapping = {"faces": {}, "textures": [{"entry": 4060, "item": 0,
                                            "rows": [[{"text": "Help"}]]}]}
-    blob = vector.hires_bin(entries, (mapping, {}))
+    blob = hires_bin(entries, (mapping, {}))
     row, = read_hires_bank(blob)
     assert (row.w, row.minimum) == (520, 520)
     assert len(row.blocks[0][0]) == 520 * 3 * 32 * 3  # the 3x image spans the whole quad: DXT5, a byte per texel
     assert (entries / "4060.bin").read_bytes() == source
     # Bug: the threaded encode (native codecs, jobs > 1) hands back an unfinished or different sheet.
-    assert vector.hires_bin(entries, (mapping, {}), jobs=4) == blob
+    assert hires_bin(entries, (mapping, {}), jobs=4) == blob
 
 
 def test_hires_bank_does_not_shrink_frozen_attribute_samples(monkeypatch, tmp_path, letters):
@@ -412,9 +420,9 @@ def test_hires_bank_does_not_shrink_frozen_attribute_samples(monkeypatch, tmp_pa
         return image, {"ink": [0, 6, width, 46], "baseline": 46}
 
     letters(label)
-    before = vector.hires_bin(entries, (mapping, {}))
+    before = hires_bin(entries, (mapping, {}))
     narrower = True
-    after = vector.hires_bin(entries, (mapping, {}))
+    after = hires_bin(entries, (mapping, {}))
 
     old, new = ({(row.entry, row.item): row for row in read_hires_bank(bank)} for bank in (before, after))
     assert set(old) == set(new) == {(4079, item) for item in accepted} | set(others)
@@ -638,7 +646,7 @@ def test_native_ability_bank_does_not_grow_fitting_ink_or_drop_fixed_reserve(mon
     for item, right, minimum in ((76, 112, 0), (76, 113, 116), (69, 126, 144)):
         monkeypatch.setattr(vector, "HIRES_NATIVE_MENU", {(4079, item)})
         mapping = {"textures": [{"entry": 4079, "item": item, "texture": 0, "text": str(right)}]}
-        bank = vector.hires_bin(entries, (mapping, {}))
+        bank = hires_bin(entries, (mapping, {}))
         row, = read_hires_bank(bank)
         actual = row.minimum
         if actual != minimum:

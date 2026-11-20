@@ -295,7 +295,7 @@ def _stock_clips(game: Path, voices: list[int]) -> dict[int, array]:
 
     takes = game_files.voices(game).clips(voices)
     oggs = [kovs_ogg(takes[v]) for v in voices]
-    pcms = _ffmpeg_each([(["-f", "ogg"], ogg, ["-ac", "1", "-ar", str(RATE), "-f", "f32le"]) for ogg in oggs])
+    pcms = _ffmpeg_each([(["-f", "ogg"], ogg, ["-ac", "1", "-ar", str(RATE), "-f", "f32le"]) for ogg in oggs], len(oggs))
     return {v: array("f", pcm) for v, pcm in zip(voices, pcms, strict=True)}
 
 

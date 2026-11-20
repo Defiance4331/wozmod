@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import re
 import struct
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import BinaryIO
 
@@ -558,16 +559,26 @@ def parse_wo1_index(data: bytes, *, data_size: int) -> tuple[Wo1IndexRecord, ...
 
 def wo1_entries(lnk_path: Path, idx_path: Path, ordinals) -> dict[int, bytes]:
     index = parse_wo1_index(idx_path.read_bytes(), data_size=lnk_path.stat().st_size)
-    entries = {}
     with lnk_path.open("rb") as stream:
-        for ordinal in ordinals:
-            record = index[ordinal]
-            stream.seek(record.offset_sectors * SECTOR_SIZE)
-            data = stream.read(record.stored_bytes)
-            if data[:4] == b"LZP2":
-                data = parse_lzp2(data, WO1_LZP2_SIGNATURE).decoded
-            entries[ordinal] = data
-    return entries
+        return {ordinal: _wo1_entry(stream, index[ordinal]) for ordinal in ordinals}
+
+
+def wo1_entry_readers(lnk_path: Path, idx_path: Path, ordinals) -> dict[int, Callable[[], bytes]]:
+    """Per ordinal, what reads that entry as wo1_entries does, opening the archive for each read: for a caller that
+    reads an entry again whenever it needs it rather than holding it."""
+    index = parse_wo1_index(idx_path.read_bytes(), data_size=lnk_path.stat().st_size)
+
+    def read(record: Wo1IndexRecord) -> bytes:
+        with lnk_path.open("rb") as stream:
+            return _wo1_entry(stream, record)
+
+    return {ordinal: partial(read, index[ordinal]) for ordinal in ordinals}
+
+
+def _wo1_entry(stream: BinaryIO, record: Wo1IndexRecord) -> bytes:
+    stream.seek(record.offset_sectors * SECTOR_SIZE)
+    data = stream.read(record.stored_bytes)
+    return parse_lzp2(data, WO1_LZP2_SIGNATURE).decoded if data[:4] == b"LZP2" else data
 
 
 def _ps2_table(stream: BinaryIO) -> tuple[list[tuple[int, int]], int, int]:

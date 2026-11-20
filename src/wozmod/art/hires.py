@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, BinaryIO
 
 from wozmod.formats.textures import encode_dxt5
 from wozmod.runtime.shared import DEFINES
@@ -178,18 +178,18 @@ def _pack(sizes: list[tuple[int, int]]) -> tuple[list[tuple[int, int, int]], lis
     return places, [(u[0], u[1]) for u in used]
 
 
-def hires_bank(rows: list[HiresRow]) -> bytes:
-    """The bank file of rows, in their order. Raises HiresError for a row whose blocks are not its image at every
-    level of every packing or whose image passes the UV cap, and for a bank past the runtime's limits."""
+def hires_bank(rows: list[HiresRow], out: BinaryIO) -> None:
+    """Write the bank file of rows, in their order, to out. Raises HiresError, before it writes anything, for a row
+    whose blocks are not its image at every level of every packing or whose image passes the UV cap, and for a bank
+    past the runtime's limits. The sheets are laid out first and then written one at a time, so the bank never sits
+    in memory beside the rows' blocks (about 240 MB each in the release)."""
     _within_limits(len(rows), HIRES_PACKINGS, [])  # first: the image sizes below need levels in bounds
     fields = []
     for row in rows:
         scale = HIRES_SCALE | HIRES_OVERLAY * row.overlay | HIRES_RIGHT_GROW * row.right_grow
         fields.append(HIRES_ROW.pack(row.entry, row.item, scale, row.w, row.h, row.band | row.minimum << 16,
                                      row.per_col))
-    head = HIRES_MAGIC + struct.pack("<3I", len(rows), len(HIRES_PACKINGS), 0) + b"".join(fields)
-    head += b"".join(struct.pack("<I", scale | levels << 8) for scale, levels in HIRES_PACKINGS)
-    places, dims, sheets = [], [], []
+    places, dims, laid = [], [], []  # laid: per sheet, its packing and the (row, size, x, y) images on it
     for bank, (scale, levels) in enumerate(HIRES_PACKINGS):
         sizes = []
         for row in rows:
@@ -203,28 +203,33 @@ def hires_bank(rows: list[HiresRow]) -> bytes:
             sizes.append(size)
         spots, used = _pack(sizes)
         first = len(dims)
-        bank_dims = [tuple(1 << max(n - 1, 0).bit_length() for n in u) for u in used]
-        bank_sheets = [[bytearray((w >> k) * (h >> k)) for k in range(levels)] for w, h in bank_dims]  # transparent
-        for (sheet, x, y), (w, h), row in zip(spots, sizes, rows, strict=True):
-            for k, blocks in enumerate(row.blocks[bank]):
-                pitch, row_pitch = (bank_dims[sheet][0] >> k) * 4, (w >> k) * 4  # bytes per row of 4x4 blocks
-                at = (y >> k) // 4 * pitch + (x >> k) * 4
-                for by in range((h >> k) // 4):
-                    bank_sheets[sheet][k][at + by * pitch:at + by * pitch + row_pitch] = \
-                        blocks[by * row_pitch:(by + 1) * row_pitch]
+        dims += [(*(1 << max(n - 1, 0).bit_length() for n in u), levels) for u in used]
+        laid += [(bank, []) for _ in used]
+        for (sheet, x, y), size, row in zip(spots, sizes, rows, strict=True):
+            laid[first + sheet][1].append((row, size, x, y))
             places.append(HIRES_PLACE.pack(first + sheet, x | y << 16))
-        dims += [(w, h, levels) for w, h in bank_dims]
-        sheets += bank_sheets
     _within_limits(len(rows), HIRES_PACKINGS, [(w.bit_length() - 1, h.bit_length() - 1) for w, h, _ in dims])
-    head = head[:12] + struct.pack("<I", len(dims)) + head[16:] + b"".join(places)
-    base = -(-(len(head) + HIRES_SHEET.size * len(dims)) // 16) * 16
-    table, data = [], bytearray()
-    for (w, h, levels), parts in zip(dims, sheets, strict=True):
-        table.append(HIRES_SHEET.pack((w.bit_length() - 1) | (h.bit_length() - 1) << 8 | levels << 16,
-                                      base + len(data)))
-        data += b"".join(parts)
-    head += b"".join(table)
-    return head + bytes(base - len(head)) + bytes(data)
+    head = (HIRES_MAGIC + struct.pack("<3I", len(rows), len(HIRES_PACKINGS), len(dims)) + b"".join(fields)
+            + b"".join(struct.pack("<I", scale | levels << 8) for scale, levels in HIRES_PACKINGS) + b"".join(places))
+    base = at = -(-(len(head) + HIRES_SHEET.size * len(dims)) // 16) * 16
+    for w, h, levels in dims:
+        head += HIRES_SHEET.pack((w.bit_length() - 1) | (h.bit_length() - 1) << 8 | levels << 16, at)
+        at += sum((w >> k) * (h >> k) for k in range(levels))
+    out.write(head + bytes(base - len(head)))
+    for (w, h, levels), (bank, images) in zip(dims, laid, strict=True):
+        for k in range(levels):
+            out.write(_sheet_level(w >> k, h >> k, [(row.blocks[bank][k], size[0] >> k, size[1] >> k, x >> k, y >> k)
+                                                    for row, size, x, y in images]))
+
+
+def _sheet_level(w: int, h: int, images: list[tuple[bytes, int, int, int, int]]) -> bytearray:
+    """A w x h sheet level's DXT5 blocks, transparent but for images: (blocks, w, h, x, y) each, in texels."""
+    level, pitch = bytearray(w * h), w * 4  # bytes per row of 4x4 blocks
+    for blocks, image_w, image_h, x, y in images:
+        start, row_pitch = y // 4 * pitch + x * 4, image_w * 4
+        for by in range(image_h // 4):
+            level[start + by * pitch:start + by * pitch + row_pitch] = blocks[by * row_pitch:(by + 1) * row_pitch]
+    return level
 
 
 def read_hires_bank(blob: bytes) -> list[HiresRow]:

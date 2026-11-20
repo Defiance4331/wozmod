@@ -59,7 +59,8 @@ def _expected_payload_bytes(
 
 @dataclass(frozen=True)
 class G1tTexture:
-    """A texture and its byte span."""
+    """A texture and its byte span, offset to end, in source: the bytes of the G1T it is part of (its header first,
+    then its payload)."""
 
     ordinal: int
     offset: int
@@ -69,13 +70,19 @@ class G1tTexture:
     width: int
     height: int
     flags: int
-    payload: bytes = field(repr=False)
+    source: bytes = field(repr=False)
+
+    @property
+    def payload(self) -> bytes:
+        """The texture's mip levels, copied out of source when asked for: a parsed G1T holds its bytes once."""
+        return self.source[self.offset + G1T_TEXTURE_HEADER.size:self.end]
 
     def decode_rgba(self) -> bytes:
         """Decode the top mip to RGBA8."""
 
         top_bytes = _mip_payload_bytes(self.pixel_format, self.width, self.height)
-        payload = self.payload[:top_bytes]
+        start = self.offset + G1T_TEXTURE_HEADER.size
+        payload = self.source[start:start + top_bytes]
         if self.pixel_format == PIXEL_FORMAT_BGRA8:
             return _swap_red_blue(payload)
         if self.pixel_format == PIXEL_FORMAT_DXT1:
@@ -292,13 +299,13 @@ def parse_g1t(data: bytes) -> G1tFile:
                 f"G1T texture {ordinal} has unsupported pixel format "
                 f"0x{pixel_format:02x}"
             )
-        payload = source[start + G1T_TEXTURE_HEADER.size : end]
+        size = end - start - G1T_TEXTURE_HEADER.size
         expected = _expected_payload_bytes(
             pixel_format, width, height, mipmap_count
         )
-        if len(payload) != expected:
+        if size != expected:
             raise TextureCodecError(
-                f"G1T texture {ordinal} payload has {len(payload)} bytes, "
+                f"G1T texture {ordinal} payload has {size} bytes, "
                 f"expected {expected}"
             )
         textures.append(
@@ -311,7 +318,7 @@ def parse_g1t(data: bytes) -> G1tFile:
                 width=width,
                 height=height,
                 flags=flags,
-                payload=payload,
+                source=source,
             )
         )
     return G1tFile(
@@ -452,12 +459,12 @@ def _encode_dxt_python(pixel_format: int, rgba: bytes, width: int, height: int, 
         return b"".join(map(encode, _blocks(rgba, width, height)))
     kept = list(_blocks(base.decode_rgba(), base.width, base.height))
     whole_columns, whole_rows = base.width // 4, base.height // 4  # edge blocks repeat pixels: never copied
-    columns, out = max(1, (base.width + 3) // 4), []
+    columns, out, payload = max(1, (base.width + 3) // 4), [], base.payload
     for index, block in enumerate(_blocks(rgba, width, height)):
         row, column = divmod(index, max(1, (width + 3) // 4))
         if column < whole_columns and row < whole_rows and kept[row * columns + column] == block:
             at = (row * columns + column) * size
-            out.append(base.payload[at:at + size])
+            out.append(payload[at:at + size])
         else:
             out.append(encode(block))
     return b"".join(out)

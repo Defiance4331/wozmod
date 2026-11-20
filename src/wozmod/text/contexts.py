@@ -667,8 +667,8 @@ def audible_ends(world: World, clips: set[Clip], jobs: int | None = None) -> dic
         records, bank = world.banks[source]
         with bank.open("rb") as stream:
             riffs += [(clip, _read_at(stream, *records[clip[1]])) for clip in wanted if clip[0] == source]
-    pcm = _ffmpeg_each([(["-threads", "1", "-f", "wav"], riff, ["-ac", "1", "-ar", "16000", "-f", "s16le"])
-                        for _, riff in riffs], jobs, "measuring voice clips")
+    pcm = _ffmpeg_each(((["-threads", "1", "-f", "wav"], riff, ["-ac", "1", "-ar", "16000", "-f", "s16le"])
+                        for _, riff in riffs), len(riffs), jobs, "measuring voice clips")
     return {clip: audible_end(data, 16000) for (clip, _), data in zip(riffs, pcm, strict=True)}
 
 

@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from wozmod import native
-from wozmod.formats.audio import _ffmpeg_each, event_voice, kovs_ogg, vorbis_records
+from wozmod.formats.audio import OnDemand, _ffmpeg_each, event_voice, kovs_ogg, vorbis_records
 from wozmod.formats.events import EVENT_TICKS, event_scenes
 from wozmod.formats.pmf import START_PADDING, audio_tracks
 from wozmod.progress import report
@@ -317,10 +317,10 @@ def build_dream_events(stock: StockVoices, psp: Path, events: dict[int, bytes],
     lines = {o: scene_lines(o, events[o]) for o in DREAM_EVENTS}
     voices = sorted({line.voice for found in lines.values() for line in found})
     takes = stock.clips(voices)
-    oggs = [kovs_ogg(takes[v]) for v in voices]
     clips = {}
-    for v, pcm in zip(voices, _ffmpeg_each([(["-f", "ogg"], ogg, ["-ac", "1", "-ar", str(RATE), "-f", "f32le"])
-                                            for ogg in oggs], jobs, "cutting the Dream scenes", (0.8, 0.81)), strict=True):
+    for v, pcm in zip(voices, _ffmpeg_each(((["-f", "ogg"], kovs_ogg(takes[v]), ["-ac", "1", "-ar", str(RATE), "-f", "f32le"])
+                                            for v in voices), len(voices), jobs, "cutting the Dream scenes", (0.8, 0.81)),
+                      strict=True):
         clips[v] = array("f")
         clips[v].frombytes(pcm)
     finished = [0]
@@ -361,10 +361,14 @@ def finished_takes(takes: dict[int, array], jobs: int | None = None) -> tuple[di
     spans = iter([(0.84, 0.85)])  # a pass after the first leaves the progress where it is
 
     def encode(gains: dict[int, float]) -> dict[int, tuple[bytes, float]]:
-        records = vorbis_records({v: (["-f", "f32le", "-ar", str(RATE), "-ch_layout", "mono"], takes[v].tobytes(),
-                                      (f"volume={g!r}:precision=float," if g != 1 else "") + "asetpts=round(N/SR/TB)")
-                                  for v, g in gains.items()}, jobs, "cutting the Dream scenes", next(spans, (0.85, 0.85)))
-        pcm = _ffmpeg_each([(["-f", "ogg"], kovs_ogg(records[v]), ["-f", "f32le"]) for v in gains], jobs,
+        def source(v: int) -> tuple[list[str], bytes, str]:  # each take's bytes made only as its batch starts
+            g = gains[v]
+            return (["-f", "f32le", "-ar", str(RATE), "-ch_layout", "mono"], takes[v].tobytes(),
+                    (f"volume={g!r}:precision=float," if g != 1 else "") + "asetpts=round(N/SR/TB)")
+
+        records = vorbis_records(OnDemand(list(gains), source), jobs, "cutting the Dream scenes",
+                                 next(spans, (0.85, 0.85)))
+        pcm = _ffmpeg_each(((["-f", "ogg"], kovs_ogg(records[v]), ["-f", "f32le"]) for v in gains), len(gains), jobs,
                            "cutting the Dream scenes", (0.85, 0.85))
         peaks = [max(map(abs, array("f", samples)), default=0.0) for samples in pcm]
         return dict(zip(gains, zip((records[v] for v in gains), peaks, strict=True), strict=True))

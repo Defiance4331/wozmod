@@ -36,11 +36,12 @@ class InstallError(Exception):
 
 GIB = 1 << 30
 # What the whole install holds (every process it starts, all steps side by side), measured on Windows 11 and Linux in
-# 2026-11: at one worker it peaks at 4.32 GiB (Windows, committed) and 4.52 GiB (Linux, resident), rounded up here; most
-# of it is what the art and voices steps load, which fewer workers cannot shrink. A worker is a thread in each step, so
-# one more adds only its own work: one ffmpeg in the voices step (89 MiB on Windows, 75 MiB on Linux) and its art
-# thread's share; seven workers peaked 0.67 GiB (Windows) and 0.71 GiB (Linux) above one.
-INSTALL_MEMORY = 46 * GIB // 10
+# 2026-11: at one worker it peaks at 1.91 GiB (Windows, committed) and 1.95 GiB (Linux, resident), rounded up here; most
+# of it is the voices step's clips and its Dream scenes, which fewer workers cannot shrink. A worker is a thread in each
+# step, so one more adds only its own work: one ffmpeg in the voices step (89 MiB on Windows, 75 MiB on Linux), a Dream
+# scene cut beside the others, and its art thread's share; seven workers peaked 0.50 GiB (Windows) and 0.57 GiB (Linux)
+# above one.
+INSTALL_MEMORY = 2 * GIB
 WORKER_MEMORY = GIB // 8
 
 

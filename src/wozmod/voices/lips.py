@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from wozmod import native
-from wozmod.formats.audio import MOZ_VOICE_IDS, parse_kovs_record
+from wozmod.formats.audio import MOZ_VOICE_IDS, OnDemand, parse_kovs_record
 
 from . import phones
 
@@ -267,10 +267,11 @@ def own_blocks(clips: dict[int, bytes], sources: dict[int, str], stock: dict[int
     """
     own: dict[int, bytes] = {}
     faces: dict[int, bytes] = {}
-    for voice, clip in sorted(clips.items()):
+    for voice in sorted(clips):  # one clip at a time: clips may read each from the bank (formats.audio.BankClips)
         mapping, blocks, fits = donors[sources[voice]]
         theirs = blocks.get(mapping.get(voice), [])
-        if matched := [b for b in theirs if fits(b, clip_frames(clip))]:
+        frames = clip_frames(clips[voice]) if theirs else 0
+        if matched := [b for b in theirs if fits(b, frames)]:
             own[voice] = matched[0]
         elif theirs or voice in stock:
             faces[voice] = (theirs or [stock[voice]])[0]
@@ -287,7 +288,7 @@ def english_lips(clips: dict[int, bytes], sources: dict[int, str], stock: dict[i
     own, faces = own_blocks(clips, sources, stock, donors)
     if not faces:
         return own, {"donor": len(own), "generated": 0}
-    wanted = {voice: clips[voice] for voice in sorted(own | faces)}
+    wanted = OnDemand(sorted(own | faces), clips.__getitem__)  # each clip read as its decode starts
     sound, heard = decode(wanted, SPEECH_RATE), decode(wanted, phones.PHONE_RATE)
     speech = {voice: Speech(sound[voice], heard[voice], texts.get(voice)) for voice in wanted}
     found = learned_shapes({voice: (speech[voice], block) for voice, block in own.items()},

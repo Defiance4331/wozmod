@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import io
 import os
 import shutil
 import struct
@@ -10,6 +11,7 @@ import pytest
 
 from wozmod.game_files import StockVoices
 from wozmod.formats.audio import (
+    BankClips,
     MOZ_VOICE_IDS,
     VoiceBankError,
     block_voice_map,
@@ -28,6 +30,13 @@ from wozmod.formats.audio import (
     wo2_voice_records,
 )
 from synthetic import kovs, ogg_crc
+
+
+def voice_bank(clips: dict[int, bytes]) -> bytes:
+    """The Voice.bin english_voice_bank writes for clips."""
+    out = io.BytesIO()
+    english_voice_bank(clips, out)
+    return out.getvalue()
 
 
 def _se_header(entries: list[bytes]) -> bytes:
@@ -86,12 +95,43 @@ def test_voice_bank_table_serves_sparse_ids_with_their_own_aligned_records() -> 
     # Bugs: a record served under another id or misaligned; a voice slot past the stock ids (voices.maps.voice_slots)
     # left out of the count, so the runtime (english_voice: id < count) never plays it.
     clips = {MOZ_VOICE_IDS - 1: kovs(90, serial=1), 5: kovs(101, serial=2), MOZ_VOICE_IDS + 1: kovs(80, serial=3)}
-    bank = english_voice_bank(clips)
+    bank = voice_bank(clips)
     count = struct.unpack_from("<I", bank)[0]
     table = [struct.unpack_from("<II", bank, 4 + 8 * i) for i in range(count)]
 
     assert count == MOZ_VOICE_IDS + 2
     assert {i: (off % 16, bank[off:off + size]) for i, (off, size) in enumerate(table) if size} == {i: (0, clip) for i, clip in clips.items()}
+
+
+def test_voice_bank_is_written_clip_by_clip_not_built_whole_beside_the_clips() -> None:
+    # Bug: Voice.bin (about 1 GB) is assembled in memory beside the clips it is made of before it is written, which
+    # set the voices step's peak (2026-11: 2.87 GiB, a third of it the bank's copy).
+    import tracemalloc
+
+    class Sink(io.RawIOBase):  # keeps nothing it is given
+        def write(self, data) -> int:
+            return len(data)
+
+    clips = {voice: kovs(345, serial=voice) for voice in range(4000)}  # 1.4 MB: four times the table
+    given = sum(map(len, clips.values()))
+    tracemalloc.start()
+    try:
+        english_voice_bank(clips, Sink())
+        held = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert held < given / 2, (held, given)
+
+
+def test_clips_read_back_from_a_written_bank_are_the_clips_it_was_written_from(tmp_path) -> None:
+    # Bug: the voices step reads its clips back from Voice.bin once it is written (BankClips), so a span read from
+    # the wrong table row, or a voice slot past the stock ids left out, hands the lip sync and the event timing
+    # another line's clip, or none.
+    clips = {MOZ_VOICE_IDS + 1: kovs(80, serial=3), 5: kovs(101, serial=2), 0: kovs(90, serial=1)}
+    with open(tmp_path / "Voice.bin", "wb") as out:
+        english_voice_bank(clips, out)
+    with BankClips(tmp_path / "Voice.bin") as back:
+        assert dict(back) == clips and list(back) == sorted(clips)
 
 
 def test_se_replacement_keeps_each_clip_offset_takes_the_donor_volume_and_preserves_other_fields() -> None:
@@ -256,7 +296,7 @@ def test_psp_voice_fills_only_a_line_neither_xbox_360_disc_has_and_leaves_as_48_
     assert sources == {10: "wo2-x360", 11: "wo1-x360", 12: "wo2-psp"}
     seconds = {i: round(parse_kovs_record(clip)[2].sample_count / 48_000, 2) for i, clip in clips.items()}
     assert seconds == {10: 0.1, 11: 0.2, 12: 0.5}
-    english_voice_bank(clips)  # raises unless every clip is 48 kHz mono
+    voice_bank(clips)  # raises unless every clip is 48 kHz mono
 
 
 def _atrac3plus_riff(frames: int, fact: tuple[int, int] | None = None, tag: int = 0xFFFE) -> bytes:
@@ -288,7 +328,7 @@ def test_psp_atrac3plus_clip_declares_the_length_its_fact_chunk_counts(tmp_path:
     clips, _ = donor_voice_clips([("wo2-psp", {12: 0}, ps2_extents(bank), bank)])
 
     assert abs(parse_kovs_record(clips[12])[2].sample_count - count * 48_000 / 44_100) <= 1  # the resampler rounds
-    english_voice_bank(clips)
+    voice_bank(clips)
 
 
 def test_atrac3plus_decode_starts_after_the_fact_skip_and_decoder_delay_and_xma_stays_whole() -> None:
@@ -370,7 +410,7 @@ def test_stereo_clip_with_the_same_signal_in_both_channels_keeps_its_level(tmp_p
         ogg[position] ^= position
     built = rms_db(["-i", "-"], bytes(ogg))
     assert abs(built - rms_db(tone)) < 0.2, built
-    english_voice_bank(clips)  # and it is a mono clip the bank takes
+    voice_bank(clips)  # and it is a mono clip the bank takes
 
 
 @pytest.mark.skipif(os.environ.get("WOZMOD_AUDIO") != "1" or not os.environ.get("WOZMOD_DONORS")
@@ -410,13 +450,13 @@ def test_voice_bank_refuses_a_clip_that_declares_less_than_it_holds(tmp_path: Pa
     last = ogg.rindex(b"OggS")
     end = last + 27 + ogg[last + 26] + sum(ogg[last + 27:last + 27 + ogg[last + 26]])
     assert end == len(ogg) and struct.unpack_from("<Q", ogg, last + 6)[0] == 24_000
-    english_voice_bank({1: kovs_record(bytes(ogg))})
+    voice_bank({1: kovs_record(bytes(ogg))})
 
     struct.pack_into("<Q", ogg, last + 6, 12_000)  # the final page now declares half the clip
     ogg[last + 22:last + 26] = bytes(4)
     struct.pack_into("<I", ogg, last + 22, ogg_crc(ogg[last:end]))
     with pytest.raises(VoiceBankError, match="declares 12000 samples but holds"):
-        english_voice_bank({1: kovs_record(bytes(ogg))})
+        voice_bank({1: kovs_record(bytes(ogg))})
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
@@ -472,7 +512,8 @@ def test_voice_clip_too_long_for_the_game_slot_is_encoded_again_one_step_lower(t
     index = struct.pack(">II", 2, 0) + b"".join(struct.pack(">5I", i, i, 1, 2048, 48_000) for i in range(2))
     calls = []
 
-    def fake(jobs, workers=None, *progress):
+    def fake(jobs, count, workers=None, *progress):
+        jobs = list(jobs)
         quality = int(jobs[0][2][jobs[0][2].index("-q:a") + 1])
         calls.append((quality, [job[1] for job in jobs]))
         # clip B is too long at the top quality and fits one step lower

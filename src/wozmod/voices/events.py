@@ -261,8 +261,8 @@ def clip_pcm(clips: dict[int, bytes], jobs: int | None = None) -> dict[int, byte
     from wozmod.formats.audio import _ffmpeg_each, kovs_ogg
 
     ids = sorted(clips)
-    pcms = _ffmpeg_each([(["-f", "ogg"], kovs_ogg(clips[i]), ["-ac", "1", "-ar", str(AUDIBLE_RATE), "-f", "s16le"])
-                         for i in ids], jobs, "timing event subtitles", (0.85, 0.9))
+    pcms = _ffmpeg_each(((["-f", "ogg"], kovs_ogg(clips[i]), ["-ac", "1", "-ar", str(AUDIBLE_RATE), "-f", "s16le"])
+                         for i in ids), len(ids), jobs, "timing event subtitles", (0.85, 0.9))
     return dict(zip(ids, pcms, strict=True))
 
 
@@ -293,13 +293,16 @@ def build_event_schedules(stock_events: dict[int, bytes], clips: dict[int, bytes
     """Write mod/captions/voice/<4251 + n>.bin for every event file whose windows the English clips change; return
     what changed per event. clips are the English voice bank's KOVS records by voice id; donors each Xbox 360 donor's
     event files (by donor_files key) and byte order, whose windows Koei retimed for the English voice are taken."""
+    from wozmod.formats.audio import OnDemand
+
     bases = event_voice_bases()
     spoken = {}
     for o, data in stock_events.items():
         for index in event_line_indices(data):
             if bases[o] + index in clips:
                 spoken.setdefault(bases[o] + index, None)
-    ends = {i: audible_end(pcm) for i, pcm in clip_pcm({i: clips[i] for i in spoken}, jobs).items()}
+    # each clip read as its decode starts
+    ends = {i: audible_end(pcm) for i, pcm in clip_pcm(OnDemand(list(spoken), clips.__getitem__), jobs).items()}
     parsed = {source: {e: scenes(data, byte_order) for e, data in files.items()}
               for source, (files, byte_order) in (donors or {}).items()}
     folder = mod / FOLDER

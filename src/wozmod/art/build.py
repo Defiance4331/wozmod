@@ -15,7 +15,7 @@ from pathlib import Path
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 from wozmod.formats.linkdata import (
-    LINKDATA2_FIRST, parse_lzp2, wo1_entries,
+    LINKDATA2_FIRST, parse_lzp2, wo1_entries, wo1_entry_readers,
 )
 from wozmod import game_files, resources
 from wozmod.progress import report as report_progress
@@ -32,7 +32,7 @@ from wozmod.formats.textures import (
 
 REPO = resources.root()
 from wozmod.fonts.menu_plates import X360_PLATE_ENTRIES
-from wozmod.fonts.menu_references import reference, x360_members
+from wozmod.fonts.menu_references import X360Entry, reference, x360_members
 from wozmod.fonts.glyph_outlines import from_json
 from .imaging import (
     fitted, glowed, greyed, hue_shifted, ink, keyed, lettering_mask, mirrored, navy_mask, placed, plated, refilled,
@@ -121,8 +121,12 @@ def wo1_donors(stem: Path, entries: set[int]) -> dict:
     """The WO1 X360 donor art entries, read from the linkdata_ens archive at stem."""
     if pc := sorted(e for e in entries if e >= WO1_PC_ENTRIES):
         raise ValueError(f"art data names WO1 PC entries {pc}: the build reads no WO1 PC disc")
-    return {k: x360_members(v) for k, v in wo1_entries(stem.with_suffix(".lnk"), stem.with_suffix(".idx"),
-                                                       sorted(entries)).items()}
+    return x360_entries(stem, entries)
+
+def x360_entries(stem: Path, entries) -> dict[int, X360Entry]:
+    """An Xbox 360 donor's art entries from its linkdata_ens archive at stem, each member converted when first used."""
+    return {k: X360Entry(read) for k, read in wo1_entry_readers(stem.with_suffix(".lnk"), stem.with_suffix(".idx"),
+                                                               sorted(entries)).items()}
 
 def wo2_g1ts(data: bytes) -> dict[int, G1tFile]:
 
@@ -786,15 +790,13 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
         donors["latin"] = lettering.latin(latin_cells or working / "latin-cells.png", latin_cells is None)
     except ValueError as error:
         raise ArtError(str(error)) from error
-    donors |= {(WO2_X360.name, k): wo2_g1ts(v) for k, v in wo1_entries(
-        wo2.with_suffix(".lnk"), wo2.with_suffix(".idx"),
-        sorted({e[WO2_X360.name][0] for e in flat if WO2_X360.name in e}
-               | {s[WO2_X360.name][0] for e in flat for s in e.get("draw", []) if WO2_X360.name in s}
-               | {3} | set(X360_PLATE_ENTRIES) | native_reference_entries(mapping))).items()}
+    donors |= {(WO2_X360.name, k): members for k, members in x360_entries(
+        wo2, {e[WO2_X360.name][0] for e in flat if WO2_X360.name in e}
+        | {s[WO2_X360.name][0] for e in flat for s in e.get("draw", []) if WO2_X360.name in s}
+        | {3} | set(X360_PLATE_ENTRIES) | native_reference_entries(mapping)).items()}
     donors["squish"] = squeeze
     donors["mapping"] = mapping
     linkdata1 = game_files.archive(game / "LINKDATA1")
-    stored: dict[int, bytes] = {}
     donors |= {("moz", k): donor_g1ts(read_entry(linkdata1, k)[0])
                for k in sorted({e[key][0] for e in flat for key in ("against", "base", "footprint", "cover") if key in e})}
     donors["faces"] = faces(mapping, donors, jobs, used_faces(list(edits.values())))
@@ -819,24 +821,22 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
         report_progress("art", "building menu textures", 0.5 + 0.15 * len(finished) / len(edits),
                         (len(finished), len(edits)))
 
-    order = sorted(edits, key=lambda ordinal: -work.stored_bytes(ordinal))  # the largest first
+    built = entries_dir or output_dir and output_dir / "wozmod/entries"  # None: previews only
+    if built:
+        built.mkdir(parents=True, exist_ok=True)
+    order = sorted(edits, key=work.stored_bytes, reverse=True)  # the largest first (a stable sort: ties keep their order)
     for ordinal, data in zip(order, ordered_map(partial(rebuilt, work), order, jobs, progress), strict=True):
-        stored[ordinal] = data
+        if built:  # each entry is written as it comes: they would take about 200 MB together
+            (built / f"{ordinal}.bin").write_bytes(data)
         print(f"entry {ordinal}: {len(edits[ordinal])} textures, {work.stored_bytes(ordinal)} -> {len(data)} bytes",
               flush=True)
+    del work, donors  # the entry build's donor textures and faces: the hi-res sheets read only what they load
     if entries_dir:
-        entries_dir.mkdir(parents=True, exist_ok=True)
-        for ordinal, data in stored.items():
-            (entries_dir / f"{ordinal}.bin").write_bytes(data)
-        print(f"{entries_dir}: {len(stored)} entries")
+        print(f"{entries_dir}: {len(order)} entries")
         return
     if not output_dir:
-        print(f"{preview_dir}: previews of {len(stored)} entries")
+        print(f"{preview_dir}: previews of {len(order)} entries")
         return
-    built = output_dir / "wozmod/entries"
-    built.mkdir(parents=True, exist_ok=True)
-    for ordinal, data in stored.items():
-        (built / f"{ordinal}.bin").write_bytes(data)
     prompts = read_entry(linkdata1, PROMPT_ENTRY)[0]
     wo2_prompts = wo1_entries(wo2.with_suffix(".lnk"), wo2.with_suffix(".idx"), [13])[13]
     for family in PROMPT_FAMILIES:
@@ -848,7 +848,7 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
     (output_dir / "wozmod/glyphs.bin").write_bytes(glyphs_bin(atlas, from_json(outlines)))
     if hires:
         write_hires(output_dir, wo1_x360, wo2, squeeze, jobs, review)
-    print(f"{output_dir}: {len(stored)} entries")
+    print(f"{output_dir}: {len(order)} entries")
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -931,13 +931,12 @@ def write_hires(output_dir: Path, wo1_x360: Path | None, wo2: Path | None, squee
     pieces = [p for e in mapping["textures"] if (e["entry"], e.get("item")) in {h[:2] for h in HIRES} | set(DARK)
               for row in e.get("rows") or [e.get("draw", [])] for p in row]
     donors = wo1_donors(wo1_x360, {p[WO1_X360.name][0] for p in pieces if "box" in p and WO1_X360.name in p} | {1, 16})
-    donors |= {(WO2_X360.name, k): x360_members(v) for k, v in wo1_entries(
-        wo2.with_suffix(".lnk"), wo2.with_suffix(".idx"),
-        sorted(set(X360_PLATE_ENTRIES) | native_reference_entries(mapping))).items()}
+    donors |= {(WO2_X360.name, k): members for k, members in x360_entries(
+        wo2, set(X360_PLATE_ENTRIES) | native_reference_entries(mapping)).items()}
     donors["menu_labels"] = prepare_menu_labels(mapping)
     donors["squish"] = squeeze
-    (output_dir / "wozmod/hires.bin").write_bytes(hires_bin(
-        output_dir / "wozmod/entries", (mapping, donors), squeeze, jobs, output_dir if review else None))
+    with open(output_dir / "wozmod/hires.bin", "wb") as out:
+        hires_bin(output_dir / "wozmod/entries", (mapping, donors), out, squeeze, jobs, output_dir if review else None)
     print(f"{output_dir}: hires.bin")
 
 if __name__ == "__main__":

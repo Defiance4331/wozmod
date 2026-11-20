@@ -117,3 +117,36 @@ def test_the_catalog_refuses_each_field_no_reader_takes_or_reads_wrongly(tmp_pat
     finally:
         references.load_catalog.cache_clear()
     assert loaded == ["good"]
+
+
+def _run(*members: bytes) -> bytes:
+    return b"".join(member + bytes(-len(member) % 2048) for member in members)
+
+
+def test_an_entry_read_member_by_member_gives_the_members_x360_members_gives():
+    # Bug: the art build's lazily read donor entries (X360Entry) convert a member from another member's span, or list
+    # one whose texture format the PC build skips, so an edit letters the wrong donor art or stops on a missing one.
+    data = _run(xbox_texture(indices=1), xbox_texture(0), xbox_texture(indices=2))
+    entry = references.X360Entry(lambda: data)
+    assert list(entry) == [0, 2] and dict(entry) == references.x360_members(data)
+
+
+def test_an_entry_read_member_by_member_holds_only_the_members_looked_up():
+    # Bug: every member of each donor entry is converted and kept although the build reads a few (in 2026-11, 15 of
+    # the 244 MiB of WO1 X360 entries it names), which held about 0.35 GB of the art step's peak.
+    import tracemalloc
+
+    payload = bytes(512 * 512 // 2)  # a 512 x 512 DXT1 texture
+    member = (b"G1TG0050" + struct.pack(">6I", 44 + len(payload), 32, 1, 2, 0, 0) + struct.pack(">I", 4)
+              + struct.pack(">8B", 1, 6, 0x99, 0, 0x11, 0x11, 0x10, 0) + payload)
+    data = _run(*[member] * 16)
+    tracemalloc.start()
+    try:
+        entry = references.X360Entry(lambda: data)
+        held = tracemalloc.get_traced_memory()[0]
+        entry[3]
+        one = tracemalloc.get_traced_memory()[0] - held
+    finally:
+        tracemalloc.stop()
+    assert len(entry) == 16
+    assert held < len(member) and len(member) <= one < 2 * len(member), (held, one, len(member))

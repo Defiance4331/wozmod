@@ -39,7 +39,7 @@ def test_ffmpeg_is_the_bundled_one_else_the_one_on_path_else_none(tmp_path, monk
     monkeypatch.setenv("PATH", str(tmp_path / "path"))
     assert resources.ffmpeg() == (found and str(fakes[found]))
     if found:
-        assert _ffmpeg_each([([], b"clip", [])]) == [f"{found}\n".encode()]
+        assert list(_ffmpeg_each([([], b"clip", [])], 1)) == [f"{found}\n".encode()]
 
 
 def test_lzp2_cache_key_needs_no_source_file(monkeypatch):

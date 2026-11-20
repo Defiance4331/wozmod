@@ -1,13 +1,15 @@
 """Native donor texture references."""
+from collections.abc import Callable, Iterator, Mapping
 from functools import lru_cache
 import json
 import struct
+from threading import Lock
 
 from wozmod import resources
 from wozmod.donors import check_disc_names
 
 from wozmod.formats.textures import (
-    TextureCodecError, x360_g1t,
+    G1tFile, TextureCodecError, x360_g1t,
 )
 
 REPO = resources.root()
@@ -65,10 +67,10 @@ def reference(texture: str, row: int) -> dict | None:
     """Return the explicitly keyed row reference."""
     return load_catalog().get(texture, {}).get("rows", {}).get(str(row))
 
-def x360_members(data: bytes) -> dict:
-    """Read native X360 members without changing their ordinals."""
+def _x360_spans(data: bytes) -> list[tuple[int, int, int]]:
+    """Each G1T member of a native X360 entry (a G1TG run or an aligned package) as (ordinal, start, size)."""
     if data[:4] == b"G1TG":
-        members, position, item = {}, 0, 0
+        spans, position, item = [], 0, 0
         while position < len(data):
             if data[position:position + 4] != b"G1TG":
                 if not any(data[position:]):
@@ -79,32 +81,64 @@ def x360_members(data: bytes) -> dict:
             size = struct.unpack_from(">I", data, position + 8)[0]
             if size < 32 or position + size > len(data):
                 raise ValueError(f"Xbox G1TG run member {item} exceeds input")
-            try:
-                members[item] = x360_g1t(data[position:position + size])
-            except TextureCodecError as error:
-
-                if not str(error).startswith("unsupported Xbox 360 texture format"):
-                    raise
+            spans.append((item, position, size))
             aligned = (position + size + 2047) // 2048 * 2048
             if any(data[position + size:min(aligned, len(data))]):
                 raise ValueError(f"nonzero Xbox G1TG run padding after {item}")
             position, item = aligned, item + 1
-        return members
+        return spans
     if len(data) < 16:
         raise ValueError("truncated Xbox texture package")
     magic, count, table, _ = struct.unpack_from(">4I", data)
     if magic != 0x33B59 or table < 16 or table + count * 8 > len(data):
         raise ValueError("invalid Xbox texture package table")
-    members = {}
+    spans = []
     for item in range(count):
         offset, size = struct.unpack_from(">II", data, table + 8 * item)
         start = offset * 16
         if start + size > len(data):
             raise ValueError(f"Xbox texture package member {item} exceeds input")
         if data[start:start + 4] == b"G1TG":
-            try:
-                members[item] = x360_g1t(data[start:start + size])
-            except TextureCodecError as error:
-                if not str(error).startswith("unsupported Xbox 360 texture format"):
-                    raise
-    return members
+            spans.append((item, start, size))
+    return spans
+
+
+def _x360_member(data: bytes, start: int, size: int) -> G1tFile | None:
+    """The member at start in the PC layout, or None when it holds a texture format the PC build cannot use."""
+    try:
+        return x360_g1t(data[start:start + size])
+    except TextureCodecError as error:
+        if not str(error).startswith("unsupported Xbox 360 texture format"):
+            raise
+        return None
+
+
+def x360_members(data: bytes) -> dict:
+    """Read native X360 members without changing their ordinals."""
+    return {item: g1t for item, start, size in _x360_spans(data) if (g1t := _x360_member(data, start, size))}
+
+
+class X360Entry(Mapping[int, G1tFile]):
+    """A native X360 entry's members, as x360_members reads them, each converted the first time it is looked up and
+    kept from then on. read() gives the entry's bytes, read again from its archive for each member converted: the
+    art build reads a few members of most entries it names (in 2026-11, 15 MiB of the 244 MiB of WO1 X360 entries),
+    and holding every member held about 0.35 GB for nothing. Safe to look up from several threads."""
+
+    def __init__(self, read: Callable[[], bytes]) -> None:
+        data = read()
+        self._read, self._kept, self._lock = read, {}, Lock()
+        self._spans = {item: (start, size) for item, start, size in _x360_spans(data)
+                       if _x360_member(data, start, size)}  # the members x360_members gives, none of them kept
+
+    def __getitem__(self, item: int) -> G1tFile:
+        with self._lock:
+            if item not in self._kept:
+                start, size = self._spans[item]
+                self._kept[item] = _x360_member(self._read(), start, size)
+            return self._kept[item]
+
+    def __iter__(self) -> Iterator[int]:
+        return iter(self._spans)
+
+    def __len__(self) -> int:
+        return len(self._spans)
