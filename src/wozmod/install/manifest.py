@@ -43,7 +43,8 @@ NOT_READ = {
     "art": {"data/movies.json": "the movies are copied, not built",
             "data/art/faces": "the faces draw lettering.zip, which the release ships built"},
 }
-PROGRAMS = {"text", "art"}  # the steps that read the discs' decrypted programs
+# The discs whose decrypted program each step reads, None for every disc's; the voices read WO2 X360's Dream teams.
+PROGRAMS = {"text": None, "voices": ("wo2-x360",), "art": None}
 # The WOZMOD_* settings each step reads. The art modules' own command lines read more (WOZMOD_GAME, ...), as argparse
 # defaults that the step never reaches; those are not the step's.
 ENVIRONMENT = {
@@ -131,7 +132,7 @@ def source_parts(found: Manifest) -> dict:
 def _programs(step: str) -> tuple[str, ...]:
     from wozmod.donors.discs import DISCS
 
-    return tuple(DISCS) if step in PROGRAMS else ()
+    return (PROGRAMS[step] or tuple(DISCS)) if step in PROGRAMS else ()
 
 
 def _stock(root: Path) -> tuple[tuple[int, int], tuple]:

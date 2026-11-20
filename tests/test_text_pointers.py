@@ -141,7 +141,9 @@ def test_each_shown_notice_and_spoken_line_takes_the_donor_record_its_command_sh
     from wozmod.formats.linkdata import decoded_member, ps2_members
     from wozmod.formats.scripts import NOTICE, SPEAK, donor_text, parse_script
     from wozmod.text.resolver import DonorResolver
-    from wozmod.text.script_alignment import PSP_STAGE_MEMBERS, moz_scripts, stage_joins, wo1_scripts, wo2_x360
+    from wozmod.text.script_alignment import (
+        PSP_STAGE_MEMBERS, dream_teams, moz_scripts, stage_joins, wo1_scripts, wo2_x360,
+    )
     from wozmod.text.keys import stock_key
     from wozmod.voices.build import PSP_TEXT
 
@@ -150,7 +152,8 @@ def test_each_shown_notice_and_spoken_line_takes_the_donor_record_its_command_sh
     members = ps2_members(folders.folder("wo2-psp") / PSP_TEXT, list(PSP_STAGE_MEMBERS.values()))
     psp = {o: parse_script(decoded_member(members[m])) for o, m in PSP_STAGE_MEMBERS.items()}
     joins = stage_joins(moz, wo1_scripts(folders.folder("wo1-x360") / "linkdata_ens"),
-                        wo2_x360(folders.folder("wo2-x360") / "linkdata_ens").scripts(), psp)
+                        wo2_x360(folders.folder("wo2-x360") / "linkdata_ens").scripts(), psp,
+                        teams=dream_teams(folders.program("wo2-x360")))
     rows = {row["key"]: row for row in json.loads(TABLE.read_text(encoding="utf-8"))["rows"]}
     resolver = DonorResolver(Path(os.environ["WOZMOD_DONORS"]))
 

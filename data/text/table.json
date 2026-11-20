@@ -51245,6 +51245,11 @@
       ]
     },
     {
+      "key": "c6b807bdfc2dcfe915ff16eb4d35d4991ce49c1e1a342fd3495f643c55b204f5",
+      "source": "authored",
+      "en": "So desperate... How pitiful... Truly pitiful..."
+    },
+    {
       "key": "ed29c1cd1b8a269e1f768cce733293d6c54e79f85c53ccfc276e3ec1904dba92",
       "source": "wo2-x360",
       "ref": [
@@ -138519,7 +138524,7 @@
         "ens",
         151,
         "dialog",
-        36
+        33
       ]
     },
     {
@@ -138530,7 +138535,7 @@
         "ens",
         151,
         "dialog",
-        37
+        34
       ]
     },
     {
@@ -138552,7 +138557,7 @@
         "ens",
         151,
         "dialog",
-        33
+        36
       ]
     },
     {
@@ -138563,7 +138568,7 @@
         "ens",
         151,
         "dialog",
-        34
+        37
       ]
     },
     {
@@ -149444,8 +149449,14 @@
     },
     {
       "key": "72c4b3bb791373ab230b80e564c6da99445984f775d09eea1e5278692974bdb4",
-      "source": "authored",
-      "en": "Then I'll go too... No, no, I've got to hold this spot."
+      "source": "wo2-x360",
+      "ref": [
+        "wo2-x360",
+        "ens",
+        163,
+        "dialog",
+        27
+      ]
     },
     {
       "key": "0f6f31a6e08ee1dcbd23f3a5b21d5f1966a89ab8da241dbe1ff5ad57f1eb1824",
@@ -242378,14 +242389,8 @@
     },
     {
       "key": "46b187d2fecb3d4b6c9f8662bd47369d489980de3c50f24bc823f3f6c4f67f04",
-      "source": "wo2-x360",
-      "ref": [
-        "wo2-x360",
-        "ens",
-        163,
-        "dialog",
-        27
-      ]
+      "source": "authored",
+      "en": "Oh? Looks like someone's out there making a real scene!"
     },
     {
       "key": "a3ebce7de5d1920946b549bc26d0c83b6f1a0a6b1cd05e7b75ef44322efd5821",

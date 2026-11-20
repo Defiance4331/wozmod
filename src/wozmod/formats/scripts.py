@@ -51,12 +51,16 @@ class Table:
 class Script:
     """A stage script's battle notices (section 2) and spoken lines (section 3). speaks holds, for a stock script read
     by script_alignment.moz_scripts, each dialog line its speak commands speak with their bank flags (speak_flags);
-    it is empty for a donor script. events holds section 1's event scripts (script_events)."""
+    it is empty for a donor script. events holds section 1's event scripts (script_events), conditions each event's
+    conditions in the same order (_event_scripts), and casts the person each placement of section 0 places
+    (placement_casts)."""
 
     notices: Table
     dialog: Table
     speaks: dict[int, set[int]] = field(default_factory=dict, compare=False)
     events: tuple[tuple[tuple[int, ...], ...], ...] = field(default=(), compare=False)
+    conditions: tuple[tuple[tuple[int, tuple[int, ...]], ...], ...] = field(default=(), compare=False)
+    casts: tuple[int, ...] = field(default=(), compare=False)
 
 
 def _table(data: bytes, spoken: bool, order: str = "<") -> Table:
@@ -100,8 +104,10 @@ def parse_script(data: bytes, order: str = "<") -> Script:
         raise ScriptError("script does not start with four sections")
     if any(b <= a for a, b in pairwise(offsets)) or offsets[-1] >= len(data) or any(o % 4 for o in offsets):
         raise ScriptError("script section offsets are invalid")
+    scripts = _event_scripts(data, order)
     return Script(_table(data[offsets[2]:offsets[3]], False, order), _table(data[offsets[3]:], True, order),
-                  events=script_events(data, order))
+                  events=tuple(commands for _, commands in scripts),
+                  conditions=tuple(conditions for conditions, _ in scripts), casts=placement_casts(data, order))
 
 
 # The commands that show a stage script's records, by the dispatchers MOZ 0x4F3AB0 (table 0x4F3CEC), WO2 X360
@@ -114,10 +120,17 @@ SPEAK = 0x26
 
 def script_events(data: bytes, order: str = "<") -> tuple[tuple[tuple[int, ...], ...], ...]:
     """Each event script of a stage script's section 1, as its commands of eight words: the opcode, then its
-    arguments.
+    arguments (see _event_scripts)."""
+    return tuple(commands for _, commands in _event_scripts(data, order))
+
+
+def _event_scripts(data: bytes, order: str) -> list[tuple[tuple, tuple]]:
+    """(conditions, commands) of each event script of section 1.
 
     Section 1 is u32 count, two u32, then count u32 script offsets from the section start. A script is bytes flags,
-    kind, setup, imm, condition count c, command count n, then c 18-byte conditions and n commands of eight u16."""
+    kind, setup, imm, condition count c, command count n, then c 18-byte conditions (a type byte, a pad byte, eight
+    u16) and n commands of eight u16. The conditions are a tree in prefix order: types 0xFF (all of) and 0xFE (any of)
+    take the next word 0 subtrees as their children (wozmod.text.stage_moments reads them)."""
     try:
         base = struct.unpack_from(f"{order}5I", data)[2]
         count = struct.unpack_from(f"{order}I", data, base)[0]
@@ -125,11 +138,25 @@ def script_events(data: bytes, order: str = "<") -> tuple[tuple[tuple[int, ...],
         for start in struct.unpack_from(f"{order}{count}I", data, base + 12):
             at = base + start
             conditions, commands = data[at + 4], data[at + 5]
-            events.append(tuple(struct.unpack_from(f"{order}8H", data, at + 6 + 18 * conditions + 16 * k)
-                                for k in range(commands)))
+            events.append((
+                tuple((data[at + 6 + 18 * k], struct.unpack_from(f"{order}8H", data, at + 8 + 18 * k))
+                      for k in range(conditions)),
+                tuple(struct.unpack_from(f"{order}8H", data, at + 6 + 18 * conditions + 16 * k)
+                      for k in range(commands))))
     except (struct.error, IndexError) as exc:
         raise ScriptError("event scripts are truncated") from exc
-    return tuple(events)
+    return events
+
+
+def placement_casts(data: bytes, order: str = "<") -> tuple[int, ...]:
+    """The person each placement of section 0 places: section 0 is u32 count, three u32, then count 32-byte
+    placements, each starting with its u16 person. Commands and conditions name a unit by its placement's index."""
+    try:
+        at = struct.unpack_from(f"{order}5I", data)[1]
+        count = struct.unpack_from(f"{order}I", data, at)[0]
+        return tuple(struct.unpack_from(f"{order}H", data, at + 16 + 32 * p)[0] for p in range(count))
+    except struct.error as exc:
+        raise ScriptError("placements are truncated") from exc
 
 
 def speak_flags(data: bytes) -> dict[int, set[int]]:

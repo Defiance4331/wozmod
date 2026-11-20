@@ -129,6 +129,8 @@ def test_each_step_key_changes_with_exactly_the_inputs_its_output_depends_on(tmp
         "a disc member all three read": (STEPS, lambda: _repin_member(monkeypatch, "wo2-x360", "linkdata_ens.idx")),
         "a dub schedule only the text reads": ({"text"}, lambda: _repin_member(monkeypatch, "wo1-x360", "linkdata_fns/369.bin")),
         "a decrypted program": ({"text", "art"}, lambda: _repin_program(monkeypatch, "wo2-psp")),
+        # The voices pair the Dream stages under WO2's fixed team, from its program (script_alignment.dream_teams).
+        "the WO2 X360 program": (STEPS, lambda: _repin_program(monkeypatch, "wo2-x360")),
         "the lettering bundle": ({"art"}, lambda: lettering.write_bytes(b"other bundle")),
         "the DLL and lettering pins, which an install does not check": (set(), lambda: _edit(root / "packaging/pins.json", '"dl"', '"dm"')),
         "the speech model": ({"voices"}, lambda: monkeypatch.setattr(phones, "MODEL", {"en-us/mdef": (1, "other")})),

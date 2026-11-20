@@ -16,7 +16,7 @@ from wozmod.formats.scripts import Script, parse_script
 from wozmod.text.resolver import DonorResolver
 from wozmod.text.script_alignment import (
     EVENTS, StageJoin, PSP_QUOTE_INSERT, PSP_QUOTES, PSP_STAGE_MEMBERS, QUOTES, WO1_QUOTE_INSERT, donor_event_entries, moz_scripts,
-    paired_quote_tables, stage_joins, wo1_scripts, wo2_x360,
+    dream_teams, paired_quote_tables, stage_joins, wo1_scripts, wo2_x360,
 )
 
 from . import phones
@@ -79,13 +79,14 @@ def voice_maps(stock: Path, donors: Path) -> VoiceMaps:
     quotes = game_files.archive(Path(stock) / "LINKDATA1")[quotes_entry]
     wo2_tables = paired_quote_tables(quotes, wo2_donor.members([wo2_quotes])[wo2_quotes], wo2_donor.order)
     wo1_by_ens, wo2_by_member = wo1_scripts(wo1 / "linkdata_ens"), wo2_donor.scripts()
-    joins = stage_joins(moz, wo1_by_ens, wo2_by_member)
-    one, two = dialogue_voice_maps(moz, wo1_by_ens, wo2_by_member,
+    joins = stage_joins(moz, wo1_by_ens, wo2_by_member, teams=dream_teams(folders.program(WO2_X360.name)))
+    one, two = dialogue_voice_maps(moz, joins,
                                    paired_quote_tables(quotes, wo1_ens[wo1_quotes], ">", insert=WO1_QUOTE_INSERT),
-                                   wo2_tables, joins)
+                                   wo2_tables)
     triggers = stage_triggers(moz, joins)
-    # A line that shares its voice id with a line whose trigger plays another take gets an id of its own.
-    slots = voice_slots(triggers, one, two)
+    # A line that shares its voice id with a line whose trigger plays another take, or that keeps its stock take
+    # (maps.STOCK_TAKES), gets an id of its own.
+    slots = voice_slots(moz, triggers, one, two)
     one, two = one | slot_records(slots, WO1_X360.name), two | slot_records(slots, WO2_X360.name)
     three = psp_text_voice_map(moz, quotes, psp / PSP_TEXT)
     stock_voices = game_files.voices(Path(stock))

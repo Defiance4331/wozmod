@@ -478,11 +478,12 @@ def stage_record_join(ours: list[bytes], theirs: list[bytes], twins: dict[int, i
 def stages(game: Path, resolver) -> dict[str, tuple[list[bytes], dict[int, int]]]:
     """program_join's stages: the stock records, and per Xbox 360 donor its records and each stock stage's twin."""
     from wozmod.formats.linkdata import archive
-    from wozmod.text.script_alignment import moz_scripts, stage_joins, wo1_scripts, wo2_x360
+    from wozmod.text.script_alignment import dream_teams, moz_scripts, stage_joins, wo1_scripts, wo2_x360
 
     folder = resolver.donors.folder
     joins = stage_joins(moz_scripts(game / "LINKDATA2"), wo1_scripts(folder("wo1-x360") / "linkdata_ens"),
-                        wo2_x360(folder("wo2-x360") / "linkdata_ens").scripts())
+                        wo2_x360(folder("wo2-x360") / "linkdata_ens").scripts(),
+                        teams=dream_teams(resolver.program("wo2-x360")))
     found = {"moz": (stage_records(archive(game / "LINKDATA1").read([STAGE_RECORDS["moz"]])[STAGE_RECORDS["moz"]], "<"),
                      {})}
     for donor in X360:

@@ -117,9 +117,9 @@ def test_person_map_learns_a_person_a_copied_event_hides_and_one_stock_names_by_
 
 
 def test_stage_join_pairs_the_lines_between_aligned_neighbours_where_each_side_holds_as_many():
-    # Bugs: a line kept from pairing only by its speaker key loses its donor take: a donor person the person map
-    # cannot learn (8 here), or a line no donor command speaks (donor line 3; Dream stage 60
-    # line 47); or a line MOZ inserts (stock line 5) takes a donor line. Expected by hand from the commands below.
+    # Bugs: a line no moment reaches loses its donor take where only the line table can pair it: a donor person the
+    # person map cannot learn (8 here), or a line no donor command speaks (donor line 3; story WO2 X360 5.13 and
+    # 28.5); or a line MOZ inserts (stock line 5) takes a donor line. Expected by hand from the commands below.
     def speaks(*people):
         return tuple(((0x26, person, line, 0, 0, 0, 0, 0),) for line, person in enumerate(people) if person is not None)
 
@@ -129,11 +129,11 @@ def test_stage_join_pairs_the_lines_between_aligned_neighbours_where_each_side_h
                                                                                     (4, 4), (6, 5))}
 
 
-def test_a_line_whose_speak_the_streams_align_takes_the_donor_line_from_the_speaker_set_pair():
-    # Bug: the table pairs donor line 1 with stock line 1 by speaker set alone (both person 32), and the stream pair
-    # of stock line 2, whose speak sits where the donor speaks line 1 (same event, same commands around it), is
-    # refused because that donor line is taken: line 2 keeps the Japanese voice and line 1 plays line 2's English
-    # take (Dream stage 60 lines 27 and 54, decisions ledger text rows 22 and 25). Expected by hand.
+def test_the_table_gives_no_line_the_donor_line_a_moment_gives_another():
+    # Bug: the line table pairs stock line 1 with donor line 1 by speaker set alone (both person 32), though stock line
+    # 2 is the one spoken at that donor line's moment (same event, same commands around it), so line 1, MOZ's own,
+    # plays line 2's English take as well (Dream stage 60 lines 54 and 27, decisions ledger text row 49). Expected by
+    # hand.
     a, b, c, d = ((op, 0, 0, 0, 0, 0, 0, 0) for op in (5, 6, 7, 8))
     donor = replace(_script([], [(None, b"d0"), (None, b"d1")]), events=((_speak(1, 0), a), (b, _speak(32, 1), c)))
     stock = replace(_script([], [(None, b"D0"), (None, b"Other words"), (None, b"D1")]), events=(
@@ -143,24 +143,12 @@ def test_a_line_whose_speak_the_streams_align_takes_the_donor_line_from_the_spea
 
 def test_a_new_line_spoken_where_the_donor_repeats_a_line_takes_that_line_too():
     # Bug: the table's gap fill gives a line MOZ added (stock 1) the donor line no donor command speaks (donor 1),
-    # where the donor speaks line 0 a second time; or the line that takes donor line 0 there takes it from stock line
-    # 0, whose own speak is donor line 0's too (Dream stage 60 lines 39 and 47). Expected by hand.
+    # where the donor's moment speaks line 0 a second time; or stock line 0, whose own moment speaks donor line 0
+    # too, loses it (Dream stage 60 lines 39 and 47). Expected by hand.
     a, b = ((op, 0, 0, 0, 0, 0, 0, 0) for op in (5, 6))
     donor = replace(_script([], [(None, b"d0"), (None, b"d1")]), events=((a, _speak(1, 0)), (b, _speak(1, 0))))
     stock = replace(_script([], [(None, b"D0"), (None, b"New")]), events=((a, _speak(1, 0)), (b, _speak(1, 1))))
     assert stage_join(stock, donor, {1: 1}) == {("dialog", 0): 0, ("dialog", 1): 0}
-
-
-def test_a_greedy_stream_match_alone_does_not_take_a_paired_donor_line():
-    # Bug: the stream pass takes a donor line from its table pair on the greedy match's word: the greedy match puts
-    # stock line 2's speak on donor line 1 (the run "5, speak"), where the optimal alignments do not, and line 1
-    # loses its take to a line the donor never speaks there (Dream stage 46 line 66 and twelve more lines).
-    five, six = (5, 0, 0, 0, 0, 0, 0, 0), (6, 0, 0, 0, 0, 0, 0, 0)
-    donor = replace(_script([], [(None, b"d0"), (None, b"d1")]), events=(
-        (), (_speak(1, 0),), (six, five, _speak(2, 1))))
-    stock = replace(_script([], [(None, b"D0"), (None, b"D1"), (None, b"D2")]), events=(
-        (five, five, _speak(1, 0)), (five, five, _speak(2, 2), _speak(2, 1)), ()))
-    assert stage_join(stock, donor, {1: 1, 2: 2}) == {("dialog", 0): 0, ("dialog", 1): 1}
 
 
 def test_notice_join_pairs_each_notice_with_the_one_its_commands_counterpart_shows():
@@ -177,9 +165,8 @@ def test_notice_join_pairs_each_notice_with_the_one_its_commands_counterpart_sho
     assert notice_join(StageJoin("wo2-x360", 0, donor, {}, {}, stock)) == {0: 0, 1: 1, 2: 3}
 
 
-def _reference_alignment(stock, donor, persons, pairs, opcode):
+def _reference_alignment(stock, donor, persons, lines):
     """script_alignment._alignment as it was in Python before its table and traces moved to streams.rs."""
-    lines = {r: d for (table, r), d in pairs.items() if table == "dialog"}
     ours, oe = _command_rows(stock, lambda p: persons.get(p, ("stock", p)), lambda r: lines.get(r, ("stock", r)))
     theirs, te = _command_rows(donor, lambda p: p, lambda r: r)
     holders = defaultdict(Counter)
@@ -218,8 +205,8 @@ def _reference_alignment(stock, donor, persons, pairs, opcode):
             up, left = here == score[i - 1][j], here == score[i][j - 1]
             if pair and not (earliest and (up or left)):
                 c = ours[i - 1][2]
-                if c is not None and c[0] == opcode:
-                    found[c[1 if opcode == NOTICE else 2]].add(theirs[j - 1][2][1 if opcode == NOTICE else 2])
+                if c is not None and c[0] == NOTICE:
+                    found[c[1]].add(theirs[j - 1][2][1])
                 i, j = i - 1, j - 1
             elif up:
                 i -= 1
@@ -249,12 +236,10 @@ def test_the_native_stream_alignments_trace_the_pairs_the_python_table_did():
     for case in range(400):
         stock, donor = replace(_script(), events=events()), replace(_script(), events=events())
         persons = rng.choice(({1: 1, 2: 2}, {1: 2, 2: 1}, {1: 1}))
-        pairs = {("dialog", r): rng.randrange(4) for r in range(4) if rng.random() < 0.6}
-        for opcode in (NOTICE, SPEAK):
-            got = _alignment(stock, donor, persons, pairs, opcode)
-            want = _reference_alignment(stock, donor, persons, pairs, opcode)
-            if [list(d.items()) for d in got] != [list(d.items()) for d in want]:
-                wrong.append((case, hex(opcode), got, want))
+        lines = {r: rng.randrange(4) for r in range(4) if rng.random() < 0.6}
+        got, want = _alignment(stock, donor, persons, lines), _reference_alignment(stock, donor, persons, lines)
+        if [list(d.items()) for d in got] != [list(d.items()) for d in want]:
+            wrong.append((case, got, want))
     assert not wrong, wrong[:3]
 
 

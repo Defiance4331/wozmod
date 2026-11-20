@@ -24,6 +24,7 @@ from wozmod.movies import movie_rows
 
 from .movie_captions import x360_schedules
 from .narration_voices import container
+from .stage_moments import StageMoments
 
 # WO1 X360 ENS ordinals, as are the other WO1 X360 entries below. Its loader 0x822A28C0 reads ENS k as archive id 0xA53 + k;
 # 0x8219D948 loads the stage script ENS 88 + stage id.
@@ -38,6 +39,19 @@ WO2_SCRIPTS = range(2796, 2864)
 # (the stage table, LINKDATA1 4075, counts them), so its scripts are LINKDATA2 0-143.
 MOZ_SCRIPTS = range(144)
 DREAM_SCRIPTS = tuple(zip(range(40, 68), range(2836, 2864), strict=True))
+# WO2 X360 plays each Dream stage with a fixed team, which its Dream scripts never test: default.pe offset 0x8EC8 (VA
+# 0x82008EC8, .rdata) holds 28 rows of 6 bytes, one per Dream stage 40-67, whose bytes 0-2 are the three officers.
+# In all 28 they are the team under which MOZ's team-gated events best reproduce WO2's scenes (WO2's reader of the
+# rows is untraced). MOZ holds the same officers at VA 0x6D62F2, where 0x476E00 reads them to unlock the stages.
+DREAM_TEAMS = 0x8EC8
+
+
+def dream_teams(program: bytes) -> dict[int, frozenset[int]]:
+    """Each Dream stage's fixed WO2 X360 team, as WO2 officers, from its decrypted default.pe (DREAM_TEAMS)."""
+    return {o: frozenset(program[DREAM_TEAMS + 6 * k:DREAM_TEAMS + 6 * k + 3])
+            for k, (o, _) in enumerate(DREAM_SCRIPTS)}
+
+
 # WO2 PSP LINKDATA_NA.FNS members by stock Z Dream stage ordinal. The PSP loads a stage script as member stage id + 198
 # (0x1524C8: 0x1066C(5, [0x126FE64] + 0xC6) at 0x1524E4), so these are PSP stages 72-83; that MOZ stage s is PSP stage
 # s - 60 rests on the scripts alone (their voices fall in each PSP stage's range, table 0x25386C).
@@ -257,12 +271,10 @@ def _record_pairs(ours: list, theirs: list) -> list[tuple[int, int]]:
     aligns, and the records between two aligned neighbours (or a table end), in order, where each side holds as many.
     That gap fill is order within an equal-count gap, not code: no donor command links these records. Its guard is
     speech recognition of the takes it gives (tests/test_subtitle_contexts.py,
-    test_no_reviewed_voice_shows_a_neighbours_line), and stage_join's stream alignments override it.
+    test_no_reviewed_voice_shows_a_neighbours_line), and stage_join lets it pair only the lines no moment reaches.
     Those are records whose keys MOZ changed but not their place: a line the donor holds but no donor command speaks,
-    which MOZ speaks, or a line MOZ gave another speaker. On the real data the fill pairs Dream stage 60 line 47,
-    which the streams then give the donor line its trigger speaks, and story lines WO1 X360 94.29 and WO2 X360 5.13
-    and 28.5, whose voice suffixes agree. A record MOZ inserts or drops leaves the counts unequal, so nothing there
-    pairs."""
+    which MOZ speaks (story lines WO2 X360 5.13 and 28.5, whose voice suffixes agree), or a line MOZ gave another
+    speaker. A record MOZ inserts or drops leaves the counts unequal, so nothing there pairs."""
     pairs = []
     for tag, i1, i2, j1, j2 in SequenceMatcher(None, ours, theirs, autojunk=False).get_opcodes():
         if tag == "equal" or (tag == "replace" and i2 - i1 == j2 - j1):
@@ -280,48 +292,33 @@ def _record_keys(script: Script, table: str, key: Callable[[tuple], object]) -> 
             for r in range(len(getattr(script, table).records))]
 
 
-def stage_join(moz: Script, donor: Script, persons: dict[int, int]) -> dict[tuple[str, int], int]:
-    """Pair a stock stage script's spoken lines with its donor script's: ("dialog", stock line) to donor line.
+def stage_join(moz: Script, donor: Script, persons: dict[int, int], team: frozenset[int] | None = None,
+               wo1: bool = False) -> dict[tuple[str, int], int]:
+    """Pair a stock stage script's spoken lines with its donor script's: ("dialog", stock line) to donor line
+    (decisions ledger text row 49). persons are the stock persons' donor persons, team the donor's fixed team (Dream
+    stages 40-67, dream_teams), wo1 whether the donor is WO1 X360 (its condition types are numbered apart).
 
-    Two alignments see a line: of its table, by the speakers of the speak commands that speak each line
-    (_record_pairs), and of the command streams (opcodes, and speak commands by speaker). A line pairs by its table;
-    one its table leaves unpaired (MOZ moved it: Dream stage 51 speaks lines 57 and 58 where WO2 X360 speaks its lines
-    26 and 27) pairs by the streams, with a donor line no other line took. A line no command speaks pairs with
-    nothing. Notices pair through notice_join.
-
-    Both of those can be wrong where MOZ moved or swapped lines, so the optimal alignments of the streams decide last
-    (the notice join's, below): a line whose speaks the earliest and the latest both put on one donor line takes it,
-    and the line that held it by table or greedy stream loses it, unless the alignments put that line's own speak
-    there too, when both keep it (the trigger: decisions ledger text rows 22 and 25). Dream stage 60 line 54 speaks
-    WO2 X360 line 27 at its trigger, where stock line 27, other words by the same officer, has no counterpart; Dream
-    stage 48 speaks lines 33 and 34 in the event where WO2 X360 speaks its lines 36 and 37, and the other way round,
-    so the table's order pairs each with the other's sentence; Dream stage 60 speaks its new line 47 where WO2 X360
-    speaks line 39 a second time. A line the alignments put on two donor lines keeps its pair (Dream stage 50 line 5:
-    four of its events speak donor line 5, one donor line 8). The greedy match alone is never enough: Dream stage 46
-    line 66 and twelve more lines match a donor line greedily that neither optimal alignment gives them."""
-    def person(stock_person: int) -> object:
-        return persons.get(stock_person, ("stock", stock_person))
-
-    a, b = _record_keys(moz, "dialog", lambda c: person(c[1])), _record_keys(donor, "dialog", lambda c: c[1])
-    joined = {("dialog", r): d for r, d in _record_pairs(a, b) if a[r] != ("unshown",)}
-    ours, theirs = _commands(moz, person), _commands(donor, lambda p: p)
-    spoken = defaultdict(set)
-    for i, j, _ in _aligned([t for t, _ in ours], [t for t, _ in theirs]):
-        if ours[i][0][0] == SPEAK:
-            spoken[ours[i][1][2]].add(theirs[j][1][2])
-    taken = set(joined.values())
-    streamed = {r: d for r, (d, *more) in spoken.items() if ("dialog", r) not in joined and not more}
-    pairs = joined | {("dialog", r): d for r, d in streamed.items() if d not in taken}
-    earliest, latest = _alignment(moz, donor, persons, pairs, SPEAK)
-    holders = defaultdict(set)
-    for (_, r), d in pairs.items():
-        holders[d].add(r)
-    moved = {r: d for r, (d, *more) in latest.items() if not more and earliest.get(r) == {d}
-             and pairs.get(("dialog", r)) != d}
-    lost = {h for d in moved.values() for h in holders[d]  # a moved line that lands here is added back below
-            if d not in earliest.get(h, set()) | latest.get(h, set())}
-    return {("dialog", r): d for (_, r), d in pairs.items() if r not in moved and r not in lost} | {
-        ("dialog", r): d for r, d in moved.items()}
+    A line pairs by its moments (stage_moments): the donor line each matched stock event, or chain, speaks where the
+    line is spoken. A line no moment reaches, or whose moments speak different donor lines, pairs by its table
+    (_record_pairs, by the speakers of the speak commands that speak each line), with a donor line no moment gives
+    another line: the lines on the 20 donor events MOZ restructured past the matching (Dream stage 50 lines 28 to 31
+    among them), the donor lines no donor command speaks (story WO2 X360 5.13 and 28.5), and Dream stage 50 line 5, which
+    four moments put on WO2 X360 line 5 and one on its line 8. A line only variants or MOZ's own events speak, and
+    the table leaves unpaired, keeps its Japanese (Dream stage 60 line 54, spoken where WO2 X360 speaks line 27 only
+    for teams without Ling Tong, so WO2's line 27 goes to MOZ's line 27, spoken at the moment WO2's team plays). A
+    line no command speaks pairs with nothing. Notices pair through notice_join."""
+    a, b = _record_keys(moz, "dialog", lambda c: persons.get(c[1], ("stock", c[1]))), \
+        _record_keys(donor, "dialog", lambda c: c[1])
+    table = {r: d for r, d in _record_pairs(a, b) if a[r] != ("unshown",)}
+    notices = _notice_pairs(moz, donor, persons, table)
+    moments = StageMoments(moz, donor, persons, notices, team, wo1).line_moments()
+    pairs = {r: d for r, (d, *more) in moments.items() if not more}
+    spoken = defaultdict(set)  # donor line: the stock lines its moments speak it at
+    for r, lines in moments.items():
+        for d in lines:
+            spoken[d].add(r)
+    pairs |= {r: d for r, d in table.items() if r not in pairs and spoken[d] <= {r}}
+    return {("dialog", r): d for r, d in sorted(pairs.items())}
 
 
 @dataclass(frozen=True)
@@ -343,10 +340,12 @@ class StageJoin:
 
 
 def stage_joins(moz: dict[int, Script], wo1: dict[int, Script], wo2: dict[int, Script],
-                psp: dict[int, Script] | None = None) -> dict[int, StageJoin]:
+                psp: dict[int, Script] | None = None, teams: dict[int, frozenset[int]] | None = None
+                ) -> dict[int, StageJoin]:
     """Join each paired stock stage script (wo1 by ENS ordinal, wo2 by PS2 member id, psp by stock ordinal): story
     stages pair with the donor script that shares their voices (pair_scripts), Dream stages by DREAM_SCRIPTS, Z Dream
-    stages by PSP_STAGE_MEMBERS; each donor's persons come from all of its pairs."""
+    stages by PSP_STAGE_MEMBERS; each donor's persons come from all of its pairs. A Dream stage's lines pair under
+    WO2 X360's team for it (teams, dream_teams), which a Dream stage joined to WO2 needs."""
     ordinal = {id(s): (WO1_X360.name, m) for m, s in wo1.items()} | {id(s): (WO2_X360.name, X360_ENS[m])
                                                                      for m, s in wo2.items()}
     paired = {o: (*ordinal[id(d)], d) for o, d in pair_scripts(moz, [*wo1.values(), *wo2.values()]).items()}
@@ -354,7 +353,13 @@ def stage_joins(moz: dict[int, Script], wo1: dict[int, Script], wo2: dict[int, S
     paired |= {o: (WO2_PSP.name, PSP_STAGE_MEMBERS[o], d) for o, d in (psp or {}).items() if o in moz}
     persons = {source: person_map([(moz[o], d) for o, (s, _, d) in paired.items() if s == source])
                for source in (WO1_X360.name, WO2_X360.name, WO2_PSP.name)}
-    return {o: StageJoin(source, entry, d, stage_join(moz[o], d, persons[source]), persons[source], moz[o])
+    dream = {o for o, _ in DREAM_SCRIPTS}
+    if (missing := sorted(o for o, (source, _, _) in paired.items() if o in dream and source == WO2_X360.name
+                          and o not in (teams or {}))):
+        raise ValueError(f"Dream stages {missing} pair with WO2 X360 but have no WO2 team (dream_teams)")
+    return {o: StageJoin(source, entry, d, stage_join(moz[o], d, persons[source],
+                                                      (teams or {}).get(o) if o in dream else None,
+                                                      source == WO1_X360.name), persons[source], moz[o])
             for o, (source, entry, d) in paired.items()}
 
 
@@ -395,12 +400,11 @@ def _command_rows(script: Script, speaker: Callable[[int], object], line: Callab
     return rows, events
 
 
-def _alignment(stock: Script, donor: Script, persons: dict[int, int], pairs: dict[tuple[str, int], int],
-               opcode: int) -> tuple[dict[int, set[int]], dict[int, set[int]]]:
-    """The earliest and the latest optimal alignment of two stage scripts' command streams (see above; pairs are the
-    stock lines' donor lines so far, persons the stock persons' donor persons), each as the donor records the
-    counterparts of each stock record's opcode commands (NOTICE or SPEAK) show."""
-    lines = {r: d for (table, r), d in pairs.items() if table == "dialog"}
+def _alignment(stock: Script, donor: Script, persons: dict[int, int], lines: dict[int, int]
+               ) -> tuple[dict[int, set[int]], dict[int, set[int]]]:
+    """The earliest and the latest optimal alignment of two stage scripts' command streams (see above; lines are the
+    stock lines' donor lines so far, persons the stock persons' donor persons), each as the donor notices the
+    counterparts of each stock notice's commands show."""
     ours, oe = _command_rows(stock, lambda p: persons.get(p, ("stock", p)), lambda r: lines.get(r, ("stock", r)))
     theirs, te = _command_rows(donor, lambda p: p, lambda r: r)
 
@@ -427,11 +431,10 @@ def _alignment(stock: Script, donor: Script, persons: dict[int, int], pairs: dic
         raise RuntimeError("the stage joins need the wozmod-native package (uv sync --extra native)")
 
     def found(traced: list[tuple[int, int]]) -> dict[int, set[int]]:
-        word = 1 if opcode == NOTICE else 2
         found = defaultdict(set)
         for i, j in traced:
-            if (c := ours[i][2]) is not None and c[0] == opcode:
-                found[c[word]].add(theirs[j][2][word])
+            if (c := ours[i][2]) is not None and c[0] == NOTICE:
+                found[c[1]].add(theirs[j][2][1])
         return found
 
     earliest, latest = native.module.stream_alignments(our_rows, their_rows, likeness)
@@ -441,7 +444,11 @@ def _alignment(stock: Script, donor: Script, persons: dict[int, int], pairs: dic
 def notice_join(join: StageJoin) -> dict[int, int]:
     """Each shown stock notice of a stage join's stock script with its donor notice: the one its commands'
     counterparts show (see above)."""
-    earliest, latest = _alignment(join.stock, join.donor, join.persons, join.pairs, NOTICE)
+    return _notice_pairs(join.stock, join.donor, join.persons, {r: d for (_, r), d in join.pairs.items()})
+
+
+def _notice_pairs(stock: Script, donor: Script, persons: dict[int, int], lines: dict[int, int]) -> dict[int, int]:
+    earliest, latest = _alignment(stock, donor, persons, lines)
     return {r: d for r, (d, *more) in latest.items() if not more and earliest.get(r) == {d}}
 
 
@@ -559,14 +566,16 @@ def quote_pairs(moz: bytes, donor: bytes, officers: bool = True, order: str = "<
     return _decoded((quote_text(m), quote_text(d)) for a, b in tables for m, d in zip(a, b, strict=False) if m and d)
 
 
-def official_pairs(stock: Path, wo1: Path, wo2_donor: Wo2Donor) -> dict[bytes, tuple[str, str]]:
-    """Re-derive stock bytes to (English, source), preserving baseline votes and suffixes."""
+def official_pairs(stock: Path, wo1: Path, wo2_donor: Wo2Donor, teams: dict[int, frozenset[int]]
+                   ) -> dict[bytes, tuple[str, str]]:
+    """Re-derive stock bytes to (English, source), preserving baseline votes and suffixes; teams are WO2's Dream
+    teams (dream_teams)."""
     linkdata1, linkdata2 = game_files.archive(stock / "LINKDATA1"), game_files.archive(stock / "LINKDATA2")
     moz = moz_scripts(stock / "LINKDATA2")
     wo1_by_ordinal, wo2 = wo1_scripts(wo1), wo2_donor.scripts()
     # A spoken line, story or Dream, pairs with the donor line its speak command's counterpart speaks.
     found = [(joined_pairs(moz[o], j, ("notices", "dialog")), j.source)
-             for o, j in stage_joins(moz, wo1_by_ordinal, wo2).items()]
+             for o, j in stage_joins(moz, wo1_by_ordinal, wo2, teams=teams).items()]
     events = [(o, source, o + shift) for ordinals, source, shift in EVENTS for o in ordinals]
     briefing_entry, briefing_members, _ = BRIEFINGS
     quotes_entry, wo1_quotes, wo2_quotes = QUOTES

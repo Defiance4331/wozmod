@@ -23,6 +23,9 @@ def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_unde
     monkeypatch.setattr(wozmod.voices.build, "build_dream_movies", lambda *folders: movies.append(folders))
     monkeypatch.setattr(wozmod.voices.build, "build_dream_events",
                         lambda *given: scenes.append(given) or ({0xAF3 + 241: take}, {}))
+    # No fixture passes a decrypted program's pin: a WO2 X360 program whose Dream team rows are all zero.
+    from wozmod.text.script_alignment import DREAM_TEAMS
+    monkeypatch.setattr(wozmod.voices.build.DonorsFolder, "program", lambda self, disc: bytes(DREAM_TEAMS + 6 * 28))
     stock, donors, output = tmp_path / "stock", tmp_path / "donors", tmp_path / "mod"
     one, two, psp = donors / "wo1-x360", donors / "wo2-x360", donors / "wo2-psp/PSP_GAME/USRDIR"
     for folder in (stock, one, two, psp / "sound", stock / "data/Sound/Voice"):

@@ -1,10 +1,12 @@
 #ifndef WOZMOD_VOICE_SLOTS_H
 #define WOZMOD_VOICE_SLOTS_H
 
-/* Stage lines that share a voice id but not a take (decisions ledger, text row 23). Two stage lines can carry one
-   stock string, the same text and the same @NNNN suffix, while the donor plays a different take at each line's
-   trigger. Neither the voice id the suffix gives nor the text key can tell them apart, so the line that would hear
-   its partner's take gets a voice id of its own past the stock range, and a row keyed with its stage and line.
+/* Stage lines that share a voice id but not a take (decisions ledger, text rows 23, 49 and 50). Two stage lines can
+   carry one stock string, the same text and the same @NNNN suffix, while the donor plays a different take at each
+   line's moment, or one of them keeps its stock take (wozmod.voices.maps.STOCK_TAKES). Neither the voice id the
+   suffix gives nor the text key can tell them apart, so the line that would hear its partner's take gets a voice id
+   of its own past the stock range, and a row keyed with its stage and line. A slot the bank holds no clip for plays
+   the stock take of the line's own id.
 
    voice/Slots.bin (wozmod.voices.maps.slot_table): u32 row count, then per row u16 stage (the LINKDATA2 entry the
    stage loads, 0x4F06D0), u16 dialog line, u16 the stock voice id its speak plays, u16 the id in Voice.bin that

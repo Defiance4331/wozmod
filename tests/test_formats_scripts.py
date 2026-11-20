@@ -45,6 +45,20 @@ def test_parse_script_drops_exactly_two_route_bytes_in_both_sections_and_word_or
         ]
 
 
+def test_parse_script_reads_each_events_conditions_and_each_placements_cast_in_both_word_orders():
+    # Bugs: a condition's words read from its type byte on (no pad byte), the commands read from the end of the
+    # conditions at another size than 18 bytes each, an event's conditions given to the next event, or the casts read
+    # at another stride than 32 bytes or from section 1: the matching then compares the wrong triggers or units (the
+    # stage moments of Dream stages 40-67 hinge on both). Expected: what the synthetic script was written with.
+    events = (((0x10, 1, 2, 3, 4, 5, 6, 7),), ((0x26, 7, 0, 0, 0, 0, 0, 1), (0x0A, 2, 0, 0, 0, 0, 0, 0)))
+    conditions = (((0xFF, (2, 0, 0, 0, 0, 0, 0, 0)), (0x11, (0, 1, 1, 0, 0, 0, 0, 0)), (0x23, (0, 44, 1, 0, 0, 0, 0, 9))),
+                  ())
+    for order in "<>":
+        parsed = parse_script(script(_table(order=order), _table(b"00D@0001\0", order=order), order, events,
+                                     conditions, (7, 300, 7)), order)
+        assert (parsed.events, parsed.conditions, parsed.casts) == (events, conditions, (7, 300, 7))
+
+
 def test_parse_script_rejects_invalid_section_headers_and_offsets():
     data = script(_table(b"00N\0"), _table(b"00D\0"))
     count, *offsets = struct.unpack_from("<5I", data)

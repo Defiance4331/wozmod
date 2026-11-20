@@ -26,17 +26,25 @@ def spans(parts, head: bytes = b"", order: str = "<") -> bytes:
     return head + table + b"".join(parts)
 
 
-def script(notices: bytes, dialog: bytes, order: str = "<", events: tuple = ()) -> bytes:
-    """A stage script: four section offsets, a filler section, the event section (u32 count and two u32, an offset
-    per event, then each event: four bytes, no conditions, a command count and its commands of eight u16), the
-    notice table padded to 4, the dialog table."""
+def script(notices: bytes, dialog: bytes, order: str = "<", events: tuple = (), conditions: tuple = (),
+           casts: tuple = ()) -> bytes:
+    """A stage script: four section offsets, the placements (u32 count, three u32, then 32 bytes per placement
+    starting with its u16 cast), the event section (u32 count and two u32, an offset per event, then each event: four
+    bytes, a condition count, a command count, its conditions of a type byte, a pad byte and eight u16, and its
+    commands of eight u16), the notice table padded to 4, the dialog table. conditions holds each event's conditions
+    as (type, eight words); an event past its end has none."""
     head, body = 12 + 4 * len(events), b""
     offsets = []
-    for event in events:
+    for k, event in enumerate(events):
+        tests = conditions[k] if k < len(conditions) else ()
         offsets.append(head + len(body))
-        body += bytes([0, 0, 0, 0, 0, len(event)]) + b"".join(struct.pack(f"{order}8H", *c) for c in event)
+        body += bytes([0, 0, 0, 0, len(tests), len(event)])
+        body += b"".join(bytes([kind, 0]) + struct.pack(f"{order}8H", *words) for kind, words in tests)
+        body += b"".join(struct.pack(f"{order}8H", *c) for c in event)
     section = struct.pack(f"{order}{3 + len(events)}I", len(events), 0, 0, *offsets) + body
-    sections = [b"HEAD", section + bytes(-len(section) % 4), notices + bytes(-len(notices) % 4), dialog]
+    placements = struct.pack(f"{order}4I", len(casts), 0, 0, 0) + b"".join(
+        struct.pack(f"{order}H", cast) + bytes(30) for cast in casts)
+    sections = [placements, section + bytes(-len(section) % 4), notices + bytes(-len(notices) % 4), dialog]
     offsets = [20 + sum(map(len, sections[:i])) for i in range(4)]
     return struct.pack(f"{order}5I", 4, *offsets) + b"".join(sections)
 

@@ -19,8 +19,8 @@ from wozmod.text.stock import resolve_stock_ref, stock_strings
 
 TABLE = Path(__file__).resolve().parents[1] / "data/text/table.json"
 # The shipped table's rows: their count and the SHA-256 of their sorted keys, one per line.
-ROW_COUNT = 23934
-ROW_KEYS_SHA256 = "cd833e5cb9200a487daf779d9fe1db17612ea9e3a11d68c4613b1f0c9dcfcd6c"
+ROW_COUNT = 23935
+ROW_KEYS_SHA256 = "e6e68c0b6348dd4642138b0b9d390c125ecd5ba949eb656d778717900cd18d61"
 
 
 def test_shipped_table_is_valid_and_keeps_every_row() -> None:

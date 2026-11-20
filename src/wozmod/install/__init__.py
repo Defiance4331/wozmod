@@ -666,7 +666,7 @@ def _build(game: Path, inputs: dict[str, Path], staging: Path, progress: Progres
     checked()  # a wrong input is named before a disc that failed to read
     if unread:
         raise unread
-    if manifest.PROGRAMS & set(rebuilt):
+    if set(manifest.PROGRAMS) & set(rebuilt):
         _place_programs(inputs, donors)
     progress.finish("discs")
     progress.checkpoint()
