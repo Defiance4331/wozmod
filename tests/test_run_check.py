@@ -570,7 +570,8 @@ def test_boot_clock_starts_once_the_run_holds_a_slot_and_the_wait_names_the_hold
 def test_a_launch_waiting_behind_a_heavy_run_names_the_machine_lock_and_who_is_ahead(tools, tmp_path, monkeypatch,
                                                                                      capsys):
     """Bugs: a launch queued for the machine (behind a benchmark, or the first-come line) reports that it waits for a
-    game slot "held by nobody now"; or it counts shared runs ahead of it, which it would go in beside, as waits."""
+    game slot "held by nobody now"; or it counts shared runs ahead of it, which it would go in beside, as waits; or a
+    launch that ends while run_check reads what it waits for is reported as waiting for a free game slot."""
     import subprocess
     import sys
 
@@ -591,7 +592,16 @@ def test_a_launch_waiting_behind_a_heavy_run_names_the_machine_lock_and_who_is_a
     try:
         root = tmp_path / "work/runtime-tests/r1"
         root.mkdir(parents=True)
-        threading.Timer(1.5, launch.kill).start()  # the launch gives up; wait_slot sets no limit of its own
+        reads, waits = [], lock.waits
+
+        def ends_on_the_second_read(pid):  # the launch gives up just as run_check looks; wait_slot has no limit
+            reads.append(pid)
+            if len(reads) == 2:
+                launch.kill()
+                launch.wait()
+            return waits(pid)
+
+        monkeypatch.setattr(lock, "waits", ends_on_the_second_read)
         assert tools.run_check.wait_slot(root, launch, 0.5) is False
     finally:
         launch.kill()

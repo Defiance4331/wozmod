@@ -74,11 +74,14 @@ def wait_slot(root: Path, proc: subprocess.Popen, report: float = SLOT_REPORT) -
     long the runs ahead take, and whoever started run_check decides how long to wait."""
     reported = time.monotonic()
     while not (root / "slot.json").is_file():
+        due = time.monotonic() - reported >= report
+        # read before the check that the run is still up: a run that ends while this is read says nothing more
+        waits = (harness.machine_lock.waits(proc.pid)
+                 or "a game slot, held by " + (", ".join(harness.slot_holders()) or "nobody now")) if due else ""
         if proc.poll() is not None:
             return False
-        if time.monotonic() - reported >= report:
-            print("run_check: waiting for " + (harness.machine_lock.waits(proc.pid) or "a game slot, held by "
-                                               + (", ".join(harness.slot_holders()) or "nobody now")), file=sys.stderr)
+        if due:
+            print(f"run_check: waiting for {waits}", file=sys.stderr)
             reported = time.monotonic()
         time.sleep(0.5)
     return True
