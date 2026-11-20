@@ -591,7 +591,8 @@ def test_a_launch_waiting_behind_a_heavy_run_names_the_machine_lock_and_who_is_a
     try:
         root = tmp_path / "work/runtime-tests/r1"
         root.mkdir(parents=True)
-        assert tools.run_check.wait_slot(root, launch, 1.5, 0.5) is False
+        threading.Timer(1.5, launch.kill).start()  # the launch gives up; wait_slot sets no limit of its own
+        assert tools.run_check.wait_slot(root, launch, 0.5) is False
     finally:
         launch.kill()
         launch.wait()
