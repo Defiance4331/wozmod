@@ -264,7 +264,10 @@ FontForge, Cairo and NumPy, and the proven ffmpeg lives in `work/release-assets/
 2. `uv run python packaging/build.py --assets work/release-assets --speech <speech model folder>` builds the Linux
    zip, and `packaging/build_windows.sh work/release-assets` the Windows one (below). Both go to
    `build/packaging/`.
-3. `gh release create <tag> --draft build/packaging/wozmod-*.zip` makes the draft release with both zips.
+3. `WOZMOD_RELEASE=$(ls build/packaging/wozmod-*.zip | paste -sd:) tools/verify.py release` runs every check,
+   strictly, and scans both zips for game files and game text. Run it only now: before step 1 it fails on the
+   `d3d9.dll` pin, and before step 2 on the zip scan, which has no zips to read. It takes about 20 minutes.
+4. `gh release create <tag> --draft build/packaging/wozmod-*.zip` makes the draft release with both zips.
 
 Publishing the draft then closes each issue that a commit since the previous release names on a
 `Reported in #N` line, with a comment that links the release (`.github/workflows/close-issues.yml`).

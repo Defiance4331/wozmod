@@ -83,12 +83,12 @@ the same tests.
 - Before handing back a change to the runtime, the art or the install, run
   `tools/verify.py --triggered`: the slow checks its diff triggers
   (`tools/verify_checks.toml`, each row citing the incident behind it).
-- Before a release, run `tools/verify.py release`.
+- Before a release, run `tools/verify.py release` at the step the README's release steps give.
 
 Heavy runs take the machine one at a time. Run a dev install or an art build
 through `python3 tools/machine_lock.py COMMAND`, and a benchmark through
 `python3 tools/bench.py`. Give a run that may wait for the machine a long
-timeout (a release takes about 40 minutes), and stop only runs you started.
+timeout (a release takes about 20 minutes), and stop only runs you started.
 Hand back a change players see with the `evidence/contact-sheet.html` that
 `tools/run_check.py` writes. On a new clone, run
 `git config core.hooksPath tools/githooks`, so the hooks lint each commit and
