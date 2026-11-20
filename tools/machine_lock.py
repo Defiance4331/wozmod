@@ -146,9 +146,15 @@ def _wait_turn(kind: Kind, holder: str, poll: float) -> int:
 
 def _busy(ahead: list[Path]) -> str:
     """Who has the machine, for a run waiting behind the tickets ahead: the heavy run, else a game, else the first
-    run ahead in line."""
-    return (holders((HEAVY,)) or [f"the game {game}" for game in holders(SLOTS)]
-            or [t.read_text(encoding="utf-8", errors="replace") for t in ahead[:1]] or ["a running game or test run"])[0]
+    run ahead in line whose ticket is still there (a ticket goes the moment its run goes in or ends)."""
+    if held := holders((HEAVY,)) or [f"the game {game}" for game in holders(SLOTS)]:
+        return held[0]
+    for ticket in ahead:
+        try:
+            return ticket.read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            continue
+    return "a running game or test run"
 
 
 def waits(pid: int) -> str:

@@ -199,3 +199,32 @@ def test_a_test_run_goes_ahead_of_a_waiting_heavy_run_until_that_runs_turn_comes
     first_done.set()
     assert all(done.wait(2) for done in (test_1, install, test_2))
     assert order == ["test 1", "install", "test 2"]
+
+
+def test_a_run_ahead_that_leaves_while_a_waiting_run_names_it_does_not_end_the_waiting_run(monkeypatch, tmp_path):
+    """Bug: the run ahead in line goes in, or ends, between a waiting run's look at the line and its read of that
+    run's ticket for the wait message, and the read's FileNotFoundError ends the waiting run."""
+    import checkout
+    import machine_lock
+
+    (tmp_path / "work").mkdir()
+    monkeypatch.setattr(checkout, "REPO", tmp_path)
+    monkeypatch.delenv(machine_lock.HELD, raising=False)
+    game = machine_lock.share(0.01, "a game")  # on the machine, shared, so the message names a run in line
+    ahead = tmp_path / "work" / machine_lock.LINE / f"{0:020d}-1-game"
+    ahead.write_text("a game ahead", encoding="utf-8")
+    alive = machine_lock._alive
+
+    def leaves_once_seen(ticket):  # the run ahead is in line when the waiting run looks, gone a moment later
+        if ticket != ahead:
+            return alive(ticket)
+        ticket.unlink()
+        return True
+
+    monkeypatch.setattr(machine_lock, "_alive", leaves_once_seen)
+    got = []
+    install = _start(lambda: got.append(machine_lock.claim("an install", 0.01)))
+    time.sleep(0.2)  # the install has named who it waits for, and waits for the game
+    os.close(game)
+    assert install.wait(2)
+    os.close(got[0])
