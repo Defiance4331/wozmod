@@ -273,6 +273,12 @@ MOZ_VOICE_IDS = 22_665
 SLOT_BYTES = 0x4EF84
 WO1_STAGES = range(0x48, 0x84)
 WO1_SUFFIX_BASE = 0xC48
+# In the WO1 voice mode a stage line's index from this on plays on WO2_SUFFIX_BASE whatever its flag (0x4F4FBB).
+WO1_SUFFIX_LIMIT = 0x1166
+# The notice clips: a notice (scripts.NOTICE) plays 0xC43 + slot (0x512CA0), slot 0-3 from 0x4F4F80 kind 0, which
+# no caller passes kind 2 (the slot 4 id 0xC47 is never played). Every donor's record there is the stock recording
+# (work/handbacks/trigger-paths.md, correlation 0.97-0.99), so they play the stock take in every voice mode.
+NOTICE_VOICES = (0xC43, 4)
 # A story line's voice on the X360: the speak command parses @NNNN and stores NNNN - 1 (WO1 0x821A11F4, WO2
 # 0x821BD5DC), and the player adds the record base below the id limit (WO1 0x82188998: 0x5C1 under 0x1E5A; WO2
 # 0x8219F980: 0x66C under 0x229C). Base plus limit is each disc's voice index count (9,243 and 10,504).
@@ -363,11 +369,11 @@ def _suffix(line: bytes) -> int | None:
 def stage_voice(ordinal: int, suffix: int, flag: int) -> int:
     """A stage line's voice id, as the speak command plays it (opcode 38, handler 0x4F17E0): the suffix less one on
     the base 0x5137F0 picks. Stages 72-131 run in the WO1 voice mode (0x4F06BB); there the base is 0xC48, or 0x3078
-    when the command's flag (scripts.speak_flags) is set, and an index from 0x1166 on always takes 0x3078
+    when the command's flag (scripts.speak_flags) is set, and an index from WO1_SUFFIX_LIMIT on always takes 0x3078
     (0x4F4FBB); elsewhere the flag picks 0xC48 and its absence 0x3078."""
     index = suffix - 1
     if ordinal in WO1_STAGES:
-        return index + (WO2_SUFFIX_BASE if flag or index >= 0x1166 else WO1_SUFFIX_BASE)
+        return index + (WO2_SUFFIX_BASE if flag or index >= WO1_SUFFIX_LIMIT else WO1_SUFFIX_BASE)
     return index + (WO1_SUFFIX_BASE if flag else WO2_SUFFIX_BASE)
 
 

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -215,10 +214,11 @@ SUBTITLE_SOURCES = ("captions", "events", "spoken", "officer quotes", "mesc 4071
                     "mesc 4105")
 
 
-def test_contexts_cover_every_subtitle_and_every_english_clip(world, contexts) -> None:
+def test_contexts_cover_every_subtitle_and_every_voice_id(world, contexts) -> None:
     # Bug: the context builder drops a source (events 384-413, camp talk 4073, a movie slot, unvoiced dialog lines),
-    # so every other test here passes without looking at it. Oracle: text.inventory (the stock strings and their
-    # draw sites) and the installer's voice choice, two enumerations the contexts do not use.
+    # or the game plays a voice that has no line (the notice clips), so every other test here passes without looking
+    # at it. Oracle: text.inventory (the stock strings and their draw sites), the installer's voice choice and the
+    # stock voice index, three enumerations the contexts do not use.
     from wozmod.formats.audio import (
         PSP_BRIEFING_VOICES, WO1_EVENT_VOICES, WO1_NARRATION_VOICES, WO2_EVENT_VOICES, WO2_NARRATION_VOICES,
     )
@@ -237,35 +237,72 @@ def test_contexts_cover_every_subtitle_and_every_english_clip(world, contexts) -
     counts = {source: sum(text in seen for text in stock[source]) for source in SUBTITLE_SOURCES}
     print(f"C5 inventory strings with a context: {counts}")
     assert not missing, f"{len(missing)} subtitle strings have no context: " + ", ".join(sorted(missing)[:50])
-    # Every clip in the English bank plays in some context, but for the blocks a whole id range maps by count
-    # (select voices, narration, event lines) whose stock data has no line at every id, and the ids of the stage lines
-    # no speak command speaks (the installer maps every suffix; the engine never plays these).
-    from wozmod.formats.audio import stage_voice
-
-    voiced = {c.voice_id for found in contexts.values() for c in found if c.voice_id is not None}
-    unspoken = {stage_voice(int(c.id[5:].split(".")[0]), int(suffix.group(1)), 0) for c in contexts["english"]
-                if c.kind == "stage" and c.voice_id is None and (suffix := re.search(rb"@([0-9]+)$", c.stock))}
-    from wozmod.formats.audio import event_voice
+    # Every id of the stock voice bank and every clip of the English one plays in some context, or sits in a block
+    # derived from the code or the stock data that says why it has no subtitle. A voice the game plays outside every
+    # context escapes every check above (decisions ledger, text row 48): the notice clips did, until this block list.
+    # Range blocks: select voices, narration, event lines (a whole id run maps by count, and the stock data has no
+    # line at every id). The rest are ids the game never plays, but the notice clips, which every donor records as
+    # the stock take (NOTICE_VOICES).
+    from wozmod import game_files
+    from wozmod.formats.audio import (
+        MOZ_EVENT_LINES, NOTICE_VOICES, WO1_SUFFIX_BASE, WO2_SUFFIX_BASE, _suffix, event_voice,
+        quote_voice, stage_voice,
+    )
     from wozmod.formats.events import event_scenes
+    from wozmod.formats.linkdata import archive
+    from wozmod.formats.scripts import quote_tables
+    from wozmod.text.contexts import QUOTES_ENTRY
+    from wozmod.text.script_alignment import quote_slot_read
     from wozmod.voices.dream_events import DREAM_EVENTS
 
+    voiced = {c.voice_id for found in contexts.values() for c in found if c.voice_id is not None}
+    table = game_files.voices(world.stock).table
+    bank = {v for v in range(len(table) // 8 - 1) if game_files.clip_span(table, v)[1]}
+    played, carried = set(), set()  # the stage and quote ids the game plays; the suffixes some line carries
+    for o, script in world._dialogue.moz.items():
+        for i, line in enumerate(script.dialog.records):
+            if suffix := _suffix(line.value):
+                carried.add(suffix)
+                played |= {stage_voice(o, suffix, flag) for flag in script.speaks.get(i, ())}
+    quotes = [(t, k, suffix) for t, lines in enumerate(quote_tables(archive(world.stock / "LINKDATA1")[QUOTES_ENTRY]))
+              for k, line in enumerate(lines) if (suffix := _suffix(line))]
+    carried |= {suffix for _, _, suffix in quotes}
+    played |= {quote_voice(suffix) for t, k, suffix in quotes if quote_slot_read(t, k)}
+    spoken = {event_voice(o, w.index) for o in DREAM_EVENTS for w in event_scenes(world.linkdata2[o]).windows}
+    dream = range(WO2_EVENT_VOICES[0] + WO2_EVENT_VOICES[2], WO2_EVENT_VOICES[0] + MOZ_EVENT_LINES["wo2-x360"])
     wordless = {event_voice(o, w.index) for o in DREAM_EVENTS for w in event_scenes(world.linkdata2[o]).windows
                 if not w.text.strip(b" \n\x81\x40")}  # a Z Dream scene's voiced sound: a take with no subtitle
-    blocks = {"select voices": range(0, 96), "unspoken stage lines": unspoken, "wordless Z Dream lines": wordless}
+    suffix_ids = range(WO1_SUFFIX_BASE, len(table) // 8 - 1)
+    unplayed = {  # each claims ids no code path plays: checked against every played id below
+        "a stage or quote line's id on the base its speak does not play":
+            {s - 1 + base for s in carried for base in (WO1_SUFFIX_BASE, WO2_SUFFIX_BASE)} - played,
+        "suffix ids no stage or quote line carries":
+            {v for v in suffix_ids if v - (WO2_SUFFIX_BASE if v >= WO2_SUFFIX_BASE else WO1_SUFFIX_BASE) + 1 not in carried},
+        "Z Dream event ids no event speaks": set(dream) - spoken,
+        "narration ids no page line takes": {v for ids in world.narration_voices.values()
+                                             for v in range(min(ids), max(ids) + 1)} - {
+                                                v for ids in world.narration_voices.values() for v in ids},
+    }
+    reaching = {name: sorted(ids & (played | voiced))[:10] for name, ids in unplayed.items() if ids & (played | voiced)}
+    assert not reaching, f"blocks of unplayed ids hold ids the game plays: {reaching}"
+    blocks = {"select voices": range(0, 96), "wordless Z Dream lines": wordless,
+              "notice ids (slots 0-3 play a take every donor records as stock; slot 4 never plays)":
+                  range(NOTICE_VOICES[0], WO1_SUFFIX_BASE),
+              **unplayed}
     for base, _, count in (*WO1_NARRATION_VOICES, *WO2_NARRATION_VOICES, PSP_BRIEFING_VOICES):
         blocks[f"narration ids {base}+"] = range(base, base + count)
     for name, (base, _, count) in (("WO1 event", WO1_EVENT_VOICES), ("WO2 event", WO2_EVENT_VOICES)):
         blocks[f"{name} ids"] = range(base, base + count)
-    unplayed = Counter()
+    by_block = Counter()
     lost = []
-    for voice_id in sorted(set(world.voices) - voiced):
+    for voice_id in sorted((bank | set(world.voices)) - voiced):
         block = next((name for name, ids in blocks.items() if voice_id in ids), None)
         if block:
-            unplayed[block] += 1
+            by_block[block] += 1
         else:
             lost.append(voice_id)
-    print(f"C5 English clips no stock line plays, by block: {dict(unplayed)}")
-    assert not lost, f"{len(lost)} English clips of script lines or quotes have no context: {lost[:50]}"
+    print(f"C5 voice ids no context plays ({len(bank)} in the stock bank), by block: {dict(by_block)}")
+    assert not lost, f"{len(lost)} voice ids (stock bank or English clips) have no context and no block: {lost[:50]}"
 
 
 @pytest.mark.skipif(os.environ.get("WOZMOD_ASR") != "1", reason="set WOZMOD_ASR=1 (reads tools/asr_audit.py's transcripts)")

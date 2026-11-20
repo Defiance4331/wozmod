@@ -26,6 +26,7 @@ from wozmod.formats.audio import (
     psp_se_entries,
     se_plan,
     slot_voice_map,
+    stage_voice,
     wo2_se_entries,
     wo2_voice_records,
 )
@@ -79,6 +80,19 @@ def test_kovs_metadata_does_not_drop_signed_loop_start_or_use_a_fixed_sample_rat
     struct.pack_into("<i", looped, 8, -123)
     size, loop, metadata = parse_kovs_record(bytes(looped))
     assert (size, loop, dataclasses.astuple(metadata)) == (69, -123, (1, 18, 1, 22_050, 4321))
+
+
+@pytest.mark.parametrize(("stage", "suffix", "flag", "voice"), [
+    (71, 67, 0, 0x3078 + 66), (71, 67, 1, 0xC48 + 66),  # the WO2 voice mode: the flag picks 0xC48
+    (72, 67, 0, 0xC48 + 66), (72, 67, 1, 0x3078 + 66),  # the WO1 voice mode (stages 72-131): the flag picks 0x3078
+    (131, 0x1166, 0, 0xC48 + 0x1165), (131, 0x1167, 0, 0x3078 + 0x1166),  # from index 0x1166 on, always 0x3078
+    (132, 0x1167, 1, 0xC48 + 0x1166),
+])
+def test_a_stage_line_plays_the_base_its_stage_mode_and_flag_pick(stage, suffix, flag, voice) -> None:
+    # Bug: a flipped or dropped flag, a stage mode range off by one, or the 0x1166 switch moved, so a line plays a
+    # neighbouring clip and only the opt-in speech check notices. Oracle: MOZ 0x4F4F80 (0x4F4FB1-0x4F4FCE, the flag
+    # and 0x1166 test) and 0x5137F0 (the base), the mode from the stage load 0x4F06BB.
+    assert stage_voice(stage, suffix, flag) == voice
 
 
 def test_wo2_voice_index_requires_contiguous_sector_starts() -> None:
