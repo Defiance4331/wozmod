@@ -1,6 +1,7 @@
 """tools/stock_pieces.py on a synthetic game, and data/stock_pieces.json against what the reference builds read.
 
-The real test (WOZMOD_STOCK_PIECES=1, with WOZMOD_GAME, WOZMOD_DONORS, WOZMOD_LETTERING and WOZMOD_SPEECH) reads the
+The real test (WOZMOD_STOCK_PIECES=1, with WOZMOD_GAME, WOZMOD_DONORS, WOZMOD_LETTERING, WOZMOD_SPEECH and
+WOZMOD_SEPARATOR) reads the
 traces of the three steps' builds (tests/conftest.py, the built fixture; tools/verify.py ref makes them). A read of a
 piece the list leaves out stops a build there, at the read gate; this test catches the other way round.
 """
@@ -18,7 +19,7 @@ from wozmod.install import steps
 from wozmod.install.gate import records
 from wozmod.install.stock import parse
 
-INPUTS = ("WOZMOD_GAME", "WOZMOD_DONORS", "WOZMOD_LETTERING", "WOZMOD_SPEECH")
+INPUTS = ("WOZMOD_GAME", "WOZMOD_DONORS", "WOZMOD_LETTERING", "WOZMOD_SPEECH", "WOZMOD_SEPARATOR")
 
 
 @pytest.mark.skipif(os.environ.get("WOZMOD_STOCK_PIECES") != "1" or not all(os.environ.get(name) for name in INPUTS),
@@ -65,7 +66,7 @@ def test_the_tool_hands_each_step_every_argument_its_function_takes(tmp_path, mo
             called[step] = steps._taken(steps._function(step), arguments)  # what each step's worker hands it
 
     monkeypatch.setattr(steps, "run", run)
-    named = argparse.Namespace(**{name: tmp_path / name for name in ("game", "donors", "speech", "lettering")})
+    named = argparse.Namespace(**{name: tmp_path / name for name in ("game", "donors", "speech", "separator", "lettering")})
     stock_pieces.run_steps(stock_pieces.inputs(named), tmp_path / "scratch")
     assert set(called) == set(steps.STEPS)
 

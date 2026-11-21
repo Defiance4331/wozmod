@@ -12,6 +12,8 @@ system (Linux, Windows Python under Wine, and a Windows 11 machine for what Wine
 - split_command(command): the program and arguments a subprocess.Popen audit event names.
 - executable(name): the file name of a program.
 - lower_priority(): this process and what it starts give way to other work.
+- shared_library(name, version): the file name of a shared library.
+- release_name(): what a release's files and folders call the system.
 """
 
 from __future__ import annotations
@@ -21,14 +23,14 @@ import uuid
 from pathlib import Path
 
 if sys.platform == "win32":
-    from .windows import (ProcessTree, console_ansi, executable, lower_priority, match_folder_access, memory,
-                          run_hidden, settings_folder, split_command)
+    from .windows import (ProcessTree, console_ansi, executable, lower_priority, match_folder_access,
+                          memory, release_name, run_hidden, settings_folder, shared_library, split_command)
 else:
-    from .posix import (ProcessTree, console_ansi, executable, lower_priority, match_folder_access, memory,
-                        run_hidden, settings_folder, split_command)
+    from .posix import (ProcessTree, console_ansi, executable, lower_priority, match_folder_access,
+                        memory, release_name, run_hidden, settings_folder, shared_library, split_command)
 
-__all__ = ["NAME", "ProcessTree", "console_ansi", "executable", "lower_priority", "match_folder_access", "memory",
-           "run_hidden", "settings_folder", "split_command", "staging_folder"]
+__all__ = ["NAME", "ProcessTree", "console_ansi", "executable", "lower_priority", "match_folder_access",
+           "memory", "release_name", "run_hidden", "settings_folder", "shared_library", "split_command", "staging_folder"]
 
 NAME = sys.platform  # the system, as the install record and the step keys name it
 

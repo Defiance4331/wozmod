@@ -217,7 +217,7 @@ def inputs(args):
         raise SystemExit(f"stock_pieces: give --{name} or set WOZMOD_{name.upper()}")
 
     return steps.Inputs(game=given("game"), donors=given("donors"), speech=given("speech"),
-                        lettering=given("lettering"), jobs=worker_count())
+                        separator=given("separator"), lettering=given("lettering"), jobs=worker_count())
 
 
 def main(argv=None) -> int:
@@ -226,6 +226,7 @@ def main(argv=None) -> int:
     parser.add_argument("--donors", type=Path, help="a donors folder as the installer lays it out")
     parser.add_argument("--lettering", type=Path)
     parser.add_argument("--speech", type=Path, help="the speech model folder")
+    parser.add_argument("--separator", type=Path, help="the Dream voice separator's model folder")
     parser.add_argument("--output", type=Path, default=OUTPUT)
     parser.add_argument("--check", action="store_true", help="compare with --output instead of writing it")
     args = parser.parse_args(argv)

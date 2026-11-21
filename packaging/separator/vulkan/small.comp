@@ -1,0 +1,120 @@
+#version 460
+// The network's small kernels (ports of kernels.cu's rmsnorm, gates, bandsplit, glu), one per define:
+// K_RMSNORM, K_GATES, K_BANDSPLIT, K_GLU. No subgroup size is assumed (NVIDIA 32, AMD 32/64, Intel 8-32): rows are
+// handled one per subgroup with lane-strided loops and subgroupAdd. Offsets: halves for fp16 data, floats for fp32,
+// uints for tables.
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_EXT_control_flow_attributes : require
+layout(local_size_x = 256) in;
+// fp16 data is read as uint pairs (unpackHalf2x16) and written rounded to nearest even by f2h: no 16-bit device
+// feature is needed, so the same SPIR-V runs on GPUs without fp16 (Maxwell, Pascal)
+uint f2h(float x) {
+    uint b = floatBitsToUint(x), s = (b >> 16) & 0x8000u; int e = int((b >> 23) & 0xffu) - 127 + 15; uint m = b & 0x7fffffu;
+    if (e >= 31) return s | 0x7c00u;
+    if (e <= 0) {
+        if (e < -10) return s;
+        m |= 0x800000u; uint sh = uint(14 - e); uint r = m >> sh, rem = m & ((1u << sh) - 1u), hf = 1u << (sh - 1u);
+        if (rem > hf || (rem == hf && (r & 1u) == 1u)) r++;
+        return s | r;
+    }
+    uint r = (uint(e) << 10) | (m >> 13), rem = m & 0x1fffu;
+    if (rem > 0x1000u || (rem == 0x1000u && (r & 1u) == 1u)) r++;
+    return s | r;
+}
+#define GET2(block, half_off) unpackHalf2x16(block.u[(half_off) >> 1])                       // two halves at an even offset
+#define GET1(block, half_off) unpackHalf2x16(block.u[(half_off) >> 1])[(half_off) & 1u]
+#define PUT2(block, half_off, pair) { vec2 p_ = (pair); block.u[(half_off) >> 1] = f2h(p_.x) | (f2h(p_.y) << 16); }
+uint row_id() { return gl_WorkGroupID.x * gl_NumSubgroups + gl_SubgroupID; }
+
+#ifdef K_RMSNORM
+// y = x / sqrt(mean(x^2) + eps) * gamma over rows of 384; y may be x
+layout(binding = 0) readonly buffer X_ { uint u[]; } x_;
+layout(binding = 1) readonly buffer Gamma_ { uint u[]; } gamma_;
+layout(binding = 2) buffer Y_ { uint u[]; } y_;
+layout(push_constant) uniform P { uint x, gamma, y, rows; float eps; } pc;
+void main() {
+    uint row = row_id(), L = gl_SubgroupSize, lane = gl_SubgroupInvocationID;
+    if (row >= pc.rows) return;
+    uint xo = pc.x + row * 384, yo = pc.y + row * 384;
+    float ss = 0.0;
+    for (uint i = lane; i < 192; i += L) {
+        vec2 a = GET2(x_, xo + 2 * i);
+        ss += dot(a, a);
+    }
+    ss = subgroupAdd(ss);
+    float inv = inversesqrt(ss / 384.0 + pc.eps);
+    for (uint i = lane; i < 192; i += L) {
+        vec2 a = GET2(x_, xo + 2 * i), g = GET2(gamma_, pc.gamma + 2 * i);
+        PUT2(y_, yo + 2 * i, a * inv * g);
+    }
+}
+#endif
+
+#ifdef K_GATES
+// out[row * 8 + h] = sigmoid(xn[row] . wg[h] + bg[h]), wg fp16 [8][384]
+layout(binding = 0) readonly buffer X_ { uint u[]; } x_;
+layout(binding = 1) readonly buffer W_ { uint u[]; } w_;
+layout(binding = 2) buffer Out_ { float f[]; } out_;
+layout(push_constant) uniform P { uint xn, wg, bg, out_, rows; } pc;
+void main() {
+    uint row = row_id(), L = gl_SubgroupSize, lane = gl_SubgroupInvocationID;
+    if (row >= pc.rows) return;
+    float s[8] = float[8](0, 0, 0, 0, 0, 0, 0, 0);
+    for (uint i = lane; i < 384; i += L) {
+        float x = GET1(x_, pc.xn + row * 384 + i);
+        [[unroll]] for (uint k = 0; k < 8; k++) s[k] += x * GET1(w_, pc.wg + k * 384 + i);
+    }
+    [[unroll]] for (uint k = 0; k < 8; k++) {
+        float t = subgroupAdd(s[k]);
+        if (lane == 0) out_.f[pc.out_ + row * 8 + k] = 1.0 / (1.0 + exp(-(t + GET1(w_, pc.bg + k))));
+    }
+}
+#endif
+
+#ifdef K_BANDSPLIT
+// band b's features of frame t (u in [edge[b], edge[b+1]) of the (T, 7916) gather, u = 2 j + c: spec[fi[j]][t][c]),
+// RMSNorm'd in fp32 with gamma, written fp16 to out[b][t][0 .. kpad) zero padded. One subgroup per (t, b);
+// grid (ceil(T / subgroups per workgroup), 60).
+layout(binding = 0) readonly buffer Spec_ { float f[]; } spec_;
+layout(binding = 1) readonly buffer Tables_ { uint u[]; } tables_;
+layout(binding = 2) readonly buffer Gamma_ { float f[]; } gamma_;
+layout(binding = 3) buffer Out_ { uint u[]; } out_;
+layout(push_constant) uniform P { uint spec, fi, edge, gamma, out_, T, kpad; float eps; } pc;
+void main() {
+    uint t = gl_WorkGroupID.x * gl_NumSubgroups + gl_SubgroupID, b = gl_WorkGroupID.y, L = gl_SubgroupSize, lane = gl_SubgroupInvocationID;
+    if (t >= pc.T) return;
+    uint e0 = tables_.u[pc.edge + b], n = tables_.u[pc.edge + b + 1] - e0;
+    float ss = 0.0;
+    for (uint i = lane; i < n; i += L) { uint uu = e0 + i; float x = spec_.f[pc.spec + (tables_.u[pc.fi + (uu >> 1)] * pc.T + t) * 2 + (uu & 1u)]; ss += x * x; }
+    ss = subgroupAdd(ss);
+    float inv = inversesqrt(ss / float(n) + pc.eps);
+    uint dst = pc.out_ + (b * pc.T + t) * pc.kpad;
+    for (uint i = 2 * lane; i < pc.kpad; i += 2 * L) {  // kpad and dst are even: pairs
+        vec2 y = vec2(0.0);
+        [[unroll]] for (uint c = 0; c < 2; c++) if (i + c < n) {
+            uint uu = e0 + i + c; y[c] = spec_.f[pc.spec + (tables_.u[pc.fi + (uu >> 1)] * pc.T + t) * 2 + (uu & 1u)] * inv * gamma_.f[pc.gamma + e0 + i + c];
+        }
+        PUT2(out_, dst + i, y);
+    }
+}
+#endif
+
+#ifdef K_GLU
+// masks[t][mo[b] + j] = h3[t][j] * sigmoid(h3[t][nh + j]) for band b (h3 at ho[b], row stride 2 nh); grid (T, 60).
+// The masks are the 32-bit floats the host hands on, each the 16-bit float nearest the value.
+layout(binding = 0) readonly buffer H_ { uint u[]; } h_;
+layout(binding = 1) readonly buffer Tables_ { uint u[]; } tables_;
+layout(binding = 2) buffer Masks_ { float f[]; } masks_;
+layout(push_constant) uniform P { uint h3, ho, nh, mo, masks, T; } pc;
+void main() {
+    uint t = gl_WorkGroupID.x, b = gl_WorkGroupID.y, nh = tables_.u[pc.nh + b];
+    uint base = pc.h3 + tables_.u[pc.ho + b] + t * 2 * nh;
+    uint mo = pc.masks + t * 7916 + tables_.u[pc.mo + b];
+    for (uint j = 2 * gl_LocalInvocationID.x; j < nh; j += 512) {
+        vec2 a = vec2(GET1(h_, base + j), GET1(h_, base + j + 1)), g = vec2(GET1(h_, base + nh + j), GET1(h_, base + nh + j + 1));
+        vec2 m = a / (1.0 + exp(-g)), rounded = unpackHalf2x16(f2h(m.x) | (f2h(m.y) << 16));
+        masks_.f[mo + j] = rounded.x; masks_.f[mo + j + 1] = rounded.y;
+    }
+}
+#endif

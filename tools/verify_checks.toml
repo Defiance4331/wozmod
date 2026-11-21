@@ -59,12 +59,22 @@ checkout's tracked files (git), so it runs in the checkout, not beside the refer
 
 [[row]]
 name = "voices, effects and Dream movies"
-paths = ["src/wozmod/voices/*", "src/wozmod/formats/audio.py", "src/wozmod/formats/pmf.py", "native/*"]
+paths = ["src/wozmod/voices/*", "src/wozmod/formats/audio.py", "src/wozmod/formats/pmf.py", "native/*",
+         "packaging/separator*"]
 run = ["ref voices", "tests/test_voices_lips.py", "tests/test_dream_events.py", "tests/test_dream_movies.py",
-       "tests/test_formats_audio.py", "tests/test_shout_banks.py", "tests/test_runtime_edits.py"]
+       "tests/test_formats_audio.py", "tests/test_shout_banks.py", "tests/test_runtime_edits.py",
+       "tests/test_separation_fidelity.py", "tests/test_separation_engines.py", "tests/test_native_features.py"]
 from = """9259ead (the Dream cutscenes in English) changed test_voices_lips and test_dream_movies. #11 (88e0639) changed
 the effect banks and tests/test_runtime_edits.py (the sound pool test). f19a297 changed test_shout_banks. The slow
-learned-mouths test, 330 s, is in tests/test_voices_lips_learned.py, which the row below runs."""
+learned-mouths test, 330 s, is in tests/test_voices_lips_learned.py, which the row below runs. The owner heard
+Japanese in the Dream takes that subtracted the PSP's Japanese track (donors ledger row 12), so they are now separated
+by a model: test_separation_fidelity (about 90 s) is the only test that runs the model as shipped, built by
+packaging/separator_model.py, against a known voice. test_separation_engines (about 50 s) is the only one that runs
+the GPU engines: the Vulkan shaders on Mesa's software renderer, and every engine and shader set this machine's GPU
+takes against the CPU on real sound. The plain attention shader first declared 41 KB of shared memory, over the
+32 KB the smallest desktop drivers give, which the software renderer's limit showed. test_native_features compiles
+the CUDA engine, which is kept in the source and out of every build (donors ledger row 25), so a change to the code
+it shares cannot break it unseen."""
 
 [[row]]
 name = "lip-sync generator"

@@ -33,6 +33,8 @@ dev = [
     "ruff>=0.15.12,<1",
 ]
 build = ["pyinstaller>=6.19,<7"]
+# packaging/separator_model.py: writes the Dream voice separator's graphs from its checkpoint
+model = ["numpy>=2,<3", "onnx>=1.19,<2"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

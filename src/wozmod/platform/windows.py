@@ -263,6 +263,16 @@ def executable(name: str) -> str:
     return f"{name}.exe"
 
 
+def shared_library(name: str, version: str) -> str:
+    """The file name of the shared library called name; a DLL's name carries no version."""
+    return f"{name}.dll"
+
+
+def release_name() -> str:
+    """What a release's files and folders call this system."""
+    return "windows"
+
+
 def lower_priority() -> None:
     """Nothing: below-normal priority for the voice step made installs on Windows slower (an 8 GiB VM, where the
     voice step finishes last: median 863 s against 801 s, 5 runs each, work/handbacks/unit-8-d3.md)."""

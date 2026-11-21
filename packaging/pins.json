@@ -19,5 +19,146 @@
       "sha256": "74dda6824b95950aa1c7cd332ba02d5cf2a2e1cbc54fa143ee194b5e91512e8a",
       "size": 3655680
     }
+  },
+  "separator": {
+    "why": "The Dream voice separator (src/wozmod/voices/separation.py). checkpoint: Kimberley Jensen's Mel-Band RoFormer vocal model (MIT), which packaging/separator_model.py makes the model files from. kernels: the two PTX builds of packaging/separator/kernels.cu that packaging/separator_kernels.py --cuda makes for the CUDA engine, each with the NVRTC compiler and the CUDA headers it is built with. That engine is out of every build (native/src/cuda.rs), so nothing here is used or shipped until it is turned back on. shaders: the glslang release that compiles packaging/separator/vulkan/ to SPIR-V for every other GPU, and how it is run (a build tool as well). Model files, PTX and SPIR-V are pinned in separation.MODEL, KERNELS and SHADERS. wheels: the pinned downloads those tools and the runtime come from (PyPI wheels, and glslang's release archive). files and licenses: what a release carries per system (packaging/separator_runtime.py): ONNX Runtime 1.32.0 for the CPU path. imports: on Windows, the wheel whose Visual C++ runtime files go beside a library that imports them; which files is read from the library's import table (packaging/windows_imports.py), not listed here.",
+    "checkpoint": {
+      "url": "https://huggingface.co/KimberleyJSN/melbandroformer/resolve/ac9b0614ab3cd7f77219e18ba494dfd93956c348/MelBandRoformer.ckpt",
+      "sha256": "87201f4d31afb5bc79993230fc49446918425574db48c01c405e44f365c7559e",
+      "size": 913106900
+    },
+    "wheels": {
+      "onnxruntime-1.32.0-cp314-cp314-manylinux_2_28_x86_64.whl": {
+        "url": "https://files.pythonhosted.org/packages/94/b5/cd55e7f1dfcf2e5fbf3a6915a8c6b4cf81df091e81de2db40e58357ffba4/onnxruntime-1.32.0-cp314-cp314-manylinux_2_28_x86_64.whl",
+        "sha256": "48b878f9551d465aa79ee94ecaf49a1f6b5d27f2975efa775ded374db14d0af1",
+        "size": 27780528
+      },
+      "onnxruntime-1.32.0-cp314-cp314-win_amd64.whl": {
+        "url": "https://files.pythonhosted.org/packages/da/50/bcc038601b4c044f07925ac11dc04e8ad4bbea87db9b4b3a2ac0823c6ddb/onnxruntime-1.32.0-cp314-cp314-win_amd64.whl",
+        "sha256": "2b08ee990d00ab2ee129c5e039f7339963335a4d76f5bd22bfb4f896ae1cec0a",
+        "size": 17123630
+      },
+      "msvc_runtime-14.51.36231-cp314-cp314-win_amd64.whl": {
+        "url": "https://files.pythonhosted.org/packages/57/99/0571bb13baed5596b7b941254a51ed1bb70fa81e6f8d2bac25b104a84aa3/msvc_runtime-14.51.36231-cp314-cp314-win_amd64.whl",
+        "sha256": "55a017355394fa78f87dbab6967cf2131398671ca0a77f8c97dadfc6c6f3de38",
+        "size": 2110765
+      },
+      "nvidia_cuda_nvrtc-13.5.37-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl": {
+        "url": "https://files.pythonhosted.org/packages/a9/54/db4e7f650746265f61c05cf1f8f556dd8c6739b58c823fbc9a7d6fda3247/nvidia_cuda_nvrtc-13.5.37-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl",
+        "sha256": "86b4d68058807988b7d9af5b44917a0601e9c337f35ccd657bfb3c759ff8d8bc",
+        "size": 58185930
+      },
+      "nvidia_cuda_runtime-13.5.37-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": {
+        "url": "https://files.pythonhosted.org/packages/0b/7c/14b8f5518f8951e9dca57ea80f44f8ea8bcc8671812e6cc38009f3205e57/nvidia_cuda_runtime-13.5.37-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+        "sha256": "df2b79a8852f10d1fef8c848489c49eebb5754051bf870202a862831412b179d",
+        "size": 2504024
+      },
+      "nvidia_cuda_nvrtc_cu12-12.0.140-py3-none-manylinux1_x86_64.whl": {
+        "url": "https://files.pythonhosted.org/packages/1b/63/f85b7f22e0c6d4ae44287986eedf5956b20fe4150a518563d0db73360ace/nvidia_cuda_nvrtc_cu12-12.0.140-py3-none-manylinux1_x86_64.whl",
+        "sha256": "8e94e991d85c422de4da87bdc7472fdc1364367bd4aace7000b559cd33122071",
+        "size": 23410082
+      },
+      "nvidia_cuda_runtime_cu12-12.0.146-py3-none-manylinux1_x86_64.whl": {
+        "url": "https://files.pythonhosted.org/packages/cf/ab/aea09611542628e5873e1352991cb0d99009fc62d2d8c361a6bcc99d245b/nvidia_cuda_runtime_cu12-12.0.146-py3-none-manylinux1_x86_64.whl",
+        "sha256": "18c038592af387684812fa712642aa9a26c12da80acb488b6709f7cced147f71",
+        "size": 813947
+      },
+      "glslang-16.6.0-linux-x86_64-release.tar.gz": {
+        "url": "https://github.com/KhronosGroup/glslang/releases/download/16.6.0/glslang-16.6.0-linux-x86_64-release.tar.gz",
+        "sha256": "2c34071f56ecf39d16233294d3739cf43f981fd39080f2fd9dccb782101191ce",
+        "size": 7923164
+      }
+    },
+    "files": {
+      "linux": [
+        {
+          "file": "libonnxruntime.so.1.32.0",
+          "wheel": "onnxruntime-1.32.0-cp314-cp314-manylinux_2_28_x86_64.whl",
+          "member": "onnxruntime/capi/libonnxruntime.so.1.32.0",
+          "sha256": "6c1585d1bbf45b0712ea4a21b705c5fcb4ba04ff2e30f1fbf81a49faf658638f",
+          "size": 34824680
+        }
+      ],
+      "windows": [
+        {
+          "file": "onnxruntime.dll",
+          "wheel": "onnxruntime-1.32.0-cp314-cp314-win_amd64.whl",
+          "member": "onnxruntime/capi/onnxruntime.dll",
+          "sha256": "f529520505e46ba357e8042bb690f30135b2df01f5ff674b8d069f8201e091e9",
+          "size": 22668600
+        }
+      ]
+    },
+    "imports": {
+      "windows": "msvc_runtime-14.51.36231-cp314-cp314-win_amd64.whl"
+    },
+    "licenses": {
+      "linux": [
+        {
+          "file": "ONNXRUNTIME-LICENSE.txt",
+          "wheel": "onnxruntime-1.32.0-cp314-cp314-manylinux_2_28_x86_64.whl",
+          "member": "onnxruntime/LICENSE",
+          "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+          "size": 1073
+        },
+        {
+          "file": "ONNXRUNTIME-ThirdPartyNotices.txt",
+          "wheel": "onnxruntime-1.32.0-cp314-cp314-manylinux_2_28_x86_64.whl",
+          "member": "onnxruntime/ThirdPartyNotices.txt",
+          "sha256": "d8696258afcf9df7827a5e01d6b6d55ee9b461b4e82020f5f48242deb9cc2270",
+          "size": 334795
+        }
+      ],
+      "windows": [
+        {
+          "file": "ONNXRUNTIME-LICENSE.txt",
+          "wheel": "onnxruntime-1.32.0-cp314-cp314-win_amd64.whl",
+          "member": "onnxruntime/LICENSE",
+          "sha256": "c250d6278f0b47a6439fb7592b08b58a55eb9f535aa49a1db63211c3f982b674",
+          "size": 1094
+        },
+        {
+          "file": "ONNXRUNTIME-ThirdPartyNotices.txt",
+          "wheel": "onnxruntime-1.32.0-cp314-cp314-win_amd64.whl",
+          "member": "onnxruntime/ThirdPartyNotices.txt",
+          "sha256": "bf8073fd6a112ac2a656bb60799652127e881689e51d37ad20df446cd5188b2d",
+          "size": 341120
+        },
+        {
+          "file": "MSVC-RUNTIME-LICENSE.txt",
+          "wheel": "msvc_runtime-14.51.36231-cp314-cp314-win_amd64.whl",
+          "member": "msvc_runtime-14.51.36231.dist-info/licenses/LICENSE",
+          "sha256": "1df9136ed423271633e0a49436f10672f81d0d98758efdd80463cb312ebb5bc7",
+          "size": 1395
+        }
+      ]
+    },
+    "kernels": [
+      {
+        "ptx": "separator-cuda13.ptx",
+        "compiler": "nvidia_cuda_nvrtc-13.5.37-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl",
+        "library": "nvidia/cu13/lib/libnvrtc.so.13",
+        "headers": "nvidia_cuda_runtime-13.5.37-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+        "include": "nvidia/cu13/include"
+      },
+      {
+        "ptx": "separator-cuda12.ptx",
+        "compiler": "nvidia_cuda_nvrtc_cu12-12.0.140-py3-none-manylinux1_x86_64.whl",
+        "library": "nvidia/cuda_nvrtc/lib/libnvrtc.so.12",
+        "headers": "nvidia_cuda_runtime_cu12-12.0.146-py3-none-manylinux1_x86_64.whl",
+        "include": "nvidia/cuda_runtime/include"
+      }
+    ],
+    "shaders": {
+      "compiler": "glslang-16.6.0-linux-x86_64-release.tar.gz",
+      "program": "bin/glslang",
+      "options": [
+        "-V",
+        "--target-env",
+        "vulkan1.3",
+        "-Os",
+        "--quiet"
+      ]
+    }
   }
 }

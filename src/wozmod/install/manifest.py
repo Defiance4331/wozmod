@@ -32,7 +32,7 @@ from pathlib import Path
 from wozmod import resources
 from wozmod.install import steps
 
-INPUTS = ("game", "donors", "lettering", "speech")  # step_keys.PLAYER_INPUTS says how a key covers each
+INPUTS = ("game", "donors", "lettering", "speech", "separator")  # step_keys.PLAYER_INPUTS says how a key covers each
 SCRATCH = {"out", "staging", "jobs"}  # parameters of a step function that are not inputs: where it writes, its workers
 SHIPPED = "step_keys.json"  # a release's source parts and mod parts, beside data/ (packaging/build.py writes it)
 SOURCE_PARTS = ("inputs", "installer", "modules", "bundled")  # what a release reads from SHIPPED
@@ -49,10 +49,13 @@ PROGRAMS = {"text": None, "voices": ("wo2-x360",), "art": None}
 # defaults that the step never reaches; those are not the step's.
 ENVIRONMENT = {
     "text": ("WOZMOD_NATIVE",),
-    "voices": ("WOZMOD_NATIVE",),
+    "voices": ("WOZMOD_NATIVE", "WOZMOD_DREAM_ENGINE"),  # the second: voices.separation ONLY_ENGINE, a developer's
     "art": ("WOZMOD_NATIVE", "WOZMOD_FONT_PYTHON", "WOZMOD_ART_TRACE"),
 }
-STARTS = {"text": (), "voices": ("ffmpeg",), "art": ()}  # the programs each step starts, by name without .exe
+# The programs each step starts, by name without .exe. The voices step also starts the installer itself again, as the
+# process that separates the Dream voices (voices.separation): wozmod in a release, this Python in a checkout.
+SELF = Path(sys.executable).name.removesuffix(".exe").removesuffix(".EXE")
+STARTS = {"text": (), "voices": ("ffmpeg", SELF), "art": ()}
 
 
 def disc_reads(step: str) -> dict[str, tuple[str, ...]]:

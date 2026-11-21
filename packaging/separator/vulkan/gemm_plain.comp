@@ -1,0 +1,125 @@
+#version 460
+// The network's matrix products (native/src/network.rs Step::Products) on a GPU without matrix units. Problem z of
+// the table computes C[m][n] = act(sum over k of A[m][k] * B[n][k] + bias[n]) + R[m][n], then the rotary turn of its
+// first columns; A, B, C are 16-bit floats, B stored [N][K], bias after B in B's buffer, R in C's buffer.
+// Storage is read as uint and unpacked (unpackHalf2x16), so the 32-bit build (F16MATH 0) needs no 16-bit device
+// feature at all (NVIDIA Maxwell and Pascal). F16MATH 1 multiplies in packed 16-bit floats (f16vec2, twice the
+// 32-bit rate on AMD RDNA and the Steam Deck) and folds each 16-term partial sum into a 32-bit one. Outputs are
+// rounded to nearest even by hand: a driver's own conversion may truncate.
+// Tile 128 x 128 x 16, 256 threads, 8 x 8 outputs a thread.
+#extension GL_EXT_control_flow_attributes : require
+#ifndef F16MATH
+#define F16MATH 0
+#endif
+#if F16MATH
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#endif
+layout(local_size_x = 256) in;
+layout(binding = 0) readonly buffer A_ { uvec4 v[]; } a_;
+layout(binding = 1) readonly buffer B_ { uvec4 v[]; } b_;
+layout(binding = 1) readonly buffer Bias_ { uint u[]; } bias_;
+layout(binding = 2) buffer C_ { uvec4 v[]; } c_;
+layout(binding = 2) buffer Cu_ { uint u[]; } cu_;
+layout(binding = 3) readonly buffer Turn_ { uint u[]; } turn_;
+layout(binding = 4) readonly buffer Table_ { uint u[]; } table_;
+layout(push_constant) uniform P { uint probs; } pc;  // where the table starts: 18 uints a problem
+const uint NONE = 0xffffffffu;
+#define BM 128
+#define BN 128
+#define BK 16
+#if F16MATH
+shared f16vec2 sA[BK / 2][BM], sB[BK / 2][BN];  // k pairs packed: [k / 2][m]
+#else
+shared float sA[BK][BM + 4], sB[BK][BN + 4];
+#endif
+
+float erf_(float x) {
+    float ax = abs(x), t = 1.0 / (1.0 + 0.5 * ax);
+    float y = 1.0 - t * exp(-ax * ax - 1.26551223 + t * (1.00002368 + t * (0.37409196 + t * (0.09678418 + t * (-0.18628806 +
+              t * (0.27886807 + t * (-1.13520398 + t * (1.48851587 + t * (-0.82215223 + t * 0.17087277)))))))));
+    return x >= 0.0 ? y : -y;
+}
+// fp32 -> fp16 bits, round to nearest even (finite inputs)
+uint f2h(float x) {
+    uint b = floatBitsToUint(x), s = (b >> 16) & 0x8000u; int e = int((b >> 23) & 0xffu) - 127 + 15; uint m = b & 0x7fffffu;
+    if (e >= 31) return s | 0x7c00u;
+    if (e <= 0) {  // subnormal
+        if (e < -10) return s;
+        m |= 0x800000u; uint sh = uint(14 - e); uint r = m >> sh, rem = m & ((1u << sh) - 1u), hf = 1u << (sh - 1u);
+        if (rem > hf || (rem == hf && (r & 1u) == 1u)) r++;
+        return s | r;
+    }
+    uint r = (uint(e) << 10) | (m >> 13), rem = m & 0x1fffu;
+    if (rem > 0x1000u || (rem == 0x1000u && (r & 1u) == 1u)) r++;
+    return s | r;
+}
+uint pack2(float a, float b) { return f2h(a) | (f2h(b) << 16); }
+#define HGET(block, off) unpackHalf2x16(block.u[(off) >> 1])[(off) & 1u]
+
+void main() {
+    uint pb = pc.probs + gl_WorkGroupID.z * 18u;
+    uint A = table_.u[pb], B = table_.u[pb + 1], bias = table_.u[pb + 2], R = table_.u[pb + 3], Cc = table_.u[pb + 4];
+    uint M = table_.u[pb + 5], N = table_.u[pb + 6], K = table_.u[pb + 7], lda = table_.u[pb + 8], ldb = table_.u[pb + 9], ldc = table_.u[pb + 10], ldr = table_.u[pb + 11], ac = table_.u[pb + 12];
+    uint rc = table_.u[pb + 13], rs = table_.u[pb + 14], pdiv = table_.u[pb + 15], pmod = table_.u[pb + 16], rope_n = table_.u[pb + 17];
+    uint m0 = gl_WorkGroupID.y * BM, n0 = gl_WorkGroupID.x * BN;
+    if (m0 >= M || n0 >= N) return;
+    uint tid = gl_LocalInvocationID.x, tm = (tid >> 4) * 8, tn = (tid & 15u) * 8;
+    float acc[8][8];
+    [[unroll]] for (uint i = 0; i < 8; i++) [[unroll]] for (uint j = 0; j < 8; j++) acc[i][j] = 0.0;
+    // loads: 128 rows x 16 k = 256 uvec4 per operand, one each per thread (row tid / 2, k chunk (tid & 1) * 8)
+    uint lr = tid >> 1, lk = (tid & 1u) * 8;
+    for (uint k0 = 0; k0 < K; k0 += BK) {
+        uvec4 a4 = m0 + lr < M ? a_.v[(A + (m0 + lr) * lda + k0 + lk) >> 3] : uvec4(0);
+        uvec4 b4 = n0 + lr < N ? b_.v[(B + (n0 + lr) * ldb + k0 + lk) >> 3] : uvec4(0);
+        barrier();
+        [[unroll]] for (uint e = 0; e < 4; e++) {
+#if F16MATH
+            sA[(lk >> 1) + e][lr] = unpackFloat2x16(a4[e]); sB[(lk >> 1) + e][lr] = unpackFloat2x16(b4[e]);
+#else
+            vec2 x = unpackHalf2x16(a4[e]), y = unpackHalf2x16(b4[e]);
+            sA[lk + 2 * e][lr] = x.x; sA[lk + 2 * e + 1][lr] = x.y; sB[lk + 2 * e][lr] = y.x; sB[lk + 2 * e + 1][lr] = y.y;
+#endif
+        }
+        barrier();
+#if F16MATH
+        f16vec2 hacc[8][8];
+        [[unroll]] for (uint i = 0; i < 8; i++) [[unroll]] for (uint j = 0; j < 8; j++) hacc[i][j] = f16vec2(0.0);
+        [[unroll]] for (uint kk = 0; kk < BK / 2; kk++) {
+            f16vec2 a[8], b[8];
+            [[unroll]] for (uint i = 0; i < 8; i++) a[i] = sA[kk][tm + i];
+            [[unroll]] for (uint j = 0; j < 8; j++) b[j] = sB[kk][tn + j];
+            [[unroll]] for (uint i = 0; i < 8; i++) [[unroll]] for (uint j = 0; j < 8; j++) hacc[i][j] = fma(a[i], b[j], hacc[i][j]);
+        }
+        [[unroll]] for (uint i = 0; i < 8; i++) [[unroll]] for (uint j = 0; j < 8; j++) acc[i][j] += float(hacc[i][j].x) + float(hacc[i][j].y);
+#else
+        [[unroll]] for (uint kk = 0; kk < BK; kk++) {
+            float a[8], b[8];
+            [[unroll]] for (uint i = 0; i < 8; i++) a[i] = sA[kk][tm + i];
+            [[unroll]] for (uint j = 0; j < 8; j++) b[j] = sB[kk][tn + j];
+            [[unroll]] for (uint i = 0; i < 8; i++) [[unroll]] for (uint j = 0; j < 8; j++) acc[i][j] = fma(a[i], b[j], acc[i][j]);
+        }
+#endif
+    }
+    [[unroll]] for (uint i = 0; i < 8; i++) {
+        uint m = m0 + tm + i, n = n0 + tn;
+        if (m >= M || n >= N) continue;
+        float x[8];
+        [[unroll]] for (uint j = 0; j < 8; j++) {
+            float t = acc[i][j];
+            if (bias != NONE) t += HGET(bias_, bias + n + j);
+            if (ac == 1u) t = 0.5 * t * (1.0 + erf_(t * 0.70710678118654752)); else if (ac == 2u) t = tanh(t);
+            if (R != NONE) t += HGET(cu_, R + m * ldr + n + j);
+            x[j] = t;
+        }
+        if (rc != NONE && n < rope_n) {
+            uint pos = (m / pdiv) % pmod;
+            [[unroll]] for (uint e = 0; e < 8; e += 2) {
+                float x0 = unpackHalf2x16(f2h(x[e])).x, x1 = unpackHalf2x16(f2h(x[e + 1])).x;
+                uint pr = ((n + e) & 63u) >> 1; float c = HGET(turn_, rc + pos * 32 + pr), sn = HGET(turn_, rs + pos * 32 + pr);
+                x[e] = x0 * c - x1 * sn; x[e + 1] = x0 * sn + x1 * c;
+            }
+        }
+        if (n + 8 <= N) c_.v[(Cc + m * ldc + n) >> 3] = uvec4(pack2(x[0], x[1]), pack2(x[2], x[3]), pack2(x[4], x[5]), pack2(x[6], x[7]));
+        else for (uint j = 0; j + 1 < 8 && n + j < N; j += 2) cu_.u[(Cc + m * ldc + n + j) >> 1] = pack2(x[j], x[j + 1]);  // N even
+    }
+}

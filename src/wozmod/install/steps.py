@@ -53,6 +53,7 @@ class Inputs:
     game: Path  # the stock game folder
     donors: Path  # the extracted discs, laid out as the installer lays them out (install.DonorsFolder)
     speech: Path  # PocketSphinx's US English model folder (voices.phones.MODEL)
+    separator: Path  # the Dream voice separator's model folder (voices.separation.MODEL)
     lettering: Path  # the release lettering bundle, lettering.zip
     jobs: int  # workers a step may use (install.worker_count)
 

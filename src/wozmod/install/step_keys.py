@@ -11,7 +11,8 @@ holds the step to) and the toolchain, in parts the install log compares:
   Python, its packages, the codec's binary and the ffmpeg found.
 - The player's part, one per input the step function takes: the game folder by the stock pieces the step reads (the
   installer checks them before any step runs), the discs by the pins of the members and decrypted programs it reads,
-  lettering.zip by its bytes and the speech model by its pins; and the values of the settings it reads.
+  lettering.zip by its bytes and the speech model and the Dream voice separator's model by their pins; and the
+  values of the settings it reads.
 
 Copied movies have no step key: each is a donor member copied whole, so its pin (data/movies.json) is its key. The
 Dream movies the voices step builds (voices/dream_movies.py) are that step's files.
@@ -160,12 +161,19 @@ def _speech_pins() -> str:
     return key(MODEL)
 
 
+def _separator_pins() -> str:
+    from wozmod.voices.separation import MODEL
+
+    return key(MODEL)
+
+
 # How the player's part covers each input a step function takes (manifest.INPUTS), given the install's lettering.zip.
 PLAYER_INPUTS: dict[str, Callable[[Manifest, Path], object]] = {
     "game": lambda found, lettering: _stock_pieces(found),
     "donors": lambda found, lettering: _donor_pins(found),
     "lettering": lambda found, lettering: _lettering(lettering),
     "speech": lambda found, lettering: _speech_pins(),
+    "separator": lambda found, lettering: _separator_pins(),
 }
 
 

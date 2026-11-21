@@ -40,16 +40,17 @@ INPUTS = {"wo1-x360": "WOZMOD_WO1_X360_ISO", "wo2-x360": "WOZMOD_WO2_X360_ISO", 
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("WOZMOD_INSTALL_E2E") != "1"
-    or not all(os.environ.get(v) for v in ["WOZMOD_GAME", "WOZMOD_DONORS", "WOZMOD_SPEECH", *INPUTS.values()]),
+    or not all(os.environ.get(v) for v in ["WOZMOD_GAME", "WOZMOD_DONORS", "WOZMOD_SPEECH", "WOZMOD_SEPARATOR",
+                                           *INPUTS.values()]),
     reason="set WOZMOD_INSTALL_E2E=1, WOZMOD_GAME, WOZMOD_DONORS (the menu words of the lettering), WOZMOD_SPEECH "
-           "(the speech model folder) and " + ", ".join(INPUTS.values()),
+           "(the speech model folder), WOZMOD_SEPARATOR (the Dream voice model folder) and " + ", ".join(INPUTS.values()),
 )
 
 
 @pytest.fixture(scope="module")
 def release_files(tmp_path_factory) -> dict[str, Path]:
-    """By installer flag: d3d9.dll built from this checkout by the release's own build, the speech model folder the
-    release carries, and lettering.zip: built the same way, or, when the install keeps the art step, the one its
+    """By installer flag: d3d9.dll built from this checkout by the release's own build, the speech model and Dream
+    voice model folders the release carries, and lettering.zip: built the same way, or, when the install keeps the art step, the one its
     reference build read (WOZMOD_LETTERING), as the art key names it."""
     spec = importlib.util.spec_from_file_location("release_assets", REPO / "packaging/release_assets.py")
     release_assets = importlib.util.module_from_spec(spec)
@@ -59,7 +60,8 @@ def release_files(tmp_path_factory) -> dict[str, Path]:
         dll, lettering = release_assets.build_dll(game, folder), Path(os.environ["WOZMOD_LETTERING"])
     else:
         dll, lettering = release_assets.build(game, Path(os.environ["WOZMOD_DONORS"]), folder)
-    return {"dll": dll, "lettering": lettering, "speech": Path(os.environ["WOZMOD_SPEECH"])}
+    return {"dll": dll, "lettering": lettering, "speech": Path(os.environ["WOZMOD_SPEECH"]),
+            "separator": Path(os.environ["WOZMOD_SEPARATOR"])}
 
 
 @pytest.fixture(scope="module")

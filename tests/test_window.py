@@ -18,7 +18,7 @@ import wozmod.install as installer
 from wozmod import __main__ as cli, remembered, window
 from wozmod.version import __version__
 from wozmod.install import InstallError
-from synthetic import speech_model
+from synthetic import separator_model, speech_model
 
 
 @pytest.fixture(autouse=True)
@@ -33,7 +33,8 @@ def test_the_window_and_the_command_give_the_same_verdict_on_each_input(tmp_path
     wrong = tmp_path / "wrong"
     wrong.write_bytes(b"xyz")
     values = {"game": str(tmp_path), "wo1-x360": str(wrong), "wo2-x360": str(tmp_path / "none"), "wo2-psp": str(wrong),
-              "lettering": str(tmp_path / "none"), "dll": str(tmp_path / "none"), "speech": str(wrong)}
+              "lettering": str(tmp_path / "none"), "dll": str(tmp_path / "none"), "speech": str(wrong),
+              "separator": str(wrong)}
 
     def same_verdicts(names):
         with pytest.raises(InstallError) as caught:
@@ -47,6 +48,7 @@ def test_the_window_and_the_command_give_the_same_verdict_on_each_input(tmp_path
     same_verdicts(installer.RELEASE_FILES)  # the release files are checked first, on their own
     values["lettering"] = values["dll"] = str(wrong)  # any file: only a release checks them against its pins
     values["speech"] = str(speech_model(tmp_path / "speech", monkeypatch))
+    values["separator"] = str(separator_model(tmp_path / "separator", monkeypatch))
     same_verdicts(("game", "wo1-x360", "wo2-x360", "wo2-psp"))
 
 
@@ -169,7 +171,8 @@ def test_every_place_names_each_disc_the_same_way(shown, tmp_path, monkeypatch, 
     wrong.write_bytes(b"xyz")
     with pytest.raises(InstallError) as caught:
         installer.check_inputs(tmp_path, {name: wrong for name in installer.INPUTS}
-                               | {"speech": speech_model(tmp_path / "speech", monkeypatch)})
+                               | {"speech": speech_model(tmp_path / "speech", monkeypatch),
+                                  "separator": separator_model(tmp_path / "separator", monkeypatch)})
     error_lines = str(caught.value).splitlines()
 
     shown_lines = set()

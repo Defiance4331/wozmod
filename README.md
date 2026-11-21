@@ -247,7 +247,8 @@ Python 3.14 or later, which uv installs if it is missing. In the repository fold
 
 - `uv run --extra native wozmod install ...` installs, with the options
   above, plus `--lettering` and `--dll` (the two release files, which the
-  repository does not hold).
+  repository does not hold), and `--speech` and `--separator` (the speech
+  model folder and the Dream voice model folder that a release carries).
 - `uv run wozmod-setup` opens the window.
 - `uv run pytest -q` runs the tests.
 
@@ -261,9 +262,13 @@ FontForge, Cairo and NumPy, and the proven ffmpeg lives in `work/release-assets/
 1. `uv run python packaging/release_assets.py --build --game <stock folder> --donors <donors folder>` makes
    `d3d9.dll` and `lettering.zip` in `work/release-assets/` and writes their pins in `packaging/pins.json`, which
    the release commit carries.
-2. `uv run python packaging/build.py --assets work/release-assets --speech <speech model folder>` builds the Linux
-   zip, and `packaging/build_windows.sh work/release-assets` the Windows one (below). Both go to
-   `build/packaging/`.
+2. `uv run python packaging/build.py --assets work/release-assets --speech <speech model folder> --separator
+   work/release-assets/dream-voice` builds the Linux zip, and `packaging/build_windows.sh work/release-assets` the
+   Windows one (below). Both go to `build/packaging/`. The Dream voice separator's folder is made once, and again
+   only when its pins change: `python packaging/separator_runtime.py` fetches ONNX Runtime as
+   `packaging/pins.json` pins it, `uv run --group model python packaging/separator_model.py <MelBandRoformer.ckpt>
+   work/release-assets/dream-voice` makes the model from the pinned checkpoint, and
+   `uv run python packaging/separator_kernels.py` compiles the Vulkan shaders with the pinned compiler.
 3. `WOZMOD_RELEASE=$(ls build/packaging/wozmod-*.zip | paste -sd:) tools/verify.py release` runs every check,
    strictly, and scans both zips for game files and game text. Run it only now: before step 1 it fails on the
    `d3d9.dll` pin, and before step 2 on the zip scan, which has no zips to read. It takes about 20 minutes.

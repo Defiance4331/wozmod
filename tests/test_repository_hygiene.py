@@ -22,7 +22,8 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 # Our own work is source and data text; anything else (a .png, .tga, .xma, .dat) is a build output or game file.
-OWN_SUFFIXES = {"", ".c", ".h", ".json", ".lock", ".md", ".patch", ".py", ".rs", ".sh", ".spec", ".toml", ".txt", ".yml"}
+OWN_SUFFIXES = {"", ".c", ".comp", ".cu", ".h", ".json", ".lock", ".md", ".patch", ".py", ".rs", ".sh", ".spec", ".toml", ".txt",
+                ".yml"}
 # Game and media formats a release must not carry; the release legitimately holds .exe, .dll, .so, .png and .zip.
 PAYLOAD_SUFFIXES = {
     ".7z", ".avi", ".bdx", ".bik", ".bin", ".dds", ".dll", ".exe", ".flac", ".g1t", ".hdx", ".idx",

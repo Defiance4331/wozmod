@@ -13,7 +13,9 @@ from wozmod.interactive import ask_choice, ask_path, ask_yes, interactive
 from wozmod.progress import Cancelled, Progress, TerminalView, duration
 
 ASKED = ("game", *PROGRAMS, *TOOLS)  # the inputs the terminal asks for when they are missing
-SHIPPED = {"lettering": "lettering.zip", "dll": "d3d9.dll", "speech": "speech"}  # inside the packaged program's resource folder
+SEPARATOR_WORKER = "--separator-worker"  # voices.separation.WORKER, named here so that only the worker imports the voices
+# Inside the packaged program's resource folder.
+SHIPPED = {"lettering": "lettering.zip", "dll": "d3d9.dll", "speech": "speech", "separator": "dream-voice"}
 
 
 def attribute(name: str) -> str:
@@ -52,7 +54,8 @@ def run_install(args: argparse.Namespace) -> int:
     absent = [f"--{name} or " + " and ".join(f"--{FILES[disc]}" for disc in TOOLS[name]) if name in TOOLS else f"--{name}"
               for name in ASKED if missing(name, args)]
     if any(getattr(args, name) is None for name in SHIPPED):
-        print("wozmod: --lettering, --dll and --speech are needed outside the release program.", file=sys.stderr)
+        print("wozmod: --lettering, --dll, --speech and --separator are needed outside the release program.",
+              file=sys.stderr)
         return 2
     if absent and not interactive():
         print(f"wozmod: missing {', '.join(absent)}. Give each one, or run wozmod in a terminal and it asks.",
@@ -153,9 +156,14 @@ SETUP_WINDOW = "--setup-window"
 
 def program() -> int:
     """The release's wozmod program: the command line, the setup window when wozmod-setup starts it, or a build
-    step's worker when an install starts one."""
+    step's worker or the Dream voices' separating process when an install starts one."""
     if sys.argv[1:] == [steps.WORKER]:
         steps.worker()
+        return 0
+    if sys.argv[1:2] == [SEPARATOR_WORKER]:
+        from wozmod.voices import separation
+
+        separation.worker(sys.argv[2])
         return 0
     if sys.argv[1:] == [SETUP_WINDOW]:
         from wozmod import window

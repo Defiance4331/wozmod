@@ -47,9 +47,11 @@ def _change_f1(ours, theirs, speaking):
 
 @pytest.mark.skipif(os.environ.get("WOZMOD_LIPS") != "1" or not (os.environ.get("WOZMOD_GAME")
                                                                   and os.environ.get("WOZMOD_DONORS")
-                                                                  and os.environ.get("WOZMOD_SPEECH")),
-                    reason="set WOZMOD_LIPS=1, WOZMOD_GAME, WOZMOD_DONORS (the installer's donors folder) and "
-                           "WOZMOD_SPEECH (the speech model folder), with ffmpeg")
+                                                                  and os.environ.get("WOZMOD_SPEECH")
+                                                                  and os.environ.get("WOZMOD_SEPARATOR")),
+                    reason="set WOZMOD_LIPS=1, WOZMOD_GAME, WOZMOD_DONORS (the installer's donors folder), "
+                           "WOZMOD_SPEECH (the speech model folder) and WOZMOD_SEPARATOR (the Dream voice model "
+                           "folder), with ffmpeg")
 def test_learned_mouths_give_koeis_shapes_on_lines_they_did_not_learn_from(tmp_path, monkeypatch):
     """Learned from the lines with Koei's own English block at even voice ids, the mouths of the odd ones against
     Koei's, per speaking frame. Bugs: features or labels that no longer tell the shapes apart (shapes picked by
@@ -73,7 +75,7 @@ def test_learned_mouths_give_koeis_shapes_on_lines_they_did_not_learn_from(tmp_p
     monkeypatch.setattr(build, "english_lips", capture)
     with pytest.raises(Captured) as caught:
         build.build_voice_banks(Path(os.environ["WOZMOD_GAME"]), Path(os.environ["WOZMOD_DONORS"]),
-                                Path(os.environ["WOZMOD_SPEECH"]), tmp_path)
+                                Path(os.environ["WOZMOD_SPEECH"]), Path(os.environ["WOZMOD_SEPARATOR"]), tmp_path)
     clips, sources, stock, donors, _, texts, listener = caught.value.args[0]
     own, faces = own_blocks(clips, sources, stock, donors)
     some = {voice: clips[voice] for voice in own}

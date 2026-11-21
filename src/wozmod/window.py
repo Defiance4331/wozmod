@@ -472,6 +472,7 @@ class SetupWindow:
                 inputs["lettering"] = resources.root() / "lettering.zip"
                 inputs["dll"] = resources.root() / "d3d9.dll"
                 inputs["speech"] = resources.root() / "speech"
+                inputs["separator"] = resources.root() / "dream-voice"
                 notes: list[str] = []
                 install(Path(values["game"]), inputs, force=True, log=log, progress=progress, note=notes.append)
                 message = f"Done. Start the game as usual. {LANGUAGES}"

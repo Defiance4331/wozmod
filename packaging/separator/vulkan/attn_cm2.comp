@@ -1,0 +1,109 @@
+#version 460
+// Flash attention with the softmax in registers, as the CUDA kernel does, through NV cooperative matrix 2 at subgroup
+// scope: row max / sum by coopMatReduceNV (broadcast along the row), element-wise math between matrices of the same type
+// (their elements correspond), the key mask through coopMatPerElementNV (it knows row and column), and P converted
+// from accumulator to A operand. Same interface as attn_cm.comp.
+#extension GL_NV_cooperative_matrix2 : require
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_spirv_intrinsics : require
+spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], capabilities = [4467], 4462, 16);
+layout(local_size_x = 128) in;
+layout(binding = 0) readonly buffer Q_ { float16_t h[]; } q_;
+layout(binding = 1) readonly buffer K_ { uvec4 v[]; } k_;
+layout(binding = 2) readonly buffer V_ { uvec4 v[]; } v_;
+layout(binding = 3) buffer O_ { uvec4 v[]; } o_;
+layout(binding = 4) readonly buffer Gate_ { float f[]; } gate_;
+layout(push_constant) uniform P { uint q, k, vv, o, gate, S, brow, srow, ldq, ldo; } pc;
+const uint NONE = 0xffffffffu;
+#define FSV 9
+#define SS 68
+// K and V tiles; after the loop the same memory stages the output (4 x 16 x SS floats = 1088 uvec4), so the kernel
+// takes 18 KB of shared memory and several workgroups fit an SM
+shared uvec4 sKV[2 * 64 * FSV];
+#define sK_(i) sKV[(i)]
+#define sV_(i) sKV[64 * FSV + (i)]
+#define OBASE(sg) ((sg) * 16 * SS / 4)
+#define Acc coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>
+
+float fmax_(const in float a, const in float b) { return max(a, b); }
+float fadd_(const in float a, const in float b) { return a + b; }
+uint g_lim;  // keys at column >= g_lim of this tile are past S
+float mask_(const in uint32_t row, const in uint32_t col, const in float e) { return col < g_lim ? e : -1e30; }
+
+void main() {
+    uint head = gl_WorkGroupID.y & 7u, bt = gl_WorkGroupID.y >> 3, q0 = gl_WorkGroupID.x * 64;
+    uint tid = gl_LocalInvocationID.x, sg = gl_SubgroupID, lane = gl_SubgroupInvocationID;
+    uint S = pc.S, base = bt * pc.brow;
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> qa[4];
+    uint qrow = q0 + sg * 16;
+    [[unroll]] for (uint c = 0; c < 4; c++)
+        coopMatLoad(qa[c], q_.h, pc.q + (base + qrow * pc.srow) * pc.ldq + head * 64 + c * 16, pc.srow * pc.ldq, gl_CooperativeMatrixLayoutRowMajor);
+    Acc oacc[4];
+    [[unroll]] for (uint j = 0; j < 4; j++) oacc[j] = Acc(0.0);
+    Acc mrow = Acc(-1e30), lrow = Acc(0.0);  // per-row running max and sum, broadcast along each row
+    const float sc = 0.125 * 1.4426950408889634;
+    for (uint k0 = 0; k0 < S; k0 += 64) {
+        barrier();
+        [[unroll]] for (uint i = 0; i < 4; i++) {
+            uint c = tid + i * 128, rr = c >> 3, ch = c & 7u, s = k0 + rr;
+            sKV[rr * FSV + ch] = s < S ? k_.v[(pc.k + (base + s * pc.srow) * pc.ldq + head * 64 + ch * 8) >> 3] : uvec4(0);
+            sKV[64 * FSV + rr * FSV + ch] = s < S ? v_.v[(pc.vv + (base + s * pc.srow) * pc.ldq + head * 64 + ch * 8) >> 3] : uvec4(0);
+        }
+        barrier();
+        Acc sacc[4], mx = Acc(-1e30);
+        [[unroll]] for (uint j = 0; j < 4; j++) {
+            sacc[j] = Acc(0.0);
+            [[unroll]] for (uint c = 0; c < 4; c++) {
+                coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> kb;
+                coopMatLoad(kb, sKV, j * 16 * FSV + c * 2, FSV, gl_CooperativeMatrixLayoutColumnMajor);
+                sacc[j] = coopMatMulAdd(qa[c], kb, sacc[j]);
+            }
+            sacc[j] = sacc[j] * sc;
+            if (k0 + j * 16 + 16 > S) { g_lim = S > k0 + j * 16 ? S - k0 - j * 16 : 0u; coopMatPerElementNV(sacc[j], sacc[j], mask_); }
+            Acc rm; coopMatReduceNV(rm, sacc[j], gl_CooperativeMatrixReduceRowNV, fmax_);
+            for (int i = 0; i < mx.length(); i++) mx[i] = max(mx[i], rm[i]);
+        }
+        Acc alpha, mn;
+        for (int i = 0; i < mx.length(); i++) { mn[i] = max(mrow[i], mx[i]); alpha[i] = exp2(mrow[i] - mn[i]); }
+        mrow = mn;
+        Acc psum = Acc(0.0);
+        coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> pa[4];
+        [[unroll]] for (uint j = 0; j < 4; j++) {
+            for (int i = 0; i < mn.length(); i++) sacc[j][i] = exp2(sacc[j][i] - mn[i]);
+            Acc rs; coopMatReduceNV(rs, sacc[j], gl_CooperativeMatrixReduceRowNV, fadd_);
+            psum += rs;
+            pa[j] = coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA>(sacc[j]);
+        }
+        for (int i = 0; i < lrow.length(); i++) lrow[i] = lrow[i] * alpha[i] + psum[i];
+        [[unroll]] for (uint j = 0; j < 4; j++) {
+            for (int i = 0; i < alpha.length(); i++) oacc[j][i] *= alpha[i];
+            [[unroll]] for (uint c = 0; c < 4; c++) {
+                coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> vb;
+                coopMatLoad(vb, sKV, 64 * FSV + c * 16 * FSV + j * 2, FSV, gl_CooperativeMatrixLayoutRowMajor);
+                oacc[j] = coopMatMulAdd(pa[c], vb, oacc[j]);
+            }
+        }
+    }
+    barrier();  // every subgroup is done with the last K / V tile
+    [[unroll]] for (uint j = 0; j < 4; j++) {
+        for (int i = 0; i < lrow.length(); i++) oacc[j][i] /= lrow[i];
+        coopMatStore(oacc[j], sKV, OBASE(sg) + j * 4, SS / 4, gl_CooperativeMatrixLayoutRowMajor);
+    }
+    subgroupMemoryBarrierShared(); subgroupBarrier();
+    uint r = lane >> 1, half_ = lane & 1u, s = qrow + r;
+    if (s < S) {
+        uint row = base + s * pc.srow;
+        float fct = pc.gate != NONE ? gate_.f[pc.gate + row * 8 + head] : 1.0;
+        uvec4 w[4];
+        [[unroll]] for (uint e4 = 0; e4 < 8; e4++) {
+            vec4 t4 = uintBitsToFloat(sKV[OBASE(sg) + r * (SS / 4) + half_ * 8 + e4]) * fct;
+            w[e4 >> 1][(e4 & 1u) * 2] = packFloat2x16(f16vec2(t4.x, t4.y)); w[e4 >> 1][(e4 & 1u) * 2 + 1] = packFloat2x16(f16vec2(t4.z, t4.w));
+        }
+        [[unroll]] for (uint e = 0; e < 4; e++) o_.v[(pc.o + row * pc.ldo + head * 64 + half_ * 32) / 8 + e] = w[e];
+    }
+}

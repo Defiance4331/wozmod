@@ -282,6 +282,20 @@ def speech_model(folder: Path, monkeypatch) -> Path:
     return folder
 
 
+def separator_model(folder: Path, monkeypatch) -> Path:
+    """A stand-in Dream voice model folder (voices.separation.MODEL) that passes the installer's check."""
+    import hashlib
+
+    from wozmod.voices import separation
+
+    library = separation.runtime(folder)
+    library.parent.mkdir(parents=True, exist_ok=True)
+    library.write_bytes(b"library")
+    (folder / "model").write_bytes(b"model")
+    monkeypatch.setattr(separation, "MODEL", {"model": (5, hashlib.sha256(b"model").hexdigest())})
+    return folder
+
+
 def fake_step_keys(monkeypatch, keys: dict | None = None) -> dict:
     """Give the installer fixed step keys (and no movies), so a synthetic install neither parses the source for them
     nor reads data/movies.json; change the returned dict's keys to make a step look changed."""

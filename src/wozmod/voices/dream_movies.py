@@ -89,14 +89,14 @@ def _ffmpeg(*arguments: str) -> bytes:
     return platform.run_hidden(command, capture_output=True, check=True, stdin=subprocess.DEVNULL).stdout
 
 
-def decoded(source: Path, channels: int, before: tuple[str, ...] = (), skip: int = 0) -> bytes:
-    """The first audio stream as 32-bit float at RATE, mono as the mean of the channels, numbered by decoded samples
+def decoded(source: Path, channels: int, before: tuple[str, ...] = (), skip: int = 0, rate: int = RATE) -> bytes:
+    """The first audio stream as 32-bit float at rate, mono as the mean of the channels, numbered by decoded samples
     (the RIFF reader stamps two ATRAC3plus frames with one frame's duration: see audio.donor_voice_clips), without
     its first skip samples at the stream's own rate."""
     mix = ",pan=mono|c0=0.5*c0+0.5*c1" if channels == 1 else ""
     trim = f"atrim=start_sample={skip}," if skip else ""
     return _ffmpeg(*before, "-i", str(source), "-map", "0:a:0", "-af",
-                   f"{trim}asetpts=round(N/SR/TB),aresample={RATE}:resampler=soxr{mix}", "-f", "f32le", "-")
+                   f"{trim}asetpts=round(N/SR/TB),aresample={rate}:resampler=soxr{mix}", "-f", "f32le", "-")
 
 
 def peak(source: Path) -> float:

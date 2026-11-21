@@ -21,7 +21,7 @@ import wozmod.install as installer
 from wozmod import __main__ as cli
 from wozmod import window
 from wozmod.donors import ProgramIdentity
-from synthetic import speech_model
+from synthetic import separator_model, speech_model
 from test_donors_programs import ENCRYPTED, PAYLOAD as DECRYPTED, fake
 
 
@@ -70,7 +70,8 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(installer.resources, "ffmpeg", lambda: "ffmpeg")
     monkeypatch.setattr(cli, "install", lambda game, inputs, **_: installer.check_inputs(game, inputs))  # no build
     paths = {"release": str(release), "game": str(tmp_path / "no game"),
-             "speech": str(speech_model(tmp_path / "speech", monkeypatch))}
+             "speech": str(speech_model(tmp_path / "speech", monkeypatch)),
+             "separator": str(separator_model(tmp_path / "separator", monkeypatch))}
     for name, content in (("wrong.iso", ENCRYPTED), ("encrypted.iso", ENCRYPTED), ("decrypted.iso", DECRYPTED),
                           ("good.file", DECRYPTED), ("wrong.file", b"x")):
         (tmp_path / name).write_bytes(content)
@@ -84,7 +85,8 @@ def world(tmp_path, monkeypatch):
 def values(world, tool: str, discs, program: str) -> dict[str, str]:
     """The window's values for one case ("" is an empty row). The other program's discs hold the decrypted file."""
     found = {name: "" for name in (*installer.PROGRAMS, *installer.TOOLS, *installer.FILES.values())}
-    found.update(game=world["game"], lettering=world["release"], dll=world["release"], speech=world["speech"])
+    found.update(game=world["game"], lettering=world["release"], dll=world["release"], speech=world["speech"],
+                 separator=world["separator"])
     for disc in installer.PROGRAMS:
         found[disc] = world["decrypted.iso"]
     for disc, (image, file) in zip(installer.TOOLS[tool], discs, strict=True):

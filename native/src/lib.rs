@@ -4,11 +4,16 @@
 //! per-pixel loops of reading the lettering faces (pixels.rs).
 
 mod align;
+#[cfg(feature = "cuda")]
+mod cuda;
 mod lips;
+mod network;
 mod pixels;
 mod scenes;
+mod separator;
 mod speech;
 mod streams;
+mod vulkan;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -608,9 +613,21 @@ fn wozmod_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(scenes::frame_peaks, module)?)?;
     module.add_function(wrap_pyfunction!(scenes::difference, module)?)?;
     module.add_function(wrap_pyfunction!(scenes::scaled, module)?)?;
-    module.add_function(wrap_pyfunction!(scenes::add_pieces, module)?)?;
     module.add_function(wrap_pyfunction!(scenes::overlap_add, module)?)?;
-    module.add_function(wrap_pyfunction!(scenes::leftover_energies, module)?)?;
+    module.add_function(wrap_pyfunction!(separator::separator_spectrum, module)?)?;
+    module.add_function(wrap_pyfunction!(separator::separator_voice, module)?)?;
+    module.add_function(wrap_pyfunction!(separator::separator_joined, module)?)?;
+    module.add_function(wrap_pyfunction!(separator::separator_agreement, module)?)?;
+    module.add_function(wrap_pyfunction!(separator::separator_cores, module)?)?;
+    #[cfg(feature = "cuda")]
+    {
+        module.add_function(wrap_pyfunction!(cuda::separator_gpu, module)?)?;
+        module.add_class::<cuda::SeparatorCuda>()?;
+    }
+    module.add_function(wrap_pyfunction!(vulkan::separator_vulkan_devices, module)?)?;
+    module.add_function(wrap_pyfunction!(vulkan::separator_shared_memory, module)?)?;
+    module.add_class::<vulkan::SeparatorVulkan>()?;
+    module.add_class::<separator::SeparatorNetwork>()?;
     module.add_function(wrap_pyfunction!(lips::lip_shapes, module)?)?;
     module.add_function(wrap_pyfunction!(speech::aligned_phones, module)?)?;
     module.add_function(wrap_pyfunction!(speech::heard_phones, module)?)?;

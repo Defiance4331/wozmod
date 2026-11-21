@@ -1,8 +1,10 @@
 """The Z Dream scenes' English takes, cut from the WO2 PSP movies of events 402-413.
 
 The fast tests build a scene from synthetic noise: a music bed in both tracks, English bursts in one, the stock clips
-(other bursts) at the PSP's mix gain in the other. The slow one (WOZMOD_AUDIO=1 with WOZMOD_GAME and WOZMOD_DONORS)
-builds event 408 from the stock game and WO2 PSP's GEV_201.pmf.
+(other bursts) at the PSP's mix gain in the other; the separated voice the takes are cut from is the English bursts
+alone, as a separator that leaves nothing else would give them (the separator itself: tests/test_separation.py and
+tests/test_separation_fidelity.py). The slow ones (WOZMOD_AUDIO=1 with WOZMOD_GAME, WOZMOD_DONORS and
+WOZMOD_SEPARATOR) build event 408 from the stock game and WO2 PSP's GEV_201.pmf, and place the three sped-up lines.
 """
 
 from __future__ import annotations
@@ -18,10 +20,11 @@ import pytest
 np = pytest.importorskip("numpy")
 native = pytest.importorskip("wozmod_native")
 
+from dream_inputs import scene_tracks  # noqa: E402
 from synthetic import timed_event  # noqa: E402
 from wozmod.formats.audio import kovs_ogg, vorbis_records  # noqa: E402
 from wozmod.voices.dream_events import (  # noqa: E402
-    HOP, RATE, TAIL, Line, SceneVoices, failed_splices, finished_takes, place, scene_lines, scene_voices,
+    HOP, LEAD, RATE, TAIL, Line, finished_takes, placed, scene_lines, scene_voices,
 )
 from wozmod.voices.dream_movies import LIMIT  # noqa: E402
 
@@ -38,14 +41,26 @@ def _burst(rng, seconds: float, peak: float) -> np.ndarray:
     return noise * peak / np.abs(noise).max()
 
 
-def _scene(length: float, seed: int):
-    rng = np.random.default_rng(seed)
-    bed = 0.03 * rng.standard_normal(int(length * RATE))  # the music bed, about 25 dB under the voices
-    return rng, bed.copy(), bed.copy()
+class _Scene:
+    """A synthetic PSP movie: the music bed in both tracks, what is said in English in one and the stock clips in
+    the other, both at the PSP's gain."""
 
+    def __init__(self, length: float, seed: int):
+        self.rng = np.random.default_rng(seed)
+        bed = 0.03 * self.rng.standard_normal(int(length * RATE))  # about 25 dB under the voices
+        self.english, self.japanese, self.voice = bed.copy(), bed.copy(), np.zeros(len(bed))
 
-def _add(track: np.ndarray, at: int, sound: np.ndarray) -> None:
-    track[at:at + len(sound)] += sound
+    def say(self, at: int, sound: np.ndarray) -> None:
+        self.english[at:at + len(sound)] += MIX * sound
+        self.voice[at:at + len(sound)] += MIX * sound
+
+    def clip(self, at: int, sound: np.ndarray) -> None:
+        self.japanese[at:at + len(sound)] += MIX * sound
+
+    def built(self, lines: list[Line], clips: dict[int, np.ndarray]):
+        """(where the lines sit, the takes cut from the English voice alone)."""
+        found = placed(_f32(self.english), _f32(self.japanese), lines, {v: _f32(c) for v, c in clips.items()})
+        return found, scene_voices(_f32(self.voice), found)
 
 
 def _laid_out(sound: np.ndarray, offset: int, length: int) -> np.ndarray:
@@ -56,29 +71,29 @@ def _laid_out(sound: np.ndarray, offset: int, length: int) -> np.ndarray:
 
 def test_each_line_gets_its_english_at_the_stock_clips_level_from_where_its_clip_starts():
     # Bug: a take cut from its subtitle keeps the PSP's lag of each clip behind its subtitle, so in game the English
-    # trails the subtitle and the mouths by 0.19 s; the placed clip is added with the wrong sign or at the wrong lag
-    # (the Japanese stays, or doubles), the
-    # PSP's gain is not divided out (the English plays 2.5 dB low), a take is cut from the line before or after, or its
-    # trailing silence is kept or its last sound is cut.
-    rng, english, japanese = _scene(4.0, 408)
+    # trails the subtitle and the mouths by 0.19 s; the PSP's gain is not divided out (the English plays 2.5 dB
+    # low); a take is cut from the line before or after; its trailing silence is kept or its last sound is cut; or
+    # the stretch handed to the separator leaves out part of a take, which then plays silence there.
+    scene = _Scene(4.0, 408)
     lines = [Line(241, 0xAF3 + 241, RATE // 2, int(1.6 * RATE)), Line(242, 0xAF3 + 242, int(2.2 * RATE), int(1.8 * RATE))]
-    clips = {line.voice: _burst(rng, 0.6, 0.5) for line in lines}
-    voices = {lines[0].voice: _burst(rng, 0.8, 0.6), lines[1].voice: _burst(rng, 0.5, 0.9)}
+    clips = {line.voice: _burst(scene.rng, 0.6, 0.5) for line in lines}
+    voices = {lines[0].voice: _burst(scene.rng, 0.8, 0.6), lines[1].voice: _burst(scene.rng, 0.5, 0.9)}
     lead = RATE // 10  # the English starts 0.1 s after the line's Japanese clip
     for line in lines:
-        _add(english, line.start + CLIP_DELAY + lead, MIX * voices[line.voice])
-        _add(japanese, line.start + CLIP_DELAY, MIX * clips[line.voice])
+        scene.say(line.start + CLIP_DELAY + lead, voices[line.voice])
+        scene.clip(line.start + CLIP_DELAY, clips[line.voice])
 
-    built = scene_voices(_f32(english), _f32(japanese), lines, {v: _f32(c) for v, c in clips.items()})
+    found, built = scene.built(lines, clips)
 
     # The English over each clip moves the fitted gain by chance (0.738 here); a gain left in would be 1/0.75 off.
-    assert abs(built.gain - MIX) < 0.02 and not built.unmatched
-    for line in lines:
+    assert abs(built.gain - MIX) < 0.02 and [each.at for each in found.placements] == [line.start + CLIP_DELAY for line in lines]
+    for line, (first, last) in zip(lines, found.wanted, strict=True):
         take = np.asarray(built.takes[line.voice])
         expected = _laid_out(voices[line.voice], lead, line.room)
         assert np.abs(take - expected[:len(take)]).max() < 0.02, line.index
         assert np.abs(expected[len(take):]).max(initial=0) < 0.02, line.index  # nothing audible left out
         assert len(take) <= lead + len(voices[line.voice]) + TAIL + HOP, line.index
+        assert first <= line.start + CLIP_DELAY and line.start + CLIP_DELAY + len(take) <= last, line.index
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
@@ -109,18 +124,16 @@ def test_a_finished_take_peaks_at_the_largest_16_bit_sample_and_a_take_under_ful
 def test_english_heard_before_its_clip_keeps_its_start():
     # Bug: a take always cut at its stock clip loses the start of a dub line that begins ahead of the Japanese take
     # (heard in event 408: two lines start 0.0-0.06 s after their subtitles, the clip 0.19 s after).
-    from wozmod.voices.dream_events import LEAD
-
-    rng, english, japanese = _scene(3.0, 408)
+    scene = _Scene(3.0, 408)
     line = Line(241, 0xAF3 + 241, RATE // 2, 2 * RATE)
-    clip = _burst(rng, 0.6, 0.5)
-    said = rng.standard_normal(int(0.9 * RATE))
+    clip = _burst(scene.rng, 0.6, 0.5)
+    said = scene.rng.standard_normal(int(0.9 * RATE))
     said *= 0.5 / np.abs(said).max()  # no fade-in: its first sound is its first sample
     early = RATE // 10  # the English starts 0.1 s after the subtitle, 0.09 s before the clip
-    _add(english, line.start + early, MIX * said)
-    _add(japanese, line.start + CLIP_DELAY, MIX * clip)
+    scene.say(line.start + early, said)
+    scene.clip(line.start + CLIP_DELAY, clip)
 
-    built = scene_voices(_f32(english), _f32(japanese), [line], {line.voice: _f32(clip)})
+    _, built = scene.built([line], {line.voice: clip})
 
     take = np.asarray(built.takes[line.voice])
     assert np.abs(take - _laid_out(said, LEAD, len(take))).max() < 0.02  # from LEAD before its first sound
@@ -130,18 +143,18 @@ def test_english_cut_into_the_next_lines_take_is_not_in_this_ones():
     # Bug: a take runs for its whole room from its clip, 0.19 s past the next subtitle, so when the next line's
     # English starts before its own clip (its take starts there) the first 0.16 s of it ends this take too, and the
     # game plays that word twice: at the end of this line, then with the next subtitle.
-    rng, english, japanese = _scene(4.0, 403)
+    scene = _Scene(4.0, 403)
     lines = [Line(305, 0xAF3 + 305, RATE // 2, int(1.5 * RATE)), Line(306, 0xAF3 + 306, 2 * RATE, int(1.5 * RATE))]
-    clips = {line.voice: _burst(rng, 0.6, 0.5) for line in lines}
-    first, second = _burst(rng, 1.0, 0.6), rng.standard_normal(int(0.9 * RATE))
+    clips = {line.voice: _burst(scene.rng, 0.6, 0.5) for line in lines}
+    first, second = _burst(scene.rng, 1.0, 0.6), scene.rng.standard_normal(int(0.9 * RATE))
     second *= 0.6 / np.abs(second).max()  # no fade-in: its first sound is its first sample
     early = int(0.03 * RATE)  # the second line's English starts 0.03 s after its subtitle, 0.16 s before its clip
-    _add(english, lines[0].start + CLIP_DELAY, MIX * first)
-    _add(english, lines[1].start + early, MIX * second)
+    scene.say(lines[0].start + CLIP_DELAY, first)
+    scene.say(lines[1].start + early, second)
     for line in lines:
-        _add(japanese, line.start + CLIP_DELAY, MIX * clips[line.voice])
+        scene.clip(line.start + CLIP_DELAY, clips[line.voice])
 
-    built = scene_voices(_f32(english), _f32(japanese), lines, {v: _f32(c) for v, c in clips.items()})
+    _, built = scene.built(lines, clips)
 
     take = np.asarray(built.takes[lines[0].voice])  # its first sample is the movie's at the first clip
     assert np.abs(take - _laid_out(first, 0, len(take))).max() < 0.02
@@ -150,48 +163,40 @@ def test_english_cut_into_the_next_lines_take_is_not_in_this_ones():
     assert np.abs(second_take - _laid_out(second, early, len(second_take))).max() < 0.02  # heard once, in its own
 
 
-def test_what_the_encodes_leave_before_a_clip_does_not_start_its_take_early():
-    # Bug: the residue the two PSP encodes leave of the bed (event 408: 27-30 dB under the line) counts as English
-    # heard before the clip, so every take starts at its subtitle and speaks 0.19 s late in game.
-    rng, english, japanese = _scene(3.0, 408)
+def test_what_the_separator_leaves_of_the_music_before_a_clip_does_not_start_its_take_early():
+    # Bug: a trace of the music the separator lets through (25 dB and more under the line) counts as English heard
+    # before the clip, so every take starts at its subtitle and speaks 0.19 s late in game.
+    scene = _Scene(3.0, 408)
     line = Line(241, 0xAF3 + 241, RATE // 2, 2 * RATE)
-    clip = _burst(rng, 0.6, 0.5)
-    said = rng.standard_normal(int(0.9 * RATE))
+    clip = _burst(scene.rng, 0.6, 0.5)
+    said = scene.rng.standard_normal(int(0.9 * RATE))
     said *= 0.5 / np.abs(said).max()
-    english += 0.5 * 10 ** (-28 / 20) * rng.standard_normal(len(english)) / 4  # residue peaking about 28 dB under
-    _add(english, line.start + CLIP_DELAY, MIX * said)  # the English starts with its clip, as most lines do
-    _add(japanese, line.start + CLIP_DELAY, MIX * clip)
+    scene.voice += 0.5 * 10 ** (-28 / 20) * scene.rng.standard_normal(len(scene.voice)) / 4  # peaking about 28 dB under
+    scene.say(line.start + CLIP_DELAY, said)  # the English starts with its clip, as most lines do
+    scene.clip(line.start + CLIP_DELAY, clip)
 
-    built = scene_voices(_f32(english), _f32(japanese), [line], {line.voice: _f32(clip)})
+    _, built = scene.built([line], {line.voice: clip})
 
     take = np.asarray(built.takes[line.voice])
     assert np.abs(take[:RATE // 2] - said[:RATE // 2]).max() < 0.1  # the take starts with the English
 
 
-def test_a_clip_the_psp_shortened_a_pause_in_still_cancels_and_one_it_changed_otherwise_stays_japanese():
-    # Bug: an edited clip is placed whole (its second half off by the cut, so Japanese is left in the take), the
-    # pieces after a pause are searched only at the whole clip's place, or a line whose clip matches only in part
-    # ships with its Japanese.
-    rng, english, japanese = _scene(5.0, 410)
-    lines = [Line(261, 0xAF3 + 261, RATE // 2, 2 * RATE), Line(264, 0xAF3 + 264, int(2.5 * RATE), int(2.5 * RATE))]
+def test_a_clip_the_psp_shortened_a_pause_in_is_still_found_where_it_starts():
+    # Bug: an edited clip is looked for whole only (it matches nowhere, and its line is timed from a wrong place or
+    # refused), or the pieces after a pause are searched only at the whole clip's place.
+    scene = _Scene(3.0, 410)
+    line = Line(261, 0xAF3 + 261, RATE // 2, 2 * RATE)
     pause = np.zeros(int(0.3 * RATE))
-    parts = {line.voice: (_burst(rng, 0.5, 0.5), _burst(rng, 0.5, 0.5)) for line in lines}
-    clips = {v: np.concatenate([a, pause, b]) for v, (a, b) in parts.items()}
-    shortened = np.concatenate([parts[lines[0].voice][0], pause[:int(0.2 * RATE)], parts[lines[0].voice][1]])
-    changed = np.concatenate([parts[lines[1].voice][0], pause, _burst(rng, 0.5, 0.5)])  # its second half another
-    voice = _burst(rng, 1.2, 0.6)
-    _add(english, lines[0].start + CLIP_DELAY + RATE // 10, MIX * voice)
-    _add(japanese, lines[0].start + CLIP_DELAY, MIX * shortened)
-    _add(japanese, lines[1].start + CLIP_DELAY, MIX * changed)
+    first, second = _burst(scene.rng, 0.5, 0.5), _burst(scene.rng, 0.5, 0.5)
+    voice = _burst(scene.rng, 1.2, 0.6)
+    scene.say(line.start + CLIP_DELAY + RATE // 10, voice)
+    scene.clip(line.start + CLIP_DELAY, np.concatenate([first, pause[:int(0.2 * RATE)], second]))
 
-    stock = {v: _f32(c) for v, c in clips.items()}
-    built = scene_voices(_f32(english), _f32(japanese), lines, stock)
-    failed = failed_splices({410: built})
-    built = scene_voices(_f32(english), _f32(japanese), lines, stock, failed[410])
+    found, built = scene.built([line], {line.voice: np.concatenate([first, pause, second])})
 
-    take = np.asarray(built.takes[lines[0].voice])
+    assert built.split == [line] and found.placements[0].at == line.start + CLIP_DELAY
+    take = np.asarray(built.takes[line.voice])
     assert np.abs(take - _laid_out(voice, RATE // 10, len(take))).max() < 0.02
-    assert built.split == [lines[0]] and built.unmatched == [lines[1]] and lines[1].voice not in built.takes
 
 
 def _voiced(rng, seconds: float) -> np.ndarray:
@@ -218,53 +223,40 @@ def _sped_up(clip: np.ndarray, rng) -> np.ndarray:
     return np.concatenate(out)
 
 
-def test_a_clip_the_psp_sped_up_by_splicing_still_cancels_and_its_line_keeps_the_english():
-    # Bug: a sped-up clip is placed whole, or by pauses, so its later runs sit off by the drops and the take keeps
-    # the Japanese (as 403/306, 410/255 and 411/273 did); the drops are taken the wrong way (blocks placed later), or
-    # overlapping blocks are summed without their weights, so the cancel doubles the Japanese at a splice.
-    rng, english, japanese = _scene(5.0, 403)
+def test_a_clip_the_psp_sped_up_by_splicing_is_still_found_where_it_starts():
+    # Bug: a sped-up clip is looked for whole, or by pauses, and found nowhere (as 403/306, 410/255 and 411/273
+    # were), so its line is timed from wherever the search ended; or the drops are taken the wrong way (blocks
+    # placed later), which moves its start.
+    scene = _Scene(5.0, 403)
     lines = [Line(305, 0xAF3 + 305, RATE // 2, 2 * RATE), Line(306, 0xAF3 + 306, int(2.5 * RATE), int(2.5 * RATE))]
-    clips = {lines[0].voice: _burst(rng, 1.0, 0.5), lines[1].voice: _voiced(rng, 2.0)}
-    copy = _sped_up(clips[lines[1].voice], rng)
+    clips = {lines[0].voice: _burst(scene.rng, 1.0, 0.5), lines[1].voice: _voiced(scene.rng, 2.0)}
+    copy = _sped_up(clips[lines[1].voice], scene.rng)
     assert len(clips[lines[1].voice]) - len(copy) > 0.05 * RATE  # the drops add up to more than a pause shortens
-    voice = _burst(rng, 1.6, 0.6)
-    _add(japanese, lines[0].start + CLIP_DELAY, MIX * clips[lines[0].voice])
-    _add(japanese, lines[1].start + CLIP_DELAY, MIX * copy)
-    _add(english, lines[1].start + CLIP_DELAY + RATE // 10, MIX * voice)
-    stock = {v: _f32(c) for v, c in clips.items()}
+    voice = _burst(scene.rng, 1.6, 0.6)
+    scene.clip(lines[0].start + CLIP_DELAY, clips[lines[0].voice])
+    scene.clip(lines[1].start + CLIP_DELAY, copy)
+    scene.say(lines[1].start + CLIP_DELAY + RATE // 10, voice)
 
-    built = scene_voices(_f32(english), _f32(japanese), lines, stock)
+    found, built = scene.built(lines, clips)
 
     assert built.spliced == [lines[1]]
+    assert abs(found.placements[1].at - (lines[1].start + CLIP_DELAY)) <= HOP  # within the 10 ms its blocks step by
     take = np.asarray(built.takes[lines[1].voice])
-    error = take - _laid_out(voice, RATE // 10, len(take))
-    # Placed whole or by pauses, the edited part leaves as much as it held (403/306: +0.5 to +3.2 dB); each splice
-    # still leaves the 2 ms the crossfade changed and the breath noise across it (about -11 dB in all here).
-    assert 10 * np.log10(np.sum(error ** 2) / np.sum(copy ** 2)) < -8
-
-
-def test_a_spliced_line_keeps_its_english_only_if_it_leaves_no_more_japanese_than_the_worst_other_line():
-    # Bug: the bar is each scene's own worst line (so a spliced line in a scene of clean lines is refused), a spliced
-    # line counts toward the bar (so it can pass by its own leftover), or a line at the bar is refused.
-    def scene(leftover: dict[int, float], spliced: list[int]):
-        return SceneVoices({}, MIX, spliced=[Line(i, 0xAF3 + i, 0, 1) for i in spliced], leftover=leftover)
-
-    scenes = {403: scene({300: -12.0, 301: -5.0, 306: -5.0, 307: -3.0}, [306, 307]),
-              410: scene({250: -14.0, 255: -6.0}, [255])}
-    assert failed_splices(scenes) == {403: frozenset({307})}
+    offset = lines[1].start + CLIP_DELAY + RATE // 10 - found.placements[1].at
+    assert np.abs(take - _laid_out(voice, offset, len(take))).max() < 0.02
 
 
 def test_a_line_spoken_twice_gets_the_take_that_fits_both_places():
     # Bug: the first place's take is kept, which runs past the next line where the line is spoken again.
-    rng, english, japanese = _scene(4.0, 404)
-    voice, clip = 0xAF3 + 315, _burst(rng, 0.4, 0.5)
+    scene = _Scene(4.0, 404)
+    voice, clip = 0xAF3 + 315, _burst(scene.rng, 0.4, 0.5)
     lines = [Line(315, voice, RATE // 4, int(2.5 * RATE)), Line(315, voice, int(3.0 * RATE), int(0.8 * RATE))]
-    long, short = _burst(rng, 1.5, 0.6), _burst(rng, 0.5, 0.6)
+    long, short = _burst(scene.rng, 1.5, 0.6), _burst(scene.rng, 0.5, 0.6)
     for line, said in zip(lines, (long, short), strict=True):
-        _add(english, line.start + CLIP_DELAY + RATE // 20, MIX * said)
-        _add(japanese, line.start + CLIP_DELAY, MIX * clip)
+        scene.say(line.start + CLIP_DELAY + RATE // 20, said)
+        scene.clip(line.start + CLIP_DELAY, clip)
 
-    take = np.asarray(scene_voices(_f32(english), _f32(japanese), lines, {voice: _f32(clip)}).takes[voice])
+    take = np.asarray(scene.built(lines, {voice: clip})[1].takes[voice])
 
     assert len(take) <= lines[1].room
     assert np.abs(take - _laid_out(short, RATE // 20, len(take))).max() < 0.02
@@ -284,88 +276,64 @@ def test_a_line_starts_on_the_movies_clock_and_has_until_the_next_speak_on_the_g
 
 
 SLOW = pytest.mark.skipif(
-    os.environ.get("WOZMOD_AUDIO") != "1" or not os.environ.get("WOZMOD_GAME") or not os.environ.get("WOZMOD_DONORS")
-    or not shutil.which("ffmpeg"),
-    reason="set WOZMOD_AUDIO=1, WOZMOD_GAME and WOZMOD_DONORS, with ffmpeg")
-
-
-def _stock_clips(game: Path, voices: list[int]) -> dict[int, array]:
-    from wozmod import game_files
-    from wozmod.formats.audio import _ffmpeg_each, kovs_ogg
-
-    takes = game_files.voices(game).clips(voices)
-    oggs = [kovs_ogg(takes[v]) for v in voices]
-    pcms = _ffmpeg_each([(["-f", "ogg"], ogg, ["-ac", "1", "-ar", str(RATE), "-f", "f32le"]) for ogg in oggs], len(oggs))
-    return {v: array("f", pcm) for v, pcm in zip(voices, pcms, strict=True)}
+    os.environ.get("WOZMOD_AUDIO") != "1" or not shutil.which("ffmpeg")
+    or not all(os.environ.get(name) for name in ("WOZMOD_GAME", "WOZMOD_DONORS", "WOZMOD_SEPARATOR")),
+    reason="set WOZMOD_AUDIO=1, WOZMOD_GAME, WOZMOD_DONORS and WOZMOD_SEPARATOR, with ffmpeg")
 
 
 @SLOW
 def test_event_408s_takes_hold_the_psp_english_without_the_japanese():
     # Bug: the PSP track keeps ffmpeg's start padding or the scene runs on a 60-a-second clock (the stock clips land
     # 55 ms later after their subtitles, or drift), the substreams are swapped (the takes hold Japanese and no
-    # English), a clip is placed at the wrong lag or with the wrong sign (the Japanese stays), or the voice ids are
-    # the other voice mode's (no clip matches).
-    from wozmod.formats.linkdata import archive
-    from wozmod.formats.pmf import audio_tracks
-    from wozmod import native
-    from wozmod.voices.dream_events import DREAM_EVENTS, ENGLISH, JAPANESE, _track
+    # English), the separated voice comes back a different length or rate than the track the lines were placed in
+    # (the takes are cut from the wrong moments), or the voice ids are the other voice mode's (no clip matches).
+    from wozmod.voices import separation
+    from wozmod.voices.dream_events import _voice_at_rate
 
-    game, psp = Path(os.environ["WOZMOD_GAME"]), Path(os.environ["WOZMOD_DONORS"]) / "wo2-psp"
-    lines = scene_lines(408, archive(game / "LINKDATA2").read([408])[408])
-    clips = _stock_clips(game, [line.voice for line in lines])
-    tracks = audio_tracks((psp / DREAM_EVENTS[408]).read_bytes())
-    english, japanese = _track(tracks[ENGLISH]), _track(tracks[JAPANESE])
+    lines, clips, english, japanese, sound = scene_tracks(408)
+    found = placed(english, japanese, lines, clips)
+    spans = [(a * separation.RATE // RATE, -(-b * separation.RATE // RATE)) for a, b in found.wanted]
+    separated = separation.separate({"408": sound}, {"408": spans}, Path(os.environ["WOZMOD_SEPARATOR"]),
+                                    os.process_cpu_count())["408"]
 
-    built = scene_voices(english, japanese, lines, clips)
+    built = scene_voices(_voice_at_rate(separated), found)
 
     assert sorted(built.takes) == sorted(line.voice for line in lines) and 0.7 < built.gain < 0.8
-    search = array("f", (np.asarray(japanese) - np.asarray(english)).astype("<f4").tobytes())
     delays = []
-    for line in lines:
-        (at, clip), = place(search, line, clips[line.voice]).pieces
+    for line, each in zip(lines, found.placements, strict=True):
+        (at, clip), = each.pieces
         delays.append((at - line.start) / RATE)
         take = np.asarray(built.takes[line.voice], dtype=float)
         # Where the take sits in the movie: between its subtitle and its clip (the clip, unless English comes first).
         a, b = line.start, min(at, line.start + RATE) + len(take)
-        region = (np.asarray(english, dtype=float)[a:b] - np.asarray(japanese, dtype=float)[a:b]).astype("<f4")
-        start = line.start + native.module.xcorr_lag(take.astype("<f4").tobytes(), region.tobytes())[0]
+        region = np.asarray(english, dtype="<f4")[a:b]
+        start = line.start + native.xcorr_lag(take.astype("<f4").tobytes(), region.tobytes())[0]
         assert line.start <= start <= at, (line.index, start, at)
         stock = _laid_out(np.asarray(clip, dtype=float), at - start, len(take))
-        mixed = np.asarray(english, dtype=float)[start:start + len(take)] \
-            - np.asarray(japanese, dtype=float)[start:start + len(take)]
         the_english = np.asarray(english, dtype=float)[start:start + len(take)]
+        the_japanese = np.asarray(japanese, dtype=float)[start:start + len(take)]
 
         def similarity(a, b):
             return np.dot(a, b) / np.sqrt(np.dot(a, a) * np.dot(b, b))
-        # Measured: the takes against their stock clip -0.02 to 0.01, EN - JP -0.83 to -0.60; the takes against the
-        # English track 0.73 to 0.85.
-        assert abs(similarity(take, stock)) < 0.1 and similarity(mixed, stock) < -0.5, line.index
+        # Measured: the takes against their stock clip -0.01 to 0.02, the Japanese track against it 0.74 to 0.95; the
+        # takes against the English track 0.86 to 0.95.
+        assert abs(similarity(take, stock)) < 0.1 and similarity(the_japanese, stock) > 0.5, line.index
         assert similarity(take, the_english) > 0.6, line.index
     # Measured 0.13-0.20 s, mean 0.18, in this scene (0.186 over all 12 scenes).
     assert 0.15 < float(np.median(delays)) < 0.22, delays
 
 
-
 @SLOW
-def test_the_three_lines_the_psp_sped_up_get_english_without_their_japanese():
-    # Bug: the sped-up clips of 403/306, 410/255 and 411/273 are placed whole (the Japanese of their second halves
-    # stays), the splice path drifts off the PSP's runs, or the leftover rule refuses them (they stay Japanese).
-    # Measured: leftover -8.3, -6.6 and -8.6 dB against the worst other line's -4.2 (median -8.1).
-    from wozmod import game_files
-    from wozmod.voices.dream_events import DREAM_EVENTS, build_dream_events
-
-    game, psp = Path(os.environ["WOZMOD_GAME"]), Path(os.environ["WOZMOD_DONORS"]) / "wo2-psp"
-    _, scenes = build_dream_events(game_files.voices(game), psp,
-                                   game_files.archive(game / "LINKDATA2").read(list(DREAM_EVENTS)))
-
-    sped_up = {403: 306, 410: 255, 411: 273}
-    assert {o: [line.index for line in scene.spliced] for o, scene in scenes.items() if scene.spliced} \
-        == {o: [i] for o, i in sped_up.items()}
-    assert not any(scene.unmatched for scene in scenes.values())
-    worst = max(db for scene in scenes.values() for i, db in scene.leftover.items() if i not in sped_up.values())
-    for o, i in sped_up.items():
-        line = next(line for line in scenes[o].spliced if line.index == i)
-        assert line.voice in scenes[o].takes and scenes[o].leftover[i] <= worst, (o, i, scenes[o].leftover[i])
+def test_the_three_lines_the_psp_sped_up_are_placed_along_its_splices():
+    # Bug: the sped-up clips of 403/306, 410/255 and 411/273 are looked for whole or by pauses only, so each line is
+    # timed from wherever the search ended, up to half a second off. Measured: their clips start 0.207, 0.205 and
+    # 0.226 s after their subtitles (the other lines: 0.12 to 0.22 s).
+    for o, index in {403: 306, 410: 255, 411: 273}.items():
+        lines, clips, english, japanese, _ = scene_tracks(o)
+        found = placed(english, japanese, lines, clips)
+        assert [line.index for line, each in zip(lines, found.placements, strict=True) if each.how == "splices"] == [index], o
+        line, each = next(pair for pair in zip(lines, found.placements, strict=True) if pair[0].index == index)
+        assert 0.18 < (each.at - line.start) / RATE < 0.25, (o, index, each.at - line.start)
 
 
 # The Python loops the native module replaced (as they were at ba41b41), kept as the oracle for the native ones.
@@ -393,59 +361,25 @@ def _old_overlap_add(padded, places, window, hop):
     return array("f", (t / w if w else 0.0 for t, w in zip(total, weight, strict=True)))
 
 
-def _old_energies(japanese, gain, pieces, end, hop, factor):
-    start = min(at for at, _ in pieces)
-    placed = array("f", bytes(4 * max(end - start, 0)))
-    for at, piece in pieces:
-        for i, v in enumerate(piece[:max(end - at, 0)], at - start):
-            placed[i] += v
-    floor = max(map(abs, placed), default=0.0) * factor
-    held = left = 0.0
-    for i in range(0, len(placed) - hop + 1, hop):
-        frame = placed[i:i + hop]
-        if max(map(abs, frame)) > floor:
-            track = _old_stretch(japanese, start + i, hop)
-            held += sum(v * v for v in track)
-            left += sum((v - gain * c) ** 2 for v, c in zip(track, frame, strict=True))
-    return held, left
-
-
-def _old_voice(english, japanese, pieces, gain):
-    import operator
-    voice = array("f", map(operator.sub, english, japanese, strict=True))
-    for at, piece in pieces:
-        span = slice(max(at, 0), min(at + len(piece), len(voice)))
-        voice[span] = array("f", map(operator.add, voice[span], map(gain.__mul__, piece[span.start - at:span.stop - at]),
-                                     strict=True))
-    return voice
-
-
 def test_the_native_scene_loops_give_exactly_what_the_python_loops_gave():
-    # Bug: a native loop rounds where Python did not (a sum in 32 bits, x * x for x ** 2, plain summation for
-    # sum()'s compensated one), adds pieces or blocks in another order, or misplaces a piece that starts before the
-    # track or runs past it: the takes of the Dream scenes change, or come out different on another thread count.
+    # Bug: a native loop rounds where Python did not (a sum in 32 bits), adds blocks in another order, or misplaces a
+    # block that runs past the track: the Dream lines are placed or cut differently, or differently on another
+    # thread count.
     import math
     rng = np.random.default_rng(7)
     f32 = lambda n, scale=0.5: array("f", (rng.standard_normal(n) * scale).astype("<f4").tobytes())  # noqa: E731
     english, japanese, hop = f32(5000), f32(5000), 48
-    pieces = [(-30, f32(400)), (900, f32(700, 2.0)), (1200, f32(300)), (4800, f32(500))]  # before, overlapping, past
     window = [0.5 - 0.5 * math.cos(2 * math.pi * i / (2 * hop)) for i in range(2 * hop)]
     places = [int(p) for p in rng.integers(0, 600, 40)]
-    gain, factor = 0.8123456789, 10 ** (-30 / 20)
+    gain = 0.8123456789
     m = native
     got = {
         "frame peaks": (m.frame_peaks(english.tobytes(), hop, hop), _old_peaks(english, hop, hop)),
         "padded block peaks": (m.frame_peaks(english.tobytes(), 2 * hop, hop, 110), _old_peaks(english, 2 * hop, hop, 110)),
         "difference": (m.difference(japanese.tobytes(), english.tobytes()),
                        array("f", (j - e for j, e in zip(japanese, english, strict=True))).tobytes()),
-        "pieces added": (m.add_pieces(m.difference(english.tobytes(), japanese.tobytes()),
-                                      [(at, p.tobytes()) for at, p in pieces], gain),
-                         _old_voice(english, japanese, pieces, gain).tobytes()),
         "scaled": (m.scaled(english.tobytes(), 1 / gain), array("f", map((1 / gain).__mul__, english)).tobytes()),
         "overlap-add": (m.overlap_add(english.tobytes(), places, window, hop),
                         _old_overlap_add(english, places, window, hop).tobytes()),
-        "leftover energies": (m.leftover_energies(japanese.tobytes(), [(at, p.tobytes()) for at, p in pieces], 4900,
-                                                  gain, hop, factor),
-                              _old_energies(japanese, gain, pieces, 4900, hop, factor)),
     }
     assert [name for name, (new, old) in got.items() if new != old] == []

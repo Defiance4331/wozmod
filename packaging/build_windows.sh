@@ -5,8 +5,9 @@
 #
 # ASSETS_DIR holds the release d3d9.dll and lettering.zip (as for packaging/build.py --assets).
 # The zip lands in build/packaging/. Needs: wine (64-bit), uv, rustup with a stable toolchain, curl,
-# and MinGW (Fedora: sudo dnf install mingw64-gcc mingw64-binutils mingw64-winpthreads-static), and WOZMOD_SPEECH
-# naming the speech model folder (voices/phones.py MODEL), which the zip carries and the Windows phones are checked with.
+# and MinGW (Fedora: sudo dnf install mingw64-gcc mingw64-binutils mingw64-winpthreads-static), WOZMOD_SPEECH
+# naming the speech model folder (voices/phones.py MODEL), which the zip carries and the Windows phones are checked with,
+# and WOZMOD_SEPARATOR naming the Dream voice separator's folder (voices/separation.py MODEL), which the zip carries.
 # Everything it sets up lives in WOZMOD_WIN_WORK (default work/windows-build) and is reused next time:
 # a Wine prefix, Windows CPython (with Tcl/Tk), the locked Python packages and the cross-built Rust codecs.
 # Downloads are pinned: Python below, packages in uv.lock (with hashes). ffmpeg is our own build (packaging/ffmpeg/), the
@@ -121,4 +122,6 @@ rm -rf "$FFMPEG_DIR" && mkdir -p "$FFMPEG_DIR" && cp "$FFMPEG" "$FFMPEG_DIR/"
 cd "$ROOT"
 WOZMOD_RUSTC_VERSION=$(cd "$ROOT/native" && rustc -V)
 export WOZMOD_RUSTC_VERSION
-wine "$PY" packaging/build.py --assets "$(winpath "$ASSETS")" --speech "$(winpath "$SPEECH")"
+SEPARATOR=${WOZMOD_SEPARATOR:?set WOZMOD_SEPARATOR to the Dream voice separator folder (voices/separation.py MODEL)}
+wine "$PY" packaging/build.py --assets "$(winpath "$ASSETS")" --speech "$(winpath "$SPEECH")" \
+  --separator "$(winpath "$SEPARATOR")"

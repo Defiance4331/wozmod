@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 import wozmod.install as installer
-from synthetic import fake_step_keys, speech_model, stock_game
+from synthetic import fake_step_keys, separator_model, speech_model, stock_game
 from wozmod.install import InstallError, install, stock, uninstall
 from wozmod.runtime import guard_report
 
@@ -28,6 +28,7 @@ def game(tmp_path: Path, monkeypatch) -> Path:
     folder = tmp_path / "game"
     record = stock_game(folder)
     speech_model(tmp_path / "speech", monkeypatch)
+    separator_model(tmp_path / "separator", monkeypatch)
     monkeypatch.setattr(stock, "recorded", lambda: record)
     fake_step_keys(monkeypatch)
 
@@ -49,7 +50,7 @@ def game(tmp_path: Path, monkeypatch) -> Path:
 
 def _inputs(tmp_path: Path) -> dict[str, Path]:
     return {name: tmp_path / name for name in
-            ("wo1-x360", "wo2-x360", "wo2-psp", "x360-tool", "psp-tool", "lettering", "dll", "speech")}
+            ("wo1-x360", "wo2-x360", "wo2-psp", "x360-tool", "psp-tool", "lettering", "dll", "speech", "separator")}
 
 
 def test_every_missing_or_wrong_input_is_named_and_no_right_one(game, tmp_path, monkeypatch):
@@ -350,8 +351,8 @@ def test_the_voice_stage_lowers_its_priority_before_it_starts_ffmpeg(monkeypatch
 
     calls = []
     monkeypatch.setattr(platform, "lower_priority", lambda: calls.append("lower"))
-    monkeypatch.setattr(wozmod.voices, "build_voice_banks", lambda *args: calls.append(("build", args[4])))
-    installer._voice_banks(tmp_path, tmp_path, tmp_path, tmp_path, 7)
+    monkeypatch.setattr(wozmod.voices, "build_voice_banks", lambda *args: calls.append(("build", args[5])))
+    installer._voice_banks(tmp_path, tmp_path, tmp_path, tmp_path, tmp_path, 7)
     assert calls == ["lower", ("build", 7)]
 
 

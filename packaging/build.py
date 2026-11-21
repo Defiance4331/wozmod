@@ -1,10 +1,13 @@
 """Build wozmod-<version>-<windows|linux>.zip (the wozmod and wozmod-setup programs) for this platform.
 
     uv sync --extra native --group build
-    uv run python packaging/build.py --assets DIR --speech SPEECH
+    uv run python packaging/build.py --assets DIR --speech SPEECH --separator SEPARATOR
 
 DIR holds the release d3d9.dll and lettering.zip: work/release-assets/, where packaging/release_assets.py makes them. SPEECH is the speech model folder
-(voices/phones.py MODEL, PocketSphinx's US English model); the zip carries it, so an install needs nothing more.
+(voices/phones.py MODEL, PocketSphinx's US English model) and SEPARATOR the Dream voice separator's folder
+(voices/separation.py MODEL, with each system's ONNX Runtime: work/release-assets/dream-voice/, where
+packaging/separator_model.py and packaging/separator_runtime.py make it); the zip carries both, so an install needs
+nothing more.
 Run it on the platform you build for: PyInstaller cannot cross-build.
 """
 
@@ -23,6 +26,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "packaging"))
 import pins  # noqa: E402  packaging/pins.py: the release pins and where the proven ffmpeg is
+import separator_runtime  # noqa: E402  the pinned wheels
+import windows_imports  # noqa: E402  the DLLs a Windows library needs beside it
 OUT = ROOT / "build/packaging"
 WINDOWS = sys.platform == "win32"
 PLATFORM = "windows" if WINDOWS else "linux"
@@ -78,6 +83,35 @@ def add_speech_model(source: Path, stage: Path) -> None:
         shutil.copy2(source / name, target)
 
 
+def _runtime_wheel() -> str:
+    return pins.pins()["separator"]["imports"]["windows"]
+
+
+def add_separator(source: Path, stage: Path) -> None:
+    """The Dream voice separator at _internal/dream-voice/ (where the release looks for it): the pinned model files,
+    the pinned Vulkan shaders as SPIR-V (which packaging/separator_kernels.py compiles), this system's ONNX
+    Runtime as packaging/pins.json pins it, and their notices in licenses/. No CUDA kernels: that engine is out of
+    every build (native/src/cuda.rs)."""
+    sys.path.insert(0, str(ROOT / "src"))
+    from wozmod.voices.separation import MODEL, SHADERS, model_problem, pinned_problem
+
+    if problem := (pins.separator_problem(PLATFORM, source) or model_problem(source) or pinned_problem(source, SHADERS)):
+        raise SystemExit(f"{source}: {problem}")
+    target = stage / "_internal/dream-voice"
+    (target / PLATFORM).mkdir(parents=True)
+    for name in (*MODEL, *SHADERS):
+        shutil.copy2(source / name, target / name)
+    for pin in pins.pins()["separator"]["files"][PLATFORM]:
+        shutil.copy2(source / PLATFORM / pin["file"], target / PLATFORM / pin["file"])
+        if PLATFORM == "windows":  # with the Visual C++ runtime it imports, which no Windows has by itself
+            windows_imports.bundle(target / PLATFORM / pin["file"], separator_runtime.wheel(source, _runtime_wheel()))
+    shutil.copy2(ROOT / "packaging/SEPARATOR-NOTICE.txt", stage / "licenses")
+    for licence in sorted((ROOT / "packaging/separator/licenses").iterdir()):  # the network's design
+        shutil.copy2(licence, stage / "licenses")
+    for pin in pins.pins()["separator"]["licenses"][PLATFORM]:  # ONNX Runtime's, and what it needs on Windows
+        shutil.copy2(source / "licenses" / PLATFORM / pin["file"], stage / "licenses" / pin["file"])
+
+
 def check_assets(assets: Path) -> None:
     for name in ("d3d9.dll", "lettering.zip"):
         path, (size, digest) = assets / name, pins.asset_pin(name)
@@ -103,6 +137,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--assets", type=Path, required=True, help="folder with d3d9.dll and lettering.zip")
     parser.add_argument("--speech", type=Path, required=True, help="the speech model folder (voices/phones.py MODEL)")
+    parser.add_argument("--separator", type=Path, required=True,
+                        help="the Dream voice separator's folder (voices/separation.py MODEL)")
     parser.add_argument("--tag", help="the release tag (for example v0.1.0); it must match the version in pyproject.toml")
     args = parser.parse_args()
     version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
@@ -132,11 +168,14 @@ def main() -> int:
     for licence in sorted((ROOT / "packaging/ffmpeg/licenses").iterdir()):  # FFmpeg's, libogg's and libvorbis's
         shutil.copy2(licence, stage / "licenses")
     shutil.copy2(ROOT / "packaging/POCKETSPHINX-NOTICE.txt", stage / "licenses")
+    add_separator(args.separator, stage)
 
     codecs = list((stage / "_internal").rglob("wozmod_native*"))
     if not codecs or not (stage / "_internal/ffmpeg").is_dir():
         raise SystemExit("the packaged program lacks the Rust codecs or ffmpeg")
     internal = stage / "_internal"
+    for codec in internal.rglob("wozmod_native*.pyd"):  # Windows: what our own library imports, as for ONNX Runtime
+        windows_imports.bundle(codec, separator_runtime.wheel(args.separator, _runtime_wheel()), also=internal)
     tk_data = all((internal / folder).is_dir() for folder in ("_tcl_data", "_tk_data")) or all(
         list(internal.glob(f"libt{name}*.zip")) for name in ("cl", "k"))  # Tcl 9 on Windows ships zips
     if not (stage / SETUP).is_file() or not tk_data:
@@ -149,6 +188,11 @@ def main() -> int:
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as bundle:
         for path in sorted(stage.rglob("*")):
             bundle.write(path, path.relative_to(stage.parent))  # keeps the executable bit
+    if WINDOWS and (wrong := windows_imports.missing(zip_path) | windows_imports.differing(zip_path)):
+        zip_path.unlink()
+        raise SystemExit("the zip's libraries would not all load with its own DLLs (a DLL one imports is not where "
+                         "Windows looks before System32, or the zip holds two versions of one):\n"
+                         + "\n".join(f"  {name}: {', '.join(dlls)}" for name, dlls in wrong.items()))
     print(f"{zip_path} {zip_path.stat().st_size} bytes")
     return 0
 

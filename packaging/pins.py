@@ -1,5 +1,6 @@
 """The release pins (packaging/pins.json): the size and SHA-256 of the d3d9.dll and lettering.zip a release ships
-beside its program, and of each ffmpeg it carries, with ffmpeg's file name.
+beside its program, of each ffmpeg it carries, with ffmpeg's file name, and of the Dream voice separator's runtime
+(ONNX Runtime and its GPU plugin, with the wheels they come from) and the checkpoint its model is made from.
 
 Between releases nothing checks them: an install from a checkout takes the checkout's own files (installer decision
 55). packaging/release_assets.py writes the DLL and lettering pins from the files it builds, and the release commit
@@ -76,6 +77,31 @@ def release_ffmpeg(system: str) -> Path:
     if problem := ffmpeg_problem(system, program):
         raise SystemExit(problem)
     return program
+
+
+def separator_folder() -> Path:
+    """The Dream voice separator folder in work/release-assets/: the model (packaging/separator_model.py) and each
+    system's runtime (packaging/separator_runtime.py)."""
+    return release_assets() / "dream-voice"
+
+
+def separator_problem(system: str, folder: Path) -> str | None:
+    """Why folder does not hold the separator's runtime and notices pinned for system; None when it does."""
+    pinned = pins()["separator"]
+    for kind, into in (("files", folder / system), ("licenses", folder / "licenses" / system)):
+        for pin in pinned[kind][system]:
+            path = into / pin["file"]
+            if not (path.is_file() and path.stat().st_size == pin["size"] and _sha256(path.read_bytes()) == pin["sha256"]):
+                return (f"{path} is {'not the file' if path.exists() else 'missing, the file'} {PINS} pins for "
+                        f"{system}; python packaging/separator_runtime.py fetches it")
+            if system == "windows" and kind == "files":
+                import windows_imports
+
+                beside = {each.name.lower() for each in into.iterdir()}
+                if lacking := [each for each in windows_imports.needed(path.read_bytes()) if each not in beside]:
+                    return (f"{path} imports {', '.join(lacking)}, which {'is' if len(lacking) == 1 else 'are'} not "
+                            f"beside it; python packaging/separator_runtime.py fetches them")
+    return None
 
 
 if __name__ == "__main__":  # packaging/build_windows.sh: the Windows program, checked here where the main checkout is

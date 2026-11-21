@@ -1,0 +1,152 @@
+#version 460
+// The network's matrix products (native/src/network.rs Step::Products) on a GPU's matrix units, through
+// VK_KHR_cooperative_matrix. Problem z of the table computes
+// C[m][n] = act(sum over k of A[m][k] * B[n][k] + bias[n]) + R[m][n], then the rotary turn of its first columns;
+// A, B, C are 16-bit floats, B stored [N][K], bias after B in B's buffer, R in C's buffer; K is a multiple of 32, the
+// row strides and offsets multiples of 8. Sums are kept in 32-bit floats.
+//
+// The matrices are the shape the device offers (specialization constants): C is CM x CN, A is CM x CK, B is CK x CN,
+// each of CM, CN in {8, 16} and CK in {8, 16, 32}. A workgroup is eight subgroups of SG lanes, each computing a
+// 32 x 32 part of a 128 x 64 tile, 32 of K at a time from one stage of shared memory. Two workgroups then fit an
+// NVIDIA multiprocessor, which is what the CUDA kernel's swizzled layout gives it; the loads here need a regular
+// stride, so the rows are padded instead.
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_spirv_intrinsics : require
+// Conversions from 32-bit to 16-bit floats round to the nearest (SPV_KHR_float_controls RoundingModeRTE, width 16).
+// Left to itself the NVIDIA driver truncates, which cost 6 dB against the CUDA kernel.
+spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], capabilities = [4467], 4462, 16);
+
+layout(constant_id = 0) const uint CM = 16;
+layout(constant_id = 1) const uint CN = 16;
+layout(constant_id = 2) const uint CK = 16;
+layout(constant_id = 3) const uint SG = 32;                // the subgroup size the pipeline is created with
+layout(local_size_x = 256, local_size_x_id = 4) in;        // SG * 8
+#define BM 128u
+#define BN 64u
+#define BK 32u
+#define SGN 2u                                             // subgroups along N; four along M
+#define WM 32u                                             // a subgroup's part of the tile
+#define WN 32u
+#define SKV 5u                                             // a shared row's stride in uvec4: 32 values and 8 of padding
+const uint NT = SG * 8u;
+const uint TM = WM / CM, TN = WN / CN, KS = BK / CK;       // matrices along M and N, and steps along K
+const uint RA = (BM * 4u + NT - 1u) / NT, RB = (BN * 4u + NT - 1u) / NT;  // 16-byte loads a thread makes of A and of B
+const uint PARTS = CM * CN / 8u;                           // a result matrix in runs of 8 columns
+
+layout(binding = 0) readonly buffer A_ { uvec4 v[]; } a_;
+layout(binding = 1) readonly buffer B_ { uvec4 v[]; } b_;
+layout(binding = 1) readonly buffer Bias_ { float16_t h[]; } bias_;
+layout(binding = 2) buffer C_ { uvec4 v[]; } c_;
+layout(binding = 2) buffer Ch_ { float16_t h[]; } ch_;
+layout(binding = 3) readonly buffer Turn_ { float16_t h[]; } turn_;
+layout(binding = 4) readonly buffer Table_ { uint u[]; } table_;
+layout(push_constant) uniform P { uint probs; } pc;  // where the table starts: 18 uints a problem
+// a problem: A B bias R C M N K lda ldb ldc ldr act | cos sin pdiv pmod columns (the rotary turn; caches [position][32])
+const uint NONE = 0xffffffffu;
+
+shared uvec4 sA[BM * SKV];
+shared uvec4 sB[BN * SKV];
+shared float scratch[8][256];
+
+float erf(float x);  // GLSL has none; defined at the end
+float act(float x, uint a) {
+    if (a == 1u) return 0.5 * x * (1.0 + erf(x * 0.70710678118654752));
+    if (a == 2u) return tanh(x);
+    return x;
+}
+
+void main() {
+    uint pb = pc.probs + gl_WorkGroupID.z * 18u;
+    uint A = table_.u[pb], B = table_.u[pb + 1], bias = table_.u[pb + 2], R = table_.u[pb + 3], Cc = table_.u[pb + 4];
+    uint M = table_.u[pb + 5], N = table_.u[pb + 6], K = table_.u[pb + 7], lda = table_.u[pb + 8], ldb = table_.u[pb + 9];
+    uint ldc = table_.u[pb + 10], ldr = table_.u[pb + 11], ac = table_.u[pb + 12];
+    uint rc = table_.u[pb + 13], rs = table_.u[pb + 14], pdiv = table_.u[pb + 15], pmod = table_.u[pb + 16], rope_n = table_.u[pb + 17];
+    uint m0 = gl_WorkGroupID.y * BM, n0 = gl_WorkGroupID.x * BN;
+    if (m0 >= M || n0 >= N) return;
+    uint tid = gl_LocalInvocationID.x, sg = gl_SubgroupID, lane = gl_SubgroupInvocationID;
+    uint wm = (sg / SGN) * WM, wn = (sg % SGN) * WN;
+    coopmat<float, gl_ScopeSubgroup, CM, CN, gl_MatrixUseAccumulator> acc[TM][TN];
+    [[unroll]] for (uint i = 0; i < TM; i++) [[unroll]] for (uint j = 0; j < TN; j++)
+        acc[i][j] = coopmat<float, gl_ScopeSubgroup, CM, CN, gl_MatrixUseAccumulator>(0.0);
+    // from the buffers to shared memory: BM rows x 4 uvec4 of A and BN x 4 of B, spread over the threads
+    uvec4 ra[RA], rb[RB];
+    uint nk = K / BK;
+#define GLOAD(k0) \
+    [[unroll]] for (uint i = 0; i < RA; i++) { uint c = tid + i * NT, r = c >> 2, ch = c & 3u, m = m0 + r; \
+        ra[i] = c < BM * 4u && m < M ? a_.v[(A + m * lda + (k0) + ch * 8u) >> 3] : uvec4(0); } \
+    [[unroll]] for (uint i = 0; i < RB; i++) { uint c = tid + i * NT, r = c >> 2, ch = c & 3u, n = n0 + r; \
+        rb[i] = c < BN * 4u && n < N ? b_.v[(B + n * ldb + (k0) + ch * 8u) >> 3] : uvec4(0); }
+#define SSTORE \
+    [[unroll]] for (uint i = 0; i < RA; i++) { uint c = tid + i * NT; if (c < BM * 4u) sA[(c >> 2) * SKV + (c & 3u)] = ra[i]; } \
+    [[unroll]] for (uint i = 0; i < RB; i++) { uint c = tid + i * NT; if (c < BN * 4u) sB[(c >> 2) * SKV + (c & 3u)] = rb[i]; }
+    GLOAD(0u)
+    SSTORE
+    barrier();
+    for (uint kt = 0; kt < nk; kt++) {
+        if (kt + 1 < nk) { GLOAD((kt + 1) * BK) }
+        [[unroll]] for (uint ks = 0; ks < KS; ks++) {
+            coopmat<float16_t, gl_ScopeSubgroup, CM, CK, gl_MatrixUseA> a[TM];
+            coopmat<float16_t, gl_ScopeSubgroup, CK, CN, gl_MatrixUseB> b[TN];
+            [[unroll]] for (uint i = 0; i < TM; i++)
+                coopMatLoad(a[i], sA, (wm + i * CM) * SKV + ks * (CK / 8u), SKV, gl_CooperativeMatrixLayoutRowMajor);
+            [[unroll]] for (uint j = 0; j < TN; j++)  // B's rows are the product's columns
+                coopMatLoad(b[j], sB, (wn + j * CN) * SKV + ks * (CK / 8u), SKV, gl_CooperativeMatrixLayoutColumnMajor);
+            [[unroll]] for (uint i = 0; i < TM; i++) [[unroll]] for (uint j = 0; j < TN; j++)
+                acc[i][j] = coopMatMulAdd(a[i], b[j], acc[i][j]);
+        }
+        if (kt + 1 < nk) {
+            barrier();
+            SSTORE
+        }
+        barrier();
+    }
+    // The last step, through a CM x CN scratch a subgroup: each lane takes runs of 8 columns of one row.
+    [[unroll]] for (uint i = 0; i < TM; i++) [[unroll]] for (uint j = 0; j < TN; j++) {
+        coopMatStore(acc[i][j], scratch[sg], 0, CN, gl_CooperativeMatrixLayoutRowMajor);
+        subgroupMemoryBarrierShared(); subgroupBarrier();
+        for (uint part = lane; part < PARTS; part += SG) {
+            uint er = part / (CN / 8u), ec = (part % (CN / 8u)) * 8u;
+            uint m = m0 + wm + i * CM + er, n = n0 + wn + j * CN + ec;
+            if (m >= M || n >= N) continue;
+            float x[8];
+            [[unroll]] for (uint e = 0; e < 8; e++) x[e] = scratch[sg][er * CN + ec + e];
+            if (bias != NONE) [[unroll]] for (uint e = 0; e < 8; e++) x[e] += float(bias_.h[bias + n + e]);
+            [[unroll]] for (uint e = 0; e < 8; e++) x[e] = act(x[e], ac);
+            if (R != NONE) {
+                uvec4 rr = c_.v[(R + m * ldr + n) >> 3];
+                [[unroll]] for (uint e = 0; e < 4; e++) { vec2 t = unpackHalf2x16(rr[e]); x[2 * e] += t.x; x[2 * e + 1] += t.y; }
+            }
+            if (rc != NONE && n < rope_n) {  // interleaved pairs, of the values as 16-bit floats, as a pass of its own would see them
+                uint pos = (m / pdiv) % pmod;
+                [[unroll]] for (uint e = 0; e < 8; e += 2) {
+                    float x0 = float(float16_t(x[e])), x1 = float(float16_t(x[e + 1]));
+                    uint pr = ((n + e) & 63u) >> 1;
+                    float c = float(turn_.h[rc + pos * 32 + pr]), sn = float(turn_.h[rs + pos * 32 + pr]);
+                    x[e] = x0 * c - x1 * sn; x[e + 1] = x0 * sn + x1 * c;
+                }
+            }
+            if (n + 8 <= N) {
+                // float16_t() rounds to the nearest (the execution mode above); packHalf2x16's rounding is the driver's
+                c_.v[(Cc + m * ldc + n) >> 3] = uvec4(packFloat2x16(f16vec2(x[0], x[1])), packFloat2x16(f16vec2(x[2], x[3])),
+                                                       packFloat2x16(f16vec2(x[4], x[5])), packFloat2x16(f16vec2(x[6], x[7])));
+            } else {
+                for (uint e = 0; e < 8 && n + e < N; e++) ch_.h[Cc + m * ldc + n + e] = float16_t(x[e]);
+            }
+        }
+        subgroupBarrier();
+    }
+}
+
+// erf from the Numerical Recipes erfc Chebyshev fit (fractional error under 1.2e-7)
+float erf(float x) {
+    float ax = abs(x);
+    float t = 1.0 / (1.0 + 0.5 * ax);
+    float y = 1.0 - t * exp(-ax * ax - 1.26551223 + t * (1.00002368 + t * (0.37409196 + t * (0.09678418 + t * (-0.18628806 +
+              t * (0.27886807 + t * (-1.13520398 + t * (1.48851587 + t * (-0.82215223 + t * 0.17087277)))))))));
+    return x >= 0.0 ? y : -y;
+}

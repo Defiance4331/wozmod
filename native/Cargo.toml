@@ -13,6 +13,19 @@ crate-type = ["cdylib"]
 pyo3 = { version = "0.29", features = ["extension-module", "abi3-py314"] }
 rustfft = "6.4"
 libm = "0.2"
+# ONNX Runtime, loaded at run time from the library file the release ships (no ONNX Runtime is built or linked here).
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "load-dynamic", "api-17"] }
+# The NVIDIA driver's own library, loaded at run time when the machine has one (cuda.rs): only with the cuda feature.
+libloading = { version = "0.8", optional = true }
+# The system's Vulkan loader, loaded at run time when the machine has one (vulkan.rs).
+ash = { version = "=0.38.0", default-features = false, features = ["loaded", "std"] }
+half = "2"
+num_cpus = "1"
+
+[features]
+# The CUDA engine of the Dream voice separator (src/cuda.rs, which says how to turn it back on). Off: no release and
+# no development build has it, by the owner's decision of 2026-11-21 (Vulkan runs every card at the same speed).
+cuda = ["dep:libloading"]
 
 [build-dependencies]
 cc = "1.2"

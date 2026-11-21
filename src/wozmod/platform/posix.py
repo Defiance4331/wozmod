@@ -69,6 +69,16 @@ def executable(name: str) -> str:
     return name
 
 
+def shared_library(name: str, version: str) -> str:
+    """The file name of version version of the shared library called name."""
+    return f"lib{name}.so.{version}"
+
+
+def release_name() -> str:
+    """What a release's files and folders call this system."""
+    return "linux"
+
+
 def lower_priority() -> None:
     """Make this process, and what it starts from now on, give way to the other work on the machine: NICE steps
     nicer, and on Linux the batch policy, whose lack of wake-up preemption also saves work."""

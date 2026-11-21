@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 import wozmod.install as installer
-from synthetic import fake_step_keys, speech_model, stock_game
+from synthetic import fake_step_keys, separator_model, speech_model, stock_game
 from wozmod import movies, remembered
 from wozmod.donors import Donor, DonorFile
 from wozmod.install import STEPS, manifest, step_keys
@@ -56,7 +56,8 @@ def setup(tmp_path, monkeypatch):
     (tmp_path / "d3d9.dll").write_bytes(b"dll")
     inputs = {**{flag: tmp_path / flag for flag in ("wo1-x360", "wo2-x360", "wo2-psp", "x360-tool", "psp-tool")},
               "lettering": tmp_path / "lettering.zip", "dll": tmp_path / "d3d9.dll",
-              "speech": speech_model(tmp_path / "speech", monkeypatch)}
+              "speech": speech_model(tmp_path / "speech", monkeypatch),
+              "separator": separator_model(tmp_path / "separator", monkeypatch)}
     seen = {"reads": [], "programs": [], "rebuilt": []}
 
     def extract(flag, image, donor, destination, files, *rest, **options):

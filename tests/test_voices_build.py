@@ -68,7 +68,8 @@ def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_unde
         (folder / "link_sebank.bdx").write_bytes(bytes(2 * banks))
     before = {p: hashlib.sha256(p.read_bytes()).digest() for p in tmp_path.rglob("*") if p.is_file()}
 
-    build_voice_banks(stock, donors, tmp_path / "no speech model: no line here needs a mouth made", output)
+    build_voice_banks(stock, donors, tmp_path / "no speech model: no line here needs a mouth made",
+                      tmp_path / "no Dream voice model: the Dream scenes are stood in for", output)
 
     table = bytearray(struct.pack("<I", 22665) + bytes(181324))
     struct.pack_into("<II", table, 4 + 8 * (0xAF3 + 241), len(table), len(take))

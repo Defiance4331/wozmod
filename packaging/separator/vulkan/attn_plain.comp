@@ -1,0 +1,116 @@
+#version 460
+// Plain flash attention (no matrix unit), same interface as attn_cm.comp. Register-tiled like a SIMT GEMM: 64 queries x
+// one head per workgroup... now 32 queries x one head per workgroup of 128 threads; per 64-key tile each thread computes a 4 x 4 block of scores (Q^T and K^T in
+// shared memory), 4 threads per row run the online softmax, and each thread updates a 4 x 4 block of the output from
+// P^T and V. fp32 math; fp16 storage is read as uint (unpackHalf2x16), so no 16-bit device feature is needed.
+// Shared: 32 KB, the least a desktop driver gives (V stays packed; 64 queries a workgroup took 48.5 KB). Grid (ceil(S / 32), batches * 8).
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+layout(local_size_x = 128) in;
+layout(binding = 0) readonly buffer Q_ { uvec4 v[]; } q_;
+layout(binding = 1) readonly buffer K_ { uvec4 v[]; } k_;
+layout(binding = 2) readonly buffer V_ { uvec4 v[]; } v_;
+layout(binding = 3) buffer O_ { uint u[]; } o_;
+layout(binding = 4) readonly buffer Gate_ { float f[]; } gate_;
+layout(push_constant) uniform P { uint q, k, vv, o, gate, S, brow, srow, ldq, ldo; } pc;
+const uint NONE = 0xffffffffu;
+shared vec4 sQT[64][8];    // [d][query / 4]
+shared vec4 sKP[64][16];   // [d][key / 4] for the scores, then P^T as [key][query / 4] in its first 8 columns
+shared uvec2 sV[64][16];   // [key][d / 4], as the 16-bit floats the buffer holds
+// A query row's rescale (and, at the end, its sum) lies in the columns P^T leaves free: with them and V packed the
+// shader declares 32768 bytes, the shared memory of the smallest desktop drivers.
+#define STAT(row) sKP[row][8].x
+
+uint f2h(float x) {
+    uint b = floatBitsToUint(x), s = (b >> 16) & 0x8000u; int e = int((b >> 23) & 0xffu) - 127 + 15; uint m = b & 0x7fffffu;
+    if (e >= 31) return s | 0x7c00u;
+    if (e <= 0) {
+        if (e < -10) return s;
+        m |= 0x800000u; uint sh = uint(14 - e); uint r = m >> sh, rem = m & ((1u << sh) - 1u), hf = 1u << (sh - 1u);
+        if (rem > hf || (rem == hf && (r & 1u) == 1u)) r++;
+        return s | r;
+    }
+    uint r = (uint(e) << 10) | (m >> 13), rem = m & 0x1fffu;
+    if (rem > 0x1000u || (rem == 0x1000u && (r & 1u) == 1u)) r++;
+    return s | r;
+}
+
+void main() {
+    uint head = gl_WorkGroupID.y & 7u, bt = gl_WorkGroupID.y >> 3, tid = gl_LocalInvocationID.x, q0 = gl_WorkGroupID.x * 32;
+    uint S = pc.S, base = bt * pc.brow;
+    uint ty = tid >> 4, tx = tid & 15u;  // 4 query rows ty * 4 .. (ty < 8), 4 key (or d) columns tx * 4 ..
+    const float sc = 0.125 * 1.4426950408889634;
+    {   // Q^T: thread loads query tid / 4, dims (tid % 4) * 16 .. + 16
+        uint qq = tid >> 2, d0 = (tid & 3u) * 16, s = min(q0 + qq, S - 1);  // 32 queries x 4
+        uint off = (pc.q + (base + s * pc.srow) * pc.ldq + head * 64 + d0) >> 3;
+        [[unroll]] for (uint c = 0; c < 2; c++) {
+            uvec4 w = q_.v[off + c];
+            [[unroll]] for (uint e = 0; e < 4; e++) {
+                vec2 t = unpackHalf2x16(w[e]) * sc; uint d = d0 + c * 8 + e * 2;
+                sQT[d][qq >> 2][qq & 3u] = t.x; sQT[d + 1][qq >> 2][qq & 3u] = t.y;
+            }
+        }
+    }
+    vec4 o[4]; [[unroll]] for (uint i = 0; i < 4; i++) o[i] = vec4(0.0);
+    float mrow = -1e30, lrow = 0.0;  // the softmax threads' row stats (row tid / 4)
+    uint srw = tid >> 2, sq = tid & 3u;  // softmax: row srw, keys sq * 16 .. + 16
+    for (uint k0 = 0; k0 < S; k0 += 64) {
+        barrier();
+        [[unroll]] for (uint half_ = 0; half_ < 2; half_++) {   // K^T and V: key half_ * 32 + tid / 4, dims (tid % 4) * 16 .. + 16
+            uint kk = half_ * 32 + (tid >> 2), d0 = (tid & 3u) * 16, s = k0 + kk; bool ok = s < S;
+            uint ko = (pc.k + (base + s * pc.srow) * pc.ldq + head * 64 + d0) >> 3, vo = (pc.vv + (base + s * pc.srow) * pc.ldq + head * 64 + d0) >> 3;
+            [[unroll]] for (uint c = 0; c < 2; c++) {
+                uvec4 a = ok ? k_.v[ko + c] : uvec4(0), b = ok ? v_.v[vo + c] : uvec4(0);
+                [[unroll]] for (uint e = 0; e < 4; e++) {
+                    vec2 t = unpackHalf2x16(a[e]); uint d = d0 + c * 8 + e * 2;
+                    sKP[d][kk >> 2][kk & 3u] = t.x; sKP[d + 1][kk >> 2][kk & 3u] = t.y;
+                }
+                sV[kk][(d0 >> 2) + c * 2] = b.xy;
+                sV[kk][(d0 >> 2) + c * 2 + 1] = b.zw;
+            }
+        }
+        barrier();
+        vec4 sacc[4]; [[unroll]] for (uint i = 0; i < 4; i++) sacc[i] = vec4(0.0);
+        [[unroll]] for (uint d = 0; d < 64; d++) {
+            vec4 a = sQT[d][ty], b = sKP[d][tx];
+            [[unroll]] for (uint i = 0; i < 4; i++) sacc[i] += a[i] * b;
+        }
+        barrier();  // everyone is done reading K^T: the same memory takes P^T
+        [[unroll]] for (uint j = 0; j < 4; j++) {
+            uint key = tx * 4 + j; bool ok = k0 + key < S;
+            sKP[key][ty] = ok ? vec4(sacc[0][j], sacc[1][j], sacc[2][j], sacc[3][j]) : vec4(-1e30);
+        }
+        barrier();
+        {   // online softmax: 4 threads per row (adjacent lanes), 16 keys each
+            float x[16], mx = -1e30;
+            [[unroll]] for (uint e = 0; e < 16; e++) { x[e] = sKP[sq * 16 + e][srw >> 2][srw & 3u]; mx = max(mx, x[e]); }
+            mx = max(mx, subgroupShuffleXor(mx, 1)); mx = max(mx, subgroupShuffleXor(mx, 2));
+            float mn = max(mrow, mx), alpha = exp2(mrow - mn), ps = 0.0; mrow = mn;
+            [[unroll]] for (uint e = 0; e < 16; e++) { float p = exp2(x[e] - mn); ps += p; sKP[sq * 16 + e][srw >> 2][srw & 3u] = p; }
+            ps += subgroupShuffleXor(ps, 1); ps += subgroupShuffleXor(ps, 2);
+            lrow = lrow * alpha + ps;
+            if (sq == 0u) STAT(srw) = alpha;
+        }
+        barrier();
+        [[unroll]] for (uint i = 0; i < 4; i++) o[i] *= STAT(ty * 4 + i);
+        [[unroll]] for (uint key = 0; key < 64; key++) {
+            uvec2 packed = sV[key][tx];
+            vec4 p = sKP[key][ty], w = vec4(unpackHalf2x16(packed.x), unpackHalf2x16(packed.y));
+            [[unroll]] for (uint i = 0; i < 4; i++) o[i] += p[i] * w;
+        }
+    }
+    barrier();  // every thread has read its rows' last rescale
+    if (sq == 0u) STAT(srw) = lrow;
+    barrier();
+    [[unroll]] for (uint i = 0; i < 4; i++) {
+        uint s = q0 + ty * 4 + i;
+        if (s >= S) continue;
+        uint row = base + s * pc.srow;
+        float fct = 1.0 / STAT(ty * 4 + i);
+        if (pc.gate != NONE) fct *= gate_.f[pc.gate + row * 8 + head];
+        vec4 a = o[i] * fct;
+        uint off = (pc.o + row * pc.ldo + head * 64 + tx * 4) >> 1;
+        o_.u[off] = f2h(a.x) | (f2h(a.y) << 16); o_.u[off + 1] = f2h(a.z) | (f2h(a.w) << 16);
+    }
+}

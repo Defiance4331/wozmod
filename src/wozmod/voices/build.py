@@ -124,11 +124,13 @@ def said(clips: dict[int, bytes], sources: dict[int, str], donor_events: dict, s
     return found | phones.shown_lines(stock_events, shown, resolver)
 
 
-def build_voice_banks(stock: Path, donors: Path, speech: Path, output_dir: Path, jobs: int | None = None) -> None:
+def build_voice_banks(stock: Path, donors: Path, speech: Path, separator: Path, output_dir: Path,
+                      jobs: int | None = None) -> None:
     """Write voice/Voice.bin, voice/Slots.bin, voice/Lips.bin and voice/SE.bin, the English Dream movies in
     movie/voice, and the retimed event files and guarded stage scripts (guarded_stages) in captions/voice, below the
     supplied mod folder; speech is the PocketSphinx model folder (phones.MODEL) the generated
-    mouths' phones come from; jobs caps the ffmpeg processes and the speech threads."""
+    mouths' phones come from, separator the model folder (separation.MODEL) that takes the Z Dream scenes' English
+    voice out of the PSP's movies; jobs caps the ffmpeg processes and the speech and separator threads."""
     stock, donors, speech, output_dir = Path(stock), Path(donors), Path(speech), Path(output_dir)
     folders = DonorsFolder(donors)
     wo1, wo2, psp = folders.folder("wo1-x360"), folders.folder("wo2-x360"), folders.folder("wo2-psp")
@@ -146,7 +148,7 @@ def build_voice_banks(stock: Path, donors: Path, speech: Path, output_dir: Path,
     )
     # The Z Dream scenes have no donor clip: their lines are cut from the PSP's movies of them, at the stock ids.
     dream_events = linkdata2.read(list(DREAM_EVENTS))
-    for voice, record in build_dream_events(stock_clips, psp, dream_events, jobs)[0].items():
+    for voice, record in build_dream_events(stock_clips, psp, dream_events, Path(separator), jobs)[0].items():
         if voice in clips:
             raise VoiceBankError(f"voice id {voice} has both a {sources[voice]} clip and a Z Dream scene's take")
         clips[voice], sources[voice] = record, WO2_PSP.name
