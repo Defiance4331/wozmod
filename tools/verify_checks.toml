@@ -2,9 +2,10 @@
 # cannot edit the list that judges it).
 #
 # Each row: when the diff from the merge base touches a path matching one of `paths` (fnmatch: `*` also matches `/`),
-# tools/verify.py prints the row, and `tools/verify.py --triggered` runs it under the machine lock: `run` is pytest
-# paths or node ids (strict, every slow switch on), or `ref STEP` (a reference build and its readers, run with the
-# row's tests: name the steps they read). `from` cites the incident or commit behind it; a row with nothing to cite
+# tools/verify.py prints the row and runs it for each commit (`--commit`, which every commit in a worktree starts in
+# the background), and main needs its passing verdict; `--triggered` runs it in a checkout. `run` is pytest paths or
+# node ids (strict, every slow switch on), or `ref STEP` (a reference build and its readers, run with the row's tests:
+# name the steps they read). `from` cites the incident or commit behind it; a row with nothing to cite
 # does not belong here. Prune a row whose check has not gone red in a long while.
 
 [[row]]

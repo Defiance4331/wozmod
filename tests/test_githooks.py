@@ -1,5 +1,5 @@
 """The commit-msg hook keeps commit messages to the changelog format in AGENTS.md, and the reference-transaction hook
-lets main move only to a commit whose tree has passing Linux and Windows verdicts (tools/verify.py)."""
+lets main move only to a commit whose tree has passing Linux, Windows and triggered-row verdicts (tools/verify.py)."""
 
 from __future__ import annotations
 
@@ -80,6 +80,14 @@ def _commit(repo: Path, name: str) -> subprocess.CompletedProcess:
     return _git(repo, "commit", "-q", "-m", name, check=False)
 
 
+CHECKLIST = """[[row]]
+name = "runtime builds"
+paths = ["runtime/*"]
+run = ["tests/test_runtime_build.py"]
+from = "a cited incident"
+"""
+
+
 def _gated(root: Path) -> Path:
     """A clone of an upstream whose main holds one commit, with the gate (and the verify.py it runs) installed as in
     ours: core.hooksPath tools/githooks. Upstream then gets a commit the clone has not fetched; no tree has a verdict."""
@@ -89,6 +97,7 @@ def _gated(root: Path) -> Path:
     for name in ("tools/verify.py", GATE):
         (upstream / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO / name, upstream / name)
+    (upstream / "tools/verify_checks.toml").write_text(CHECKLIST, encoding="utf-8")
     (upstream / ".gitignore").write_text("work/\n", encoding="utf-8")
     _commit(upstream, "base.txt")
     repo = root / "repo"
@@ -122,10 +131,10 @@ def test_main_moves_only_to_a_commit_whose_tree_has_a_passing_linux_and_windows_
     tree = _git(repo, "write-tree").stdout.strip()
     wrong = []
     for name, checks, accepted, says in [
-            ("no verdicts", {}, False, ["no Linux verdict; no Windows verdict", f"--commit {tree} --wait\n"]),
-            ("Linux only", {"linux": "pass"}, False, [f"{tree} has no Windows verdict.", f"--commit {tree} --wait\n"]),
+            ("no verdicts", {}, False, ["no Linux verdict; no Windows verdict", f"--commit {tree}\n"]),
+            ("Linux only", {"linux": "pass"}, False, [f"{tree} has no Windows verdict.", f"--commit {tree}\n"]),
             ("a red Windows verdict", {"windows": "fail"}, False, [f"{tree} has a red Windows verdict",
-                                                                  f"--commit {tree} --wait --rerun"]),
+                                                                  f"--commit {tree} --rerun"]),
             ("a Windows pass after it", {"windows": "pass"}, True, [])]:
         _verdicts(repo, tree, **checks)
         run = _git(repo, "commit", "-q", "-m", "a", check=False)
@@ -138,6 +147,36 @@ def test_main_moves_only_to_a_commit_whose_tree_has_a_passing_linux_and_windows_
     reset = _git(repo, "reset", "-q", "--hard", "feature", check=False)
     if reset.returncode == 0 or _rev(repo, "main") != verified:
         wrong.append(f"a reset to an unverified commit: exit {reset.returncode}")
+    assert wrong == []
+
+
+@GATED
+def test_main_needs_a_passing_verdict_of_each_checklist_row_the_diff_triggers(tmp_path):
+    # Bugs: main moves to a tree whose diff triggers a checklist row with no verdict for that row (the gate reads only
+    # the fast suite's), or a red one; a change that edits the checklist drops its own row and lands without it (every
+    # row counts then, as tools/verify.py rules); or a row the diff does not trigger is asked for.
+    repo = _gated(tmp_path)
+    wrong = []
+    for name, files, checks, accepted, says in [
+            ("a runtime change, no row verdict", {"runtime/a.c": "1"}, {}, False,
+             ["has no row runtime builds verdict.", "--commit "]),
+            ("a red row verdict", {"runtime/a.c": "2"}, {"row runtime builds": "fail"}, False,
+             ["a red row runtime builds verdict"]),
+            ("a passing row verdict", {"runtime/a.c": "3"}, {"row runtime builds": "pass"}, True, []),
+            ("an edit to the checklist that drops the row", {"tools/verify_checks.toml": "", "b.txt": "b"}, {}, False,
+             ["has no row runtime builds verdict."]),
+            ("a change no row is for", {"docs.txt": "d"}, {}, True, [])]:
+        for path, text in files.items():
+            (repo / path).parent.mkdir(parents=True, exist_ok=True)
+            (repo / path).write_text(text, encoding="utf-8")
+        _git(repo, "add", "-A")
+        tree = _git(repo, "write-tree").stdout.strip()
+        _verdicts(repo, tree, linux="pass", windows="pass", **checks)
+        run = _git(repo, "commit", "-q", "-m", name, check=False)
+        if (run.returncode == 0) != accepted or not all(text in run.stderr for text in says):
+            wrong.append(f"{name}: exit {run.returncode} {run.stderr.strip()}")
+        if run.returncode:
+            _git(repo, "reset", "-q", "--hard", "HEAD")  # main stays; the next case starts from it
     assert wrong == []
 
 

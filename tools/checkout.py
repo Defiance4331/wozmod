@@ -10,10 +10,16 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 
 
+EXPORTS = ("work", "verify", "trees")  # where tools/verify.py exports a tree to run it: MAIN/work/verify/trees/NAME
+
+
 def main_checkout() -> Path:
-    """The main checkout; a linked worktree's .git file names its folder in the main checkout's .git/worktrees/."""
+    """The main checkout; a linked worktree's .git file names its folder in the main checkout's .git/worktrees/, and
+    an export of a tree (no .git) is in the main checkout's work/verify/trees/."""
     git = REPO / ".git"
-    return Path(git.read_text(encoding="utf-8").removeprefix("gitdir:").strip()).parents[2] if git.is_file() else REPO
+    if git.is_file():
+        return Path(git.read_text(encoding="utf-8").removeprefix("gitdir:").strip()).parents[2]
+    return REPO.parents[3] if not git.exists() and REPO.parent.parts[-3:] == EXPORTS else REPO
 
 
 def work() -> Path:

@@ -1,23 +1,31 @@
 #!/usr/bin/env python3
 """One command for the checks: what a change needs, bound to the exact tree it ran on.
 
-    tools/verify.py [--commit REV] [--triggered] [--wait] [--rerun] [--plan]
+    tools/verify.py --commit REV [--rerun]
+    tools/verify.py [--triggered] [--wait] [--rerun] [--plan]
     tools/verify.py ref STEP...
     tools/verify.py release [-- PYTEST_ARG...]
 
-With no mode: names the tree (git write-tree of the checkout with its untracked files, ignored ones left out), runs
-the fast suite on Linux, prints its verdict and exits on it; it also starts the same suite under Windows Python
-(tools/windows_suite.py) on an export of that tree in the background, whose verdict lands in the notes about 2 minutes
-later (a later call prints it; --wait waits for it and exits on both). --commit REV verifies the tree of REV (a commit
-or a tree) instead, the Linux run too on an export of it, in its own environment: the exact tree a commit holds,
-whatever the checkout's untracked files. A verdict already recorded for the tree is shown, not run again (--rerun
-runs it again; both stay recorded).
+--commit REV verifies the tree of REV (a commit or a tree) for main: the fast suite on Linux and under Windows Python
+(tools/windows_suite.py), then the rows of tools/verify_checks.toml that the diff from the merge base with main
+triggers, each on an export of the tree in its own environment, whatever the checkout holds meanwhile. It prints
+every verdict and exits on them all. Each commit in a linked worktree starts it in the background
+(tools/githooks/post-commit runs `_background`; its output goes to work/verify/runs/TREE/background.log): a newer
+commit in the same checkout stops that checkout's run of an older tree, and a call on a tree whose run is going waits
+for that run, then reuses its verdicts. So `tools/verify.py --commit HEAD` before landing prints them, waiting for a
+run still going.
 
-main needs both: tools/githooks/reference-transaction refuses to move refs/heads/main to a commit whose tree lacks a
-passing Linux or Windows verdict (gate below), unless a remote-tracking ref already holds the commit or main's tree
-stays the same.
-It also prints the rows of tools/verify_checks.toml that the diff from the merge base with main triggers;
---triggered runs them. --plan prints the tree, the judge and those rows, and runs nothing.
+With no mode: names the tree (git write-tree of the checkout with its untracked files, ignored ones left out), runs
+the fast suite on Linux in the checkout, prints its verdict and exits on it; it also starts the same suite under
+Windows Python on an export of that tree in the background, whose verdict lands in the notes about 2 minutes later
+(a later call prints it; --wait waits for it and exits on both). It prints the triggered rows; --triggered runs them
+in the checkout, and records a verdict only while the checkout still holds the tree. --plan prints the tree, the
+judge and those rows, and runs nothing.
+
+A verdict already recorded for the tree is shown, not run again (--rerun runs it again; both stay recorded). main
+needs them all: tools/githooks/reference-transaction refuses to move refs/heads/main to a commit whose tree lacks a
+passing Linux, Windows or triggered-row verdict (gate and owed below), unless a remote-tracking ref already holds the
+commit or main's tree stays the same.
 
 ref STEP...: per step (text, voices, art), the reference build of this tree's step key in work/verify/builds/STEP/KEY/
 (out/, staging/, the read gate's trace.jsonl and unread.json, build.log, build.json), reused while the key exists,
@@ -30,8 +38,9 @@ tests/test_release_pins.py), the reference builds and their readers (the end-to-
 the builds), the first install, timed alone, and the Windows run. It fails when a run skipped a test for a reason
 other than a system mark (linux_only, real_windows), or left out a test a full collection finds: a narrowed test set.
 
-Verdicts are local git notes (refs/notes/verify) on the tree object, one JSON line per run; logs and junit files are
-in the main checkout's work/verify/runs/TREE/. The judge (this file and tools/verify_checks.toml) runs from the merge
+Verdicts are local git notes (refs/notes/verify) on the tree object, one JSON line per run, so every commit of the
+tree has them (an amend, the squashed commit that lands); logs and junit files are in the main checkout's
+work/verify/runs/TREE/. The judge (this file and tools/verify_checks.toml) runs from the merge
 base with main, so a change cannot edit the check that judges it: when the tree edits either, it is said, and every
 checklist row counts as triggered. Each run holds the machine lock (tools/machine_lock.py) for what it is: the
 reference builds as a build and the test runs as test runs, both shared, beside games and other runs (a test run on
@@ -48,6 +57,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -318,14 +328,29 @@ def machine_lock(repo: Path):
 
 
 def shared_machine(repo: Path, what: str) -> int | None:
-    """Hold the machine shared, as a test run in a checkout does (tests/conftest.py), for a run on an export: there
-    the conftest finds no checkout, so it locks a work/ of the export's own. The descriptor: close it when done."""
+    """Hold the machine shared, as a test run in a checkout does (tests/conftest.py), for a run on an export, which
+    is given HELD so its conftest does not wait for the run it is part of. The descriptor: close it when done."""
     return machine_lock(repo).hold("test", what)
 
 
 def exported_path(folder: Path) -> dict:
     """What a run on the export in folder imports from it: its own code, not the checkout's."""
     return {"PYTHONPATH": os.pathsep.join([str(folder / "src"), str(folder / "tools")])}
+
+
+def on_export(repo: Path, tree: str, out: Path, arguments: list[str], switches: bool, what: str) -> dict:
+    """pytest with arguments on an export of tree, in tree's own environment (venv), so it runs what the tree holds
+    whatever the checkout does meanwhile; every slow switch on, or none; holding the machine as a test run."""
+    held = shared_machine(repo, what)
+    folder = export(repo, tree, work(repo) / "verify/trees" / f"{tree}.{os.getpid()}")
+    inside = {} if held is None else {machine_lock(repo).HELD: "test"}
+    try:
+        return pytest(folder, out, arguments, environment(repo, switches, True) | exported_path(folder) | inside,
+                      venv(repo, tree, folder))
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+        if held is not None:
+            os.close(held)
 
 
 # Default mode
@@ -338,15 +363,7 @@ def linux(repo: Path, tree: str, rerun: bool, exact: bool = False) -> dict:
         return found | {"reused": True}
     out = runs(repo, tree) / "linux"
     if exact:
-        held = shared_machine(repo, f"the Linux run of {tree[:12]}")
-        folder = export(repo, tree, work(repo) / "verify/trees" / f"{tree}.{os.getpid()}")
-        try:
-            found = pytest(folder, out, [], environment(repo, False, True) | exported_path(folder),
-                           venv(repo, tree, folder))
-        finally:
-            shutil.rmtree(folder, ignore_errors=True)
-            if held is not None:
-                os.close(held)
+        found = on_export(repo, tree, out, [], False, f"the Linux run of {tree[:12]}")
     else:
         found = pytest(repo, out, [], environment(repo, False), LIVE)
     entry = {"check": "linux", "verdict": found["verdict"], "summary": found["summary"], "judge": os.environ[JUDGED],
@@ -356,6 +373,20 @@ def linux(repo: Path, tree: str, rerun: bool, exact: bool = False) -> dict:
                                                       f"{now[:12]} during the run"}
     record(repo, tree, entry)
     return entry
+
+
+def tree_lock(repo: Path, tree: str) -> int:
+    """Hold tree's run lock until this process ends, first waiting for a run of tree already going (the background
+    run of its commit, or another --commit), whose verdicts this run then reuses rather than running them again."""
+    runs(repo, tree).mkdir(parents=True, exist_ok=True)
+    lock = os.open(runs(repo, tree) / "commit.lock", os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print(f"a run of tree {tree[:12]} is going (its log: {runs(repo, tree) / 'background.log'}); waiting for it",
+              flush=True)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+    return lock
 
 
 def windows_lock(repo: Path, tree: str):
@@ -414,6 +445,17 @@ def windows(repo: Path, tree: str, rerun: bool, wait: bool) -> str:
         fcntl.flock(lock, fcntl.LOCK_SH)
     found = recorded(repo, tree, "windows")
     return f"{found['verdict']}: {found['summary']}" if found else "the run ended without a verdict (see its log)"
+
+
+def windows_here(repo: Path, tree: str, rerun: bool) -> dict:
+    """The Windows verdict for tree, run in this process (--commit) unless it is recorded; a run of it already going
+    (the default mode's background one) is waited for, and its verdict taken."""
+    lock = os.open(runs(repo, tree) / "windows.lock", os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    if not rerun and (found := recorded(repo, tree, "windows")):
+        os.close(lock)
+        return found | {"reused": True}
+    return windows_run(repo, tree, [], lock)
 
 
 # Reference builds
@@ -620,8 +662,9 @@ def checks(rows: list[dict]) -> list[dict]:
     return found
 
 
-def run_rows(repo: Path, tree: str, base: str, rows: list[dict], rerun: bool) -> bool:
-    """Run checks(rows), recording each row's verdict."""
+def run_rows(repo: Path, tree: str, base: str, rows: list[dict], rerun: bool, exact: bool = False) -> bool:
+    """Run checks(rows), recording each row's verdict: the rows of pytest items in the checkout, recorded only when
+    it still holds tree, or (exact) on an export of tree."""
     ok = True
     for check in checks(rows):
         if not rerun and all(found := [recorded(repo, tree, f"row {name}") for name in check["rows"]]):
@@ -632,10 +675,16 @@ def run_rows(repo: Path, tree: str, base: str, rows: list[dict], rerun: bool) ->
         if check["steps"]:  # the rows' tests run with the readers, against the reference builds
             done = references(repo, tree, base, check["steps"], check["tests"])
         else:
-            done = [pytest(repo, runs(repo, tree) / "rows" / re.sub(r"\W+", "-", check["rows"][0]), check["tests"],
-                           environment(repo, True), LIVE)]
+            out = runs(repo, tree) / "rows" / re.sub(r"\W+", "-", check["rows"][0])
+            done = [on_export(repo, tree, out, check["tests"], True, f"row {check['rows'][0]} of {tree[:12]}")
+                    if exact else pytest(repo, out, check["tests"], environment(repo, True), LIVE)]
         verdict = "pass" if all(found["verdict"] == "pass" for found in done) else "fail"
         summary = "; ".join(found["summary"] for found in done)
+        if not exact and (now := tree_id(repo)) != tree:
+            print(f"{', '.join(check['rows'])}: {verdict}: {summary}; not recorded: the checkout changed to tree "
+                  f"{now[:12]} during the run", flush=True)
+            ok = False
+            continue
         for name in check["rows"]:
             print(f"{name}: {verdict}: {summary}", flush=True)
             record(repo, tree, {"check": f"row {name}", "verdict": verdict, "summary": summary,
@@ -683,36 +732,101 @@ def release(repo: Path, tree: str, base: str, extra: list[str]) -> bool:
 # The gate on main
 
 
+def owed(repo: Path, base: str | None, tree: str) -> list[str]:
+    """The checks main needs passing on tree, as the judge rules them for the change from base (the merge base with
+    main): linux, windows, and `row NAME` for each checklist row the diff triggers, every row when the change edits
+    the judge. The checklist is base's, or the tree's when base has none (or there is no base)."""
+    if base and git(repo, "rev-parse", "-q", "--verify", f"{base}:{JUDGE[0]}", check=False):
+        text = git(repo, "show", f"{base}:{JUDGE[1]}", check=False)
+        edits = git(repo, "diff", "--name-only", base, tree, "--", *JUDGE).splitlines()
+    else:
+        text, edits = git(repo, "show", f"{tree}:{JUDGE[1]}", check=False), list(JUDGE)
+    rows = tomllib.loads(text).get("row", []) if text else []
+    if not edits:
+        rows = triggered(rows, git(repo, "diff", "--name-only", base, tree).splitlines())
+    return ["linux", "windows", *(f"row {row['name']}" for row in rows)]
+
+
 def gate(repo: Path, updates: list[str]) -> list[str]:
     """Why a ref transaction must not move main, from its lines as git's reference-transaction hook gets them in the
-    prepared state (`OLD NEW REF`, symbolic refs resolved): main may move to a commit whose tree has a passing Linux
-    and a passing Windows verdict, or that a remote-tracking ref holds (now, or in this same transaction), and may keep
-    its tree or be deleted. Empty when it may."""
+    prepared state (`OLD NEW REF`, symbolic refs resolved): main may move to a commit whose tree has a passing verdict
+    of every check it owes (owed(): Linux, Windows, and the checklist rows its diff from the merge base with main
+    triggers), or that a remote-tracking ref holds (now, or in this same transaction), and may keep its tree or be
+    deleted. Empty when it may."""
     moves = [line.split() for line in updates if line.strip()]
     deleted = lambda new: new.strip("0") == ""
     pending = [new for _, new, ref in moves if ref.startswith("refs/remotes/") and not deleted(new)]
     problems = []
-    for _, new, ref in moves:
+    for old, new, ref in moves:
         if ref != f"refs/heads/{MAIN}" or deleted(new):
             continue
         tree = git(repo, "rev-parse", f"{new}^{{tree}}")
         if tree == git(repo, "rev-parse", "-q", "--verify", f"refs/heads/{MAIN}^{{tree}}", check=False):
             continue  # a re-stamp or an amended message: main's content stays what it was
-        found = {check: recorded(repo, tree, check) for check in ("linux", "windows")}
+        base = None if deleted(old) else git(repo, "merge-base", old, new, check=False) or None
+        found = {check: recorded(repo, tree, check) for check in owed(repo, base, tree)}
         if all(entry and entry["verdict"] == "pass" for entry in found.values()):
             continue
         if git(repo, "for-each-ref", "--count=1", "--contains", new, "--format=%(refname)", "refs/remotes/") or any(
                 subprocess.run(["git", "merge-base", "--is-ancestor", new, tip], cwd=repo).returncode == 0
                 for tip in pending):
             continue  # upstream's commit: a pull or a fast-forward to it
-        state = [f"no {check.capitalize()} verdict" if entry is None else
-                 f"a red {check.capitalize()} verdict (recorded {entry['at']}: {entry.get('summary', '')})"
+        label = lambda check: check.capitalize() if check in ("linux", "windows") else check
+        state = [f"no {label(check)} verdict" if entry is None else
+                 f"a red {label(check)} verdict (recorded {entry['at']}: {entry.get('summary', '')})"
                  for check, entry in found.items() if entry is None or entry["verdict"] != "pass"]
         red = any(entry and entry["verdict"] != "pass" for entry in found.values())
         problems.append(f"main may not move to {new[:12]}: its tree {tree} has {'; '.join(state)}.\n"
                         f"{'Fix the change, or for a flaky test rerun' if red else 'Verify it'}: "
-                        f"tools/verify.py --commit {tree} --wait{' --rerun' if red else ''}")
+                        f"tools/verify.py --commit {tree}{' --rerun' if red else ''}")
     return problems
+
+
+# The background run of a commit
+
+
+def background(repo: Path) -> str:
+    """_background (tools/githooks/post-commit, in a linked worktree): HEAD, to verify as --commit does, detached,
+    with this process's output in runs/TREE/background.log. A newer commit makes the checkout's run of an older tree
+    obsolete, so this stops it first; a run of the same tree (after an amend or a re-stamp) goes on, and so does a
+    later commit's, and this one exits. The checkout's run holds work/verify/checkouts/KEY.lock for its life and
+    KEY.json names it; the lock of a run that crashed or was killed is free, so its stale record names no one."""
+    for name in [name for name in os.environ if name.startswith("GIT_")]:
+        del os.environ[name]  # what git sets for its hooks (GIT_DIR, GIT_INDEX_FILE) would steer every test's git
+    if os.getpgrp() != os.getpid():
+        os.setsid()  # a group of its own: stopping it stops every process it started
+    head, tree = git(repo, "rev-parse", "HEAD"), git(repo, "rev-parse", "HEAD^{tree}")
+    runs(repo, tree).mkdir(parents=True, exist_ok=True)
+    with (runs(repo, tree) / "background.log").open("a", encoding="utf-8") as log:
+        os.dup2(log.fileno(), 1)
+        os.dup2(log.fileno(), 2)
+    print(f"--- {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}: commit {head[:12]} in {repo}", flush=True)
+    folder = work(repo) / "verify/checkouts"
+    folder.mkdir(parents=True, exist_ok=True)
+    key = hashlib.sha256(git(repo, "rev-parse", "--absolute-git-dir").encode()).hexdigest()[:16]
+    running = os.open(folder / f"{key}.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    with (folder / f"{key}.start").open("a") as start:
+        fcntl.flock(start, fcntl.LOCK_EX)  # one start at a time per checkout, so the newest commit's run stays
+        if git(repo, "rev-parse", "HEAD^{tree}") != tree:
+            print("HEAD has moved on since this commit; the later commit's run verifies it")
+            sys.exit(0)
+        try:
+            fcntl.flock(running, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:  # a run is going: its record is the one under this lock
+            before = json.loads((folder / f"{key}.json").read_text(encoding="utf-8"))
+            if before["tree"] == tree:
+                print(f"the run of this tree (pid {before['pid']}) goes on")
+                sys.exit(0)
+            print(f"stopping the run of the older tree {before['tree'][:12]} (pid {before['pid']})", flush=True)
+            try:
+                os.killpg(before["pid"], signal.SIGTERM)
+            except ProcessLookupError:
+                pass  # it ended just now
+            fcntl.flock(running, fcntl.LOCK_EX)
+        (folder / f"{key}.json").write_text(json.dumps({"pid": os.getpid(), "tree": tree, "commit": head}) + "\n",
+                                            encoding="utf-8")
+    os.set_inheritable(running, True)  # held by the judge this process becomes, until the run ends
+    return head
 
 
 # The command
@@ -724,6 +838,8 @@ def main(argv: list[str]) -> int:
         print(*(f"reference-transaction: {problem}" for problem in problems), sep="\n", file=sys.stderr)
         return 1 if problems else 0
     repo = Path(git(Path.cwd(), "rev-parse", "--show-toplevel"))
+    if argv[:1] == ["_background"]:  # tools/githooks/post-commit, before any judge: the checkout's own
+        argv = ["--commit", background(repo)]
     delegate(repo, argv)
     if argv[:1] == ["_windows"]:  # the background half of the default mode
         found = windows_run(repo, argv[1], [], int(argv[2]))
@@ -731,20 +847,20 @@ def main(argv: list[str]) -> int:
     mode = argv[0] if argv[:1] and argv[0] in ("ref", "release") else None
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     if mode is None:
-        for flag, about in (("--triggered", "also run the checklist rows the diff triggers"),
-                            ("--wait", "wait for the Windows verdict and exit on both"),
+        for flag, about in (("--triggered", "also run the checklist rows the diff triggers (--commit always does)"),
+                            ("--wait", "wait for the Windows verdict and exit on every verdict (--commit always does)"),
                             ("--rerun", "run again what is recorded"),
                             ("--plan", "print the tree, the judge and the triggered rows; run nothing")):
             parser.add_argument(flag, action="store_true", help=about)
-        parser.add_argument("--commit", metavar="REV", help="verify the tree of REV (a commit or a tree), on an export")
+        parser.add_argument("--commit", metavar="REV", help="verify the tree of REV (a commit or a tree) for main: every "
+                            "check it needs, on exports, after any run of it already going")
         options = parser.parse_args(argv)
-        if options.commit and options.triggered:
-            parser.error("--triggered runs its rows in the checkout; check out the commit and run it there")
     exact = mode is None and bool(options.commit)
     base = merge_base(repo)
     if exact:
         tree = git(repo, "rev-parse", "--verify", f"{options.commit}^{{tree}}")
         print(f"tree {tree} (of {options.commit}, on an export); merge base with {MAIN} {base[:12]}")
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(128 + signal.SIGTERM))  # stopped: clean up the exports
     else:
         tree = tree_id(repo)
         head = git(repo, "rev-parse", "HEAD")
@@ -774,24 +890,31 @@ def main(argv: list[str]) -> int:
                             "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
         print(f"release: {verdict}")
         return 0 if verdict == "pass" else 1
-    print("checklist rows the diff triggers" + (" (run with --triggered):" if not options.triggered else ":")
+    print("checklist rows the diff triggers" + (" (run with --triggered):" if not (options.triggered or exact) else ":")
           if rows else "checklist rows the diff triggers: none")
     for row in rows:
         print(f"  {row['name']}: {', '.join(row['run'])}")
     if options.plan:
         return 0
+    if exact:
+        tree_lock(repo, tree)
     found = linux(repo, tree, options.rerun, exact)
     print(f"Linux: {found['verdict']}{' (recorded ' + found['at'] + ')' if found.get('reused') else ''}: "
           f"{found['summary']}", flush=True)
     flaky = {r["verdict"] for r in records(repo, tree) if r["check"] == "linux"}
     if len(flaky) > 1:
         print("Linux: this tree has both a pass and a fail recorded: a flaky test, to root-cause or delete")
-    state = windows(repo, tree, options.rerun, options.wait)
+    if exact:  # everything main needs (gate), in this process
+        won = windows_here(repo, tree, options.rerun)
+        state = (f"{won['verdict']}{' (recorded ' + won['at'] + ')' if won.get('reused') else ''}: "
+                 f"{won['summary']}")
+    else:
+        state = windows(repo, tree, options.rerun, options.wait)
     print(f"Windows: {state}", flush=True)
-    # A hand-back needs the Linux verdict; main needs both (gate), which --wait waits for.
-    ok = found["verdict"] == "pass" and (not options.wait or state.startswith("pass"))
-    if options.triggered:
-        ok &= run_rows(repo, tree, base, rows, options.rerun)
+    # The default mode exits on the Linux verdict; main needs every one (gate), which --wait and --commit wait for.
+    ok = found["verdict"] == "pass" and (not (options.wait or exact) or state.startswith("pass"))
+    if options.triggered or exact:
+        ok &= run_rows(repo, tree, base, rows, options.rerun, exact)
     return 0 if ok else 1
 
 

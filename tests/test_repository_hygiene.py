@@ -14,6 +14,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -42,10 +43,18 @@ TREE = pytest.mark.linux_only("checks the repository's own files, the same bytes
 
 
 def _files() -> list[Path]:
-    listed = subprocess.run(
-        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-        cwd=REPO, capture_output=True, check=True,
-    ).stdout.decode()
+    """The repository's files, as git lists them: tracked and untracked, ignored ones left out. An export of a tree
+    (tools/verify.py runs there) has no .git and sits in the main checkout's ignored work/, where git lists nothing:
+    there an empty repository lists the export's files, under the tree's own .gitignore."""
+    listing = ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]
+    if (REPO / ".git").exists():
+        listed = subprocess.run(["git", *listing], cwd=REPO, capture_output=True, check=True).stdout.decode()
+    else:
+        env = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
+        with tempfile.TemporaryDirectory() as empty:
+            subprocess.run(["git", "init", "-q", "--bare", empty], env=env, capture_output=True, check=True)
+            listed = subprocess.run(["git", f"--git-dir={empty}", f"--work-tree={REPO}", *listing], cwd=REPO, env=env,
+                                    capture_output=True, check=True).stdout.decode()
     return [REPO / name for name in listed.split("\0") if name and (REPO / name).is_file()]
 
 
@@ -76,6 +85,31 @@ def test_only_our_source_and_data_types_are_tracked() -> None:
     others = [str(p.relative_to(REPO)) for p in _files() if p.suffix.lower() not in OWN_SUFFIXES]
 
     assert others == []
+
+
+@TREE
+def test_on_an_export_the_checks_read_its_files(tmp_path) -> None:
+    """Bugs: on an export of a tree (tools/verify.py runs there: no .git, inside the main checkout's ignored work/),
+    git lists no file, so every check here passes whatever the tree holds; or the listing takes in what the tree's
+    .gitignore leaves out, such as the run's own temporary files in the export's work/."""
+    import shutil
+    import sys
+
+    # without what git sets for its hooks (GIT_DIR): the commit hook runs this, and git init would reinitialise ours
+    env = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
+    git = lambda *arguments: subprocess.run(["git", *arguments], cwd=tmp_path, env=env, check=True, capture_output=True)
+    git("init", "-q")
+    (tmp_path / ".gitignore").write_text("work/\n", encoding="utf-8")
+    folder = tmp_path / "work/verify/trees/TREE"
+    (folder / "tests").mkdir(parents=True)
+    shutil.copy(Path(__file__), folder / "tests" / Path(__file__).name)
+    (folder / "stock.bin").write_bytes(b"\0")
+    (folder / ".gitignore").write_text("work/\n", encoding="utf-8")
+    (folder / "work/test-tmp").mkdir(parents=True)
+    (folder / "work/test-tmp/fit.so").write_bytes(b"\0")  # what a test run leaves there
+    run = subprocess.run([sys.executable, "-m", "pytest", "-q", "-n0", "-p", "no:cacheprovider", "-k",
+                          "only_our_source", "tests"], cwd=folder, env=env, capture_output=True, encoding="utf-8")
+    assert (run.returncode, "stock.bin" in run.stdout, "fit.so" in run.stdout) == (1, True, False), run.stdout
 
 
 @TREE

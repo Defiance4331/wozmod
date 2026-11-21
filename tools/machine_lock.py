@@ -212,12 +212,6 @@ def hold(kind: Kind, what: str, poll: float = 1.0) -> int | None:
     return _wait_turn(kind, f"{what} (pid {os.getpid()}, in {os.getcwd()})", poll)
 
 
-def share(poll: float = 1.0, what: str = "the game", kind: Kind = "game") -> int | None:
-    """hold() under its old name, for main's tools/verify.py, which judges a change to this file from the merge base
-    and calls it."""
-    return hold(kind, what, poll)
-
-
 @contextlib.contextmanager
 def holding(kind: Kind, what: str, poll: float = 1.0):
     """hold() for the with block, and log its row in work/machine-lock.log; every process the block starts inherits

@@ -66,7 +66,8 @@ copies.
 
 ## Testing
 
-Run `uv run pytest -q`. Bugs worth naming here are a shifted offset, a dropped
+While you work, run the test files your change touches with
+`uv run pytest -q FILE...`. Bugs worth naming here are a shifted offset, a dropped
 translation row, and an edit over the wrong stock bytes. Synthetic bytes in
 `tmp_path` cover formats and patch logic. Use stock or donor files only for
 what synthetic bytes cannot show, and skip when they are absent. Slow tests run
@@ -75,15 +76,14 @@ the main checkout's `work/harness.toml`. A test that cannot run on one system
 carries `linux_only(reason)` or `real_windows(reason)`, so both systems collect
 the same tests.
 
-`tools/verify.py` judges a change (its `--help` says how):
-
-- Before handing back a change, run `tools/verify.py`; the hand-back needs its
-  Linux verdict. Main moves only to a tree with passing Linux and Windows
-  verdicts, which the `reference-transaction` hook enforces.
-- Before handing back a change to the runtime, the art or the install, run
-  `tools/verify.py --triggered`: the slow checks its diff triggers
-  (`tools/verify_checks.toml`, each row citing the incident behind it).
-- Before a release, run `tools/verify.py release` at the step the README's release steps give.
+Each commit in a worktree starts `tools/verify.py` on its tree in the
+background: the fast suite on Linux and Windows, and the slow rows its diff
+triggers (`tools/verify_checks.toml`, each row citing the incident behind it).
+Main moves only to a tree whose verdicts all pass, which the
+`reference-transaction` hook enforces. Before landing,
+`tools/verify.py --commit HEAD` prints them, waiting for a run still going;
+its `--help` says how the rest works. Before a release, run
+`tools/verify.py release` at the step the README's release steps give.
 
 Only a run that times something has the machine alone: a benchmark, run
 through `python3 tools/bench.py`, and the timed first install of

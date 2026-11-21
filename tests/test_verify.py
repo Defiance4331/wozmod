@@ -20,7 +20,9 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 def _git(repo: Path, *arguments: str) -> str:
-    return subprocess.run(["git", *arguments], cwd=repo, check=True, capture_output=True, encoding="utf-8").stdout
+    env = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}  # not a hook's GIT_DIR
+    return subprocess.run(["git", *arguments], cwd=repo, env=env, check=True, capture_output=True,
+                          encoding="utf-8").stdout
 
 
 def _repository(root: Path, files: dict[str, str]) -> Path:
@@ -217,6 +219,19 @@ def test_a_commit_run_tests_the_commits_own_tree_not_the_checkout(tmp_path, monk
             verify.recorded(repo, verify.tree_id(repo), "linux")) == ("pass", "1 passed", "pass", None), found
 
 
+def test_the_tools_of_an_export_use_the_main_checkouts_work_folder(tmp_path):
+    # Bug: a run on an export (no .git) takes the export's own empty work/ for the machine's, so a check that reads
+    # what the machine keeps there (the ASR transcripts, the caches) fails on every export and passes in a checkout.
+    folders = {"export": tmp_path / "main/work/verify/trees/TREE.1", "elsewhere": tmp_path / "copy"}
+    found = {}
+    for name, folder in folders.items():
+        (folder / "tools").mkdir(parents=True)
+        shutil.copy2(REPO / "tools/checkout.py", folder / "tools/checkout.py")
+        found[name] = subprocess.run([sys.executable, "-c", "import checkout; print(checkout.work())"],
+                                     cwd=folder / "tools", capture_output=True, encoding="utf-8").stdout.strip()
+    assert found == {"export": str(tmp_path / "main/work"), "elsewhere": str(tmp_path / "copy/work")}
+
+
 def test_two_runs_that_need_the_same_step_key_at_once_build_it_once(tmp_path):
     # Bug: two reference runs at once (builds share the machine) build one step key into the same KEY.partial, so the
     # second deletes the first's half-made build, or one of them fails to rename it into place.
@@ -262,3 +277,93 @@ def test_a_hand_back_exits_on_the_linux_verdict_and_wait_on_both(tmp_path):
         assert "Windows: fail" in run.stdout, run.stdout + run.stderr
         codes[flags] = run.returncode
     assert codes == {(): 0, ("--wait",): 1}
+
+
+def _clean_env() -> dict:
+    return {name: value for name, value in os.environ.items() if not name.startswith(("GIT_", "WOZMOD_"))}
+
+
+def test_a_newer_commit_stops_the_run_of_an_older_tree_and_a_run_of_the_same_tree_goes_on(tmp_path):
+    # Bugs: two commits in a row leave two background runs going, the older one obsolete; an amend (a new commit, the
+    # same tree) starts a second run of a tree already being verified; stopping the older run misses the processes it
+    # started (its process group); or the record of a run that was killed keeps the next one from starting.
+    import json
+    import signal
+    import time
+
+    log = tmp_path / "judged.jsonl"
+    stub = (f"import json, os, sys, time\nopen({str(log)!r}, 'a').write(json.dumps([os.getpid(), sys.argv[1:]]) + '\\n')\n"
+            "time.sleep(60)\n")  # the merge base's judge: says what it verifies, then runs for a while
+    main = _repository(tmp_path / "main", {"tools/verify.py": stub})
+    worktree = tmp_path / "worktree"
+    _git(main, "worktree", "add", "-q", "-b", "feature", str(worktree), "main")
+    (worktree / "tools/verify.py").write_text((REPO / "tools/verify.py").read_text(encoding="utf-8"), encoding="utf-8")
+
+    def commit(name: str, *flags: str) -> str:
+        (worktree / name).write_text(name, encoding="utf-8")
+        _git(worktree, "add", "-A")
+        _git(worktree, "commit", "-q", "-m", name, *flags)
+        return _git(worktree, "rev-parse", "HEAD").strip()
+
+    def started(count: int) -> list:
+        deadline = time.monotonic() + 10
+        while (len(lines := log.read_text(encoding="utf-8").splitlines() if log.exists() else []) < count
+               and time.monotonic() < deadline):
+            time.sleep(0.05)
+        return [json.loads(line) for line in lines]
+
+    start = lambda: subprocess.Popen([sys.executable, "tools/verify.py", "_background"], cwd=worktree,  # noqa: E731
+                                     env=_clean_env(), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+    runs = []
+    try:
+        first = commit("a.txt")
+        runs.append(start())
+        started(1)
+        second = commit("b.txt")
+        runs.append(start())
+        stopped = runs[0].wait(10)
+        started(2)
+        amended = commit("b.txt", "--amend", "-m", "b, reworded")
+        runs.append(start())
+        amend_exit, second_up = runs[2].wait(10), runs[1].poll() is None
+        os.killpg(runs[1].pid, signal.SIGKILL)  # a crash: its lock goes free, its record stays
+        runs[1].wait(10)
+        runs.append(start())
+        judged = [argv for _, argv in started(3)]
+    finally:
+        for run in runs:
+            if run.poll() is None:
+                os.killpg(run.pid, signal.SIGKILL)
+                run.wait()
+    assert (stopped, amend_exit, second_up, judged) == \
+        (-signal.SIGTERM, 0, True, [["--commit", first], ["--commit", second], ["--commit", amended]])
+
+
+def test_a_second_commit_run_of_a_tree_waits_for_the_run_going_and_reuses_its_verdicts(tmp_path):
+    # Bug: a --commit call on a tree whose background run is going starts a second run beside it (another export,
+    # another Windows run, double records), or prints before that run's verdicts are recorded.
+    import time
+
+    repo = _repository(tmp_path / "repo", {"tools/verify.py": (REPO / "tools/verify.py").read_text(encoding="utf-8")})
+    tree = verify.tree_id(repo)
+    release = tmp_path / "release"
+    holder = subprocess.Popen([sys.executable, "-c", (
+        f"import sys, time; sys.path.insert(0, {str(repo / 'tools')!r}); from pathlib import Path; import verify; "
+        f"verify.tree_lock(Path({str(repo)!r}), {tree!r}); print('held', flush=True)\n"
+        f"while not Path({str(release)!r}).exists(): time.sleep(0.05)\n")], stdout=subprocess.PIPE, encoding="utf-8")
+    try:
+        assert holder.stdout.readline() == "held\n"
+        run = subprocess.Popen([sys.executable, "tools/verify.py", "--commit", "HEAD"], cwd=repo, env=_clean_env(),
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding="utf-8")
+        time.sleep(1)
+        waited = run.poll() is None
+        for check in ("linux", "windows"):  # what the run going records before it ends
+            verify.record(repo, tree, {"check": check, "verdict": "pass", "summary": "1 passed", "at": "then",
+                                       "judge": "tree"})
+        release.touch()
+        out, _ = run.communicate(timeout=30)
+    finally:
+        release.touch()
+        holder.wait(10)
+    assert (waited, run.returncode, "is going" in out, "Linux: pass (recorded then)" in out,
+            "Windows: pass (recorded then)" in out) == (True, 0, True, True, True), out
