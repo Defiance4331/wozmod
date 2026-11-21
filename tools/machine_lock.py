@@ -1,30 +1,35 @@
 #!/usr/bin/env python3
 """Machine-wide locks in the main checkout's work/, shared by every checkout of the repo: the two game slots
-(game_harness.py) and the heavy-run lock.
+(game_harness.py) and the machine lock.
 
     python3 tools/machine_lock.py COMMAND [ARG...]
 
-runs COMMAND with the machine to itself: it waits for every other heavy run and every running game to end first
-(saying who holds the machine), holds the lock for COMMAND's life, and exits with COMMAND's status. tools/verify.py
-takes it this way; run a dev install or an art build this way too. A benchmark goes through tools/bench.py, which
-takes the lock around each measured run alone, so the runs waiting between them go in. A game launch (game_harness.py
-run) and a test run (a parallel one in tests/conftest.py, verify's suite runs) hold it shared, beside each other.
-Heavy runs and games wait in one line, first come, first served: one goes in once every run that began waiting
-before it has. A test run is short and goes ahead of them, but not of a heavy run whose turn has come (_place), so a
-stream of test runs cannot keep a heavy run out. A heavy run beside
-another, or beside a game, slows both, skews a benchmark's numbers and makes time limits (the install budget, Wine
-boot timeouts) fail for no fault of the code. Every run that holds the machine runs at the lowest CPU and disk priority
-(background()), so whatever the user is doing on this machine meanwhile, such as playing or streaming a game, goes
-first; on an otherwise idle machine that costs nothing.
+runs COMMAND as a build: it waits in the machine's line while a run that measures holds the machine or waits ahead,
+holds the machine shared for COMMAND's life (beside games, test runs and other builds), and exits with COMMAND's
+status. Run a dev install or an art build this way.
+
+What a run does decides how it holds the machine (Kind). Only a run that times something has the machine alone: a
+benchmark's measured run (tools/bench.py, which takes it around each measured run alone, so the runs waiting between
+them go in) and the timed first install of tools/verify.py release. A game or a build beside a measured run would take
+CPU it measures and skew its numbers. Every other run holds the machine shared, beside the others: builds (an install,
+a reference build, a triggered check, a replay), game launches (game_harness.py run) and test runs (a parallel one in
+tests/conftest.py, verify's suite runs). A measuring run waits for every run on the machine and every run that began
+waiting before it; once it waits, every run that arrives after it waits for it. So the line matters only around
+measuring runs: they and builds and games go in first come, first served, and a test run is short and goes ahead of
+them, but not of a measuring run whose turn has come (_place), so a stream of test runs cannot keep one out. Every run
+that holds the machine runs at the lowest CPU and disk priority (background()), so whatever the user is doing on this
+machine meanwhile, such as playing or streaming a game, goes first; on an otherwise idle machine that costs nothing.
 
 Each lock is a flock on a file the kernel releases when its holder exits, so a crashed or killed run never leaves the
 machine locked. The descriptor is not inherited, so a process COMMAND leaves behind (a wineserver) cannot hold it.
-Each finished heavy run appends a row to work/machine-lock.log: start, minutes held, CPU minutes used, exit, command.
--h or --help prints this; any other option before COMMAND is refused, since no command starts with one.
+Each finished build or measured run appends a row to work/machine-lock.log: start, minutes held, CPU minutes used,
+exit, kind, command. -h or --help prints this; any other option before COMMAND is refused, since no command starts
+with one.
 """
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import fcntl
 import json
@@ -40,11 +45,13 @@ from pathlib import Path
 
 from checkout import work
 
-HEAVY = ".machine.lock"  # a heavy run holds it exclusively; each running game holds it shared
+MACHINE = ".machine.lock"  # a measuring run holds it exclusively; every other run holds it shared
 # The line of runs waiting for the machine: one ticket file per run, named by when it began to wait, locked by its run.
 # First come, first served, so neither a stream of games nor a benchmark's back-to-back runs can keep the others out.
 LINE = ".machine.line"
-HELD = "WOZMOD_MACHINE_LOCK"  # set for COMMAND, so a heavy run inside one runs without waiting for itself
+# The kind a run holds the machine for, set for everything it starts, so a run inside one (a test run inside a
+# build, the commands of a measured run) goes on at once instead of waiting for its own run.
+HELD = "WOZMOD_MACHINE_LOCK"
 # Two games may run at once on the machine, from any checkout: every run holds one of these, in the main checkout's
 # work/, for its whole life, and writes its name and start into it so a waiting launch can say who holds
 # what.
@@ -85,31 +92,38 @@ def _alive(ticket: Path) -> bool:
     return False
 
 
-Kind = Literal["heavy", "game", "test"]  # a heavy run holds the machine alone; a game or a test run, shared
+# What a run is: a run that measures time ("measure") holds the machine alone; a build, a game or a test run holds
+# it shared. A test run is short and goes ahead of the measuring runs, builds and games waiting (_place).
+Kind = Literal["measure", "build", "game", "test"]
+ALONE: Kind = "measure"
+# The tickets of runs that need the machine alone: a measuring run's, and a heavy run's from a checkout that still has
+# the lock from before measuring runs (every heavy run alone), which waits in the same line.
+ALONE_TICKETS = (f"-{ALONE}", "-heavy")
 
 
 def _place(kind: Kind, line: Path) -> int:
-    """Where a new ticket of kind waits in line, which is sorted by it. A heavy run or a game waits where it arrives. A
-    test run goes ahead of the heavy runs waiting, except one whose turn has come: while a heavy run has the machine,
-    no waiting one's turn has come, and the test run takes the front of the line, to go in as soon as the machine is
-    free of heavy runs; otherwise the first heavy run waiting is next, waits only for the runs already on the machine,
-    and the test run waits right behind it. So a heavy run never waits for a test run that arrived after its turn
-    came, however many arrive."""
+    """Where a new ticket of kind waits in line, which is sorted by it. A measuring run, a build or a game waits where
+    it arrives. A test run goes ahead of the measuring runs waiting, except one whose turn has come: while a measuring
+    run has the machine, no waiting one's turn has come, and the test run takes the front of the line, to go in as soon
+    as the machine is free of it; otherwise the first measuring run waiting is next, waits only for the runs already on
+    the machine, and the test run waits right behind it. So a measuring run never waits for a test run that arrived
+    after its turn came, however many arrive. (Builds and games wait only for measuring runs, so a test run has
+    nothing else to go ahead of.)"""
     arrival = time.monotonic_ns()
     if kind != "test":
         return arrival
     waiting = [t for t in sorted(line.iterdir())
-               if not t.name.startswith(".") and t.name.endswith("-heavy") and _alive(t)]
+               if not t.name.startswith(".") and t.name.endswith(ALONE_TICKETS) and _alive(t)]
     if not waiting:
         return arrival
-    return 0 if holders((HEAVY,)) else int(waiting[0].name.split("-")[0]) + 1
+    return 0 if holders((MACHINE,)) else int(waiting[0].name.split("-")[0]) + 1
 
 
 def _wait_turn(kind: Kind, holder: str, poll: float) -> int:
-    """Wait in line for the machine, then hold it: alone (a heavy run) or shared (a game or a test run, beside the
-    shared runs next to it in line). A run goes in when no run ahead of it in line (_place) still waits (for a shared
-    run: no heavy one), and the runs on the machine allow it. Returns the held descriptor."""
-    alone = kind == "heavy"
+    """Wait in line for the machine, then hold it: alone (a measuring run) or shared (any other, beside the shared runs
+    next to it in line). A run goes in when no run ahead of it in line (_place) still waits (for a shared run: no
+    measuring one), and the runs on the machine allow it. Returns the held descriptor."""
+    alone = kind == ALONE
     line = work() / LINE
     line.mkdir(exist_ok=True)
     name = f"{_place(kind, line):020d}-{os.getpid()}-{kind}"
@@ -123,8 +137,8 @@ def _wait_turn(kind: Kind, holder: str, poll: float) -> int:
     try:
         while True:
             ahead = [t for t in sorted(line.iterdir()) if not t.name.startswith(".") and t.name < name and _alive(t)]
-            if not (ahead if alone else [t for t in ahead if t.name.endswith("-heavy")]):
-                machine = os.open(work() / HEAVY, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+            if not (ahead if alone else [t for t in ahead if t.name.endswith(ALONE_TICKETS)]):
+                machine = os.open(work() / MACHINE, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
                 try:
                     fcntl.flock(machine, (fcntl.LOCK_EX if alone else fcntl.LOCK_SH) | fcntl.LOCK_NB)
                 except BlockingIOError:
@@ -145,34 +159,29 @@ def _wait_turn(kind: Kind, holder: str, poll: float) -> int:
 
 
 def _busy(ahead: list[Path]) -> str:
-    """Who has the machine, for a run waiting behind the tickets ahead: the heavy run, else a game, else the first
+    """Who has the machine, for a run waiting behind the tickets ahead: the measuring run, else a game, else the first
     run ahead in line whose ticket is still there (a ticket goes the moment its run goes in or ends)."""
-    if held := holders((HEAVY,)) or [f"the game {game}" for game in holders(SLOTS)]:
+    if held := holders((MACHINE,)) or [f"the game {game}" for game in holders(SLOTS)]:
         return held[0]
     for ticket in ahead:
         try:
             return ticket.read_text(encoding="utf-8", errors="replace")
         except FileNotFoundError:
             continue
-    return "a running game or test run"
+    return "the builds, games and test runs on it"
 
 
 def waits(pid: int) -> str:
     """What the process pid, waiting in the machine's line, waits for: who holds the machine and how many runs that
-    go before it wait ahead (a shared run waits only for heavy ones). '' when pid is not in line."""
+    go before it wait ahead (a shared run waits only for measuring ones). '' when pid is not in line."""
     line = work() / LINE
     tickets = [t for t in sorted(line.iterdir()) if not t.name.startswith(".") and _alive(t)] if line.is_dir() else []
     mine = next((t for t in tickets if t.name.split("-")[1] == str(pid)), None)
     if mine is None:
         return ""
-    ahead = [t for t in tickets if t.name < mine.name and (mine.name.endswith("-heavy") or t.name.endswith("-heavy"))]
+    ahead = [t for t in tickets
+             if t.name < mine.name and (mine.name.endswith(ALONE_TICKETS) or t.name.endswith(ALONE_TICKETS))]
     return f"the machine, held by {_busy(ahead)}" + (f"; {len(ahead)} run(s) wait ahead" if ahead else "")
-
-
-def claim(holder: str, poll: float = 1.0) -> int:
-    """For a heavy run: wait in line, saying who has the machine, then hold it alone. The descriptor stays open, so
-    the lock lasts until the process ends."""
-    return _wait_turn("heavy", holder, poll)
 
 
 # ioprio_set(2) by machine: the idle disk class for the calling thread (IOPRIO_WHO_PROCESS 1, who 0 = this thread).
@@ -188,14 +197,57 @@ def background() -> None:
         ctypes.CDLL(None, use_errno=True).syscall(number, 1, 0, IDLE_CLASS)
 
 
-def share(poll: float = 1.0, what: str = "the game", kind: Kind = "game") -> int | None:
-    """For a game launch or a test run (kind; what names it): wait in line, then hold the machine shared, beside other
-    games and test runs, so no heavy run starts beside it. The descriptor (None inside a heavy run, which already has
-    the machine) stays open, so the lock lasts until the process ends."""
+def hold(kind: Kind, what: str, poll: float = 1.0) -> int | None:
+    """Hold the machine for a run of kind (what names it): put the calling thread at the lowest priority
+    (background()), wait in line, saying who has the machine, then hold it, alone for a measuring run and shared for
+    any other. The descriptor stays open, so the lock lasts until it is closed or the process ends; None inside a run
+    that holds the machine already (HELD), whose part this run is. A measuring run cannot have the machine alone
+    inside a run that holds it shared, so that raises: start it on its own."""
     background()
-    if os.environ.get(HELD):
+    if held := os.environ.get(HELD):
+        if kind == ALONE and held != ALONE:
+            raise RuntimeError(f"machine_lock: {what} measures, so it needs the machine alone, but it runs inside a "
+                               f"run that holds it shared ({held}); start it on its own")
         return None
-    return _wait_turn(kind, f"{what} (pid {os.getpid()})", poll)
+    return _wait_turn(kind, f"{what} (pid {os.getpid()}, in {os.getcwd()})", poll)
+
+
+def share(poll: float = 1.0, what: str = "the game", kind: Kind = "game") -> int | None:
+    """hold() under its old name, for main's tools/verify.py, which judges a change to this file from the merge base
+    and calls it."""
+    return hold(kind, what, poll)
+
+
+@contextlib.contextmanager
+def holding(kind: Kind, what: str, poll: float = 1.0):
+    """hold() for the with block, and log its row in work/machine-lock.log; every process the block starts inherits
+    HELD, so the runs inside it go on at once. Yields the row's fields: set "status" to the exit status the row
+    records (0 by default, "error" when the block raises). Inside a run that holds the machine already, it holds and
+    logs nothing."""
+    fd = hold(kind, what, poll)
+    row: dict = {}
+    if fd is None:
+        yield row
+        return
+    before = resource.getrusage(resource.RUSAGE_CHILDREN)  # cumulative: a second hold in this process subtracts it
+    start, began = time.time(), time.monotonic()
+    os.environ[HELD] = kind
+    try:
+        yield row
+    except BaseException:
+        row.setdefault("status", "error")
+        raise
+    finally:
+        os.environ.pop(HELD, None)
+        used = resource.getrusage(resource.RUSAGE_CHILDREN)
+        cpu = used.ru_utime + used.ru_stime - before.ru_utime - before.ru_stime
+        try:
+            with (work() / "machine-lock.log").open("a", encoding="utf-8") as log:
+                log.write(f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(start))}\t"
+                          f"{(time.monotonic() - began) / 60:.1f}\t{cpu / 60:.1f}\t{row.get('status', 0)}\t{kind}\t"
+                          f"{what}\n")
+        finally:
+            os.close(fd)
 
 
 def holders(names: tuple[str, ...]) -> list[str]:
@@ -221,37 +273,23 @@ def holders(names: tuple[str, ...]) -> list[str]:
     return held
 
 
-def run(command: list[str]) -> tuple[int, float]:
-    """Run command with the machine to itself: wait in line, hold the lock for its life, log its row, then free the
-    machine. Inside a heavy run it runs at once. Returns its exit status (negative: the signal that ended it) and the
-    seconds it ran, not counting the wait."""
-    if os.environ.get(HELD):
-        start = time.monotonic()
-        return subprocess.run(command).returncode, time.monotonic() - start
-    line = " ".join(command)
-    fd = claim(f"{line} (pid {os.getpid()}, in {os.getcwd()})")
-    try:
-        before = resource.getrusage(resource.RUSAGE_CHILDREN)  # cumulative: a second run in this process subtracts it
-        start, began = time.time(), time.monotonic()
-        background()  # COMMAND and all it starts inherit it
-        child = subprocess.Popen(command, env={**os.environ, HELD: "1"})
+def run(command: list[str], kind: Kind = "build") -> tuple[int, float]:
+    """Run command as a run of kind: wait in line, hold the machine for its life (holding()), then free it. Inside a
+    run that holds the machine already it runs at once. Returns its exit status (negative: the signal that ended it)
+    and the seconds it ran, not counting the wait."""
+    with holding(kind, " ".join(command)) as row:
+        began = time.monotonic()
+        child = subprocess.Popen(command)  # it inherits HELD and the lowest priority (hold())
         # stopping this stops COMMAND, then frees the machine; after it the old handlers come back, so a stop between
         # two of a bench's runs stops the bench
         kept = {sig: signal.signal(sig, lambda number, _frame: child.send_signal(number))
                 for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
         try:
-            status = child.wait()
+            row["status"] = status = child.wait()
         finally:
             for sig, handler in kept.items():
                 signal.signal(sig, handler)
         seconds = time.monotonic() - began
-        used = resource.getrusage(resource.RUSAGE_CHILDREN)
-        cpu = used.ru_utime + used.ru_stime - before.ru_utime - before.ru_stime
-        with (work() / "machine-lock.log").open("a", encoding="utf-8") as log:
-            log.write(f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(start))}\t{seconds / 60:.1f}\t"
-                      f"{cpu / 60:.1f}\t{status}\t{line}\n")
-    finally:
-        os.close(fd)
     return status, seconds
 
 

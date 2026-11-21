@@ -33,8 +33,9 @@ other than a system mark (linux_only, real_windows), or left out a test a full c
 Verdicts are local git notes (refs/notes/verify) on the tree object, one JSON line per run; logs and junit files are
 in the main checkout's work/verify/runs/TREE/. The judge (this file and tools/verify_checks.toml) runs from the merge
 base with main, so a change cannot edit the check that judges it: when the tree edits either, it is said, and every
-checklist row counts as triggered. ref, release and --triggered hold the machine lock (tools/machine_lock.py); a test
-run on an export holds it shared, as one in a checkout does (tests/conftest.py).
+checklist row counts as triggered. Each run holds the machine lock (tools/machine_lock.py) for what it is: the
+reference builds as a build and the test runs as test runs, both shared, beside games and other runs (a test run on
+an export as one in a checkout does, tests/conftest.py); release's timed first install alone, as a measuring run.
 """
 
 from __future__ import annotations
@@ -307,14 +308,19 @@ def harness_inputs(repo: Path) -> dict:
 LIVE = ["uv", "run", "--extra", "native", "python"]  # the checkout's own environment
 
 
-def shared_machine(repo: Path, what: str) -> int | None:
-    """Hold the machine shared, as a test run in a checkout does (tests/conftest.py), for a run on an export: there
-    the conftest finds no checkout, so it locks a work/ of the export's own. The descriptor: close it when done."""
+def machine_lock(repo: Path):
+    """tools/machine_lock.py, the checkout's: the machine-wide lock every run of every checkout takes."""
     if str(repo / "tools") not in sys.path:
         sys.path.insert(0, str(repo / "tools"))
     import machine_lock
 
-    return machine_lock.share(what=what, kind="test")
+    return machine_lock
+
+
+def shared_machine(repo: Path, what: str) -> int | None:
+    """Hold the machine shared, as a test run in a checkout does (tests/conftest.py), for a run on an export: there
+    the conftest finds no checkout, so it locks a work/ of the export's own. The descriptor: close it when done."""
+    return machine_lock(repo).hold("test", what)
 
 
 def exported_path(folder: Path) -> dict:
@@ -455,8 +461,16 @@ def step_keys(python: list[str], folder: Path, env: dict) -> dict[str, str]:
 
 
 def build(python: list[str], folder: Path, step: str, key: str, tree: str, env: dict, builds: Path) -> tuple[Path, str]:
-    """The build of step at key (made in KEY.partial, renamed into place; a failed one is kept as KEY.failed)."""
+    """The build of step at key (made in KEY.partial, renamed into place; a failed one is kept as KEY.failed), under
+    KEY.lock, so a run that needs the same key while another builds it waits for that build and reuses it."""
     made = builds / step / key
+    made.parent.mkdir(parents=True, exist_ok=True)
+    with made.with_suffix(".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _build(python, folder, step, key, tree, env, made)
+
+
+def _build(python: list[str], folder: Path, step: str, key: str, tree: str, env: dict, made: Path) -> tuple[Path, str]:
     if (made / "build.json").is_file():
         return made, "reused"
     partial, failed = made.with_suffix(".partial"), made.with_suffix(".failed")
@@ -531,14 +545,19 @@ def trace_summary(made: Path) -> str:
 def references(repo: Path, tree: str, base: str, steps: list[str], tests: list[str] = (),
                extra: list[str] = ()) -> list[dict]:
     """ref: each step's build of tree and of the merge base, the diff, then the readers and tests (which read the
-    builds too), each with pytest's arguments extra. Returns their run."""
+    builds too), each with pytest's arguments extra, holding the machine as a build. Returns their run."""
+    with machine_lock(repo).holding("build", f"the reference builds of {tree[:12]} ({' '.join(steps)})"):
+        return _references(repo, tree, base, steps, tests, extra)
+
+
+def _references(repo: Path, tree: str, base: str, steps: list[str], tests: list[str], extra: list[str]) -> list[dict]:
     builds = work(repo) / "verify/builds"
     base_tree = git(repo, "rev-parse", f"{base}^{{tree}}")
     inputs = harness_inputs(repo) | {"WOZMOD_HARNESS_CONFIG": str(work(repo) / "harness.toml")}
     sides, made = {}, {}
     try:
         for side in dict.fromkeys([tree, base_tree]):
-            folder = export(repo, side, work(repo) / "verify/trees" / side)
+            folder = export(repo, side, work(repo) / "verify/trees" / f"{side}.{os.getpid()}")  # another run may build it
             python = venv(repo, side, folder)
             env = side_environment(repo, folder)
             sides[side] = (folder, python, env)
@@ -653,7 +672,8 @@ def release(repo: Path, tree: str, base: str, extra: list[str]) -> bool:
     for found in references(repo, tree, base, list(STEPS), bound, extra):
         if found["verdict"] != "pass":
             return False
-    alone = pytest(repo, out / "e2e", ["-n0", E2E, *extra], env, LIVE)
+    with machine_lock(repo).holding("measure", f"the timed install of release on {tree[:12]}"):
+        alone = pytest(repo, out / "e2e", ["-n0", E2E, *extra], env, LIVE)
     if not judged("the timed install, alone", alone, [n for n in every if e2e(n)]):
         return False
     # The Windows run is the fast suite: its slow tests skip, saying which switch they need.
@@ -720,10 +740,6 @@ def main(argv: list[str]) -> int:
         options = parser.parse_args(argv)
         if options.commit and options.triggered:
             parser.error("--triggered runs its rows in the checkout; check out the commit and run it there")
-    heavy = mode is not None or options.triggered
-    if heavy and not os.environ.get("WOZMOD_MACHINE_LOCK"):
-        os.execvp(sys.executable, [sys.executable, str(repo / "tools/machine_lock.py"), sys.executable, __file__,
-                                   *argv])
     exact = mode is None and bool(options.commit)
     base = merge_base(repo)
     if exact:

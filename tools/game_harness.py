@@ -1468,7 +1468,7 @@ def run(root: Path, args: argparse.Namespace) -> int:
     launcher = local_path(root, "launch.sh")
     if not launcher.is_file():
         raise ValueError("prepare and review a run-local launch.sh first")
-    machine = machine_lock.share()  # no game beside a heavy run (a benchmark, an install), nor one beside a game
+    machine = machine_lock.hold("game", "the game")  # no game beside a measuring run (a benchmark's), nor one beside it
     try:
         lock, slot = take_slot(root.name)  # every launch, so no game runs outside the two-game limit
         try:

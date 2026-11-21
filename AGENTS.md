@@ -85,10 +85,13 @@ the same tests.
   (`tools/verify_checks.toml`, each row citing the incident behind it).
 - Before a release, run `tools/verify.py release` at the step the README's release steps give.
 
-Heavy runs take the machine one at a time. Run a dev install or an art build
-through `python3 tools/machine_lock.py COMMAND`, and a benchmark through
-`python3 tools/bench.py`. Give a run that may wait for the machine a long
-timeout (a release takes about 20 minutes), and stop only runs you started.
+Only a run that times something has the machine alone: a benchmark, run
+through `python3 tools/bench.py`, and the timed first install of
+`tools/verify.py release`. Every other run shares the machine at the lowest
+priority. Run a dev install or an art build through
+`python3 tools/machine_lock.py COMMAND`, so it waits while a benchmark
+measures. Give a run that may wait for the machine a long timeout (a release
+takes about 20 minutes), and stop only runs you started.
 Hand back a change players see with the `evidence/contact-sheet.html` that
 `tools/run_check.py` writes. On a new clone, run
 `git config core.hooksPath tools/githooks`, so the hooks lint each commit and

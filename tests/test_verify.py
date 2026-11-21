@@ -204,8 +204,9 @@ def test_a_commit_run_tests_the_commits_own_tree_not_the_checkout(tmp_path, monk
     for name in ("machine_lock.py", "checkout.py"):  # the shared machine lock it takes, from the checkout's tools/
         (repo / "tools").mkdir(exist_ok=True)
         shutil.copy2(REPO / "tools" / name, repo / "tools" / name)
-    # This test run holds the machine already: waiting for it again would wait behind a heavy run that waits for us.
-    monkeypatch.setenv("WOZMOD_MACHINE_LOCK", "1")
+    # This test run holds the machine already: waiting for it again would wait behind a measuring run that waits
+    # for us.
+    monkeypatch.setenv("WOZMOD_MACHINE_LOCK", "test")
     committed = _git(repo, "rev-parse", "HEAD^{tree}").strip()
     (repo / "src/thing.py").write_text("VALUE = 2\n", encoding="utf-8")
     (repo / "tests/test_untracked.py").write_text("def test_red():\n    assert False\n", encoding="utf-8")
@@ -214,6 +215,35 @@ def test_a_commit_run_tests_the_commits_own_tree_not_the_checkout(tmp_path, monk
     found = verify.linux(repo, committed, rerun=False, exact=True)
     assert (found["verdict"], found["summary"].split(" (")[0], verify.recorded(repo, committed, "linux")["verdict"],
             verify.recorded(repo, verify.tree_id(repo), "linux")) == ("pass", "1 passed", "pass", None), found
+
+
+def test_two_runs_that_need_the_same_step_key_at_once_build_it_once(tmp_path):
+    # Bug: two reference runs at once (builds share the machine) build one step key into the same KEY.partial, so the
+    # second deletes the first's half-made build, or one of them fails to rename it into place.
+    import threading
+
+    folder = tmp_path / "tree"
+    (folder / "tests").mkdir(parents=True)
+    log = tmp_path / "builds.log"
+    (folder / "tests/step_run.py").write_text(  # a tree's one-step driver: step, out folder, 0
+        f"import sys, time\nfrom pathlib import Path\nopen({str(log)!r}, 'a').write('built\\n')\ntime.sleep(0.5)\n"
+        "(Path(sys.argv[2]) / 'out').mkdir()\n", encoding="utf-8")
+    found, errors = [], []
+
+    def run():
+        try:
+            found.append(verify.build([sys.executable], folder, "text", "KEY", "TREE", dict(os.environ), tmp_path / "b"))
+        except BaseException as error:  # noqa: BLE001 - a SystemExit too: it is what the race raises
+            errors.append(error)
+
+    threads = [threading.Thread(target=run) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+    assert (errors, sorted(how.split(" in ")[0] for _, how in found), log.read_text(encoding="utf-8").split()) == \
+        ([], ["built", "reused"], ["built"])
+    assert (tmp_path / "b/text/KEY/out").is_dir()
 
 
 def test_a_hand_back_exits_on_the_linux_verdict_and_wait_on_both(tmp_path):

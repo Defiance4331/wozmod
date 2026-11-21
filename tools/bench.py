@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Benchmark commands against each other, taking the machine lock around each measured run alone.
+"""Benchmark commands against each other, each measured run holding the machine alone.
 
     python3 tools/bench.py [--runs N] NAME=COMMAND NAME=COMMAND [NAME=COMMAND...]
 
-runs the arms in turn (A, B, A, B...) N times each (default 1). Each run waits in the machine's line and holds the
-lock (tools/machine_lock.py) only while it runs, so the game and test runs that queued meanwhile go in between two
-runs, and alternating spreads any drift in the machine over every arm. COMMAND is a shell command line. Prints, per
-arm, the wall time of its passed run (of several: their median and range) and how many failed; exits 1 when any
-run failed. One run shows only a difference well above the machine's run-to-run noise (Windows installs have
+runs the arms in turn (A, B, A, B...) N times each (default 1). Each run is a measuring run (tools/machine_lock.py):
+it waits for every run on the machine and holds it alone, only while it runs, so the builds, games and test runs that
+queued meanwhile go in between two runs, and alternating spreads any drift in the machine over every arm. COMMAND is
+a shell command line. Prints, per arm, the wall time of its passed run (of several: their median and range) and how
+many failed; exits 1 when any run failed. One run shows only a difference well above the machine's run-to-run noise (Windows installs have
 varied 801 to 863 s, about 7%); for a smaller one, give --runs 5 or more.
 """
 
@@ -38,7 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     failed = dict.fromkeys(times, 0)
     for round_ in range(1, args.runs + 1):
         for name, command in args.arms:
-            status, seconds = machine_lock.run(["sh", "-c", command])
+            status, seconds = machine_lock.run(["sh", "-c", command], "measure")
             print(f"bench: {name} run {round_}: {seconds:.2f} s, exit {status}", file=sys.stderr, flush=True)
             if status:
                 failed[name] += 1

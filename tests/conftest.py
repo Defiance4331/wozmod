@@ -93,7 +93,7 @@ def pytest_configure(config) -> None:
         if getattr(config.option, "numprocesses", None) not in (None, 0):
             import machine_lock
 
-            config.stash[MACHINE] = machine_lock.share(what="this test run", kind="test")
+            config.stash[MACHINE] = machine_lock.hold("test", "this test run")
         config.stash[DISPLAY] = _private_display()
     if not REQUIRE_INPUTS:
         return

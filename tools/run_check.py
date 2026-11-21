@@ -69,7 +69,7 @@ def launch(root: Path, pad: str | None = None, size: str | None = None, video: b
 
 def wait_slot(root: Path, proc: subprocess.Popen, report: float = SLOT_REPORT) -> bool:
     """True once the run holds a game slot; meanwhile say every ``report`` seconds what it waits for: the machine
-    (held by a heavy run, or by runs ahead in line) before a slot, then the slots' holders. False when the run ended
+    (held by a measuring run, or by one ahead in line) before a slot, then the slots' holders. False when the run ended
     first. The wait has no limit of its own, as for every run in the machine's line: a launch keeps its place however
     long the runs ahead take, and whoever started run_check decides how long to wait."""
     reported = time.monotonic()

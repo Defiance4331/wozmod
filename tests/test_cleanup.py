@@ -187,8 +187,8 @@ def test_only_reference_builds_no_live_tree_keys_are_listed(repo):
 
 
 def test_what_verify_left_is_kept_while_a_run_holds_the_machine_shared(repo):
-    # Bug: cleanup probes the machine lock shared, so it sees only heavy runs, and deletes an export or an environment
-    # a test run or the background Windows run (which hold it shared) is using.
+    # Bug: cleanup probes the machine lock shared, so it sees only measuring runs, and deletes an export or an
+    # environment a build, a test run or the background Windows run (which hold it shared) is using.
     import fcntl
 
     _folder(repo / "work/verify/trees/0123456789abcdef.4242", 30)

@@ -1626,7 +1626,7 @@ def test_two_games_at_once_each_run_their_own_writable_steam_runtime(tmp_path, m
         assert command[bind:bind + 3] == ["--bind", str(template / runtime), str(template / runtime)]
 
 
-def test_a_game_launch_waits_while_a_heavy_run_has_the_machine(tmp_path, monkeypatch):
+def test_a_game_launch_waits_while_a_measuring_run_has_the_machine(tmp_path, monkeypatch):
     """Bug: a launch takes only a game slot, so a game check starts beside a benchmark holding the machine lock and
     skews its numbers."""
     monkeypatch.setattr(checkout, "REPO", tmp_path)
@@ -1636,7 +1636,7 @@ def test_a_game_launch_waits_while_a_heavy_run_has_the_machine(tmp_path, monkeyp
     root = tmp_path / "work/runtime-tests/run"
     _staged(root / "game")
     (root / "launch.sh").write_text("exit 0\n", encoding="utf-8")
-    bench = harness.machine_lock.claim("bench", 0.01)
+    bench = harness.machine_lock.hold("measure", "bench", 0.01)
     threading.Thread(target=harness.main, args=(["run", "--root", str(root), "--game", str(root / "game"),
                                                  "--target", harness.TARGET],), daemon=True).start()
     assert not launched.wait(0.5)

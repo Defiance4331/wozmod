@@ -567,8 +567,8 @@ def test_boot_clock_starts_once_the_run_holds_a_slot_and_the_wait_names_the_hold
     assert tools.run_check.harness.slot_holders() == []
 
 
-def test_a_launch_waiting_behind_a_heavy_run_names_the_machine_lock_and_who_is_ahead(tools, tmp_path, monkeypatch,
-                                                                                     capsys):
+def test_a_launch_waiting_behind_a_measuring_run_names_the_machine_lock_and_who_is_ahead(tools, tmp_path,
+                                                                                         monkeypatch, capsys):
     """Bugs: a launch queued for the machine (behind a benchmark, or the first-come line) reports that it waits for a
     game slot "held by nobody now"; or it counts shared runs ahead of it, which it would go in beside, as waits; or a
     launch that ends while run_check reads what it waits for is reported as waiting for a free game slot."""
@@ -579,16 +579,16 @@ def test_a_launch_waiting_behind_a_heavy_run_names_the_machine_lock_and_who_is_a
     monkeypatch.setattr(lock, "work", lambda: tmp_path / "work")
     monkeypatch.delenv(lock.HELD, raising=False)
     (tmp_path / "work").mkdir()
-    heavy = lock.claim("bench", 0.01)
+    heavy = lock.hold("measure", "bench", 0.01)
     shared, install = [], []
-    threading.Thread(target=lambda: shared.append(lock.share(0.01, "a test run")), daemon=True).start()
+    threading.Thread(target=lambda: shared.append(lock.hold("test", "a test run", 0.01)), daemon=True).start()
     time.sleep(0.2)
-    threading.Thread(target=lambda: install.append(lock.claim("install", 0.01)), daemon=True).start()
+    threading.Thread(target=lambda: install.append(lock.hold("measure", "bench run 2", 0.01)), daemon=True).start()
     time.sleep(0.2)
     launch = subprocess.Popen([sys.executable, "-c", (  # the game harness's run(): in line for the machine
         f"import sys, time; sys.path.insert(0, {str(Path(lock.__file__).parent)!r}); import machine_lock; "
         f"machine_lock.work = lambda: __import__('pathlib').Path({str(tmp_path / 'work')!r}); "
-        "machine_lock.share(0.01); time.sleep(30)")], env={k: v for k, v in os.environ.items() if k != lock.HELD})
+        "machine_lock.hold('game', 'the game', 0.01); time.sleep(30)")], env={k: v for k, v in os.environ.items() if k != lock.HELD})
     try:
         root = tmp_path / "work/runtime-tests/r1"
         root.mkdir(parents=True)
@@ -613,7 +613,8 @@ def test_a_launch_waiting_behind_a_heavy_run_names_the_machine_lock_and_who_is_a
                 time.sleep(0.01)
             os.close(waiter[0])
     said = [line for line in capsys.readouterr().err.splitlines() if line.startswith("run_check:")]
-    assert said and set(said) == {"run_check: waiting for the machine, held by bench (0 min); 1 run(s) wait ahead"}
+    holder = f"bench (pid {os.getpid()}, in {os.getcwd()}) (0 min)"
+    assert said and set(said) == {f"run_check: waiting for the machine, held by {holder}; 1 run(s) wait ahead"}
 
 
 def test_ab_runs_a_on_the_install_as_it_stands_and_b_with_the_swaps_and_exits_on_b(tools, tmp_path, monkeypatch):

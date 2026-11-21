@@ -9,9 +9,9 @@ the question is whether today's tests catch the old bug. A hunk that no longer a
 fix wrote are still in the file, once (with as much of the hunk's context as still matches); otherwise the fix is
 reported as not applying, and its scratch tree is left out of every run.
 
-Per fix, under the machine lock (tools/machine_lock.py), in a scratch worktree in the main checkout's work/replay/
-holding the checkout's tree (git write-tree, uncommitted and untracked files included) with the fix undone, the
-tiers run cheapest first, and the replay stops at the first red one:
+Per fix, in a scratch worktree in the main checkout's work/replay/ holding the checkout's tree (git write-tree,
+uncommitted and untracked files included) with the fix undone, the tiers run cheapest first, each holding the machine
+lock (tools/machine_lock.py) for what it is, as tools/verify.py's runs do, and the replay stops at the first red one:
 
     Linux             the fast suite
     Windows           the fast suite under Windows Python (tools/windows_suite.py)
@@ -452,7 +452,7 @@ def main(argv: list[str]) -> int:
     repo = Path(verify.git(Path.cwd(), "rev-parse", "--show-toplevel"))
     os.environ.setdefault(verify.JUDGED, "tree")  # the replay's tree judges itself: it is what is measured
     verify.windows_run = without_pythonpath(verify.windows_run)
-    if argv[:1] == ["_one"]:  # one fix, under the machine lock
+    if argv[:1] == ["_one"]:  # one fix
         tree, name = argv[1], argv[2]
         fix = next(fix for fix in fixes(repo, tree) if fix.id == name)
         print(f"replay {fix.id} ({fix.reason}) on tree {tree[:12]}", flush=True)
@@ -480,8 +480,7 @@ def main(argv: list[str]) -> int:
     found = {}
     for fix in wanted:
         if options.rerun or not verify.recorded(repo, tree, f"replay {fix.id}"):
-            subprocess.run([sys.executable, repo / "tools/machine_lock.py", sys.executable, __file__, "_one", tree,
-                            fix.id], cwd=repo, check=True)
+            subprocess.run([sys.executable, __file__, "_one", tree, fix.id], cwd=repo, check=True)
         found[fix.id] = verify.recorded(repo, tree, f"replay {fix.id}")
     print(table(wanted, found))
     return 0
