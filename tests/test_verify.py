@@ -367,3 +367,25 @@ def test_a_second_commit_run_of_a_tree_waits_for_the_run_going_and_reuses_its_ve
         holder.wait(10)
     assert (waited, run.returncode, "is going" in out, "Linux: pass (recorded then)" in out,
             "Windows: pass (recorded then)" in out) == (True, 0, True, True, True), out
+
+
+def test_a_windows_run_lets_the_machine_go_when_it_returns(tmp_path, monkeypatch):
+    # Bug: windows_run holds the machine shared until its process ends, so a caller that goes on (--commit's triggered
+    # rows, a release, a replay) keeps a benchmark waiting to take it alone, and the caller's next row waits behind
+    # the benchmark: both stall until one is killed.
+    runner = ("import sys\nfrom pathlib import Path\nout = Path(sys.argv[sys.argv.index('--out') + 1])\n"
+              "(out / 'junit.xml').write_text('<testsuite><testcase classname=\"tests.test_a\" name=\"test_one\"/>'\n"
+              "                               '</testsuite>', encoding='utf-8')\n")  # stands in for Windows Python
+    repo = _repository(tmp_path / "repo", {"tools/windows_suite.py": runner})
+    lock = verify.machine_lock(repo)
+    monkeypatch.setattr(lock, "work", lambda: tmp_path / "machine")  # the machine lock's files, not the machine's
+    (tmp_path / "machine").mkdir()
+    monkeypatch.delenv(lock.HELD, raising=False)  # so it takes the machine itself, not as part of this test run
+    monkeypatch.setenv(verify.JUDGED, "tree")
+    tree = verify.tree_id(repo)
+    assert verify.windows_run(repo, tree, [])["verdict"] == "pass"
+    alone = subprocess.run([sys.executable, "-c", "import fcntl, os, sys\n"
+                            "fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT)\n"
+                            "fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)", str(tmp_path / "machine" / lock.MACHINE)],
+                           capture_output=True, encoding="utf-8")
+    assert alone.returncode == 0, alone.stderr

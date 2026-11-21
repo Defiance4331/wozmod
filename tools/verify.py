@@ -50,6 +50,7 @@ an export as one in a checkout does, tests/conftest.py); release's timed first i
 from __future__ import annotations
 
 import argparse
+import contextlib
 import fcntl
 import fnmatch
 import hashlib
@@ -327,10 +328,18 @@ def machine_lock(repo: Path):
     return machine_lock
 
 
-def shared_machine(repo: Path, what: str) -> int | None:
-    """Hold the machine shared, as a test run in a checkout does (tests/conftest.py), for a run on an export, which
-    is given HELD so its conftest does not wait for the run it is part of. The descriptor: close it when done."""
-    return machine_lock(repo).hold("test", what)
+@contextlib.contextmanager
+def shared_machine(repo: Path, what: str):
+    """Hold the machine shared for the with block, as a test run in a checkout does (tests/conftest.py), and let it
+    go when the block ends, so a caller that goes on (--commit's triggered rows, a release, a replay) does not keep a
+    benchmark waiting. Yields what a run on an export inside it adds to its environment: HELD, so its conftest does
+    not wait for the run it is part of (nothing inside a run that holds the machine already, whose HELD it has)."""
+    held = machine_lock(repo).hold("test", what)
+    try:
+        yield {} if held is None else {machine_lock(repo).HELD: "test"}
+    finally:
+        if held is not None:
+            os.close(held)
 
 
 def exported_path(folder: Path) -> dict:
@@ -341,16 +350,13 @@ def exported_path(folder: Path) -> dict:
 def on_export(repo: Path, tree: str, out: Path, arguments: list[str], switches: bool, what: str) -> dict:
     """pytest with arguments on an export of tree, in tree's own environment (venv), so it runs what the tree holds
     whatever the checkout does meanwhile; every slow switch on, or none; holding the machine as a test run."""
-    held = shared_machine(repo, what)
-    folder = export(repo, tree, work(repo) / "verify/trees" / f"{tree}.{os.getpid()}")
-    inside = {} if held is None else {machine_lock(repo).HELD: "test"}
-    try:
-        return pytest(folder, out, arguments, environment(repo, switches, True) | exported_path(folder) | inside,
-                      venv(repo, tree, folder))
-    finally:
-        shutil.rmtree(folder, ignore_errors=True)
-        if held is not None:
-            os.close(held)
+    with shared_machine(repo, what) as inside:
+        folder = export(repo, tree, work(repo) / "verify/trees" / f"{tree}.{os.getpid()}")
+        try:
+            return pytest(folder, out, arguments, environment(repo, switches, True) | exported_path(folder) | inside,
+                          venv(repo, tree, folder))
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
 
 
 # Default mode
@@ -400,20 +406,20 @@ def windows_run(repo: Path, tree: str, arguments: list[str], held: int | None = 
     with windows_lock(repo, tree) if held is None else os.fdopen(held, "a") as lock:
         if held is None:
             fcntl.flock(lock, fcntl.LOCK_EX)
-        shared_machine(repo, f"the Windows run of {tree[:12]}")  # held until this process ends
-        folder = export(repo, tree, work(repo) / "verify/trees" / f"{tree}.{os.getpid()}")
-        out = runs(repo, tree) / "windows"
-        out.mkdir(parents=True, exist_ok=True)
-        try:
-            with (out / "windows_suite.log").open("w", encoding="utf-8") as log:
-                # The checkout's runner, which finds the main checkout's Windows environments; the tree's files.
-                code = subprocess.run([sys.executable, repo / "tools/windows_suite.py", "--tree", folder, "--out",
-                                       out, *arguments], cwd=folder, env=environment(repo, False, True), stdout=log,
-                                      stderr=subprocess.STDOUT).returncode
-            stopped(code, "the Windows run")
-            found = outcome(out / "junit.xml", code)
-        finally:
-            shutil.rmtree(folder, ignore_errors=True)
+        with shared_machine(repo, f"the Windows run of {tree[:12]}"):
+            folder = export(repo, tree, work(repo) / "verify/trees" / f"{tree}.{os.getpid()}")
+            out = runs(repo, tree) / "windows"
+            out.mkdir(parents=True, exist_ok=True)
+            try:
+                with (out / "windows_suite.log").open("w", encoding="utf-8") as log:
+                    # The checkout's runner, which finds the main checkout's Windows environments; the tree's files.
+                    code = subprocess.run([sys.executable, repo / "tools/windows_suite.py", "--tree", folder, "--out",
+                                           out, *arguments], cwd=folder, env=environment(repo, False, True),
+                                          stdout=log, stderr=subprocess.STDOUT).returncode
+                stopped(code, "the Windows run")
+                found = outcome(out / "junit.xml", code)
+            finally:
+                shutil.rmtree(folder, ignore_errors=True)
         found["summary"] += f", log {out / 'pytest.log'}"
         record(repo, tree, {"check": "windows", "verdict": found["verdict"], "summary": found["summary"],
                             "judge": os.environ[JUDGED], "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
