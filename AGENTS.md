@@ -87,8 +87,9 @@ its `--help` says how the rest works. Before a release, run
 
 Only a run that times something has the machine alone: a benchmark, run
 through `python3 tools/bench.py`, and the timed first install of
-`tools/verify.py release`. Every other run shares the machine at the lowest
-priority. Run a dev install or an art build through
+`tools/verify.py release`. Time a run once: the owner wants a rough number, not a
+precise one, so one run is enough unless the owner asks for more. Every other run
+shares the machine at the lowest priority. Run a dev install or an art build through
 `python3 tools/machine_lock.py COMMAND`, so it waits while a benchmark
 measures. Give a run that may wait for the machine a long timeout (a release
 takes about 20 minutes), and stop only runs you started.

@@ -7,8 +7,9 @@ runs the arms in turn (A, B, A, B...) N times each (default 1). Each run is a me
 it waits for every run on the machine and holds it alone, only while it runs, so the builds, games and test runs that
 queued meanwhile go in between two runs, and alternating spreads any drift in the machine over every arm. COMMAND is
 a shell command line. Prints, per arm, the wall time of its passed run (of several: their median and range) and how
-many failed; exits 1 when any run failed. One run shows only a difference well above the machine's run-to-run noise (Windows installs have
-varied 801 to 863 s, about 7%); for a smaller one, give --runs 5 or more.
+many failed; exits 1 when any run failed. One run gives the rough number the owner asks for (AGENTS.md); give --runs N
+only when the owner asks for more runs. One run cannot tell apart two arms closer than the machine's run-to-run noise
+(Windows installs have varied 801 to 863 s, about 7%), so do not report a smaller gap as a difference.
 """
 
 from __future__ import annotations
