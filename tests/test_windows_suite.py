@@ -57,3 +57,12 @@ def test_a_run_counts_errors_and_failures_as_broken_and_lists_each_skip_reason(t
     assert broken == 2
     assert text.splitlines() == ["1 passed, 1 failure, 1 error, 1 skipped", "FAILURE t::bad: assert 1 == 2",
                                  "ERROR t::setup: fixture broke", "skips:", "     1 Linux only: why"]
+
+
+def test_a_list_of_release_zips_reaches_windows_python_as_one_path_each(tmp_path):
+    # Bug: WOZMOD_RELEASE goes into Wine joined by the host's ":", which Windows Python does not split, so the release
+    # scan of both zips opens one missing file (the 0.3.0 release run).
+    zips = [tmp_path / "wozmod-linux.zip", tmp_path / "wozmod-windows.zip"]
+    found = windows_suite.path_lists({"WOZMOD_RELEASE": ":".join(map(str, zips)), "WOZMOD_GAME": str(tmp_path)})
+    assert list(found) == ["WOZMOD_RELEASE"]
+    assert [Path(p.removeprefix("Z:").replace("\\", "/")) for p in found["WOZMOD_RELEASE"].split(";")] == zips

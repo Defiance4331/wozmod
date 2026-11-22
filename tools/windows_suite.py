@@ -45,11 +45,20 @@ TOOLS = "C:\\wozmod-tools"  # on the Windows PATH: ffmpeg.exe and its libraries
 RUST_TARGET = "x86_64-pc-windows-gnu"
 UNUSED = 7 * 24 * 3600  # an environment no run used for this long is removed
 WINE = {"WINEARCH": "win64", "WINEDEBUG": "-all", "WINEDLLOVERRIDES": "mscoree,mshtml="}  # no Mono or Gecko prompts
+# The variables that hold a list of paths, joined by os.pathsep: ":" on the host, ";" for Windows Python. A single
+# path needs no change (Wine maps the Linux root to Z:), but a list passed on as it is reads as one missing file.
+PATH_LISTS = ("WOZMOD_RELEASE",)
 
 
 def windows(path: Path) -> str:
     """path as Windows programs under Wine name it: Wine maps the Linux root to Z:."""
     return "Z:" + str(Path(path).resolve()).replace("/", "\\")
+
+
+def path_lists(environ: dict[str, str]) -> dict[str, str]:
+    """The PATH_LISTS variables environ sets, as Windows Python splits them: each path under Z:, joined by ";"."""
+    return {name: ";".join(windows(Path(path)) for path in environ[name].split(os.pathsep) if path)
+            for name in PATH_LISTS if environ.get(name)}
 
 
 def _rust() -> dict[str, str]:
@@ -242,7 +251,8 @@ def run(tree: Path, out: Path, arguments: list[str]) -> int:
         with _wine(copy, out / "xvfb.log") as wine, (out / "pytest.log").open("w", encoding="utf-8") as log:
             wine.update(WINEPATH=TOOLS, PYTHONPATH=f"{windows(tree / 'src')};{windows(tree / 'tools')}",
                         PYTHONPYCACHEPREFIX=windows(ENVS / "pycache"),  # not the tree's __pycache__, Linux's
-                        WOZMOD_RUSTC_VERSION=json.loads((env / "env.json").read_text(encoding="utf-8"))["rustc"])
+                        WOZMOD_RUSTC_VERSION=json.loads((env / "env.json").read_text(encoding="utf-8"))["rustc"],
+                        **path_lists(wine))
             pytest = subprocess.run(["wine", PYTHON, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-rs",
                                      f"--junitxml={windows(junit)}", *arguments], cwd=tree, env=wine, stdout=log,
                                     stderr=subprocess.STDOUT)
