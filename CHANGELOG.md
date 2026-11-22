@@ -6,50 +6,25 @@ All notable changes to wozmod are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-22
+
 ### Added
 
 - In English voice mode, the twelve Dream stage cutscenes of Musou Orochi Z speak English, taken from Warriors
-  Orochi 2 for PSP, with mouths that move to the English words.
+  Orochi 2 for PSP, with mouths that move to the English words. The installer lifts the English voice out of the PSP
+  soundtrack, so no Japanese voice plays underneath it. Each line takes the English take Warriors Orochi 2 plays at
+  the same moment, so stage 48's messenger plays the success or failure take that matches how it went. Where an
+  English scene does not fit your team, or no English take fits a line, the stage keeps Musou Orochi Z's own
+  Japanese line with our subtitle, and the Japanese voice mode plays every stock scene.
 - The two Dream Mode movies play the English voices of Warriors Orochi 2 for PSP over the PC's own high-resolution
   picture and music.
-
-### Changed
-
-- The download is about three times smaller: 40 MB instead of 133 MB on Windows, and 46 MB instead of 161 MB on
-  Linux. It still holds everything the install needs, so an install downloads nothing.
-
-### Fixed
-
-- Each English attack shout now plays at the volume its own game gave it. Before, it kept the volume set for the
-  Japanese shout it replaced, so some officers shouted well above the rest: Dodomeki's shouts are now 3 dB quieter
-  and Wei Yan's 2 dB. Other officers' shouts move by up to about 3.5 dB either way, to the balance their own game
-  gave them.
-- English lines taken from Warriors Orochi 2 for PSP no longer start about a tenth of a second after their subtitles.
-- An officer's strategy line in battle now sits on a strip that runs the full width of the screen, as in Warriors
-  Orochi 2 on Xbox 360, so long English lines no longer run off its end and fade into the battlefield. The line also
-  uses that width: all but one now read on a single row instead of leaving a word or two on a second, and it sits
-  centred on the strip, whether it takes one row or two.
-- Text no longer runs past the edges of the screen or gets squeezed to fit its box. Battle notices and movie captions
-  stay inside the screen's safe area, and take a second row only when they are too long for it. Then the two rows are
-  about the same length and each is centred, and a battle notice's bar grows to hold both instead of leaving the
-  second row on its faded edge. Battle dialogue rows have a little space between them, as notices and subtitles do.
-  Battle dialogue, the weapon info boxes and Story Z narration use the full width of their box. Upgrade skill
-  descriptions, battle history, conditions and pre-battle panels wrap at their box instead of being squeezed narrower.
-- With a controller, the X button (Square on a PlayStation pad) no longer leaves a wide gap before its word in
-  on-screen prompts, such as Random on the officer select screen. It now sits as close as every other button.
-- In event scenes, mouths move with the voice as it plays. They used to start a little before the voice, and after
-  any slow frame they stayed behind it for the rest of the line.
-- The 45 English cutscene lines that no disc times mouths for, such as two lines of the He Fei scene in the Orochi
-  story, now move the speaker's mouth with the English words. The installer learns which mouth shape goes with which
-  sound from the lines the Xbox 360 discs do time, so the mouth opens, rounds or spreads with the vowel, changes shape
-  where the sound does, holds each shape about as long as Koei's animators do instead of twitching within a
-  syllable, and keeps the speaker's expression. It also lines each clip up with the words of its subtitle, sound by
-  sound, so the mouth takes the shape Koei's animators gave that sound: on lines they did animate, the made mouth now
-  picks their shape on about half of the frames, where it picked it on two in five. The Dream stage cutscenes' mouths
-  are made the same way. Their mouths used to follow the Japanese line, stretched to the English one's length, so they
-  seldom matched what was said.
-
-## [0.3.0] - 2026-11-14
+- 28 more battle quotes speak English: each reuses the words of another quote and now plays that quote's English
+  take. A line keeps its Japanese voice only when Musou Orochi Z added it, and `wozmod/runtime.log` names each such
+  line as it plays.
+- Story select, the Free Mode story list and the scenario screens show the official English Warriors Orochi and
+  Warriors Orochi 2 logos from the Xbox 360 discs, and the English Warriors Orochi logo sits over the Z on the title
+  screen, the loading screen and the attract demo.
+- Each download includes the licence texts of the third-party code it carries, in `licenses/`.
 
 ### Changed
 
@@ -66,6 +41,13 @@ All notable changes to wozmod are listed here, newest first. The format follows
   than before; at full volume nothing changes.
 - Enemy and object sounds keep playing past their maximum distance, as they did on Windows XP, and nearby enemy hits,
   grunts and cries stand out of a big fight. ([#11](https://github.com/Defiance4331/wozmod/issues/11))
+- The download carries the voice separation model for the Dream cutscenes, about 131 MB, and on Windows the Visual
+  C++ runtime files it needs. A small ffmpeg built for wozmod and leaner packing save most of that back, so the
+  download ends up a little larger than 0.2.1's. It still holds everything the install needs, so an install
+  downloads nothing.
+- Installing uses about half the memory it did, so machines with 8 to 16 GB run more workers at once and install
+  faster; an 8 GB machine still keeps 2 GB free for you. Lifting out the Dream voices adds under a minute on a
+  graphics card with a Vulkan driver, or about 7 minutes on the processor, and the install log says which it used.
 
 ### Fixed
 
@@ -84,11 +66,44 @@ All notable changes to wozmod are listed here, newest first. The format follows
 - Voices:
   - a cutscene could play with no voice at all when a line started while the game was still reading from disk, as in
     the Orochi story's He Fei scene with Gan Ning and Zhang Liao; if a line ever has to wait, `wozmod/runtime.log`
-    says so;
+    says so ([#26](https://github.com/Defiance4331/wozmod/issues/26));
   - about 860 English lines taken from Warriors Orochi 2 for PSP played 3 dB too loud and crackled; they now play at
-    their original level.
-- Speed: battles slowed down, sometimes to a few frames a second, on AMD graphics cards with Resizable BAR on, and
-  battle effects no longer wait on the graphics card each frame.
+    their original level, and no longer start about a tenth of a second after their subtitles;
+  - each English attack shout now plays at the volume its own game gave it. Before, it kept the volume set for the
+    Japanese shout it replaced, so some officers shouted well above the rest: Dodomeki's shouts are now 3 dB quieter
+    and Wei Yan's 2 dB. Other officers' shouts move by up to about 3.5 dB either way, to the balance their own game
+    gave them.
+- Mouths:
+  - in event scenes, mouths move with the voice as it plays. They used to start a little before the voice, and after
+    any slow frame they stayed behind it for the rest of the line;
+  - the 45 English cutscene lines that no disc times mouths for, such as two lines of the He Fei scene in the Orochi
+    story, now move the speaker's mouth with the English words. The installer learns which mouth shape goes with
+    which sound from the lines the Xbox 360 discs do time, so the mouth opens, rounds or spreads with the vowel,
+    changes shape where the sound does, holds each shape about as long as Koei's animators do instead of twitching
+    within a syllable, and keeps the speaker's expression. It also lines each clip up with the words of its
+    subtitle, sound by sound, so the mouth takes the shape Koei's animators gave that sound: on lines they did
+    animate, the made mouth now picks their shape on about half of the frames, where it picked it on two in five.
+- Text:
+  - an officer's strategy line in battle now sits on a strip that runs the full width of the screen, as in Warriors
+    Orochi 2 on Xbox 360, so long English lines no longer run off its end and fade into the battlefield. The line
+    also uses that width: all but one now read on a single row instead of leaving a word or two on a second, and it
+    sits centred on the strip, whether it takes one row or two;
+  - text no longer runs past the edges of the screen or gets squeezed to fit its box. Battle notices and movie
+    captions stay inside the screen's safe area, and take a second row only when they are too long for it. Then the
+    two rows are about the same length and each is centred, and a battle notice's bar grows to hold both instead of
+    leaving the second row on its faded edge. Battle dialogue rows have a little space between them, as notices and
+    subtitles do. Battle dialogue, the weapon info boxes and Story Z narration use the full width of their box.
+    Upgrade skill descriptions, battle history, conditions and pre-battle panels wrap at their box instead of being
+    squeezed narrower;
+  - with a controller, the X button (Square on a PlayStation pad) no longer leaves a wide gap before its word in
+    on-screen prompts, such as Random on the officer select screen. It now sits as close as every other button.
+- The game would not start after a Windows reinstall or for another Windows account, because the installer locked
+  its files to the account that ran it. Installed files now take the game folder's permissions, as stock files do,
+  and an install or uninstall fixes files placed by 0.2.1 and earlier; if your account may not change them, the
+  installer says to run it once as administrator.
+- Speed: battles slowed down, sometimes to a few frames a second, on AMD graphics cards with Resizable BAR on
+  ([#2](https://github.com/Defiance4331/wozmod/issues/2)), and battle effects no longer wait on the graphics card
+  each frame.
 
 ## [0.2.1] - 2026-10-30
 
