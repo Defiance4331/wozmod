@@ -25,6 +25,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "packaging"))
+import notices  # noqa: E402  the licence notices for the third-party code in the program
 import pins  # noqa: E402  packaging/pins.py: the release pins and where the proven ffmpeg is
 import separator_runtime  # noqa: E402  the pinned wheels
 import windows_imports  # noqa: E402  the DLLs a Windows library needs beside it
@@ -112,6 +113,21 @@ def add_separator(source: Path, stage: Path) -> None:
         shutil.copy2(source / "licenses" / PLATFORM / pin["file"], stage / "licenses" / pin["file"])
 
 
+def add_notices(stage: Path) -> None:
+    """The licences of the third-party code in the program, in licenses/ (packaging/notices.py): what PyInstaller froze
+    in, and the Rust crates our module is built from. The crates notice is made here on Linux, and on Windows by
+    packaging/build_windows.sh before it starts this under Wine, which cannot run cargo."""
+    notices.write_runtime(BUILD / "work/wozmod", PLATFORM, stage / "licenses" / notices.RUNTIME)
+    target = stage / "licenses" / notices.CRATES
+    if not WINDOWS:
+        notices.write_crates(PLATFORM, target)
+        return
+    staged = OUT / "notices" / PLATFORM / notices.CRATES
+    if problem := notices.crates_problem(staged, PLATFORM):
+        raise SystemExit(problem)
+    shutil.copy2(staged, target)
+
+
 def check_assets(assets: Path) -> None:
     for name in ("d3d9.dll", "lettering.zip"):
         path, (size, digest) = assets / name, pins.asset_pin(name)
@@ -169,6 +185,7 @@ def main() -> int:
         shutil.copy2(licence, stage / "licenses")
     shutil.copy2(ROOT / "packaging/POCKETSPHINX-NOTICE.txt", stage / "licenses")
     add_separator(args.separator, stage)
+    add_notices(stage)
 
     codecs = list((stage / "_internal").rglob("wozmod_native*"))
     if not codecs or not (stage / "_internal/ffmpeg").is_dir():

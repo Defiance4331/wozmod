@@ -1,0 +1,161 @@
+{
+ "build": "20261110",
+ "core": {
+  "files": [
+   "licenses/LICENSE.cpython.txt"
+  ],
+  "licences": [
+   "Python-2.0",
+   "CNRI-Python"
+  ]
+ },
+ "extensions": {
+  "_bz2": {
+   "files": [
+    "licenses/LICENSE.bzip2.txt"
+   ],
+   "licences": [
+    "bzip2-1.0.6"
+   ]
+  },
+  "_ctypes": {
+   "files": [
+    "licenses/LICENSE.libffi.txt"
+   ],
+   "licences": [
+    "MIT"
+   ]
+  },
+  "_curses": {
+   "files": [
+    "licenses/LICENSE.ncurses.txt"
+   ],
+   "licences": [
+    "X11"
+   ]
+  },
+  "_curses_panel": {
+   "files": [
+    "licenses/LICENSE.ncurses.txt"
+   ],
+   "licences": [
+    "X11"
+   ]
+  },
+  "_dbm": {
+   "files": [
+    "licenses/LICENSE.bdb.txt"
+   ],
+   "licences": [
+    "Sleepycat"
+   ]
+  },
+  "_decimal": {
+   "files": [
+    "licenses/LICENSE.mpdecimal.txt"
+   ],
+   "licences": [
+    "BSD-2-Clause"
+   ]
+  },
+  "_hashlib": {
+   "files": [
+    "licenses/LICENSE.openssl-3.txt"
+   ],
+   "licences": [
+    "Apache-2.0"
+   ]
+  },
+  "_lzma": {
+   "files": [
+    "licenses/LICENSE.liblzma.txt"
+   ],
+   "licences": [
+    "0BSD"
+   ]
+  },
+  "_sqlite3": {
+   "files": [
+    "licenses/LICENSE.sqlite.txt"
+   ],
+   "licences": []
+  },
+  "_ssl": {
+   "files": [
+    "licenses/LICENSE.openssl-3.txt"
+   ],
+   "licences": [
+    "Apache-2.0"
+   ]
+  },
+  "_tkinter": {
+   "files": [
+    "licenses/LICENSE.libX11.txt",
+    "licenses/LICENSE.libXau.txt",
+    "licenses/LICENSE.libxcb.txt",
+    "licenses/LICENSE.tcl.txt",
+    "licenses/LICENSE.zlib-ng.txt",
+    "licenses/LICENSE.zlib.txt"
+   ],
+   "licences": [
+    "MIT",
+    "TCL",
+    "X11",
+    "Zlib"
+   ]
+  },
+  "_uuid": {
+   "files": [
+    "licenses/LICENSE.libuuid.txt"
+   ],
+   "licences": [
+    "BSD-3-Clause"
+   ]
+  },
+  "_zstd": {
+   "files": [
+    "licenses/LICENSE.zstd.txt"
+   ],
+   "licences": [
+    "BSD-3-Clause"
+   ]
+  },
+  "binascii": {
+   "files": [
+    "licenses/LICENSE.zlib-ng.txt",
+    "licenses/LICENSE.zlib.txt"
+   ],
+   "licences": [
+    "Zlib"
+   ]
+  },
+  "pyexpat": {
+   "files": [
+    "licenses/LICENSE.expat.txt"
+   ],
+   "licences": [
+    "MIT"
+   ]
+  },
+  "readline": {
+   "files": [
+    "licenses/LICENSE.libedit.txt",
+    "licenses/LICENSE.ncurses.txt"
+   ],
+   "licences": [
+    "BSD-3-Clause",
+    "X11"
+   ]
+  },
+  "zlib": {
+   "files": [
+    "licenses/LICENSE.zlib-ng.txt",
+    "licenses/LICENSE.zlib.txt"
+   ],
+   "licences": [
+    "Zlib"
+   ]
+  }
+ },
+ "python": "3.14.10"
+}

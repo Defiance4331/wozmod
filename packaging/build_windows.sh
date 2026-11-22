@@ -69,6 +69,12 @@ linux_digest=$(cd "$ROOT" && uv run --extra native python packaging/speech_diges
 windows_digest=$(cd "$ROOT" && wine "$PY" "$(winpath "$ROOT/packaging/speech_digest.py")" "$(winpath "$SPEECH")" | tr -d '\r')
 [ "$linux_digest" = "$windows_digest" ] || { echo "the Windows phones differ from Linux's: $windows_digest, $linux_digest" >&2; exit 1; }
 
+# The licences of the Rust crates the codecs were just built from, and of what the toolchain linked in, for build.py
+# to ship (packaging/notices.py): Wine cannot run cargo
+NOTICES=$ROOT/build/packaging/notices/windows
+rm -rf "$NOTICES" && mkdir -p "$NOTICES"
+python3 -I "$ROOT/packaging/notices.py" crates windows "$NOTICES/RUST-CRATES-NOTICE.txt"
+
 # 4. wozmod-setup.exe, the small launcher that opens the window (packaging/setup_launcher.c), with the icon and manifest
 # the PyInstaller program before it had: PyInstaller's windowed icon (from the Windows PyInstaller just installed)
 # and the manifest PyInstaller wrote

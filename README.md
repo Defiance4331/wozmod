@@ -264,10 +264,12 @@ FontForge, Cairo and NumPy, and the proven ffmpeg lives in `work/release-assets/
    the release commit carries.
 2. `uv run python packaging/build.py --assets work/release-assets --speech <speech model folder> --separator
    work/release-assets/dream-voice` builds the Linux zip, and `packaging/build_windows.sh work/release-assets` the
-   Windows one (below). Both go to `build/packaging/`. The Dream voice separator's folder is made once, and again
-   only when its pins change: `python packaging/separator_runtime.py` fetches ONNX Runtime as
-   `packaging/pins.json` pins it, `uv run --group model python packaging/separator_model.py <MelBandRoformer.ckpt>
-   work/release-assets/dream-voice` makes the model from the pinned checkpoint, and
+   Windows one (below). Both go to `build/packaging/`, each with the licence notices of the third-party code in it
+   in `licenses/` (`packaging/notices.py`, which says what to do when it stops the build on a new Python). The Dream
+   voice separator's folder is made once, and again only when its pins change:
+   `python packaging/separator_runtime.py` fetches ONNX Runtime as `packaging/pins.json` pins it,
+   `uv run --group model python packaging/separator_model.py <MelBandRoformer.ckpt> work/release-assets/dream-voice`
+   makes the model from the pinned checkpoint, and
    `uv run python packaging/separator_kernels.py` compiles the Vulkan shaders with the pinned compiler.
 3. `WOZMOD_RELEASE=$(ls build/packaging/wozmod-*.zip | paste -sd:) tools/verify.py release` runs every check,
    strictly, and scans both zips for game files and game text. Run it only now: before step 1 it fails on the
