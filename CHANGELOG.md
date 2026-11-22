@@ -42,9 +42,9 @@ All notable changes to wozmod are listed here, newest first. The format follows
 - Enemy and object sounds keep playing past their maximum distance, as they did on Windows XP, and nearby enemy hits,
   grunts and cries stand out of a big fight. ([#11](https://github.com/Defiance4331/wozmod/issues/11))
 - The download carries the voice separation model for the Dream cutscenes, about 131 MB, and on Windows the Visual
-  C++ runtime files it needs. A small ffmpeg built for wozmod and leaner packing save most of that back, so the
-  download ends up a little larger than 0.2.1's. It still holds everything the install needs, so an install
-  downloads nothing.
+  C++ runtime files it needs. A small ffmpeg built for wozmod and leaner packing save most of that back: the Windows
+  download is 166 MB instead of 133 MB, and the Linux one 177 MB instead of 161 MB. It still holds everything the
+  install needs, so an install downloads nothing.
 - Installing uses about half the memory it did, so machines with 8 to 16 GB run more workers at once and install
   faster; an 8 GB machine still keeps 2 GB free for you. Lifting out the Dream voices adds under a minute on a
   graphics card with a Vulkan driver, or about 7 minutes on the processor, and the install log says which it used.
