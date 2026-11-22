@@ -5,7 +5,7 @@
 #
 # ASSETS_DIR holds the release d3d9.dll and lettering.zip (as for packaging/build.py --assets).
 # The zip lands in build/packaging/. Needs: wine (64-bit), uv, rustup with a stable toolchain, curl,
-# and MinGW (Fedora: sudo dnf install mingw64-gcc mingw64-binutils mingw64-winpthreads-static), WOZMOD_SPEECH
+# Xvfb, and MinGW (Fedora: sudo dnf install mingw64-gcc mingw64-binutils mingw64-winpthreads-static), WOZMOD_SPEECH
 # naming the speech model folder (voices/phones.py MODEL), which the zip carries and the Windows phones are checked with,
 # and WOZMOD_SEPARATOR naming the Dream voice separator's folder (voices/separation.py MODEL), which the zip carries.
 # Everything it sets up lives in WOZMOD_WIN_WORK (default work/windows-build) and is reused next time:
@@ -21,12 +21,23 @@ WORK=${WOZMOD_WIN_WORK:-$ROOT/work/windows-build}
 read -r PYTHON_URL PYTHON_SHA256 MATURIN < <(python3 -c "import json; p = json.load(open('$ROOT/packaging/windows-build.json', \
   encoding='utf-8')); print(p['python']['url'], p['python']['sha256'], 'maturin==' + p['maturin'])")
 
-for tool in wine uv curl x86_64-w64-mingw32-gcc x86_64-w64-mingw32-dlltool x86_64-w64-mingw32-windres; do
+for tool in wine uv curl x86_64-w64-mingw32-gcc x86_64-w64-mingw32-dlltool x86_64-w64-mingw32-windres Xvfb; do
   command -v "$tool" >/dev/null || { echo "missing $tool (see the header of this script)" >&2; exit 1; }
 done
 [ -x "$HOME/.cargo/bin/rustup" ] || { echo "missing rustup in ~/.cargo/bin" >&2; exit 1; }
 
 export WINEPREFIX=$WORK/prefix WINEARCH=win64 WINEDEBUG=-all WINEDLLOVERRIDES="mscoree,mshtml="
+# Wine runs on a private virtual display, as in tools/windows_suite.py: the Python installer needs a display, and
+# nothing appears on the desktop. -noreset: Xvfb can abort when it resets after its last client leaves.
+DISPLAY_FILE=$(mktemp)
+Xvfb -displayfd 3 -nolisten tcp -noreset -screen 0 1280x1024x24 3>"$DISPLAY_FILE" >/dev/null 2>&1 &
+XVFB=$!
+stop_display() { wineserver -k 2>/dev/null || true; wineserver -w 2>/dev/null || true; kill "$XVFB" 2>/dev/null || true; rm -f "$DISPLAY_FILE"; }
+trap stop_display EXIT
+for _ in $(seq 100); do [ -s "$DISPLAY_FILE" ] && break; sleep 0.1; done
+[ -s "$DISPLAY_FILE" ] || { echo "Xvfb did not start" >&2; exit 1; }
+export DISPLAY=:$(head -n1 "$DISPLAY_FILE")
+unset WAYLAND_DISPLAY
 winpath() { winepath -w "$1" 2>/dev/null; }
 PY=$WORK/prefix/drive_c/wozmod-python/python.exe
 mkdir -p "$WORK/dl"
