@@ -140,7 +140,7 @@ def build_voice_banks(stock: Path, donors: Path, speech: Path, separator: Path, 
     linkdata1, linkdata2 = game_files.archive(stock / "LINKDATA1"), game_files.archive(stock / "LINKDATA2")
     wo1_ens = archive(wo1 / "linkdata_ens")
     stock_clips = game_files.voices(stock)
-    clips, sources = english_voice_clips(
+    clips, sources, stereo = english_voice_clips(
         one, (wo1 / "linkdata_ans.idx").read_bytes(), wo1 / "link_vodat.bdx",
         two, (wo2 / "linkdata_ans.idx").read_bytes(), wo2 / "link_vodat.bdx",
         stock_clips, jobs, psp=(three, psp / PSP_VOICES),
@@ -148,15 +148,21 @@ def build_voice_banks(stock: Path, donors: Path, speech: Path, separator: Path, 
     )
     # The Z Dream scenes have no donor clip: their lines are cut from the PSP's movies of them, at the stock ids.
     dream_events = linkdata2.read(list(DREAM_EVENTS))
-    for voice, record in build_dream_events(stock_clips, psp, dream_events, Path(separator), jobs)[0].items():
+    dream_takes = build_dream_events(stock_clips, psp, dream_events, Path(separator), jobs)[0]
+    for voice, record in dream_takes.items():
         if voice in clips:
             raise VoiceBankError(f"voice id {voice} has both a {sources[voice]} clip and a Z Dream scene's take")
         clips[voice], sources[voice] = record, WO2_PSP.name
+    # The PSP's stereo dialogue takes its gain (formats.audio.PSP_DIALOGUE_GAIN_MB), and so do the Z Dream takes. They
+    # are the PSP dub's English too, mixed into the movies, and with the gain they sit +0.8 dB over their stock takes
+    # per id, against +0.6 for the Xbox 360 English (investigation 2026-11-22 psp-briefing-gain-overshoot; text
+    # ledger row 54 keeps their level). Their movies' two channels do not decide it: those are the music mix's, and
+    # the take is the voice cut out of it.
     destination = output_dir / "voice"
     destination.mkdir(parents=True, exist_ok=True)
     with open(destination / "Voice.bin", "wb") as out:
         english_voice_bank(clips, out)
-    (destination / "Gains.bin").write_bytes(voice_gains(sources))
+    (destination / "Gains.bin").write_bytes(voice_gains(clips, stereo | dream_takes.keys()))
     # The bank written, its clips are read back from it as needed: what follows reads the event lines' clips, and
     # holding all of them (about 1 GB) to the end set the step's peak.
     with BankClips(destination / "Voice.bin") as clips:

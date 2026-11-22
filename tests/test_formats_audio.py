@@ -13,6 +13,7 @@ from wozmod.game_files import StockVoices
 from wozmod.formats.audio import (
     BankClips,
     MOZ_VOICE_IDS,
+    PSP_DIALOGUE_GAIN_MB,
     VoiceBankError,
     block_voice_map,
     english_voice_bank,
@@ -27,6 +28,7 @@ from wozmod.formats.audio import (
     se_plan,
     slot_voice_map,
     stage_voice,
+    voice_gains,
     wo2_se_entries,
     wo2_voice_records,
 )
@@ -268,7 +270,7 @@ def test_x360_placeholder_falls_back_without_blocking_a_usable_shared_clip(tmp_p
     stock.write_bytes(kovs(96, samples=1234))
     stock_index = bytes(8) + struct.pack(">II", 0, 96) * 14
 
-    selected, sources = english_voice_clips({10: 0, 11: 1, 12: 2}, wo1_index, wo1_bank, {10: 3, 11: 0, 12: 2, 13: 1}, wo2_index, wo2_bank, StockVoices(stock_index, stock))
+    selected, sources, _ = english_voice_clips({10: 0, 11: 1, 12: 2}, wo1_index, wo1_bank, {10: 3, 11: 0, 12: 2, 13: 1}, wo2_index, wo2_bank, StockVoices(stock_index, stock))
 
     assert {i: parse_kovs_record(clip)[2].sample_count for i, clip in selected.items()} == {10: 9600, 11: 7000}
     assert sources == {10: "wo2-x360", 11: "wo1-x360"}
@@ -303,7 +305,7 @@ def test_psp_voice_fills_only_a_line_neither_xbox_360_disc_has_and_leaves_as_48_
     stock.write_bytes(kovs(96, samples=1234))
     stock_index = bytes(8) + struct.pack(">II", 0, 96) * 15
 
-    clips, sources = english_voice_clips(
+    clips, sources, _ = english_voice_clips(
         {11: 0}, wo1_index, wo1_bank, {10: 0}, wo2_index, wo2_bank, StockVoices(stock_index, stock),
         psp=({10: 0, 11: 1, 12: 2, 14: 3}, psp_bank))
 
@@ -311,6 +313,34 @@ def test_psp_voice_fills_only_a_line_neither_xbox_360_disc_has_and_leaves_as_48_
     seconds = {i: round(parse_kovs_record(clip)[2].sample_count / 48_000, 2) for i, clip in clips.items()}
     assert seconds == {10: 0.1, 11: 0.2, 12: 0.5}
     voice_bank(clips)  # raises unless every clip is 48 kHz mono
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
+def test_only_the_psp_clips_recorded_in_stereo_are_raised(tmp_path: Path) -> None:
+    # Bug: a mono PSP clip (the Z Dream briefings 580-591, mastered at the Xbox 360 level) takes the stereo dialogue's
+    # +2.7 dB and plays over the briefings around it, a stereo PSP line loses it and plays under its neighbours, or an
+    # Xbox 360 clip takes it (text ledger row 54).
+    from synthetic import write_ps2_archive
+
+    def wav(channels: int) -> bytes:
+        pcm = b"".join(struct.pack("<h", (i * 7) % 4000 - 2000) for i in range(4410 * channels))
+        fmt = struct.pack("<IHHIIHH", 16, 1, channels, 44_100, 88_200 * channels, 2 * channels, 16)
+        return b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " + fmt + b"data" + struct.pack("<I", len(pcm)) + pcm
+
+    x360 = tmp_path / "x360.bdx"
+    x360.write_bytes(wav(2) + bytes(-len(wav(2)) % 2048))
+    index = struct.pack(">II", 1, 0) + struct.pack(">5I", 0, 0, -(-len(wav(2)) // 2048), len(wav(2)), 48_000)
+    psp = write_ps2_archive(tmp_path / "voice_na.bns", {0: wav(1), 1: wav(2)})
+    stock = tmp_path / "stock.bin"
+    stock.write_bytes(kovs(96, samples=1234))
+
+    clips, _, stereo = english_voice_clips({}, index, x360, {10: 0}, index, x360,
+                                           StockVoices(bytes(8) + struct.pack(">II", 0, 96) * 13, stock),
+                                           psp=({11: 0, 12: 1}, psp))
+
+    gains = voice_gains(clips, stereo)
+    assert dict(enumerate(struct.unpack_from("<13h", gains, 4))) == {
+        **dict.fromkeys(range(13), 0), 12: PSP_DIALOGUE_GAIN_MB}  # 10 Xbox 360 stereo, 11 PSP mono, 12 PSP stereo
 
 
 def _atrac3plus_riff(frames: int, fact: tuple[int, int] | None = None, tag: int = 0xFFFE) -> bytes:

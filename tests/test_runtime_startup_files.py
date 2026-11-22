@@ -123,13 +123,12 @@ def test_the_dll_takes_the_slots_the_build_writes_and_refuses_them_cut_short(fil
 
 
 def test_the_dll_reads_each_clips_gain_as_the_build_writes_it(files):
-    """Bug: a WO2 PSP clip that misses its gain, or another clip that gets it (an id off by one, the wrong byte order,
-    the donor misread); the DLL refusing the Gains.bin the build writes, or taking one cut short."""
-    sources = {0: "wo2-x360", 1: "wo2-psp", 2: "wo1-x360", 0x5888: "wo2-psp", 0x6001: "wo2-psp"}  # 0x6001: a slot
-    blob = voice_gains(sources)
+    """Bug: a raised clip that misses its gain, or another clip that gets it (an id off by one, the wrong byte order);
+    the DLL refusing the Gains.bin the build writes, or taking one cut short."""
+    clips, raised = (0, 1, 2, 0x5888, 0x6000, 0x6001), {1, 0x5888, 0x6001}  # 0x6001: a slot
+    blob = voice_gains(clips, raised)
     ids = range(0x6003)  # past the bank's end too
-    assert {i: files.gain(blob, i) for i in ids} == {
-        i: PSP_DIALOGUE_GAIN_MB if sources.get(i) == "wo2-psp" else 0 for i in ids}
+    assert {i: files.gain(blob, i) for i in ids} == {i: PSP_DIALOGUE_GAIN_MB if i in raised else 0 for i in ids}
     assert [files.gains(blob[:n], n) for n in (len(blob), 0, 3, len(blob) - 1, len(blob) - 2)] == [1, 0, 0, 0, 0]
 
 

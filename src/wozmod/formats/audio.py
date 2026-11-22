@@ -9,7 +9,7 @@ import os
 import re
 import struct
 import zlib
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from contextlib import ExitStack
 from dataclasses import dataclass
 from itertools import batched
@@ -641,23 +641,31 @@ def english_voice_clips(wo1_mapping: dict[int, int], wo1_index: bytes, wo1_bank:
                         wo2_mapping: dict[int, int], wo2_index: bytes, wo2_bank: Path,
                         stock: StockVoices,
                         jobs: int | None = None, *, psp: tuple[dict[int, int], Path] | None = None,
-                        stock_ids: dict[int, int] | None = None) -> tuple[dict[int, bytes], dict[int, str]]:
+                        stock_ids: dict[int, int] | None = None,
+                        ) -> tuple[dict[int, bytes], dict[int, str], set[int]]:
     """Select usable WO2 X360 clips, then WO1 X360 ones, then WO2 PSP ones (lower quality: only for a line neither
-    Xbox 360 disc has), with each clip's source; jobs is the ffmpeg process count. A WO1 clip as long as the stock
-    clip is the stock take, not an English one, and is left out (stock: the game's own clips); stock_ids names the stock
-    id whose take a voice slot stands in for."""
+    Xbox 360 disc has), with each clip's source and the ids whose WO2 PSP clip is recorded in stereo, the ones
+    PSP_DIALOGUE_GAIN_MB raises; jobs is the ffmpeg process count. A WO1 clip as long as the stock clip is the stock
+    take, not an English one, and is left out (stock: the game's own clips); stock_ids names the stock id whose take
+    a voice slot stands in for."""
     stock_ids = stock_ids or {}
     banks = [("wo2-x360", wo2_mapping, wo2_voice_records(wo2_index), wo2_bank),
              ("wo1-x360", wo1_mapping, wo2_voice_records(wo1_index), wo1_bank)]
     if psp:
         banks.append(("wo2-psp", psp[0], ps2_extents(psp[1]), psp[1]))
     clips, sources = donor_voice_clips(banks, jobs)
+    stereo: set[int] = set()
+    if psp:
+        _, mapping, extents, bank = banks[-1]
+        with bank.open("rb") as stream:  # a PSP id's clip is its mapped record (donor_voice_choice)
+            stereo = {i for i, source in sources.items()
+                      if source == "wo2-psp" and _channels(_read_at(stream, *extents[mapping[i]])) == 2}
     samples = lambda record: parse_kovs_record(record, verify_checksums=False)[2].sample_count  # noqa: E731
     wo1 = [moz_id for moz_id, source in sources.items() if source == "wo1-x360"]
     takes = stock.clips(stock_ids.get(moz_id, moz_id) for moz_id in wo1)
     stock_takes = {moz_id for moz_id in wo1 if samples(clips[moz_id]) == samples(takes[stock_ids.get(moz_id, moz_id)])}
     return ({i: clip for i, clip in clips.items() if i not in stock_takes},
-            {i: source for i, source in sources.items() if i not in stock_takes})
+            {i: source for i, source in sources.items() if i not in stock_takes}, stereo)
 
 
 def _read_at(stream: BinaryIO, offset: int, size: int) -> bytes:
@@ -693,20 +701,22 @@ def _bank_ids(clips: Iterable[int]) -> int:
     return max(MOZ_VOICE_IDS, max(clips, default=0) + 1)
 
 
-# The WO2 PSP's dialogue lines play this much louder, in mB, one gain for the whole disc (text ledger row 53), on top
-# of the raise of all dialogue: the runtime applies it on the dialogue stream (runtime/sound_headroom.h), not in the
-# clip, where 784 of the 876 PSP clips would pass full scale. Basis (work/handbacks/psp-dialogue-gain.md): one PSP
-# channel measures -15.2 LUFS pooled, against -12.5 for the Xbox 360 English and -12.6 for the stock Japanese of the
-# same ids; the donors' own playback gains and music masters give +2.6 dB (sigma 1.1).
+# The WO2 PSP's English recorded in stereo plays this much louder, in mB (text ledger rows 53 and 54), on top of the
+# raise of all dialogue: the runtime applies it on the dialogue stream (runtime/sound_headroom.h), not in the clip,
+# where 784 of the 876 PSP clips would pass full scale. Basis (work/handbacks/psp-dialogue-gain.md): one channel of
+# the PSP's stereo dialogue measures -15.2 LUFS pooled, against -12.5 for the Xbox 360 English and -12.6 for the stock
+# Japanese of the same ids; the donors' own playback gains and music masters give +2.6 dB (sigma 1.1). The PSP's mono
+# clips (the Z Dream briefings 580-591, and 94-95) were mastered at the others' level and play without it: with it
+# the briefings played 3.8 dB over their stock takes, against 1.1 for the Xbox 360 briefings.
 PSP_DIALOGUE_GAIN_MB = 270
 
 
-def voice_gains(sources: Mapping[int, str]) -> bytes:
-    """voice/Gains.bin for the bank of these clips by their source (english_voice_clips): u32 id count, as the bank
-    indexes, then each id's clip gain in mB, s16: PSP_DIALOGUE_GAIN_MB for a WO2 PSP clip, 0 for any other id."""
-    gains = [0] * _bank_ids(sources)
-    for voice, source in sources.items():
-        gains[voice] = PSP_DIALOGUE_GAIN_MB if source == "wo2-psp" else 0
+def voice_gains(clips: Iterable[int], raised: Collection[int]) -> bytes:
+    """voice/Gains.bin for a bank of these clip ids: u32 id count, as the bank indexes, then each id's clip gain in
+    mB, s16: PSP_DIALOGUE_GAIN_MB for an id in raised, 0 for any other."""
+    gains = [0] * _bank_ids(clips)
+    for voice in raised:
+        gains[voice] = PSP_DIALOGUE_GAIN_MB
     return struct.pack(f"<I{len(gains)}h", len(gains), *gains)
 
 

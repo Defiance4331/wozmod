@@ -689,7 +689,7 @@ def build_text_stage(stock: Path, donors: Path, out: Path) -> Path:
     maps = {donor: {i: r for i, r in mapping.items() if i in wanted} for donor, mapping in world.maps.items()}
     wo1, wo2 = world.folders.folder("wo1-x360"), world.folders.folder("wo2-x360")
     psp = world.folders.folder("wo2-psp") / "PSP_GAME/USRDIR/sound/voice_na.bns"
-    clips, _ = english_voice_clips(
+    clips, *_ = english_voice_clips(
         maps["wo1-x360"], (wo1 / "linkdata_ans.idx").read_bytes(), wo1 / "link_vodat.bdx",
         maps["wo2-x360"], (wo2 / "linkdata_ans.idx").read_bytes(), wo2 / "link_vodat.bdx",
         game_files.voices(stock), psp=(maps["wo2-psp"], psp))
