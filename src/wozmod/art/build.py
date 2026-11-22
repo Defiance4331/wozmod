@@ -759,7 +759,7 @@ def build_art(game: Path, wo1_x360: Path | None, wo2: Path | None, text_donors: 
     mapping = words.load(MAPPING)
     edits: dict[int, list[dict]] = {}
     for edit in mapping["textures"]:  
-        for ordinal, step in expanded(resolved(edit, mapping.get("logos", {}))):
+        for ordinal, step in expanded(resolved(edit, mapping["logos"], mapping["logo_sets"])):
             edits.setdefault(ordinal, []).append(step)
     stages = mapping["stage_names"]
     for strips in stages["strips"]:

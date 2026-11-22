@@ -7,9 +7,14 @@ an entry may name another, so each donor logo's crop is written once.
 
 The logo goes where its screen's layout puts it, not where the Japanese logo's own shape put it (menu-lettering ledger
 row 40). A logo in a slot (a row, card or frame) states `slot` [x0, y0, x1, y1]: it is as large as the slot holds and
-centred on it. Logos shown together as a set state `line` [x, y, height]: the OROCHI word, rows `orochi` [top, bottom]
-of the crop, is `height` pixels tall with its middle at `y`, and the logo is centred on `x`; the set's rows give equal
-heights and one screen line.
+centred on it. Logos that belong together name their set, `set`: the art data's `logo_sets` states once what the
+set's logos share, so they cannot drift apart, and each member takes those keys over its own (the scenario badges
+share a `slot` and a `glow`). A set may give `line` [y, height] in layout px (the stock 1280x720 menu units; 1.5
+screen px at 1080p): its logos are shown side by side and share that OROCHI line. Each such logo states `x`, its centre
+in layout px, and `window` [x, y, width, height], the layout rect the game draws its texture through: texels from
+(0, 0), one per layout px (story select 0x59D640 and the Free Mode story list 0x589EE0 push the same rects). So the
+OROCHI word, rows `orochi` [top, bottom] of the crop, is `height` texels tall with its middle on the set's line, and
+the logo, glow included, must lie inside the window's texels or the game cuts it off.
 
 `under` draws the logo over a flattened stock picture instead of an empty texture. The stock Japanese logo's own layer
 (`footprint`, a stock texture) marks what to lift out of the picture: that footprint is cleared, then covered by the
@@ -27,13 +32,20 @@ from .faces import source_image, stock_image
 from .imaging import glow, glowed, rgba
 
 
-def resolved(edit: dict, recipes: dict) -> dict:
-    """`edit` with its logo recipe's named entry merged under the row's own keys."""
+def resolved(edit: dict, recipes: dict, sets: dict) -> dict:
+    """`edit` with its logo recipe's named entry merged under the row's own keys, and a set logo's line in its own
+    texels and the rest of its set's shared keys over its own."""
     spec = edit.get("logo")
     if not spec or "recipe" not in spec:
         return edit
     while "recipe" in spec:
         spec = recipes[spec["recipe"]] | {k: v for k, v in spec.items() if k != "recipe"}
+    if "set" in spec:
+        shared = sets[spec["set"]]
+        spec = spec | {k: v for k, v in shared.items() if k != "line"}
+        if "line" in shared:
+            (middle, height), (x, y, width, rows) = shared["line"], spec["window"]
+            spec |= {"line": [spec["x"] - x, middle - y, height], "shown": [width, rows]}
     return edit | {"logo": spec}
 
 
@@ -65,6 +77,9 @@ def drawn(source: Image.Image, spec: dict, size: tuple[int, int], scale: float =
     if "glow" in spec:
         radius, strength, colour = spec["glow"]
         canvas = glowed(canvas, radius * scale, strength, tuple(colour))
+    box = canvas.getchannel("A").getbbox()
+    if "shown" in spec and box and (min(box[:2]) == 0 or box[2] >= spec["shown"][0] or box[3] >= spec["shown"][1]):
+        raise ValueError(f"a logo with ink at {box} meets an edge of the {spec['shown']} texels the game draws")
     return canvas
 
 
