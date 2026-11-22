@@ -68,8 +68,8 @@ HOOKS = [
 # indexes by them.
 HEADROOM = [
     (0x67A004, "50 8b423c 51", 140, "eax"),      # an effect buffer's SetVolume at 0x67A009 (0x679FD0)
-    (0x677EB1, "52 50 8b413c", 141, "edx"),      # a stream's SetVolume at 0x677EB6 (0x677E90): music, dialogue
-    (0x678F3D, "8b523c 51 50", 142, "ecx"),      # a stream's first SetVolume at 0x678F42 (0x678BA0)
+    (0x677EB1, "52 50 8b413c", 141, "edx"),      # a stream's SetVolume at 0x677EB6 (0x677E90): music, dialogue; esi its player
+    (0x678F3D, "8b523c 51 50", 142, "ecx"),      # a stream's first SetVolume at 0x678F42 (0x678BA0); esi its player
     (0x5E9D23, "50 ffd2 8d4c2440", 143, "ret"),  # a movie's put_Volume at 0x5E9D24, at its open (0x5E9A90)
     (0x5E9F7C, "8b511c 56 50", 144, "esi"),      # a movie's put_Volume at 0x5E9F81, at its level (0x5E9E90)
 ]
@@ -109,6 +109,7 @@ ALWAYS_HOOKS = [
     (0x4A1710, "8b442404 f60010", 71, None),    # lip block handed to a slot (cdecl: state, slot, block)
     (0x5D7BF0, "8b542404 83fa01 56", 109, None),  # voice play (thiscall): kept while its clip waits to load
     (0x5D8590, "83ec44 53 55 56 57", 110, None),  # voice frame (thiscall): a kept play made after its load
+    (0x5D872A, "8bcb b801000000", 161, None),     # voice frame: buffer ebx goes to its stream (sound_headroom.h)
     (0x513720, "51 6a00 e8b8630c00", 135, 0),     # voice start (cdecl): waits for a busy reader; always replaced
     (0x5D82A0, "8b0d0404e000", 136, None),       # voice stop: what waits to play is dropped
     (0x5D5990, "8b442404 83f87d", 38, 4),       # SE bank header offset (thiscall): English attack voices

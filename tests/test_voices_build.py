@@ -75,6 +75,8 @@ def test_builder_reads_extracted_donor_folders_and_writes_both_sparse_banks_unde
     struct.pack_into("<II", table, 4 + 8 * (0xAF3 + 241), len(table), len(take))
     assert {p.relative_to(output).as_posix(): p.read_bytes() for p in output.rglob("*") if p.is_file()} == {
         "voice/Voice.bin": bytes(table) + take,
+        "voice/Gains.bin": struct.pack("<I", 22665) + b"".join(  # the Z Dream take: the PSP's
+            struct.pack("<h", 270 if voice == 0xAF3 + 241 else 0) for voice in range(22665)),
         "voice/Slots.bin": struct.pack("<I", 0),  # no two lines share a voice id here
         "voice/SE.bin": struct.pack("<I", 122) + bytes(1964),
         "voice/Lips.bin": struct.pack("<I", 22665) + bytes(8 * 22665),

@@ -9,7 +9,7 @@ from wozmod import game_files
 from wozmod.donors import WO1_X360, WO2_PSP, WO2_X360, DonorsFolder
 from wozmod.formats.audio import (
     WO1_EVENT_VOICES, WO2_EVENT_VOICES, BankClips, VoiceBankError, decoded_clips, english_se_bank, english_voice_bank,
-    english_voice_clips, parse_kovs_record,
+    english_voice_clips, parse_kovs_record, voice_gains,
 )
 from wozmod.formats.linkdata import LINKDATA2_FIRST, archive, decoded_member, ps2_members
 from wozmod.formats.scripts import Script, guarded, parse_script
@@ -126,7 +126,7 @@ def said(clips: dict[int, bytes], sources: dict[int, str], donor_events: dict, s
 
 def build_voice_banks(stock: Path, donors: Path, speech: Path, separator: Path, output_dir: Path,
                       jobs: int | None = None) -> None:
-    """Write voice/Voice.bin, voice/Slots.bin, voice/Lips.bin and voice/SE.bin, the English Dream movies in
+    """Write voice/Voice.bin, voice/Gains.bin, voice/Slots.bin, voice/Lips.bin and voice/SE.bin, the English Dream movies in
     movie/voice, and the retimed event files and guarded stage scripts (guarded_stages) in captions/voice, below the
     supplied mod folder; speech is the PocketSphinx model folder (phones.MODEL) the generated
     mouths' phones come from, separator the model folder (separation.MODEL) that takes the Z Dream scenes' English
@@ -156,6 +156,7 @@ def build_voice_banks(stock: Path, donors: Path, speech: Path, separator: Path, 
     destination.mkdir(parents=True, exist_ok=True)
     with open(destination / "Voice.bin", "wb") as out:
         english_voice_bank(clips, out)
+    (destination / "Gains.bin").write_bytes(voice_gains(sources))
     # The bank written, its clips are read back from it as needed: what follows reads the event lines' clips, and
     # holding all of them (about 1 GB) to the end set the step's peak.
     with BankClips(destination / "Voice.bin") as clips:

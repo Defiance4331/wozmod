@@ -1,5 +1,5 @@
 """The DLL's checks of the files the installer wrote, run before it patches anything (runtime/startup_files.h): the
-install record, table.bin, Slots.bin and the pad prompt packages, read as the Python side writes them."""
+install record, table.bin, Slots.bin, Gains.bin and the pad prompt packages, read as the Python side writes them."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import struct
 
 import pytest
 
+from wozmod.formats.audio import PSP_DIALOGUE_GAIN_MB, voice_gains
 from wozmod.install import _write_manifest
 from wozmod.runtime.text_table import table_blob
 from wozmod.voices.maps import VoiceSlot, slot_table
@@ -31,6 +32,8 @@ int record_names(const char *json, char *out, unsigned size)
 }
 int table(const unsigned *t, unsigned size) { return table_ok(t, size); }
 int slots(const unsigned char *d, unsigned size) { return slots_ok(d, size); }
+int gains(const unsigned char *d, unsigned size) { return gains_ok(d, size); }
+int gain(const unsigned char *d, unsigned id) { return clip_gain(d, id); }
 int package(const unsigned char *d, unsigned size, const unsigned char *slots, unsigned n)
 {
     return package_items_ok(d, size, slots, n);
@@ -44,6 +47,8 @@ def files(c_library):
     lib.record_names.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
     lib.table.argtypes = [ctypes.c_char_p, ctypes.c_uint]
     lib.slots.argtypes = [ctypes.c_char_p, ctypes.c_uint]
+    lib.gains.argtypes = [ctypes.c_char_p, ctypes.c_uint]
+    lib.gain.argtypes = [ctypes.c_char_p, ctypes.c_uint]
     lib.package.argtypes = [ctypes.c_char_p, ctypes.c_uint, ctypes.c_char_p, ctypes.c_uint]
     return lib
 
@@ -115,6 +120,17 @@ def test_the_dll_takes_the_slots_the_build_writes_and_refuses_them_cut_short(fil
     for blob in (slot_table({}), rows):
         assert files.slots(blob, len(blob)) == 1
     assert [files.slots(rows[:n], n) for n in (0, 3, len(rows) - 8, len(rows) - 1)] == [0, 0, 0, 0]
+
+
+def test_the_dll_reads_each_clips_gain_as_the_build_writes_it(files):
+    """Bug: a WO2 PSP clip that misses its gain, or another clip that gets it (an id off by one, the wrong byte order,
+    the donor misread); the DLL refusing the Gains.bin the build writes, or taking one cut short."""
+    sources = {0: "wo2-x360", 1: "wo2-psp", 2: "wo1-x360", 0x5888: "wo2-psp", 0x6001: "wo2-psp"}  # 0x6001: a slot
+    blob = voice_gains(sources)
+    ids = range(0x6003)  # past the bank's end too
+    assert {i: files.gain(blob, i) for i in ids} == {
+        i: PSP_DIALOGUE_GAIN_MB if sources.get(i) == "wo2-psp" else 0 for i in ids}
+    assert [files.gains(blob[:n], n) for n in (len(blob), 0, 3, len(blob) - 1, len(blob) - 2)] == [1, 0, 0, 0, 0]
 
 
 def _package(items: list[bytes]) -> bytes:

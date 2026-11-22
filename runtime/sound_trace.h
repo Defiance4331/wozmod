@@ -22,6 +22,9 @@
         the mean square of its samples over the whole buffer (float bits, full scale 1.0), its length in frames, and
         its WAVEFORMATEX channels | bits << 16, and its sample peak (of 32768): the clip's loudness and peak, for levels
         computed from the trace
+   vol  a stream's volume (hooks 141, 142; sound_headroom.h): hook id, the game's volume (mB), the dialogue raise (0
+        for music), the stream's player (esi), its channel index (-1 for music); and hook 161, the voice frame
+        starting a channel stream: 161, the buffer, its clip gain, the voice manager, the buffer's voice id
    snd_trace.on = 0 stops the lines. */
 
 #define SND_SLOTS 0xC0CC48u     /* 100 sound slots of 0x3C bytes: emitter, id, lifetime, started; slot n at n - 1 */
@@ -30,6 +33,16 @@
 static struct { char magic[16]; volatile u32 on, lines; } snd_trace = {"ENRT-SND-TRACE", 1};
 
 static void snd_line(const char *tag, struct frame *f, const u32 *v, u32 n);
+static void snd_volume(struct frame *f, u32 id, u32 a, long b)
+{
+    u32 v[5];
+    v[0] = id, v[1] = a, v[2] = (u32)b;
+    if (id == 161)
+        v[3] = f->edi, v[4] = f->ebx < 2 ? *(const u32 *)(f->edi + 0xC + 0x40 * f->ebx + 0x10) : ~0u;
+    else
+        v[3] = f->esi, v[4] = (u32)ksl_channel_index(dialogue.base, dialogue.count, f->esi);
+    snd_line("vol", f, v, 5);
+}
 #define SND_EVERY 6u
 #define SND_V(r, off) (*(u32 *)((u8 *)(r) + (off)))
 #define SND_COM(obj, slot) ((*(void ***)(obj))[(slot) / 4])

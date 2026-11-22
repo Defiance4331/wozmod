@@ -183,13 +183,14 @@ def test_the_release_program_starts_a_worker(tmp_path, monkeypatch):
 
 
 def _crash(out: Path) -> None:
+    (out / "died").write_text(repr(time.time()), encoding="utf-8")  # when it died, for the parent to time from
     os._exit(9)  # as when the system kills the worker for memory
 
 
 def test_a_worker_that_dies_is_reported_at_once(tmp_path, monkeypatch):
-    # Bug: the parent waits for an end message from a worker that has already died, so the install hangs.
+    # Bug: the parent waits for an end message from a worker that has already died, so the install hangs. Timed from
+    # the death, not the start: starting a worker under Wine on a busy machine took 14 s alone.
     _fake(monkeypatch, _crash, "art")
-    started = time.monotonic()
     with pytest.raises(RuntimeError, match="art step's worker ended without finishing"):
         steps.run({"art": {"out": tmp_path}}, Progress(), None)
-    assert time.monotonic() - started < 10
+    assert time.time() - float((tmp_path / "died").read_text(encoding="utf-8")) < 10

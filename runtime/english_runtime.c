@@ -2182,10 +2182,14 @@ static HANDLE open_bank(const WCHAR *file, u32 max, u32 words, u32 **table, u32 
 #define SLOTS_BANK L"voice\\Slots.bin"
 static u8 *slots;  /* voice_slots.h */
 static u32 slots_size;
+#define GAINS_BANK L"voice\\Gains.bin"
+static u8 *gains;  /* each Voice.bin clip's own gain (startup_files.h, sound_headroom.h) */
+static u32 gains_size;
+static struct dialogue_level dialogue;  /* sound_headroom.h */
 static u8 *lips;
 static u32 lips_size;
 
-/* At start, before anything is patched: the three voice banks and Slots.bin, each there and whole. 0 after a refusal
+/* At start, before anything is patched: the three voice banks, Slots.bin and Gains.bin, each there and whole. 0 after a refusal
    line each. */
 static int open_voices(void)
 {
@@ -2201,6 +2205,9 @@ static int open_voices(void)
         ok = 0, note("refused: wozmod\\voice\\Slots.bin is missing or damaged", slots_size);
     else
         note("Slots.bin bytes:", slots_size);
+    gains = load(path(name, GAINS_BANK), &gains_size);
+    if (!gains_ok(gains, gains_size))
+        ok = 0, note("refused: wozmod\\voice\\Gains.bin is missing or damaged", gains_size);
     lips = load(path(name, LIPS_BANK), &lips_size);
     if (!lips_ok(lips, lips_size))
         ok = 0, note("refused: wozmod\\voice\\Lips.bin is missing or damaged", lips_size);
@@ -5180,9 +5187,23 @@ static int always(u32 id, struct frame *f, u32 *replace)
     case 141:
     case 142:
     case 143:
-    case 144: {  /* a volume the player hears, just before the game sets it (sound_headroom.h) */
+    case 144: {  /* a volume the player hears, just before the game sets it; a stream's player in esi (sound_headroom.h) */
         u32 *volume = (u32 *)f + headroom_word[id - HEADROOM_FIRST];
-        *volume = (u32)headroom_trim((long)*volume);
+        long raise = id == 141 || id == 142 ? dialogue_raise(&dialogue, f->esi) : 0;
+#ifdef ENRT_TEST
+        if (id == 141 || id == 142)
+            snd_volume(f, id, *volume, raise);
+#endif
+        *volume = (u32)headroom_trim((long)*volume, raise);
+        return 1;
+    }
+    case 161: {  /* the voice frame starts buffer ebx on its channel stream (edi the voice manager; sound_headroom.h) */
+        const u8 *channels = *(const u8 *const *)(*(const u8 *const *)(f->edi + 4) + 0xC);
+        dialogue_start(&dialogue, *(const u32 *)(channels + KSL_CHANNELS_ARRAY), *(const u32 *)(channels + KSL_CHANNELS_COUNT),
+                       f->ebx);
+#ifdef ENRT_TEST
+        snd_volume(f, id, f->ebx, dialogue.playing[f->ebx & 1]);
+#endif
         return 1;
     }
     case 150:
@@ -5434,7 +5455,10 @@ static int always(u32 id, struct frame *f, u32 *replace)
     case 36:
     case 37:  /* the load asks for the offset (36), then the size (37): the speak's line names its own load only */
         slot = voice_slot(slots, slots_size, spoken_stage, spoken_line, f->arg[1]);
-        if ((voice = english_voice(slot)))
+        voice = english_voice(slot);
+        if (id == 36)  /* the load (0x5D8160, its only caller) holds the buffer it loads in edi */
+            dialogue_load(&dialogue, VOICE_MANAGER, f->edi, voice ? clip_gain(gains, slot) : 0);
+        if (voice)
             f->eax = id == 36 ? VOICE_TAG | voice[0] : voice[1], *replace = 1;
         else if (id == 36 && !VOICES_JAPANESE && voice_bank != INVALID_HANDLE_VALUE && f->arg[1] < 0x10000
                  && !(japanese_noted[f->arg[1] >> 5] & 1u << (f->arg[1] & 31))) {

@@ -144,7 +144,8 @@ FEATURES = (
     Feature("weapon_slots", "weapon texture slots", shown="weapon loading in battle",
             spans=tuple((va, 4) for va in _column("weapon_slot_sites", 0))),  # weapon_slots.h: the table's immediates
     Feature("headroom", "sound headroom", shown="game volume",
-            hooks=(140, 141, 142, 143, 144)),  # english_runtime.HEADROOM: every volume the player hears, 13 dB lower
+            hooks=(140, 141, 142, 143, 144,  # english_runtime.HEADROOM: every volume the player hears, 13 dB lower
+                   161)),  # the voice frame handing a buffer to its stream: dialogue 3 dB less so (sound_headroom.h)
     Feature("volume", "volume options", shown="volume sliders",
             hooks=tuple(range(150, 161)),  # english_runtime.VOLUME, then STAGE_DUCK_HOOKS
             edits=("SE_PRECISION",  # the SE gain at full precision, so the low steps stay apart

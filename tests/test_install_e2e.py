@@ -192,6 +192,7 @@ int record_names(const char *json, char *out, unsigned size)
 }
 int table(const unsigned *t, unsigned size) { return table_ok(t, size); }
 int lips(const unsigned char *d, unsigned size) { return lips_ok(d, size); }
+int gains(const unsigned char *d, unsigned size) { return gains_ok(d, size); }
 int package(const unsigned char *d, unsigned size, const unsigned char *slots, unsigned n)
 {
     return package_items_ok(d, size, slots, n);
@@ -212,7 +213,7 @@ int glyphs(const unsigned char *d, unsigned size)
 
 def test_the_dll_accepts_every_file_the_install_wrote(installed, c_library):
     # Bug: the DLL's checks at start (runtime/startup_files.h) refuse a file the installer writes, so wozmod turns
-    # itself off for every player: a record name it cannot read or does not find, a table, Lips.bin, glyph file,
+    # itself off for every player: a record name it cannot read or does not find, a table, Lips.bin, Gains.bin, glyph file,
     # prompt package or sharper copy it calls damaged. (hires.bin's reader has its own writer test, test_art_hires.)
     from wozmod.runtime.prompts import PROMPT_SLOTS, STICK_ITEMS
 
@@ -222,11 +223,12 @@ def test_the_dll_accepts_every_file_the_install_wrote(installed, c_library):
     count = lib.record_names((folder / "install.json").read_bytes(), out, len(out))
     names = [n.decode() for n in out.raw.split(b"\0")[:count]] if count >= 0 else []
     slots = bytes(PROMPT_SLOTS + STICK_ITEMS)
-    data = {name: (folder / name).read_bytes() for name in ("table.bin", "voice/Lips.bin", "glyphs.bin",
+    data = {name: (folder / name).read_bytes() for name in ("table.bin", "voice/Lips.bin", "voice/Gains.bin", "glyphs.bin",
                                                            *(f"prompts-{family}{kind}.bin" for family in
                                                              ("xbox", "playstation") for kind in ("", "-hires")))}
     refused = {name for name, d in data.items() if not (
         lib.table(d, len(d)) if name == "table.bin" else lib.lips(d, len(d)) if name == "voice/Lips.bin"
+        else lib.gains(d, len(d)) if name == "voice/Gains.bin"
         else lib.glyphs(d, len(d)) if name == "glyphs.bin"
         else lib.copies(d, len(d), slots[0]) if "hires" in name
         else lib.package(d, len(d), slots, len(slots)))}

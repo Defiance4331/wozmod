@@ -669,7 +669,7 @@ def english_voice_bank(clips: dict[int, bytes], out: BinaryIO) -> None:
     """Write an indexed bank of validated mono 48 kHz clips to out: every stock voice id, then any voice slot past
     them (wozmod.voices.maps.voice_slots). Every clip is checked before anything is written, and the clips are written
     as they are, so the bank (about 1 GB) never sits in memory beside them."""
-    ids = max(MOZ_VOICE_IDS, max(clips, default=0) + 1)
+    ids = _bank_ids(clips)
     table = bytearray(_aligned_size(4 + 8 * ids))
     struct.pack_into("<I", table, 0, ids)
     at = len(table)
@@ -686,6 +686,28 @@ def english_voice_bank(clips: dict[int, bytes], out: BinaryIO) -> None:
     for _, data in sorted(clips.items()):
         out.write(data)
         out.write(bytes(_aligned_size(len(data)) - len(data)))
+
+
+def _bank_ids(clips: Iterable[int]) -> int:
+    """How many voice ids a bank of these clips indexes: every stock id, then any slot past them."""
+    return max(MOZ_VOICE_IDS, max(clips, default=0) + 1)
+
+
+# The WO2 PSP's dialogue lines play this much louder, in mB, one gain for the whole disc (text ledger row 53), on top
+# of the raise of all dialogue: the runtime applies it on the dialogue stream (runtime/sound_headroom.h), not in the
+# clip, where 784 of the 876 PSP clips would pass full scale. Basis (work/handbacks/psp-dialogue-gain.md): one PSP
+# channel measures -15.2 LUFS pooled, against -12.5 for the Xbox 360 English and -12.6 for the stock Japanese of the
+# same ids; the donors' own playback gains and music masters give +2.6 dB (sigma 1.1).
+PSP_DIALOGUE_GAIN_MB = 270
+
+
+def voice_gains(sources: Mapping[int, str]) -> bytes:
+    """voice/Gains.bin for the bank of these clips by their source (english_voice_clips): u32 id count, as the bank
+    indexes, then each id's clip gain in mB, s16: PSP_DIALOGUE_GAIN_MB for a WO2 PSP clip, 0 for any other id."""
+    gains = [0] * _bank_ids(sources)
+    for voice, source in sources.items():
+        gains[voice] = PSP_DIALOGUE_GAIN_MB if source == "wo2-psp" else 0
+    return struct.pack(f"<I{len(gains)}h", len(gains), *gains)
 
 
 class BankClips(Mapping[int, bytes]):

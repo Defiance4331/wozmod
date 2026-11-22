@@ -1,5 +1,5 @@
 /* Files the DLL checks at start, before it patches anything (wozmod is all or nothing): table.bin, the install record,
- * Lips.bin, Slots.bin and the pad prompt packages. Pure, so a native test reads the files the Python side writes. */
+ * Lips.bin, Slots.bin, Gains.bin and the pad prompt packages. Pure, so a native test reads the files the Python side writes. */
 #ifndef WOZMOD_STARTUP_FILES_H
 #define WOZMOD_STARTUP_FILES_H
 
@@ -102,6 +102,19 @@ static inline int lips_ok(const unsigned char *data, unsigned size)
 static inline int slots_ok(const unsigned char *data, unsigned size)
 {
     return data && size >= 4 && !((size - 4) % 8) && startup_u32(data) == (size - 4) / 8;
+}
+
+/* voice/Gains.bin (wozmod.formats.audio.voice_gains): u32 id count, then each Voice.bin id's clip gain, s16 mB: 1 when
+ * the gains fill it. */
+static inline int gains_ok(const unsigned char *data, unsigned size)
+{
+    return data && size >= 4 && !((size - 4) % 2) && startup_u32(data) == (size - 4) / 2;
+}
+
+/* The clip gain of Voice.bin id in a Gains.bin gains_ok took, 0 past its end. */
+static inline int clip_gain(const unsigned char *data, unsigned id)
+{
+    return id < startup_u32(data) ? (short)(data[4 + 2 * id] | data[5 + 2 * id] << 8) : 0;
 }
 
 /* prompts-<family>.bin (wozmod.art.build.pad_prompts): entry 4079's texture package: u32 magic 0x33B59, item count,
