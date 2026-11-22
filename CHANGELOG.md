@@ -6,11 +6,6 @@ All notable changes to wozmod are listed here, newest first. The format follows
 
 ## [Unreleased]
 
-### Fixed
-
-- Music and sound effects no longer stay quieter after you fall, or fell the enemy commander, while a battle line
-  is speaking. Before, they stayed lowered through the menus and into the next battle.
-
 ## [0.3.0] - 2026-11-22
 
 ### Added
@@ -109,6 +104,8 @@ All notable changes to wozmod are listed here, newest first. The format follows
 - Speed: battles slowed down, sometimes to a few frames a second, on AMD graphics cards with Resizable BAR on
   ([#2](https://github.com/Defiance4331/wozmod/issues/2)), and battle effects no longer wait on the graphics card
   each frame.
+- Music and sound effects no longer stay quieter after you fall, or fell the enemy commander, while a battle line
+  is speaking. Before, they stayed lowered through the menus and into the next battle.
 
 ## [0.2.1] - 2026-10-30
 
