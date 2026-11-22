@@ -6,57 +6,34 @@ All notable changes to wozmod are listed here, newest first. The format follows
 
 ## [Unreleased]
 
-### Fixed
-
-- A battle notice's bar is as tall as that notice's own text. After a notice that wrapped to two rows, every notice
-  that followed while the notice bar was still up kept the two-row bar, with its one row floating in the middle.
-
 ## [0.3.0] - 2026-11-22
 
 ### Added
 
-- In English voice mode, the twelve Dream stage cutscenes of Musou Orochi Z speak English, taken from Warriors
-  Orochi 2 for PSP, with mouths that move to the English words. The installer lifts the English voice out of the PSP
-  soundtrack, so no Japanese voice plays underneath it. Each line takes the English take Warriors Orochi 2 plays at
-  the same moment, so stage 48's messenger plays the success or failure take that matches how it went. Where an
-  English scene does not fit your team, or no English take fits a line, the stage keeps Musou Orochi Z's own
-  Japanese line with our subtitle, and the Japanese voice mode plays every stock scene.
-- The two Dream Mode movies play the English voices of Warriors Orochi 2 for PSP over the PC's own high-resolution
-  picture and music.
-- 28 more battle quotes speak English: each reuses the words of another quote and now plays that quote's English
-  take. A line keeps its Japanese voice only when Musou Orochi Z added it, and `wozmod/runtime.log` names each such
-  line as it plays.
-- Story select, the Free Mode story list and the scenario screens show the official English Warriors Orochi and
-  Warriors Orochi 2 logos from the Xbox 360 discs, and the English Warriors Orochi logo sits over the Z on the title
-  screen, the loading screen and the attract demo.
-- Each download includes the licence texts of the third-party code it carries, in `licenses/`.
+- The twelve Dream stage cutscenes are voiced in English, taken from Warriors Orochi 2 for PSP, with mouths that
+  move to the English words.
+- Some Dream Mode stages play different lines depending on the officers you take. Lines that only Musou Orochi Z
+  wrote, for teams Warriors Orochi 2 never used, have no English recording, so they play in Japanese with English
+  subtitles. Take the recommended officers to hear the stage in English.
+- The two Dream Mode movies are voiced in English.
+- 28 more battle quotes are voiced in English.
+- The menus show the official English Warriors Orochi and Warriors Orochi 2 logos, and the title and loading
+  screens show the English Warriors Orochi logo.
 
 ### Changed
 
-- Big fights no longer crackle, and the game plays at the loudness of other current PC games, which is quieter than
-  before. Large battles added up to as much as 12 dB past what the sound output can carry; the game now mixes with
-  room to spare and brings the finished sound back up without letting it clip. Voices over loud scenes, such as
-  Taigong Wang's lines during the falling rocks at Odani Castle, are clean now. Music and sound effects keep their
-  balance.
-- Characters' lines during a battle are easier to hear over the fighting. While one speaks, music and battle sounds
-  drop about 4 dB further than before, by the same amount whatever your sliders are set to, and they come back when
-  the line ends. A line with no recorded voice no longer quiets the battle.
-- Spoken lines play 3 dB louder against the music and sound effects, which stay where they were: battle lines, camp
-  talk, event scenes and narration, in both voice modes. Lines taken from Warriors Orochi 2 for PSP play a further
-  2.7 dB louder, so they sit level with the Xbox 360 lines around them; the game raises them as it plays them, so the
-  installed clips stay as clean as before. Attack shouts and movies keep their level.
-- The BGM, SE and Voice sliders lower their sound by the same 3 dB a step, from full at 15 to silent at 0. Before,
-  their top half barely changed anything and the bottom fell off a cliff. A slider you had lowered now sounds quieter
-  than before; at full volume nothing changes.
-- Enemy and object sounds keep playing past their maximum distance, as they did on Windows XP, and nearby enemy hits,
-  grunts and cries stand out of a big fight. ([#11](https://github.com/Defiance4331/wozmod/issues/11))
-- The download carries the voice separation model for the Dream cutscenes, about 131 MB, and on Windows the Visual
-  C++ runtime files it needs. A small ffmpeg built for wozmod and leaner packing save most of that back: the Windows
-  download is 166 MB instead of 133 MB, and the Linux one 177 MB instead of 161 MB. It still holds everything the
-  install needs, so an install downloads nothing.
-- Installing uses about half the memory it did, so machines with 8 to 16 GB run more workers at once and install
-  faster; an 8 GB machine still keeps 2 GB free for you. Lifting out the Dream voices adds under a minute on a
-  graphics card with a Vulkan driver, or about 7 minutes on the processor, and the install log says which it used.
+- Big battles no longer crackle or distort. With many enemies fighting at once, the sound used to get louder than
+  your speakers could play, so it clipped. The game now leaves room for loud moments, which makes it a little
+  quieter overall, about as loud as other PC games.
+- Spoken lines are louder against the music and sound effects, and the battle sounds dip a little more while a
+  character speaks.
+- The BGM, SE and Voice sliders change the volume evenly at every step. A slider you had lowered now sounds quieter
+  than before.
+- Nearby enemy hits, grunts and cries are easier to hear in big fights.
+  ([#11](https://github.com/Defiance4331/wozmod/issues/11))
+- The installer uses about half as much memory, so computers with 8 to 16 GB install faster.
+- The installer now prepares the English Dream voices: under a minute with a graphics card, or about 7 minutes
+  without one.
 
 ### Fixed
 
@@ -64,57 +41,29 @@ All notable changes to wozmod are listed here, newest first. The format follows
   - when two players start Orochi X's Dream battle with some teams
     ([#18](https://github.com/Defiance4331/wozmod/issues/18));
   - when switching characters during a Musou above 60 FPS;
-  - when a squad's path started outside the map's walkable area;
-  - at the opening logos while XSplit captured the game.
-- High frame rates:
-  - standing in a burning area drained health faster the higher the frame rate, four times as fast at 240 FPS
+  - a rare crash when a group of soldiers set off from outside the map;
+  - at the opening logos while XSplit was capturing the game.
+- Above 60 FPS:
+  - burning ground drained health faster the higher the frame rate
     ([#20](https://github.com/Defiance4331/wozmod/issues/20));
-  - the True Musou close-up and the team cut-ins lost their burning backdrop above 60 FPS
+  - the True Musou close-up and team cut-ins lost their fiery backdrop
     ([#12](https://github.com/Defiance4331/wozmod/issues/12));
-  - the first True Musou shout came late, or early after a short stutter, and ran into the second.
-- Voices:
-  - a cutscene could play with no voice at all when a line started while the game was still reading from disk, as in
-    the Orochi story's He Fei scene with Gan Ning and Zhang Liao; if a line ever has to wait, `wozmod/runtime.log`
-    says so ([#26](https://github.com/Defiance4331/wozmod/issues/26));
-  - about 860 English lines taken from Warriors Orochi 2 for PSP played 3 dB too loud and crackled; they now play at
-    their original level, and no longer start about a tenth of a second after their subtitles;
-  - each English attack shout now plays at the volume its own game gave it. Before, it kept the volume set for the
-    Japanese shout it replaced, so some officers shouted well above the rest: Dodomeki's shouts are now 3 dB quieter
-    and Wei Yan's 2 dB. Other officers' shouts move by up to about 3.5 dB either way, to the balance their own game
-    gave them.
-- Mouths:
-  - in event scenes, mouths move with the voice as it plays. They used to start a little before the voice, and after
-    any slow frame they stayed behind it for the rest of the line;
-  - the 45 English cutscene lines that no disc times mouths for, such as two lines of the He Fei scene in the Orochi
-    story, now move the speaker's mouth with the English words. The installer learns which mouth shape goes with
-    which sound from the lines the Xbox 360 discs do time, so the mouth opens, rounds or spreads with the vowel,
-    changes shape where the sound does, holds each shape about as long as Koei's animators do instead of twitching
-    within a syllable, and keeps the speaker's expression. It also lines each clip up with the words of its
-    subtitle, sound by sound, so the mouth takes the shape Koei's animators gave that sound: on lines they did
-    animate, the made mouth now picks their shape on about half of the frames, where it picked it on two in five.
+  - the first True Musou shout came at the wrong moment.
+- Sound:
+  - some cutscenes played with no voice, such as the He Fei scene in the Orochi story
+    ([#26](https://github.com/Defiance4331/wozmod/issues/26));
+  - English lines taken from Warriors Orochi 2 for PSP crackled and started slightly after their subtitles;
+  - some English attack shouts were much louder than others;
+  - music and sound effects stayed quiet after you fell, or defeated the enemy commander, while someone was speaking.
+- Mouths in cutscenes keep time with the voice, and English lines that had no mouth timing now move with the words.
 - Text:
-  - an officer's strategy line in battle now sits on a strip that runs the full width of the screen, as in Warriors
-    Orochi 2 on Xbox 360, so long English lines no longer run off its end and fade into the battlefield. The line
-    also uses that width: all but one now read on a single row instead of leaving a word or two on a second, and it
-    sits centred on the strip, whether it takes one row or two;
-  - text no longer runs past the edges of the screen or gets squeezed to fit its box. Battle notices and movie
-    captions stay inside the screen's safe area, and take a second row only when they are too long for it. Then the
-    two rows are about the same length and each is centred, and a battle notice's bar grows to hold both instead of
-    leaving the second row on its faded edge. Battle dialogue rows have a little space between them, as notices and
-    subtitles do. Battle dialogue, the weapon info boxes and Story Z narration use the full width of their box.
-    Upgrade skill descriptions, battle history, conditions and pre-battle panels wrap at their box instead of being
-    squeezed narrower;
-  - with a controller, the X button (Square on a PlayStation pad) no longer leaves a wide gap before its word in
-    on-screen prompts, such as Random on the officer select screen. It now sits as close as every other button.
-- The game would not start after a Windows reinstall or for another Windows account, because the installer locked
-  its files to the account that ran it. Installed files now take the game folder's permissions, as stock files do,
-  and an install or uninstall fixes files placed by 0.2.1 and earlier; if your account may not change them, the
-  installer says to run it once as administrator.
-- Speed: battles slowed down, sometimes to a few frames a second, on AMD graphics cards with Resizable BAR on
-  ([#2](https://github.com/Defiance4331/wozmod/issues/2)), and battle effects no longer wait on the graphics card
-  each frame.
-- Music and sound effects no longer stay quieter after you fall, or fell the enemy commander, while a battle line
-  is speaking. Before, they stayed lowered through the menus and into the next battle.
+  - long strategy lines in battle ran off the end of their strip;
+  - some text ran off the screen or was squeezed to fit its box;
+  - the X (Square) button prompt had a wide gap before its word.
+- The game would not start after a Windows reinstall or under another Windows account. If the installer can't fix
+  the files itself, it asks you to run it once as administrator.
+- Battles slowed down badly on AMD graphics cards with Resizable BAR on
+  ([#2](https://github.com/Defiance4331/wozmod/issues/2)).
 
 ## [0.2.1] - 2026-10-30
 
