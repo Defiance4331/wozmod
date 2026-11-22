@@ -1,9 +1,9 @@
 {
-  "why": "The Windows CPython and maturin that packaging/build_windows.sh builds the release with and tools/windows_suite.py tests with. Keep the Python equal to the CPython uv uses (.python-version).",
+  "why": "The Windows CPython and maturin that packaging/build_windows.sh builds the release with and tools/windows_suite.py tests with. The Python version is .python-version (the CPython uv uses for the Linux build and dev checkouts); tests/test_pins.py holds the two equal.",
   "python": {
-    "version": "3.14.8",
-    "url": "https://www.python.org/ftp/python/3.14.8/python-3.14.8-amd64.exe",
-    "sha256": "759be887b96e736a3ca886daf8d575f18fcae1a09efab6902f42d59e8999f8ef"
+    "version": "3.14.10",
+    "url": "https://www.python.org/ftp/python/3.14.10/python-3.14.10-amd64.exe",
+    "sha256": "92480239264744fe0386a1bd8275786fefa126e3129e56a68e22b52c73329965"
   },
   "maturin": "1.15.0",
   "test_ffmpeg": {

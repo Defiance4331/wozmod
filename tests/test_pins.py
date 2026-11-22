@@ -76,3 +76,14 @@ def test_packaging_takes_the_proven_ffmpeg_and_never_builds_one(tmp_path, monkey
 
     monkeypatch.setattr(subprocess, "run", no_build)
     assert build.prepare_ffmpeg() == assets / "ffmpeg-x-linux"
+
+
+def test_the_linux_and_windows_builds_use_one_python_version():
+    """Bug: someone bumps the Python of one release build (.python-version, which uv installs for Linux, or the Windows
+    installer in windows-build.json, or the licences taken for the Linux build) and not the others, so the two zips
+    ship different CPython versions."""
+    wanted = (REPO / ".python-version").read_text(encoding="utf-8").strip()
+    windows = json.loads((REPO / "packaging/windows-build.json").read_text(encoding="utf-8"))["python"]
+    linux = json.loads((REPO / "packaging/python/linux/licences.json").read_text(encoding="utf-8"))["python"]
+    assert (windows["version"], linux) == (wanted, wanted)
+    assert f"/python/{wanted}/python-{wanted}-amd64.exe" in windows["url"]
