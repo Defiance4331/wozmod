@@ -263,8 +263,9 @@ FontForge, Cairo and NumPy, and the proven ffmpeg lives in `work/release-assets/
    `d3d9.dll` and `lettering.zip` in `work/release-assets/` and writes their pins in `packaging/pins.json`, which
    the release commit carries.
 2. `uv run python packaging/build.py --assets work/release-assets --speech <speech model folder> --separator
-   work/release-assets/dream-voice` builds the Linux zip, and `packaging/build_windows.sh work/release-assets` the
-   Windows one (below). Both go to `build/packaging/`, each with the licence notices of the third-party code in it
+   work/release-assets/dream-voice` builds the Linux zip, and `packaging/build_windows.sh --assets
+   work/release-assets --speech <speech model folder> --separator work/release-assets/dream-voice` the Windows one
+   (below). Both go to `build/packaging/`, each with the licence notices of the third-party code in it
    in `licenses/` (`packaging/notices.py`, which says what to do when it stops the build on a new Python). The Dream
    voice separator's folder is made once, and again only when its pins change:
    `python packaging/separator_runtime.py` fetches ONNX Runtime as `packaging/pins.json` pins it,
@@ -284,7 +285,8 @@ Publishing the draft then closes each issue that a commit since the previous rel
 
 ### Build the Windows zip on Linux
 
-`packaging/build_windows.sh <folder with d3d9.dll and lettering.zip>` builds
+`packaging/build_windows.sh --assets <folder with d3d9.dll and lettering.zip> --speech <speech model folder>
+--separator <Dream voice separator folder>` (the same inputs as `packaging/build.py`) builds
 the Windows zip on Linux, under Wine, with no GitHub workflow. It built the
 published v0.1.0 Windows zip. The header of the script lists what it needs
 (Wine, uv, rustup, curl and MinGW).

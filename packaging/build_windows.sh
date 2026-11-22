@@ -1,13 +1,14 @@
 #!/bin/bash
 # Build wozmod-<version>-windows.zip on Linux: the Windows program runs under Wine, with no GitHub Actions.
 #
-#   packaging/build_windows.sh ASSETS_DIR
+#   packaging/build_windows.sh --assets DIR --speech SPEECH --separator SEPARATOR
 #
-# ASSETS_DIR holds the release d3d9.dll and lettering.zip (as for packaging/build.py --assets).
+# The same three inputs as packaging/build.py, and all three folders must exist: the script checks them before it
+# touches anything. DIR holds the release d3d9.dll and lettering.zip. SPEECH is the speech model folder
+# (voices/phones.py MODEL), which the zip carries and the Windows phones are checked with. SEPARATOR is the Dream
+# voice separator's folder (voices/separation.py MODEL), which the zip carries.
 # The zip lands in build/packaging/. Needs: wine (64-bit), uv, rustup with a stable toolchain, curl,
-# Xvfb, and MinGW (Fedora: sudo dnf install mingw64-gcc mingw64-binutils mingw64-winpthreads-static), WOZMOD_SPEECH
-# naming the speech model folder (voices/phones.py MODEL), which the zip carries and the Windows phones are checked with,
-# and WOZMOD_SEPARATOR naming the Dream voice separator's folder (voices/separation.py MODEL), which the zip carries.
+# Xvfb, and MinGW (Fedora: sudo dnf install mingw64-gcc mingw64-binutils mingw64-winpthreads-static).
 # Everything it sets up lives in WOZMOD_WIN_WORK (default work/windows-build) and is reused next time:
 # a Wine prefix, Windows CPython (with Tcl/Tk), the locked Python packages and the cross-built Rust codecs.
 # Downloads are pinned: Python below, packages in uv.lock (with hashes). ffmpeg is our own build (packaging/ffmpeg/), the
@@ -15,7 +16,23 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-ASSETS=$(cd "${1:?usage: packaging/build_windows.sh ASSETS_DIR}" && pwd)
+
+usage="usage: packaging/build_windows.sh --assets DIR --speech SPEECH --separator SEPARATOR"
+ASSETS= SPEECH= SEPARATOR=
+while [ $# -gt 0 ]; do
+  case $1 in
+    --assets|--speech|--separator)
+      [ $# -ge 2 ] || { echo "$1 needs a folder; $usage" >&2; exit 2; }
+      [ -d "$2" ] || { echo "$1 $2: not a folder; $usage" >&2; exit 2; }
+      folder=$(cd "$2" && pwd)
+      case $1 in --assets) ASSETS=$folder;; --speech) SPEECH=$folder;; --separator) SEPARATOR=$folder;; esac
+      shift 2;;
+    *) echo "unknown argument $1; $usage" >&2; exit 2;;
+  esac
+done
+[ -n "$ASSETS" ] || { echo "missing --assets; $usage" >&2; exit 2; }
+[ -n "$SPEECH" ] || { echo "missing --speech; $usage" >&2; exit 2; }
+[ -n "$SEPARATOR" ] || { echo "missing --separator; $usage" >&2; exit 2; }
 WORK=${WOZMOD_WIN_WORK:-$ROOT/work/windows-build}
 # The Windows CPython and maturin, pinned in packaging/windows-build.json (tools/windows_suite.py tests with the same)
 read -r PYTHON_URL PYTHON_SHA256 MATURIN < <(python3 -c "import json; p = json.load(open('$ROOT/packaging/windows-build.json', \
@@ -75,7 +92,6 @@ wine "$PY" -m pip install -q --force-reinstall --no-deps "$(winpath "$(ls "$WORK
 (cd "$ROOT" && PYTHONPATH=$(winpath "$ROOT/src") wine "$PY" -m pytest -q -p no:cacheprovider tests/test_native_codecs.py \
   tests/test_voices_phones.py)
 # The phones the mouths come from must be the same on Windows as on Linux, to the bit (packaging/speech_digest.py).
-SPEECH=${WOZMOD_SPEECH:?set WOZMOD_SPEECH to the speech model folder (voices/phones.py MODEL)}
 linux_digest=$(cd "$ROOT" && uv run --extra native python packaging/speech_digest.py "$SPEECH")
 windows_digest=$(cd "$ROOT" && wine "$PY" "$(winpath "$ROOT/packaging/speech_digest.py")" "$(winpath "$SPEECH")" | tr -d '\r')
 [ "$linux_digest" = "$windows_digest" ] || { echo "the Windows phones differ from Linux's: $windows_digest, $linux_digest" >&2; exit 1; }
@@ -139,6 +155,5 @@ rm -rf "$FFMPEG_DIR" && mkdir -p "$FFMPEG_DIR" && cp "$FFMPEG" "$FFMPEG_DIR/"
 cd "$ROOT"
 WOZMOD_RUSTC_VERSION=$(cd "$ROOT/native" && rustc -V)
 export WOZMOD_RUSTC_VERSION
-SEPARATOR=${WOZMOD_SEPARATOR:?set WOZMOD_SEPARATOR to the Dream voice separator folder (voices/separation.py MODEL)}
 wine "$PY" packaging/build.py --assets "$(winpath "$ASSETS")" --speech "$(winpath "$SPEECH")" \
   --separator "$(winpath "$SEPARATOR")"
