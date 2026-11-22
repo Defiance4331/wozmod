@@ -380,12 +380,16 @@ def text_cell(screen: dict, text: dict | None, cell: int, tol: int = 1, allow_em
     return Check(not bad, {"texts": len(ts), "cell": cell, "tol": tol, "bad": bad})
 
 
-def quad_position(screen: dict, quad: str, x: int | None = None, y: int | None = None, width: int | None = None,
-                  height: int | None = None, left: int | None = None, tol: int = 1, allow_empty: bool = False) -> Check:
-    """Every quad of texture `quad` sits at the given layout `x`, `y` and has the given `width`, `height`, within
-    `tol` (a strip title at its row; a tag at its size). `left` is the leftmost quad's x, for a grid such as the
-    weapon row's skill squares (columns from x 1014). Skipped fields are not checked."""
-    qs = select_quads(screen, quad)
+def quad_position(screen: dict, quad: str | None = None, x: int | None = None, y: int | None = None,
+                  width: int | None = None, height: int | None = None, left: int | None = None, tol: int = 1,
+                  box: str | None = None, allow_empty: bool = False) -> Check:
+    """Every quad of texture `quad`, or every plain box drawn by caller `box`, sits at the given layout `x`, `y` and
+    has the given `width`, `height`, within `tol` (a strip title at its row; a tag at its size; a battle notice's bar
+    at its height). `left` is the leftmost quad's x, for a grid such as the weapon row's skill squares (columns from
+    x 1014). Skipped fields are not checked."""
+    if (quad is None) == (box is None):
+        raise ValueError("quad_position takes a texture `quad` or a box caller `box`")
+    qs = select_quads(screen, quad) if box is None else [b for b in screen.get("boxes", []) if b["caller"] == box]
     if not qs:
         return _empty("quads=0", allow_empty)
     want = {"x": x, "y": y, "width": width, "height": height}
@@ -743,8 +747,13 @@ def run_spec(screens: list[dict], driver, seen: dict | None = None) -> list[Row]
                                 and got["near_after"] - got["near_before"] >= got["asked"], got, None))
             if sc.get("keys"):  # pressed after the route, from wherever the screen's cursor was left
                 driver.keys(sc["keys"])
-            if sc.get("notice"):  # a battle notice of the check's own text, drawn as the game draws its notices
-                driver.notice(sc["notice"])
+            # A battle notice of the check's own text, drawn as the game draws its notices. A list shows them in turn,
+            # each one after the screen's wait finds the one before it on screen, while its window is still up.
+            notices = [sc["notice"]] if isinstance(sc.get("notice"), str) else sc.get("notice", [])
+            for n, text in enumerate(notices):
+                if n and sc.get("wait") and not driver.wait(dict(sc["wait"])):
+                    raise TimeoutError(f"notice {n} of {len(notices)} was not drawn before the next")
+                driver.notice(text)
             if sc.get("wait") and not driver.wait(dict(sc["wait"])):
                 rows.append(Row(name, "wait", False, {"wait": sc["wait"]}, None))
                 continue

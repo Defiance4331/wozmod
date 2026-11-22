@@ -82,8 +82,9 @@ static const u32 *enrt_table;
 #define WINDOW_SIZE 0x128
 #define WINDOW_MEASURE 0x54E807
 /* Battle notices (window 2) are drawn only by 0x550DF0: a 1224 bar centred on the window's y (+4), as tall as the
-   text's measured height (+0x18) plus 34 (0x54E780 keeps the bar, +0x10, at least that), then the text from the
-   window's x at y - height / 2, rows left-aligned at whatever pitch the last draw left (the stock 0x22). The runtime
+   text's measured height (+0x18) plus 34 (0x54E780 sets the bar, +0x10, to that on every notice, as
+   runtime_edits.CODE_EDITS drops its keep-the-taller test), then the text from the window's x at y - height / 2,
+   rows left-aligned at whatever pitch the last draw left (the stock 0x22). The runtime
    measures and draws notices at one pitch, so the bar holds every row, and draws each row centred on the screen with
    the block's ink centred on the bar (docs/design-language.md, Text lanes and Vertical). */
 #define NOTICE_DRAW 0x550F0B
@@ -5571,6 +5572,14 @@ static int always(u32 id, struct frame *f, u32 *replace)
     case 73:
     case 74:
         test_quad(id, f, id == 73);
+        return 1;
+    case 162:  /* the notice bar 0x5508B0 (y centre, x, width, height, alpha), as drawn: opening, shown or closing */
+        if (current->quads < TEST_QUADS) {
+            struct test_quad *q = &current->quad[current->quads];
+            q->hook = id, q->caller = f->ret, q->handle = 0;
+            q->x = f->arg[1], q->y = f->arg[0] - (u32)((int)f->arg[3] >> 1), q->width = f->arg[2], q->height = f->arg[3];
+        }
+        current->quads++;
         return 1;
     case 112:  /* the stage-script queue (cdecl: owner, index, state, kind, flag): kind 8 is defeat */
         *replace = test_keep & KEEP_NO_DEFEAT && f->arg[3] == 8;

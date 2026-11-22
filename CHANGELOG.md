@@ -6,6 +6,11 @@ All notable changes to wozmod are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A battle notice's bar is as tall as that notice's own text. After a notice that wrapped to two rows, every notice
+  that followed while the notice bar was still up kept the two-row bar, with its one row floating in the middle.
+
 ## [0.3.0] - 2026-11-22
 
 ### Added

@@ -821,6 +821,40 @@ wait = { caller = "0x550f0b", timeout = 30 }
   kind = "text_within_safe_area"
   text = { caller = "0x550f0b" }
 
+  [[screen.assert]]
+  kind = "quad_position"    # the bar (0x5508B0, returning to 0x550E8F): two rows' measured height plus 34
+  box = "0x550e8f"
+  height = 86
+
+# A one-row notice right after a two-row one, the notice window still up: its bar is one row tall again (24 + 34).
+# 0x54E780 kept the taller bar until the window closed, so the one row floated in a two-row bar.
+[[screen]]
+name = "battle-notice-bar-after-two-rows"
+route = "battle"
+notice = ["Hold the northern ford until the reserve arrives, then drive the rear guard back across the riverbanks!",
+          "Seize the eastern garrison by minimum illumination"]
+wait = { box_caller = "0x550e8f", timeout = 30 }    # each bar fully open: it holds still for three polls
+
+  [[screen.assert]]
+  kind = "quad_position"
+  box = "0x550e8f"
+  height = 58
+
+  [[screen.assert]]
+  kind = "text_position"    # the second notice's one row and no other, centred on the bar (y 527)
+  text = { caller = "0x550f0b", match = "^Seize" }
+  y = 516
+  centre = 640
+
+  [[screen.assert]]
+  kind = "text_position"
+  text = { caller = "0x550f0b" }
+  y = 516
+
+  [[screen.assert]]
+  kind = "text_on_one_line"    # its letters on one line in the shorter bar; the contact sheet shows the bar
+  text = { caller = "0x550f0b" }
+
 # Upgrade Skills after a skill is picked: the officers, and the chosen officer's weapons. Both draw their weapon list
 # in the frame of FUN_00526db0, which English widens with the weapon row. The route unlocks the weapons and sets the
 # first skill's count and a weapon's effect, so check visits them after the screens that need the plain save.

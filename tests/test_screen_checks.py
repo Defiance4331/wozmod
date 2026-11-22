@@ -189,6 +189,11 @@ def test_quad_position_flags_the_skill_squares_left_at_the_old_x_and_a_condensed
     assert not sc.quad_position(screen(textures=[dict(q, x=q["x"] - 128) for q in grid]), "4079.82", left=1014).ok
     assert not sc.quad_position(screen(textures=[quad("4079.83", 500, 300, 56, 20)]), "4079.83", width=96).ok
     assert sc.quad_position(screen(textures=[quad("4079.83", 500, 300, 97, 20)]), "4079.83", width=96).ok  # 1 px tol
+    # A plain box by its caller (the battle notice's bar), not another caller's box of the right height.
+    bars = {"boxes": [{"x": 0, "y": 484, "width": 1224, "height": 86, "caller": "0x550e8f"},
+                      {"x": 0, "y": 498, "width": 1224, "height": 58, "caller": "0x1"}]}
+    assert not sc.quad_position(bars, box="0x550e8f", height=58).ok
+    assert sc.quad_position(bars, box="0x550e8f", height=86).ok
 
 
 def test_line_count_bounds_use_newlines():
@@ -315,12 +320,18 @@ def test_runner_skips_the_capture_when_no_assertion_reads_pixels_and_stops_on_wa
     assert [(r.assertion, r.ok) for r in rows] == [("wait", False)]
 
 
-def test_runner_presses_a_screens_keys_and_posts_its_notice_after_its_route_and_before_reading_it(tmp_path):
+def test_runner_presses_a_screens_keys_and_posts_its_notices_after_its_route_and_before_reading_it(tmp_path):
     """Bug: the keys or the notice are dropped or sent before the route, so every gallery stop reads the first
-    artwork and the calibration notice is posted outside the battle."""
+    artwork and the calibration notice is posted outside the battle; one notice's text is posted letter by letter;
+    a list's next notice is posted before the screen's wait finds the one before it on screen, so the second
+    replaces the first before its bar was drawn."""
+    wait = {"caller": "0x1"}
     d = Driver(tmp_path)
-    sc.run_spec([{**SPEC[0], "keys": ["Right", "Down"], "notice": "nnn", "wait": {"caller": "0x1"}}], d)
-    assert [e[0] for e in d.log[:4]] == ["route", "keys", "notice", "wait"] and d.log[1][1] == ["Right", "Down"]
+    sc.run_spec([{**SPEC[0], "keys": ["Right", "Down"], "notice": "nnn", "wait": wait}], d)
+    assert d.log[1:] == [("keys", ["Right", "Down"]), ("notice", "nnn"), ("wait", wait)]
+    d = Driver(tmp_path)
+    sc.run_spec([{**SPEC[0], "notice": ["two rows", "one row"], "wait": wait}], d)
+    assert d.log[1:] == [("notice", "two rows"), ("wait", wait), ("notice", "one row"), ("wait", wait)]
 
 
 def test_spec_loader_rejects_unknown_kinds_and_keys_and_accepts_every_committed_spec(tmp_path):

@@ -155,7 +155,7 @@ FEATURES = (
             returns=_c("STAGE_LINE_MUSIC", "STAGE_LINE_EFFECTS")),  # the line's two setter calls
     # Builds with a define only; keep them last, so the features above keep their numbers in every build.
     Feature("moving", "moving camera fix", hooks=(72,), define="ENRT_MOVING_FIX"),
-    Feature("test", "test harness", hooks=(73, 74, 112, 128, 129, 130, 131, 132, 134), define="ENRT_TEST",
+    Feature("test", "test harness", hooks=(73, 74, 112, 128, 129, 130, 131, 132, 134, 162), define="ENRT_TEST",
             calls=_c("WINDOW_SET_TEXT", "WINDOW_OPEN", "WINDOW_STYLE", "QUEUE_SCRIPT", "GAIN_EXP", "GIVE_WEAPON",
                      "PLAY_SCENE", "SCENE_ARG", "SPAWN_SQUAD", "DESPAWN_SQUAD", "PLACE_UNIT", "CALL_HORSE", "MOUNT",
                      "CELL_FLAG", "MAP_POSITION", "NAV_CELL")),

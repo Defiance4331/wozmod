@@ -204,6 +204,7 @@ MOVING_FIX_HOOKS = [
 TEST_HOOKS = [
     (0x5DDDE0, "8b442424 8b4c241c", 73, None),  # sprite record builder (banner plates): a plain box in `screen`
     (0x590350, "83ec20 53 55", 74, None),       # nine-slice outline (the gallery selection frame), the same
+    (0x5508B0, "83ec1c 53 55", 162, None),      # battle notice bar (only caller 0x550E8A): a plain box, as drawn
     (0x4EEE60, "53 8a5c2414 80fb07", 112, 0),   # stage-script queue (cdecl): keep's no-defeat refuses kind 8
     (0x4B0480, "51 dd05b0b07a00", 114, None),   # true rate: the battle's ticks begin
     # runtime/sound_trace.h: every sound request and effect start to runtime.log

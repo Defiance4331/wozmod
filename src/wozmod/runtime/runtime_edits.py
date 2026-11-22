@@ -315,6 +315,13 @@ CODE_EDITS = [
     (0x54EC48, bytes.fromhex("83c208"), bytes.fromhex("83c209")),
     (0x54EF45, bytes.fromhex("83c208"), bytes.fromhex("83c209")),
 
+    # A battle notice's bar is as tall as its own text. set_window_text 0x54E780 gives window 2 (battle notices) a bar
+    # of the text's height + 0x22 (+0x10 of its record) only when that is taller than the bar it has (cmp at
+    # 0x54E855), and the bar resets only when the notice window closes (0x55118D), so after a two-row notice every
+    # notice in the same run had a two-row bar. Each notice grows its bar in from zero (show_window 0x54E8B0 restarts
+    # the opening, which 0x550DF0 scales by), so the larger bar held nothing on screen. The jge over the store goes.
+    (0x54E864, bytes.fromhex("7d44"), bytes.fromhex("9090")),
+
     # The camp-talk bar's rows and y, and the name plate's and the name's y on its top (text_boxes).
     *box("camp").edits(),
     # The Story Z talk bar's rows sampled and drawn, pushed as imm8 (126), which the grown bar outgrows; its y, and the
