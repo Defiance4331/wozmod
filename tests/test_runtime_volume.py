@@ -397,12 +397,14 @@ def _duck(c_library):
                                   "static struct stage_duck d;\n"
                                   "void line(int voiced) { stage_duck_line(&d, voiced); }\n"
                                   "void release(int spoken) { stage_duck_release(&d, spoken); }\n"
-                                  "int restore(void) { return stage_duck_restore(&d); }\n"
+                                  "void closes(int unused) { (void)unused; stage_duck_close(&d); }\n"
+                                  "int end(int unused) { (void)unused; return stage_duck_tick_end(&d); }\n"
+                                  "int decided(int unused) { (void)unused; return stage_duck_decided(&d); }\n"
                                   "unsigned ducked(unsigned stock, unsigned level, int music) {\n"
                                   "    return stage_duck_gain(&d, volume_scaled(stock, level),\n"
                                   "                           music ? STAGE_DUCK_MUSIC : STAGE_DUCK_EFFECTS); }\n")
     lib.ducked.argtypes, lib.ducked.restype = [ctypes.c_uint, ctypes.c_uint, ctypes.c_int], ctypes.c_uint
-    lib.restore.restype = ctypes.c_int
+    lib.end.restype = lib.decided.restype = ctypes.c_int
     return lib
 
 
@@ -426,29 +428,37 @@ def test_a_voiced_stage_line_ducks_music_and_effects_by_the_owners_depth_at_ever
     assert wrong == []
 
 
-def test_a_released_spoken_window_is_restored_by_its_ticks_end_unless_a_line_takes_over(c_library):
-    """Bugs: a restore between two chained lines (the bed swells for a moment under every word-5 chain), a restore
-    left pending (made every tick, or at the next battle's first tick), a notice box's close restoring (undoing an
-    event scene's own music level), the stock leak kept (an event that ends on word 5 = 1 stays ducked). A tick is
-    0x4F5090 (the release), then the window commands (a line), then 0x4ED6D0 (the restore check)."""
+def test_every_end_of_a_voiced_lines_window_undoes_its_duck_once(c_library):
+    """Bugs: a battle decided while a voiced line speaks keeps its duck through the results, the menus and into the
+    next battle (the owner's report; stock did the same at its shallower depth); that restore made on every tick of
+    the decided battle, or after a window that closed normally (undoing an event scene's own music level); a restore
+    between two chained lines (the bed swells for a moment under every word-5 chain); a released restore left pending,
+    or a notice box's close restoring; the stock leak kept (an event that ends on word 5 = 1 stays ducked). Each case
+    is the window's events in order; "end" is a tick's end (0x4ED6D0) and "decided" a tick of a decided battle
+    (0x4EF4FC), each giving 1 when it undoes the duck."""
     lib = _duck(c_library)
-    ticks = {  # each tick's events before its end: the restores due at each end
-        "chained voiced line": ([["release 1", "line 1"]], [0]),
-        "chained unvoiced load": ([["release 1", "line 0"]], [0]),  # its own setter calls set the full level
-        "the event ends on word 5 = 1": ([["release 1"], []], [1, 0]),
-        "a voiceless line follows": ([["release 1"]], [1]),  # index < 0 or kind 3: it calls no setter
-        "the notice box closes": ([["release 0"]], [0]),
-        "a line, no release": ([["line 1"], []], [0, 0]),
+    cases = {
+        "chained voiced line": ("line 1, release 1, line 1, end", [0]),
+        "chained unvoiced load": ("line 1, release 1, line 0, end", [0]),  # its own setter calls set the full level
+        "the event ends on word 5 = 1": ("line 1, release 1, end, end", [1, 0]),
+        "a voiceless line follows": ("line 1, release 1, end", [1]),  # index < 0 or kind 3: it calls no setter
+        "the notice box closes": ("line 1, close, release 0, end", [0]),
+        "the notice box closes over a held line": ("line 1, release 0, end", [0]),
+        "a line closes": ("line 1, close, end", [0]),  # stock restores both levels itself
+        "decided while a voiced line speaks": ("line 1, end, decided, decided", [0, 1, 0]),
+        "decided after the line closed": ("line 1, close, decided", [0]),
+        "decided while an unvoiced line shows": ("line 0, decided", [0]),
+        "decided in the tick of a release": ("line 1, release 1, end, decided", [1, 0]),
     }
     wrong = []
-    for case, (events, expected) in ticks.items():
-        lib.restore()
+    for case, (events, expected) in cases.items():
+        lib.line(0)
         got = []
-        for tick in events:
-            for event in tick:
-                name, value = event.split()
-                getattr(lib, name)(int(value))
-            got.append(lib.restore())
+        for event in events.split(", "):
+            name, _, value = event.partition(" ")
+            result = getattr(lib, "closes" if name == "close" else name)(int(value or 0))
+            if name in ("end", "decided"):
+                got.append(result)
         if got != expected:
             wrong.append((case, got, expected))
     assert wrong == []
@@ -457,7 +467,9 @@ def test_a_released_spoken_window_is_restored_by_its_ticks_end_unless_a_line_tak
 def test_the_stage_duck_hooks_sit_on_the_line_its_two_setter_calls_and_each_ticks_end():
     """Bugs: a return address taken from a call's own address (the duck never applies), the music and effects returns
     swapped (music ducked by the effects depth), a line hook that does not see the load's result in edi, a caller of
-    the window commands whose tick never reaches the restore check (a released duck kept on, the stock leak)."""
+    the window commands whose tick never reaches the restore check (a released duck kept on, the stock leak), the close
+    hook on the release branch (a chained line's duck forgotten) and the decided hook on a path that a decided
+    battle's ticks never take (the duck kept after a defeat)."""
     image, layout = _image()
     hooks = {hook_id: va for va, _, hook_id in runtime.STAGE_DUCK_HOOKS}
     sites = _direct_branches(image, layout, {0x5137F0, 0x514200, 0x513070, 0x4EECC0, 0x4ED6D0})
@@ -479,4 +491,28 @@ def test_the_stage_duck_hooks_sit_on_the_line_its_two_setter_calls_and_each_tick
     ends = sorted(va for va, target in sites.items() if target == 0x4ED6D0)
     if hooks[158] != 0x4ED6D0 or [va + 5 for va in commands] != ends:
         wrong.append(("the window commands and the tick's end", [hex(v) for v in commands], [hex(v) for v in ends]))
+    md = _disassembler()
+    close = list(md.disasm(image[pe.file_offset(layout, hooks[159]):][:0x40], hooks[159]))
+    calls = [(i.address, i.operands[0].imm) for i in close if i.mnemonic == "call"]
+    restore = [(va, target) for va, target in calls if target in (0x514200, 0x513070)]
+    if [target for _, target in restore] != [0x514200, 0x513070] or any(
+            i.mnemonic.startswith("j") for i in close if i.address < restore[-1][0]):
+        wrong.append("the close hook is not on the straight path into the stock restore (music, then effects)")
+    tick = list(md.disasm(image[pe.file_offset(layout, 0x4EF4F0):][:0x30], 0x4EF4F0))
+    at = next(n for n, i in enumerate(tick) if i.address == hooks[160])
+    test, jbe = tick[at - 2:at]
+    decided = tick[at:at + 6]  # mov eax, result; cmp eax, 1; je; cmp eax, 2; je; call
+    if (test.op_str != "eax, 0x2000000" or jbe.mnemonic != "jbe"
+            or [i.mnemonic for i in decided] != ["mov", "cmp", "je", "cmp", "je", "call"]
+            or [decided[1].operands[1].imm, decided[3].operands[1].imm] != [1, 2]
+            or decided[2].operands[0].imm != decided[4].operands[0].imm
+            or decided[5].operands[0].imm != 0x4F5090):
+        wrong.append("the decided hook is not where mode 0x2000000 skips the window step for results 1 and 2")
     assert wrong == []
+
+
+def _disassembler():
+    capstone = pytest.importorskip("capstone")
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    md.detail = True
+    return md

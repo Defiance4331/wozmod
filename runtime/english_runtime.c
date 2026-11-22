@@ -5138,8 +5138,8 @@ static long __stdcall ring_unlock(void *buffer)
 }
 
 /* A stage line's duck (stage_duck.h). The line's two setter calls return to STAGE_LINE_MUSIC and STAGE_LINE_EFFECTS;
-   a release's restore makes the calls the window's close makes (0x4F511B). Buffer 0's take size is at +4 of the
-   buffer (voice_play.h), stored by the load core (0x5D823F) on success. */
+   a released or abandoned window's restore makes the calls the window's close makes (0x4F511B). Buffer 0's take size
+   is at +4 of the buffer (voice_play.h), stored by the load core (0x5D823F) on success. */
 #define STAGE_LINE_MUSIC 0x4F4FF4    /* after fade_bgm_level, in start_stage_line_voice 0x4F4F80 */
 #define STAGE_LINE_EFFECTS 0x4F5015  /* after set_se_level */
 #define FADE_BGM_LEVEL ((void (*)(u32))0x514200)
@@ -5147,6 +5147,7 @@ static long __stdcall ring_unlock(void *buffer)
 #define BGM_OPTION (*(volatile u8 *)0x80151B)
 #define SE_OPTION (*(volatile u8 *)0x80151C)
 #define STAGE_WINDOW (*(volatile u32 *)0x9C9308)  /* the stage window shown: 2 is the notice box */
+#define BATTLE_RESULT (*(volatile u32 *)0x801AB8)  /* 1 or 2 once a commander falls (0x435DC7) */
 static struct stage_duck stage_duck;
 
 static int always(u32 id, struct frame *f, u32 *replace)
@@ -5203,7 +5204,14 @@ static int always(u32 id, struct frame *f, u32 *replace)
         stage_duck_release(&stage_duck, STAGE_WINDOW != 2);
         return 1;
     case 158:  /* the tick's stage window commands are done */
-        if (stage_duck_restore(&stage_duck))
+        if (stage_duck_tick_end(&stage_duck))
+            FADE_BGM_LEVEL(BGM_OPTION), SET_SE_LEVEL(SE_OPTION);
+        return 1;
+    case 159:  /* the spoken window closes, and stock restores both levels */
+        stage_duck_close(&stage_duck);
+        return 1;
+    case 160:  /* a stage script tick in mode 0x2000000, which steps no window while the result is 1 or 2 */
+        if ((BATTLE_RESULT == 1 || BATTLE_RESULT == 2) && stage_duck_decided(&stage_duck))
             FADE_BGM_LEVEL(BGM_OPTION), SET_SE_LEVEL(SE_OPTION);
         return 1;
     case 23:  /* an effect batch's Lock (0x6392A0), its arguments pushed: buffer, offset, size, out, flags */

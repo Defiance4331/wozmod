@@ -6,6 +6,11 @@ All notable changes to wozmod are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Music and sound effects no longer stay quieter after you fall, or fell the enemy commander, while a battle line
+  is speaking. Before, they stayed lowered through the menus and into the next battle.
+
 ## [0.3.0] - 2026-11-22
 
 ### Added
