@@ -108,14 +108,14 @@ static const u32 *enrt_table;
 #define STILL_CODE_END 0x59D000
 #define BRIEFING_COUNT 0x548C7B
 #define SCENARIO_TEXT_DRAW 0x588C17
-/* Scenario text in the stock column at one smaller cell in every box, 5 lines, condensed only past them. */
+/* Scenario text in the stock column at one smaller cell in every box, condensed only past its line limit. */
 #define SCENARIO_TEXT_WIDTH LANE_SCENARIO
 #define SCENARIO_TEXT_CELL 20
 #define SCENARIO_TEXT_PITCH 23
-#define SCENARIO_TEXT_LINES 5
-/* Dream summary at the stock cell and pitch in its column, at most 7 lines (clear of the help bar). */
+#define SCENARIO_TEXT_LINES LANE_SCENARIO_LINES
+/* Dream summary at the stock cell and pitch in its column (clear of the help bar), at most its line limit. */
 #define DREAM_SUMMARY_PITCH 28
-#define DREAM_SUMMARY_LINES 7
+#define DREAM_SUMMARY_LINES LANE_DREAM_SUMMARY_LINES
 #define DREAM_SUMMARY_DRAW 0x547673
 #define DREAM_SUMMARY_WIDTH LANE_DREAM_SUMMARY
 #define DREAM_SUMMARY_Y 408

@@ -133,8 +133,9 @@ def lane(kind: str) -> Lane:
 
 
 def c_header() -> list[str]:
-    """The runtime's lane tables (english_runtime.c): widths, and site and width for the draws matched by address
-    (the boxed draws also whether the text is a one-row line, whose rows the runtime splits evenly)."""
+    """The runtime's lane tables (english_runtime.c): widths, the line limits of the two columns it fits (scenario
+    objective, Dream summary), and site and width for the draws matched by address (the boxed draws also whether the
+    text is a one-row line, whose rows the runtime splits evenly)."""
     def table(kind: str, *columns: str) -> str:
         return ", ".join("{" + ", ".join([f"{site:#x}", str(row.width), *(str(int(getattr(row, c))) for c in columns)])
                          + "}" for row in LANES if row.kind == kind for site in row.sites)
@@ -147,7 +148,9 @@ def c_header() -> list[str]:
         f"#define LANE_CAPTION {lane('caption').width}",
         f"#define LANE_HISTORY {lane('history').width}",
         f"#define LANE_SCENARIO {lane('scenario').width}",
+        f"#define LANE_SCENARIO_LINES {lane('scenario').lines}",
         f"#define LANE_DREAM_SUMMARY {lane('dream').width}",
+        f"#define LANE_DREAM_SUMMARY_LINES {lane('dream').lines}",
         f"#define LANE_BOXED {table('boxed', 'one_row')}",
         f"#define LANE_DESCRIBED {table('described')}",
     ]
