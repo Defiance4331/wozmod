@@ -6,11 +6,6 @@ All notable changes to wozmod are listed here, newest first. The format follows
 
 ## [Unreleased]
 
-### Changed
-
-- While a character speaks in battle, the music dips only as much as in the original game, so it no longer drops
-  out under every line. Sound effects still dip a little more, so voices stay clear.
-
 ## [0.3.0] - 2026-11-22
 
 ### Added
@@ -30,8 +25,8 @@ All notable changes to wozmod are listed here, newest first. The format follows
 - Big battles no longer crackle or distort. With many enemies fighting at once, the sound used to get louder than
   your speakers could play, so it clipped. The game now leaves room for loud moments, which makes it a little
   quieter overall, about as loud as other PC games.
-- Spoken lines are louder against the music and sound effects, and the battle sounds dip a little more while a
-  character speaks.
+- Spoken lines are louder against the music and sound effects. While a character speaks in battle, the music dips
+  as much as in the original game, and sound effects dip a little more, so voices stay clear.
 - The BGM, SE and Voice sliders change the volume evenly at every step. A slider you had lowered now sounds quieter
   than before.
 - Nearby enemy hits, grunts and cries are easier to hear in big fights.
