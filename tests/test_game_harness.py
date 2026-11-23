@@ -1679,6 +1679,10 @@ def test_video_pins_the_screen_stream_to_bgrx(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(harness.subprocess, "Popen", lambda command, **kwargs: calls.append(command))
     monkeypatch.setattr(harness, "watch_recording", lambda *args: None)  # no xrun journal into a removed tmp_path
+
+    def no_game():  # as with no game in the run: a game another run has on the machine is not this test's
+        raise ValueError("no game")
+    monkeypatch.setattr(harness, "game_pid", no_game)
     harness.perform(tmp_path, {"action": "video", "name": "clip", "seconds": 5})
     command = calls[0]
     link = command.index("!", command.index("pipewiresrc"))

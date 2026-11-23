@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import struct
 
 import pytest
 
@@ -155,18 +156,24 @@ def test_a_step_is_the_games_advance_in_whole_pixels_with_halves_split_both_ways
     assert sum(f(a, 1.5) - a * 1.5 for a in halves) == 0  # as many halves round up as down
 
 
-def test_a_squished_line_fits_its_box_as_the_glyphs_step_through_it(raster):
-    # Catches the weapon-attribute line drawn 5 px past its box: the squish chosen from the exact width while each
-    # letter steps by a whole pixel, which here rounds up for most letters.
-    raster.fit.restype = raster.step.restype = ctypes.c_float
+def test_a_squished_line_is_the_widest_its_steps_fit_in_its_box(raster):
+    # Catches a squish whose whole-pixel steps run past the box (the weapon-attribute line drawn 5 px past it, when
+    # the factor came from the exact width), and one squeezed past what the box needs: the old shrink-by-ratio loop
+    # overshot [14, 15, 14, 14] in 56 px to 53 px of steps, where a factor with 56 px of steps fits.
+    raster.fit.restype = ctypes.c_float
     raster.step.restype = ctypes.c_int
-    advances = [13] * 37  # each exact step 16.58 px: every one rounds up
-    box, scale = 409, 1.5
-    exact = box / sum(advances)
-    steps = lambda f: sum(raster.step(a, ctypes.c_float(scale * f)) for a in advances)
-    factor = raster.fit((ctypes.c_int * len(advances))(*advances), len(advances), ctypes.c_float(box),
-                        ctypes.c_float(scale), ctypes.c_float(exact))
-    assert steps(exact) > box * scale  # the exact-width squish overflows
-    assert steps(factor) <= box * scale and factor > 0.97 * exact
-    assert raster.fit((ctypes.c_int * 3)(10, 10, 10), 3, ctypes.c_float(400), ctypes.c_float(scale),
+    bad = []
+    for advances, box, scale in (([13] * 37, 409, 1.5),  # each exact step 16.58 px: every one rounds up
+                                 ([14, 15, 14, 14], 56, 1.0),
+                                 ([8, 11, 8, 11, 11], 47, 1.5),
+                                 ([8, 8, 8, 11, 11], 41, 1.5)):
+        exact = box / sum(advances)
+        steps = lambda f: sum(raster.step(a, ctypes.c_float(scale * f)) for a in advances)
+        factor = raster.fit((ctypes.c_int * len(advances))(*advances), len(advances), ctypes.c_float(box),
+                            ctypes.c_float(scale), ctypes.c_float(exact))
+        wider = struct.unpack("<f", struct.pack("<I", struct.unpack("<I", struct.pack("<f", factor))[0] + 1))[0]
+        if not (steps(factor) <= box * scale < steps(wider)):
+            bad.append((advances, box, scale, factor, steps(factor), steps(wider)))
+    assert bad == []
+    assert raster.fit((ctypes.c_int * 3)(10, 10, 10), 3, ctypes.c_float(400), ctypes.c_float(1.5),
                       ctypes.c_float(1.0)) == 1.0  # room to spare: no squish
