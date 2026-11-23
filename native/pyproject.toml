@@ -16,4 +16,5 @@ module-name = "wozmod_native"
 # the Rust or C sources kept the old module.
 [tool.uv]
 cache-keys = [{ file = "pyproject.toml" }, { file = "Cargo.toml" }, { file = "Cargo.lock" }, { file = "build.rs" },
-              { file = "src/**/*.rs" }, { file = "csrc/**" }, { file = "patches/**" }]
+              { file = "src/**/*.rs" }, { file = "csrc/**" }, { file = "patches/**" },
+              { file = ".cargo/**" }]

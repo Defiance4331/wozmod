@@ -37,3 +37,6 @@ tar = "0.4"
 opt-level = 3
 lto = true
 codegen-units = 1
+# No symbol table: Python finds the module by its export, and the linker's own names spell out the build's folders
+# (the MinGW import libraries are named after the folder rustc made them in).
+strip = "symbols"

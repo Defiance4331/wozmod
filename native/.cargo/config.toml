@@ -1,0 +1,12 @@
+# Every build of the module runs cargo in this folder (uv's build of the path dependency, maturin for the Windows wheel),
+# so these settings reach them all. Paths without a slash name a program on PATH; with one, they are relative to native/.
+[build]
+# rustc writes the absolute path of each source file outside this folder into the module's panic messages: the crates
+# in the cargo registry and the standard library's sources under rustup, wherever the build machine keeps them. The
+# wrapper writes that prefix as ~, so builds of one commit match wherever they ran (cargo's own trim-paths, which would
+# do it here, is not stable in cargo 1.100).
+rustc-wrapper = ".cargo/remap-paths.sh"
+# Read by nothing: cargo fingerprints these flags and not what the wrapper adds, so this name rebuilds a crate built
+# before the wrapper, which a target folder would otherwise keep with the old paths in it. Rename it whenever the
+# wrapper's flags change.
+rustflags = ["--cfg", "wozmod_paths_remapped"]

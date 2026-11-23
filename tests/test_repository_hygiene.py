@@ -268,6 +268,43 @@ def test_release_zips_carry_no_game_files_or_game_text() -> None:
     assert offending == []
 
 
+def _build_machine_paths(release: Path) -> list[str]:
+    """The members of a release zip, nested zips opened, that hold a path of the machine running this check, as
+    UTF-8 or UTF-16 text and with /, \\ or _ between its parts (a compiler keeps the source paths it saw in a library,
+    and a linker turns them into symbol names). Not MACHINE_PATHS: third-party libraries carry their own builders'."""
+    machine = Path.home().as_posix()
+    found = re.compile(b"|".join(re.escape(machine.replace("/", separator).encode(encoding))
+                                 for separator in "/\\_" for encoding in ("utf-8", "utf-16-le")), re.IGNORECASE)
+    with zipfile.ZipFile(release) as archive:
+        return [name for name, data in _members(archive) if found.search(data)]
+
+
+def test_the_machine_path_scan_reads_nested_zips_utf16_and_symbol_names(tmp_path) -> None:
+    """Bug: the release scan reads only the zip's own members, only UTF-8, or only paths with their slashes, so a path
+    in base_library.zip, one a Windows library keeps as UTF-16, or one a linker spelled with underscores ships."""
+    machine = Path.home().as_posix()
+    inner = io.BytesIO()
+    with zipfile.ZipFile(inner, "w") as nested:
+        nested.writestr("lib.pyd", b"MZ" + f"{machine}/src/lib.rs".encode("utf-16-le"))
+        nested.writestr("clean.txt", b"no path here")
+    release = tmp_path / "release.zip"
+    with zipfile.ZipFile(release, "w") as archive:
+        archive.writestr("wozmod/_internal/base_library.zip", inner.getvalue())
+        archive.writestr("wozmod/_internal/lib.so", b"\x7fELF" + f"{machine}/.cargo/registry".encode())
+        archive.writestr("wozmod/_internal/other.pyd", b"MZ_head_" + f"{machine}/build/x.lib".replace("/", "_").encode())
+        archive.writestr("wozmod/LICENSE", b"GPL")
+    assert _build_machine_paths(release) == ["wozmod/_internal/base_library.zip!lib.pyd", "wozmod/_internal/lib.so",
+                                             "wozmod/_internal/other.pyd"]
+
+
+@pytest.mark.skipif(not os.environ.get("WOZMOD_RELEASE"), reason="set WOZMOD_RELEASE to release zips (os.pathsep list)")
+def test_release_zips_carry_no_build_machine_paths() -> None:
+    # Bug: a library in the release keeps the absolute source paths its compiler saw (rustc's panic messages, C's
+    # __FILE__, the linker's symbol names), so it depends on where it was built; native/.cargo/config.toml maps them.
+    found = [f"{release}!{name}" for release in os.environ["WOZMOD_RELEASE"].split(os.pathsep)
+             for name in _build_machine_paths(Path(release))]
+    assert found == []
+
 def _donor_strings(root: Path) -> set[str]:
     """Every string the games show, case and spacing folded: their ENS archives, the PSP pool, and the program
     strings the text table and the art data point at (a program's other bytes, such as shader code, are not text)."""

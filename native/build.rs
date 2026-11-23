@@ -189,7 +189,12 @@ fn main() {
         .define("POCKETSPHINX_EXPORTS", None)
         .define("SPHINXBASE_EXPORTS", None)
         .warnings(false)
-        .opt_level(2);
+        .opt_level(2)
+        // The library's messages name their source file (__FILE__), which the compiler writes as the path it was given:
+        // in this build's own folders. The output folder last, as it may lie inside native/ and
+        // the last match wins.
+        .remap_source_path(&manifest, "native")
+        .remap_source_path(&out, "out");
     let shim = manifest.join("csrc/ps_math.h");
     if msvc {
         build.flag("/FI").flag(shim.to_str().unwrap()).flag("/fp:precise");
