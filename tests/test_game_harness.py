@@ -615,7 +615,8 @@ def test_run_kills_the_sandbox_once_the_server_ends(tmp_path, monkeypatch):
 def test_every_routed_screen_reaches_every_other():
     """Bug: a new screen routed with no way back passes the single-target check above, then fails a check whose
     order visits it before another screen (the Z talk pages once left results-discard unreachable)."""
-    screens = [n for n in harness.ROUTE_SCREENS if n not in {"boot", "title"}]  # nothing returns to the boot or the title
+    # nothing returns to the boot, the title or the demo the title plays when idle
+    screens = [n for n in harness.ROUTE_SCREENS if n not in {"boot", "title", "attract-demo"}]
     stuck = []
     for start in screens:
         for target in screens:

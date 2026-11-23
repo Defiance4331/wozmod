@@ -1940,6 +1940,7 @@ def drive_step(root: Path, keys: list | dict, until: dict | None, every: float |
 ROUTE_SCREENS = {
     "boot": None,  # a fresh run, before any input
     "title": {"texture": "4085.0"},
+    "attract-demo": {"texture": "4068.0"},  # the demo battle the title plays when left idle, its logo top right
     **{f"menu@{item}": {"texture": MENU} for item in ("story", "option", "free", "dream", "vs", "survival", "gallery")},
     "options": {"texture": "4079.171"},
     "game-settings": {"texture": "4069.14", "without": "4079.149"},  # the controller page draws 4069.14 too
@@ -2233,6 +2234,9 @@ ROUTE_EDGES = [
     # the tour, 0202-tour; 0207-B
     ("boot", "title", [(["Escape"], {**ROUTE_SCREENS["title"], "every": 4})]),  # skips the logos and movie
     ("title", "menu@story", ["Return"]),
+    # idle at the title until the demo plays (about 15 s, past the loading screen 4067), 2026-11-23_1707-z-logo3-b
+    ("title", "attract-demo", [([], ROUTE_SCREENS["attract-demo"])]),
+    ("attract-demo", "title", [(["Return"], ROUTE_SCREENS["title"])]),  # any key ends the demo
     ("menu@story", "menu@option", ["Up", "Up"]),
     ("menu@option", "menu@story", ["Down", "Down"]),
     ("menu@story", "menu@dream", ["Down", "Down"]),

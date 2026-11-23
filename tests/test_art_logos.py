@@ -91,3 +91,25 @@ def test_the_logos_of_a_set_take_its_one_glow():
 
     r, _, b, a = out.getpixel((39, 50))  # just left of the logo, inside the set's 2-texel glow
     assert a and b > r
+
+
+def test_a_logo_over_a_shape_puts_its_ink_on_the_middle_of_the_shapes_outline():
+    """Bug: the logo is centred by its box, or on the shape's box, so it sits left of a lopsided Z whose left side
+    slants out to a point, and further left again for a logo whose ink leans left (v0.3.0's title and loading screen)."""
+    shape = Image.new("RGBA", (64, 48))
+    shape.paste((255, 255, 255, 255), (20, 0, 60, 44))  # a block, then a spike out to x 0 in rows 44-47
+    shape.paste((255, 255, 255, 255), (0, 44, 60, 48))
+    logo = Image.new("RGBA", (20, 32))
+    logo.paste((255, 0, 0, 255), (0, 0, 10, 32))  # heavy on the left, a thin bar on the right: ink at x 7.33 of 20
+    logo.paste((255, 0, 0, 255), (18, 0, 20, 32))
+    donors = {("moz", 4067): {1: Item(shape)}, 7: {0: Item(logo)}}
+    spec = {"wo1-x360": [7, 0, 0], "box": [0, 0, 20, 32], "rows": [4, 36], "outline": [4067, 1, 0]}
+
+    out = logo_image(Image.new("RGBA", (64, 48)), spec, donors, None).getchannel("A")
+
+    alpha = out.get_flattened_data()
+    ink = sum((i % 64 + 0.5) * a for i, a in enumerate(alpha)) / sum(alpha)
+    # The hull's left edge runs from (20, 0) to (0, 44): over rows 4-35 its mean is 20 - 20 * 20 / 44 = 11.14, so the
+    # outline's middle is (11.14 + 60) / 2 = 35.57 (its box's middle is 30).
+    assert abs(ink - 35.57) < 0.8
+    assert out.getbbox()[1::2] == (4, 36)
