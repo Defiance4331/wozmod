@@ -69,6 +69,12 @@ class Lane:
     def lane(self) -> int:
         return min(self.bounds().values())
 
+    def fits(self, text: str) -> bool:
+        """Whether a text takes at most `lines` lines wrapped at `width` (its line breaks made spaces, as fit_lines in
+        runtime/english_runtime.c draws it). One that takes more is wrapped wider and condensed back into `width`
+        (wrap_lines there)."""
+        return text_boxes.wrap(text.replace("\n", " "), self.width, self.cell).count("\n") < self.lines
+
 
 _page = text_boxes.box("camp")
 CUTIN_TEXT_X = 300  # 0x54F2F0 draws the cut-in phrase from x 300 (push 0x12C)

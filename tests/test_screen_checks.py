@@ -436,6 +436,21 @@ def test_a_summary_is_checked_at_its_letter_cell_not_by_how_many_lines_it_fills(
     assert not sc.text_cell(smaller, None, cell=24).ok
 
 
+def test_a_dream_summary_condenses_into_its_lane_only_when_its_lines_cannot_fit():
+    # Catches a check that ignores the lane's fallback either way: one that still asks the full width of a summary the
+    # runtime must condense (it needs more than 7 lines at the lane), or one that lets a summary that fits be condensed.
+    from wozmod.runtime.latin_font import width
+    from wozmod.runtime.text_lanes import lane
+    word, dream = "Mmmmmmmmm", lane("dream")  # two do not fit the lane, so each word takes a line
+    pair = f"{word} {word}"
+    assert width(word, 24) < dream.width < width(pair, 24)
+    fits = "\n".join([word] * dream.lines)
+    too_long = "\n".join([pair] * ((dream.lines + 2) // 2))  # drawn from the runtime's wider wrap
+    cell = lambda shown, w: sc.text_cell(screen([text(980, 408, w, shown)]), None, cell=24, lane="dream").ok
+    assert cell(fits, width(word, 24)) and not cell(fits, width(word, 24) - 8)
+    assert cell(too_long, dream.width - 3) and not cell(too_long, width(pair, 24))
+
+
 @pytest.mark.parametrize("size, area", [((3440, 1440), (440, 0, 2560, 1440)), ((1920, 1200), (0, 60, 1920, 1080)),
                                         ((3840, 2160), (0, 0, 3840, 2160))])
 def test_checks_measure_the_centred_16_9_area_of_a_wider_or_taller_capture(size, area):

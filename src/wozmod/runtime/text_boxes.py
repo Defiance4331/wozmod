@@ -169,10 +169,10 @@ class Box:
     def wrapped(self, text: str) -> str:
         """The text as the page draws it: its line breaks made spaces, then wrapped at the cell (page in
         english_runtime.c; a text of 512 bytes or more is drawn as it is, which no page text reaches)."""
-        return _wrap(text.replace("\n", " "), self.wrap, self.cell_size[0])
+        return wrap(text.replace("\n", " "), self.wrap, self.cell_size[0])
 
 
-def _wrap(text: str, at: int, cell: int) -> str:
+def wrap(text: str, at: int, cell: int) -> str:
     """wrap in english_runtime.c: a line breaks at its last space once it measures `at` or more."""
     out, line, space, i = [], 0, None, 0
     while i < len(text):

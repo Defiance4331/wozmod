@@ -27,7 +27,7 @@ from typing import Any, Callable
 
 from PIL import Image
 
-from wozmod.runtime import layout, text_boxes
+from wozmod.runtime import layout, text_boxes, text_lanes
 from wozmod.runtime.english_runtime import DLL_BASE
 from wozmod.runtime.latin_font import width as _table_width
 from wozmod.runtime.runtime_edits import SAFE_LEFT, SAFE_RIGHT
@@ -369,14 +369,19 @@ def text_box(screen: dict, box: str, allow_empty: bool = False, *, img: Image.Im
                                        "bad": bad, "right_ends": edge.numbers["right_ends"]})
 
 
-def text_cell(screen: dict, text: dict | None, cell: int, tol: int = 1, allow_empty: bool = False) -> Check:
+def text_cell(screen: dict, text: dict | None, cell: int, lane: str | None = None, tol: int = 1,
+              allow_empty: bool = False) -> Check:
     """Every selected text's reported width is its widest line's width from the game's width table at `cell` px
-    letters: the site keeps that letter cell (the dream summary at the stock 24, not a smaller cell that also fits)."""
+    letters: the site keeps that letter cell (the dream summary at the stock 24, not a smaller cell that also fits).
+    `lane` names the site's text lane (wozmod.runtime.text_lanes, by kind): a text too long for the lane's lines at
+    its width takes the condensed fallback (fit_lines), so its reported width is at most the lane's instead."""
     ts = _texts(screen, text)
     if not ts:
         return _empty("texts=0", allow_empty)
-    seen = [{"width": t["width"], "table": max(_table_width(line, cell) for line in t["text"].split("\n"))} for t in ts]
-    bad = [s for s in seen if abs(s["width"] - s["table"]) > tol]
+    column = text_lanes.lane(lane) if lane else None
+    seen = [{"width": t["width"], "table": max(_table_width(line, cell) for line in t["text"].split("\n")),
+             **({"lane": column.width} if column and not column.fits(t["text"]) else {})} for t in ts]
+    bad = [s for s in seen if (s["width"] > s["lane"] + tol if "lane" in s else abs(s["width"] - s["table"]) > tol)]
     return Check(not bad, {"texts": len(ts), "cell": cell, "tol": tol, "bad": bad})
 
 

@@ -440,6 +440,7 @@ route = "story-orochi-scenario"
   side = "right"
 
 # Dream summary (Old): the stock cell (24) and pitch (28) in its column, at most 7 lines, ending inside the safe area.
+# A summary that needs more than 7 lines at the column wraps wider and condenses into it (text_lanes, lane dream).
 [[screen]]
 name = "dream-select"
 route = "dream-select"
@@ -453,6 +454,7 @@ route = "dream-select"
   kind = "text_cell"
   text = { x = 980, y = 408 }
   cell = 24
+  lane = "dream"
 
   [[screen.assert]]
   kind = "text_within_safe_area"
