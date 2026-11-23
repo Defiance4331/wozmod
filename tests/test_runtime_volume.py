@@ -411,12 +411,12 @@ def _duck(c_library):
 def test_a_voiced_stage_line_ducks_music_and_effects_by_the_owners_depth_at_every_level(c_library):
     """Bugs: a depth made from 3/4 instead of the stock 11/15 heard at full sliders (music 0.19 dB off), the music
     and effects depths swapped, a whole-level duck left in (the depth moves with the slider, level 1 mutes), a duck on
-    a line with no voice, level 0 no longer silent. The owner's depth, ledger row 42: the stock drop at full sliders
-    (music 11/15, effects 12/15) and 4 dB more, on the curve's gain at every option; a line with no voice keeps it."""
+    a line with no voice, level 0 no longer silent. The depth: the stock drop at full sliders (music 11/15, effects
+    12/15), effects 4 dB more (ledger row 42), on the curve's gain at every option; a line with no voice keeps it."""
     lib = _duck(c_library)
     wrong = []
-    for music, ceiling, stock_duck in ((1, MUSIC, 11 / 15), (0, EFFECTS, 12 / 15)):
-        depth = 20 * math.log10(stock_duck) - 4
+    for music, ceiling, stock_duck, extra in ((1, MUSIC, 11 / 15, 0), (0, EFFECTS, 12 / 15, 4)):
+        depth = 20 * math.log10(stock_duck) - extra
         for level in range(16):
             curve = ceiling * 10 ** (-3 * (15 - level) / 20) if level else 0
             for voiced in (1, 0):

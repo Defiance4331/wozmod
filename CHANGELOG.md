@@ -6,6 +6,11 @@ All notable changes to wozmod are listed here, newest first. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- While a character speaks in battle, the music dips only as much as in the original game, so it no longer drops
+  out under every line. Sound effects still dip a little more, so voices stay clear.
+
 ## [0.3.0] - 2026-11-22
 
 ### Added
