@@ -8,6 +8,7 @@ from contextlib import nullcontext
 import pytest
 from PIL import Image
 
+from wozmod.art import bundle
 from wozmod.art.bundle import read_bundle, write_bundle
 
 
@@ -22,6 +23,20 @@ def layers():
     color.putdata([(3, 5, 7, 11), (13, 17, 19, 23)])
     return {"mask/full": (mask, {"advance": 4.25, "origin": [-2, 3]}),
             "label/squish": (color, {"height": 1})}
+
+
+def test_failed_write_leaves_the_old_bundle_whole_for_a_reader(tmp_path, monkeypatch):
+    path = tmp_path / "bundle.zip"
+    write_bundle(path, layers(), RECIPE_SHA256, outlines=OUTLINES)
+    before = path.read_bytes()
+    members = iter(range(2))  # let the index and one layer reach the archive, then fail
+    original = bundle._zip_member
+    monkeypatch.setattr(bundle, "_zip_member", lambda name: original(name) if next(members, None) is not None
+                        else (_ for _ in ()).throw(OSError("disk full")))
+    with pytest.raises(OSError):
+        write_bundle(path, layers(), RECIPE_SHA256, outlines=OUTLINES)
+    assert path.read_bytes() == before
+    assert [p.name for p in tmp_path.iterdir()] == ["bundle.zip"]
 
 
 def test_bundle_round_trip_cannot_drop_edge_pixels_or_layer_metrics(tmp_path):

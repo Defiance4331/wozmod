@@ -11,6 +11,8 @@ from pathlib import Path
 from PIL import Image
 from PIL._util import DeferredError
 
+from wozmod.atomic import replacing
+
 # 4: each layer is its raw pixels (Image.tobytes) in an LZMA zip member, 30 % smaller than the PNG of format 3 and
 # as fast to read; Image.frombytes gives the same image back.
 FORMAT_VERSION = 4
@@ -105,7 +107,7 @@ def write_bundle(path: str | Path, layers: dict[str, tuple[Image.Image, dict]],
     index = _json_bytes({"format_version": FORMAT_VERSION,
                          "recipe_sha256": recipe_sha256,
                          "outlines_sha256": hashlib.sha256(outlines).hexdigest(), "layers": rows})
-    with zipfile.ZipFile(path, "w") as archive:
+    with replacing(path) as temporary, zipfile.ZipFile(temporary, "w") as archive:
         archive.writestr(_zip_member("index.json"), index)
         for name, payload in payloads:
             archive.writestr(_zip_member(name), payload)

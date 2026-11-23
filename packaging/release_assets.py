@@ -27,6 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pins  # noqa: E402  packaging/pins.py, beside this file
+from wozmod.atomic import replacing  # noqa: E402
 
 
 def build_dll(game: Path, folder: Path) -> Path:
@@ -65,7 +66,8 @@ def main() -> int:
         dll, lettering = folder / "d3d9.dll", folder / "lettering.zip"
         for source, target in ((args.dll, dll), (args.lettering, lettering)):
             if source.resolve() != target.resolve():
-                shutil.copyfile(source, target)
+                with replacing(target) as temporary:  # a build reading work/release-assets/ sees the old file or the new
+                    shutil.copyfile(source, temporary)
     else:
         parser.error("give --dll and --lettering, or --build with --game and --donors")
     pins.write_assets(dll, lettering)

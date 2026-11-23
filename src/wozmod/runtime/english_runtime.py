@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from wozmod.atomic import replacing
 from wozmod.formats import pe
 
 from .guards import blob, guard_list
@@ -328,4 +329,5 @@ def compile_dll(output: Path, header: str, defines: tuple[str, ...] = ()) -> Non
         subprocess.run([COMPILER, *flags], cwd=tmp, check=True)
         dll = Path(tmp, "d3d9.dll").read_bytes()
     _require(dll[:2] == b"MZ", "the compiler wrote no PE image")
-    output.write_bytes(dll)
+    with replacing(output) as temporary:
+        temporary.write_bytes(dll)
